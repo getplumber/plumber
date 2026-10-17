@@ -1,0 +1,124 @@
+name: Report Integration Test Skip
+
+# Posts the PR-open "skipped" placeholder for the required
+# `Python Integration Tests` check on FORK PRs, as the driver-test GitHub App.
+#
+# Division of labour:
+#   - INTERNAL PRs: the placeholder is posted inline by trigger-integration-tests.yml's
+#     `skip-integration-tests-pr` job (it can mint the app token directly). Posting it
+#     there means it works from the PR branch immediately, without waiting for this
+#     workflow_run file to reach the default branch.
+#   - FORK PRs: a fork's `pull_request` run has a READ-ONLY GITHUB_TOKEN and no secrets,
+#     so it cannot mint the app token or post any check on its own head. This
+#     workflow_run workflow instead runs in THIS (base) repo's context with full secret
+#     access even for fork-triggered runs, so it can post the app-attributed placeholder
+#     on a fork PR's head. This job self-guards to fork runs to avoid double-posting on
+#     internal PRs (which the inline job already covers).
+#
+# Why the app (not github.token): the ruleset pins the required
+# `Python Integration Tests` check to the driver-test app's integration id. Only a
+# check posted BY that app satisfies the gate — a github.token (github-actions) check
+# of the same name is a different context and does NOT.
+#
+# SECURITY: this workflow runs with secrets in a privileged context. It MUST NOT check
+# out or execute any PR/fork-controlled content. It only calls checks.create with a
+# static body; the sole fork-controlled input is `workflow_run.head_sha`, an opaque
+# commit SHA passed to the API. Do not add `actions/checkout` or a `run:` step that
+# executes repo content here.
+#
+# The real integration suite is unaffected: it runs as the required gate on the
+# `merge_group` commit (and as a label preview on internal PRs), dispatched by
+# trigger-integration-tests.yml. Mirrors databricks-sql-go / databricks-sql-nodejs.
+
+on:
+  workflow_run:
+    workflows: ["Trigger Integration Tests"]
+    types: [requested]
+
+jobs:
+  report-skip:
+    # Fork PR-triggered runs only. Internal PRs are posted inline by
+    # trigger-integration-tests.yml; the merge_group run posts the real required check.
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.head_repository.full_name != github.event.workflow_run.repository.full_name
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    permissions:
+      checks: write
+      contents: read
+      pull-requests: read
+    steps:
+      # This job is fork-only (see the job `if:`), so the placeholder is always
+      # appropriate EXCEPT when the fork PR is already closed. A fork PR's label
+      # preview cannot dispatch the real suite (no secret access), so nothing
+      # else posts the required check for it — keep the placeholder even when
+      # labeled. Skip only closed PRs. Resolve the PR by SHA because a fork's
+      # workflow_run payload has an empty pull_requests array. Read-only lookup
+      # (no checkout / no execution of PR content) — does not weaken the SECURITY
+      # note above.
+      - name: Decide whether to post the placeholder
+        id: gate
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        with:
+          script: |
+            let prs = context.payload.workflow_run.pull_requests || [];
+            let number = prs.length ? prs[0].number : null;
+            if (number === null) {
+              // Fork PRs: workflow_run.pull_requests is empty. Resolve by SHA.
+              const { data } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                commit_sha: process.env.HEAD_SHA,
+              });
+              number = data.length ? data[0].number : null;
+            }
+            if (number === null) {
+              // No PR resolvable (unexpected) — default to posting so the
+              // required check isn't left unfulfilled.
+              core.setOutput('post', 'true');
+              return;
+            }
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: number,
+            });
+            const isClosed = pr.state === 'closed';
+            console.log(`PR #${number} closed=${isClosed} -> post=${!isClosed}`);
+            core.setOutput('post', (!isClosed).toString());
+
+      - name: Generate GitHub App token (this repo)
+        id: app-token
+        if: steps.gate.outputs.post == 'true'
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        with:
+          app-id: ${{ secrets.INTEGRATION_TEST_APP_ID }}
+          private-key: ${{ secrets.INTEGRATION_TEST_PRIVATE_KEY }}
+          owner: databricks
+          repositories: databricks-sql-python
+
+      - name: Post skipped Python Integration Tests check
+        if: steps.gate.outputs.post == 'true'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'Python Integration Tests',
+              head_sha: process.env.HEAD_SHA,
+              status: 'completed',
+              conclusion: 'success',
+              completed_at: new Date().toISOString(),
+              output: {
+                title: 'Skipped on PR — runs in merge queue',
+                summary: 'Python Integration Tests are skipped on ordinary PR events and run as the required gate in the merge queue (dispatched to databricks-driver-test). Add the `integration-test` label to preview them on this PR. (Label previews cannot run on fork PRs, which lack secret access; fork PRs are exercised by the required merge-queue run.)',
+              },
+            });

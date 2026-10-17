@@ -365,6 +365,33 @@ type platformPathPush struct {
 	Modifiers     []string `json:"modifiers,omitempty"`
 	Sentence      string   `json:"sentence"`
 	FindingHashes []string `json:"finding_hashes"`
+	// Claims is the path's own claims (control.Claim), in claim order;
+	// omitted (never an empty array) for a path that computed none.
+	Claims []platformClaimPush `json:"claims,omitempty"`
+}
+
+// platformClaimPush is one control.Claim on the wire: the same four
+// fields, state and source as plain strings, snake_case keys like the
+// rest of the contract.
+type platformClaimPush struct {
+	Kind    string `json:"kind"`
+	Subject string `json:"subject"`
+	State   string `json:"state"`
+	Source  string `json:"source,omitempty"`
+}
+
+// platformClaimsFrom converts a path's claims to their wire shape; nil
+// for no claims, so a path that computed none pushes no claims key at
+// all (platformPathPush.Claims' omitempty).
+func platformClaimsFrom(claims []control.Claim) []platformClaimPush {
+	if len(claims) == 0 {
+		return nil
+	}
+	out := make([]platformClaimPush, 0, len(claims))
+	for _, c := range claims {
+		out = append(out, platformClaimPush{Kind: c.Kind, Subject: c.Subject, State: string(c.State), Source: c.Source})
+	}
+	return out
 }
 
 // platformScoreContext is the attack-path picture scoring-v4 priced for one
@@ -438,6 +465,7 @@ func platformScoreContextFrom(score *control.PlumberScoreResult) *platformScoreC
 			Modifiers:     p.Modifiers,
 			Sentence:      control.PathSentence(p),
 			FindingHashes: append(append([]string(nil), p.AllAnchorHashes()...), p.GateHashes...),
+			Claims:        platformClaimsFrom(p.Claims),
 		})
 	}
 	return ctx

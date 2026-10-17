@@ -1,0 +1,46 @@
+name: Release
+
+on:
+  workflow_run:
+    workflows: ['CI']
+    branches: [main]
+    types: [completed]
+
+# `npm publish` moves `latest` unless told otherwise. Never let this publish interleave
+# with one from the v0 maintenance branch; the group is shared with v0's release.yml.
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  release:
+    permissions:
+      id-token: write # Required for trusted publishing
+      contents: write
+      pull-requests: write
+
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.repository_owner == 'cloudflare' }}
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'npm'
+
+      - run: npm ci
+      - run: npm run build
+
+      - id: changesets
+        uses: changesets/action@v1
+        with:
+          version: ./.github/changeset-version.sh
+          publish: npx changeset publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true

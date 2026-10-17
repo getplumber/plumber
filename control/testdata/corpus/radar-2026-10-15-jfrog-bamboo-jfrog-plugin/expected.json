@@ -1,0 +1,47 @@
+{
+  "source": "https://github.com/jfrog/bamboo-jfrog-plugin",
+  "commit": "df652f8865e808856753e112268c9f93a7ba5468",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "frogbot",
+      "known": true,
+      "requiredReviewers": true,
+      "reviewers": 1
+    },
+    {
+      "name": "github-pages",
+      "known": true,
+      "branchPolicy": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/cla.yml": "active",
+    ".github/workflows/credential-validation.yml": "active",
+    ".github/workflows/frogbot.yml": "disabled_inactivity",
+    ".github/workflows/monitorIssues.yml": "disabled_inactivity",
+    ".github/workflows/security-scan.yml": "disabled_inactivity",
+    ".github/workflows/test.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The Critical pull_request_target path from the Frogbot scan was judged false: the job runs under environment `frogbot`, whose required approvers approve each run before it starts, and it checks out the approved head commit, so the path holds as a maintainer-approved Medium at most. The workflow `frogbot.yml` is now disabled for inactivity (the workflow states read at capture), so its jobs start no path at all; the label-gated `security-scan.yml` jobs stay bounded the same way.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "pr_target",
+        "subjectContains": "github.event.pull_request.head.sha",
+        "tier": "medium"
+      }
+    ]
+  }
+}

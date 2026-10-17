@@ -1,0 +1,33 @@
+{
+  "source": "https://github.com/jfrog/terraform-provider-pipeline",
+  "commit": "24afd33bb6c4c0d97d48f175cbb27977619fb687",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "master",
+  "branches": [
+    {
+      "name": "master",
+      "protected": true
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/cla.yml": "active",
+    ".github/workflows/release.yml": "active",
+    ".github/workflows/slack-notify-issues.yml": "active",
+    ".github/workflows/slack-notify-pr.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High cache path into `release/goreleaser` was judged overstated: a fork pull_request run writes only its own pull request scope, and the only base-context writer of fork code, `build-gate.yml` calling `acceptance-tests.yml`, waits on approval-gated environments (or does not exist here), so the writers are insiders and approved runs and the path holds at High at most. No job here declares cache-mode, so GitHub keeps the cache of every low-trust run read-only and grants no job cache write: ISSUE-705 is silent and no cache path exists, so the cache ceiling admits none.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "poisoned_cache",
+        "subjectContains": "",
+        "tier": "none"
+      }
+    ]
+  }
+}

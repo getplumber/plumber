@@ -1,0 +1,57 @@
+# Semantic PR Title Validation
+#
+# This workflow validates that PR titles follow the Conventional Commits format.
+# This is required for the semantic-pr-release-drafter to correctly categorize changes.
+#
+# Valid formats:
+# - feat: Add new feature
+# - fix: Fix a bug
+# - chore: Maintenance task
+# - docs: Documentation changes
+# - ci: CI/CD changes
+# - refactor: Code refactoring
+# - test: Test changes
+# - perf: Performance improvements
+# - feat!: Breaking change (major version bump)
+#
+# Optional scope: feat(api): Add new endpoint
+
+name: Validate PR Title
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize]
+
+permissions:
+  pull-requests: read
+  statuses: write
+
+jobs:
+  validate:
+    name: Validate Semantic PR Title
+    runs-on: ubuntu-latest
+    steps:
+      - uses: amannn/action-semantic-pull-request@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Configure which types are allowed
+          types: |
+            feat
+            fix
+            chore
+            docs
+            ci
+            refactor
+            test
+            perf
+            build
+            revert
+          # Require a scope to be provided (optional)
+          requireScope: false
+          # Configure which scopes are allowed (empty = any scope allowed)
+          scopes: ""
+          # Allow WIP PRs
+          wip: true
+          # Validate the PR title only (not the commits)
+          validateSingleCommit: false

@@ -125,13 +125,66 @@ func TestBotAuthorAndSameRepoGatesAnchorNothing(t *testing.T) {
 		if paths := assemblePaths(findings, sit); len(paths) != 0 {
 			t.Errorf("%s: want no path, got %+v", g.Reason, paths)
 		}
-		MarkGatedFindings(findings, sit)
+		markGatedFindings(findings, sit)
 		if sev := ContextualSeverity(findings[0], nil, ""); sev != SeverityLow {
 			t.Errorf("%s: severity %s, want low", g.Reason, sev)
 		}
 		if note, _ := findings[0].Data["gateNote"].(string); note != "gated to the repository's own branches" {
 			t.Errorf("%s: note %q", g.Reason, note)
 		}
+	}
+}
+
+// A job the privileged run never executes (its condition names other
+// events: ir.GateNoOutsider) lets no outsider in: no path, and the
+// finding stays an individual one, at Low, with the note naming the
+// repository's own events.
+func TestEventGateAnchorsNothing(t *testing.T) {
+	sit := gatedJob(&ir.Gate{Class: ir.GateNoOutsider, Reason: "event push"})
+	findings := []opaengine.Finding{headCheckout()}
+	if paths := assemblePaths(findings, sit); len(paths) != 0 {
+		t.Errorf("want no path, got %+v", paths)
+	}
+	markGatedFindings(findings, sit)
+	if sev := ContextualSeverity(findings[0], nil, ""); sev != SeverityLow {
+		t.Errorf("severity %s, want low", sev)
+	}
+	if note, _ := findings[0].Data["gateNote"].(string); note != "gated to the repository's own events" {
+		t.Errorf("note %q", note)
+	}
+}
+
+// A job of a reusable workflow carries no privileged trigger of its own
+// (its run is its caller's), so its gate (ir.ClassifyGates: its callers'
+// gates) decides who reaches an untrusted expression in it: a call made
+// on the repository's own events only admits no path; an ungated call
+// from a pull_request_target run is an outsider's.
+func TestCalledJobGateHoldsItsUntrustedExpression(t *testing.T) {
+	called := func(g *ir.Gate) *Situation {
+		j := JobSituation{Gate: g}
+		j.Privilege.Secrets = []string{"NPM_TOKEN"}
+		j.Privilege.SecretsState = "proven"
+		return &Situation{Exposure: ir.VisibilityPublic, Provider: "github", Jobs: map[string]JobSituation{"_warm/warm": j}}
+	}
+	expression := func() opaengine.Finding {
+		return entryFinding("ISSUE-207", "_warm/warm", "github.event.pull_request.title")
+	}
+
+	sit := called(&ir.Gate{Class: ir.GateNoOutsider, Reason: "event push"})
+	findings := []opaengine.Finding{expression()}
+	if paths := assemblePaths(findings, sit); len(paths) != 0 {
+		t.Errorf("push-only call: want no path, got %+v", paths)
+	}
+	markGatedFindings(findings, sit)
+	if note, _ := findings[0].Data["gateNote"].(string); note != "gated to the repository's own events" {
+		t.Errorf("push-only call: note %q", note)
+	}
+
+	p := onePath(t, assemblePaths([]opaengine.Finding{expression()}, called(&ir.Gate{Class: ir.GateOutsider})))
+	// The pull request title is an outsider's here, never only an insider's
+	// (no push cap held over the path).
+	if p.Entry.Actor != "outsider" || p.insider || p.ceiling != TierCritical {
+		t.Errorf("ungated call: insider %v, ceiling %s, entry = %+v", p.insider, p.ceiling, p.Entry)
 	}
 }
 
@@ -161,10 +214,10 @@ func TestBotActorGateKeepsACappedPath(t *testing.T) {
 		t.Errorf("path = %+v", p)
 	}
 	b := NewPathBlock(p, nil)
-	if !strings.HasPrefix(b.So, "as `dependabot[bot]`, and only `dependabot[bot]`, an attacker") {
+	if !strings.HasPrefix(b.So, "as anyone who can make `dependabot[bot]` the actor, an attacker") {
 		t.Errorf("So = %q", b.So)
 	}
-	MarkGatedFindings(findings, sit)
+	markGatedFindings(findings, sit)
 	if _, marked := findings[0].Data["gateNote"]; marked {
 		t.Errorf("an actor gate marked the finding: %+v", findings[0].Data)
 	}
@@ -227,7 +280,7 @@ func TestLabelWordingFollowsTheTrigger(t *testing.T) {
 	}
 }
 
-// MarkGatedFindings touches only an entry finding on a job no outsider can
+// markGatedFindings touches only an entry finding on a job no outsider can
 // make run: a maintainer's gate, an unknown gate, another job and a
 // finding that is no entry stay as they are.
 func TestMarkGatedFindingsTouchesOnlyNoOutsiderEntries(t *testing.T) {
@@ -237,7 +290,7 @@ func TestMarkGatedFindingsTouchesOnlyNoOutsiderEntries(t *testing.T) {
 		{Class: ir.GateOutsider},
 	} {
 		findings := []opaengine.Finding{headCheckout()}
-		MarkGatedFindings(findings, gatedJob(g))
+		markGatedFindings(findings, gatedJob(g))
 		if _, marked := findings[0].Data["gateNote"]; marked {
 			t.Errorf("%s gate marked the finding", g.Class)
 		}
@@ -248,11 +301,42 @@ func TestMarkGatedFindingsTouchesOnlyNoOutsiderEntries(t *testing.T) {
 	other.Job = "ci/open"
 	hygiene := finding("ISSUE-801", "ci/cloud", nil)
 	findings := []opaengine.Finding{other, hygiene}
-	MarkGatedFindings(findings, sit)
+	markGatedFindings(findings, sit)
 	for _, f := range findings {
 		if _, marked := f.Data["gateNote"]; marked {
 			t.Errorf("%s on %s marked", f.Code, f.Job)
 		}
+	}
+}
+
+// The head-checkout policy's own fork guard (Data "forkGuard") is a
+// downgrade, never a suppression, and only where the gate classifier
+// decided nothing for the job (no JobSituation.Gate): the finding is then
+// priced Low with the gate note. A job with a classified gate is decided
+// by that gate alone (noOutsiderGate): the jfrog-cli-evidence shape, a
+// fork-guarded checkout in a job behind a maintainer's label, anchors a
+// maintainer-approved path and carries neither the note nor the
+// downgrade.
+func TestMarkGatedFindingsDowngradesTheForkGuardedHeadCheckout(t *testing.T) {
+	guarded := func() opaengine.Finding {
+		f := headCheckout()
+		f.Data["forkGuard"] = true
+		return f
+	}
+
+	findings := []opaengine.Finding{guarded()}
+	markGatedFindings(findings, gatedJob(nil))
+	if findings[0].Data["occurrenceSeverity"] != string(SeverityLow) || findings[0].Data["gateNote"] != gatedNote {
+		t.Errorf("no classified gate: data = %+v, want occurrenceSeverity low and the gate note", findings[0].Data)
+	}
+
+	findings = []opaengine.Finding{guarded()}
+	markGatedFindings(findings, gatedJob(&ir.Gate{Class: ir.GateMaintainerApproved, Reason: "label safe to test"}))
+	if _, noted := findings[0].Data["gateNote"]; noted {
+		t.Errorf("label gate: data = %+v, want no gate note", findings[0].Data)
+	}
+	if _, low := findings[0].Data["occurrenceSeverity"]; low {
+		t.Errorf("label gate: data = %+v, want no downgrade", findings[0].Data)
 	}
 }
 
@@ -366,7 +450,7 @@ func endToEnd(t *testing.T, job ir.Job) ([]opaengine.Finding, []AttackPath) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	MarkGatedFindings(findings, sit)
+	markGatedFindings(findings, sit)
 	return findings, assemblePaths(findings, sit)
 }
 
@@ -463,7 +547,7 @@ func TestDependabotGatesEndToEnd(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		MarkGatedFindings(findings, sit)
+		markGatedFindings(findings, sit)
 		var out []AttackPath
 		for _, path := range assemblePaths(findings, sit) {
 			if path.EntryKind == EntryPRTarget {

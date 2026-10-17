@@ -1,0 +1,80 @@
+# These Tests validate successful OIDC server configuration in the CLI.
+# After the server has been configured the CLI will ping the server to make sure we have access
+name: "Config OIDC test"
+on:
+  workflow_call:
+  workflow_dispatch:
+
+env:
+  JFROG_CLI_LOG_LEVEL: DEBUG
+
+# Needed for OIDC
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  config-oidc:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: macos
+            version: latest
+          - name: windows
+            version: 2022
+    name: OIDC tests (${{ matrix.os.name }})
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    steps:
+      - name: Checkout the repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+          # Safe: this workflow only runs after human approval via the build-gate environment.
+          allow-unsafe-pr-checkout: true
+          
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+        with:
+          go-version-file: go.mod
+
+      - name: Setup FastCI
+        uses: jfrog-fastci/fastci@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          fastci_otel_token: ${{ secrets.FASTCI_TOKEN }}
+
+      - name: Build CLI
+        run: |
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            ./build/build.bat
+          else
+            ./build/build.sh
+          fi
+        shell: bash
+
+      - name: Get ID Token from GitHub
+        shell: bash
+        run: |
+          ID_TOKEN=$(curl -sLS -H "User-Agent: actions/oidc-client" -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+          "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=jfrog-github" | jq .value | tr -d '"')
+          echo "JFROG_CLI_OIDC_EXCHANGE_TOKEN_ID=${ID_TOKEN}" >> $GITHUB_ENV
+
+      - name: Run config command
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            ./jfrog.exe c add --url=https://ecosysjfrog.jfrog.io --oidc-provider-name=setup-jfrog-cli-test --interactive=false
+          else
+            ./jf c add --url=https://ecosysjfrog.jfrog.io --oidc-provider-name=setup-jfrog-cli-test --interactive=false
+          fi
+
+      - name: Ping the server to validate successful OIDC configuration
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            ./jfrog.exe rt ping
+          else
+           ./jf rt ping
+          fi

@@ -1,0 +1,123 @@
+name: Agent Plugins Tests
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  Agent-Plugins-Tests:
+    name: agent-plugins ${{ matrix.os.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: windows
+            version: 2022
+          - name: macos
+            version: 14
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    steps:
+      - name: Skip macOS - JGC-413
+        if: matrix.os.name == 'macos'
+        run: |
+          echo "::warning::JGC-413 - Skip until artifactory bootstrap in osx is fixed"
+          exit 0
+
+      - name: Checkout code
+        if: matrix.os.name != 'macos'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+          # Safe: this workflow only runs after human approval via the build-gate environment.
+          allow-unsafe-pr-checkout: true
+
+      - name: Setup FastCI
+        if: matrix.os.name != 'macos'
+        uses: jfrog-fastci/fastci@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          fastci_otel_token: ${{ secrets.FASTCI_TOKEN }}
+
+      - name: Setup Go with cache
+        if: matrix.os.name != 'macos'
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Install claude-code (Linux)
+        if: matrix.os.name == 'ubuntu'
+        run: |
+          CLAUDE_VERSION="v2.1.233"
+          OS="linux"
+          ARCH="x64"
+          mkdir -p /tmp/jf-agent-plugins-bins
+          curl -sL "https://github.com/anthropics/claude-code/releases/download/${CLAUDE_VERSION}/claude-${OS}-${ARCH}.tar.gz" -o claude.tar.gz
+          # Archive contains a single flat file "claude" (no wrapping directory) - no --strip-components needed.
+          tar -xzf claude.tar.gz -C /tmp/jf-agent-plugins-bins/
+          chmod +x /tmp/jf-agent-plugins-bins/claude
+          echo "/tmp/jf-agent-plugins-bins" >> $GITHUB_PATH
+          rm -f claude.tar.gz
+          /tmp/jf-agent-plugins-bins/claude --version
+
+      - name: Install claude-code (Windows)
+        if: matrix.os.name == 'windows'
+        shell: pwsh
+        run: |
+          $CLAUDE_VERSION = "v2.1.233"
+          $OS = "win32"
+          $ARCH = "x64"
+          $CLAUDE_URL = "https://github.com/anthropics/claude-code/releases/download/${CLAUDE_VERSION}/claude-${OS}-${ARCH}.zip"
+          New-Item -ItemType Directory -Path "C:\temp\jf-agent-plugins-bins" -Force | Out-Null
+          curl.exe -sL "$CLAUDE_URL" -o claude.zip
+          Expand-Archive -Path claude.zip -DestinationPath "C:\temp\jf-agent-plugins-bins\"
+          Add-Content -Path $env:GITHUB_PATH -Value "C:\temp\jf-agent-plugins-bins"
+          Remove-Item -Path claude.zip -Force
+          & "C:\temp\jf-agent-plugins-bins\claude.exe" --version
+
+      - name: Install codex (Linux)
+        if: matrix.os.name == 'ubuntu'
+        run: |
+          CODEX_VERSION="rust-v0.147.0"
+          ARCH="x86_64"
+          OS="unknown-linux-musl"
+          mkdir -p /tmp/jf-agent-plugins-bins
+          curl -sL "https://github.com/openai/codex/releases/download/${CODEX_VERSION}/codex-${ARCH}-${OS}.tar.gz" -o codex.tar.gz
+          # Archive contains a single flat file "codex-<arch>-<os>" (no wrapping directory,
+          # and not named "codex") - extract then rename to the plain "codex" binary name.
+          tar -xzf codex.tar.gz -C /tmp/jf-agent-plugins-bins/
+          mv "/tmp/jf-agent-plugins-bins/codex-${ARCH}-${OS}" /tmp/jf-agent-plugins-bins/codex
+          chmod +x /tmp/jf-agent-plugins-bins/codex
+          echo "/tmp/jf-agent-plugins-bins" >> $GITHUB_PATH
+          rm -f codex.tar.gz
+          /tmp/jf-agent-plugins-bins/codex --version
+
+      - name: Install codex (Windows)
+        if: matrix.os.name == 'windows'
+        shell: pwsh
+        run: |
+          $CODEX_VERSION = "rust-v0.147.0"
+          $ARCH = "x86_64"
+          $OS = "pc-windows-msvc.exe"
+          $CODEX_URL = "https://github.com/openai/codex/releases/download/${CODEX_VERSION}/codex-${ARCH}-${OS}.zip"
+          New-Item -ItemType Directory -Path "C:\temp\jf-agent-plugins-bins" -Force | Out-Null
+          curl.exe -sL "$CODEX_URL" -o codex.zip
+          Expand-Archive -Path codex.zip -DestinationPath "C:\temp\jf-agent-plugins-bins\"
+          # Zip contains multiple binaries (codex-command-runner.exe, codex-windows-sandbox-setup.exe,
+          # codex-x86_64-pc-windows-msvc.exe) - rename the actual codex CLI to the plain "codex.exe" name.
+          Move-Item -Path "C:\temp\jf-agent-plugins-bins\codex-${ARCH}-${OS}" -Destination "C:\temp\jf-agent-plugins-bins\codex.exe" -Force
+          Add-Content -Path $env:GITHUB_PATH -Value "C:\temp\jf-agent-plugins-bins"
+          Remove-Item -Path codex.zip -Force
+          & "C:\temp\jf-agent-plugins-bins\codex.exe" --version
+
+      - name: Install local Artifactory
+        if: matrix.os.name != 'macos'
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          # No VERSION pin: releases.jfrog.io keeps only a subset of patch
+          # releases, so pinning breaks once that version is pruned.
+          RT_CONNECTION_TIMEOUT_SECONDS: ${{ env.RT_CONNECTION_TIMEOUT_SECONDS || '1200' }}
+
+      - name: Run agent plugins tests
+        if: matrix.os.name != 'macos'
+        shell: bash
+        run: go test -v github.com/jfrog/jfrog-cli --timeout 0 -test.agentPlugins=true

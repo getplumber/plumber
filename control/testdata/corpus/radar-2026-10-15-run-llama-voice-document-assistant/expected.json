@@ -1,0 +1,29 @@
+{
+  "source": "https://github.com/run-llama/voice-document-assistant",
+  "commit": "48a365a6690068f9e1e329a793b6089f874cd021",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": false
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {},
+  "workflowStatesKnown": true,
+  "note": "The High `AstraBert/setup-jake@v0.1.0` path was judged false: the workflows listing answers `total_count: 0` although `lint.yaml` and `typecheck.yaml` exist, so GitHub Actions is disabled on the repository and no job ever runs.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "AstraBert/setup-jake@v0.1.0",
+        "tier": "none",
+        "pending": "the workflows listing answers known and empty while workflow files exist, which the spec reads as Actions disabled (section 7), but the lane only derives Actions disabled from a non-empty listing whose every workflow is disabled, so the jobs stay live."
+      }
+    ]
+  }
+}

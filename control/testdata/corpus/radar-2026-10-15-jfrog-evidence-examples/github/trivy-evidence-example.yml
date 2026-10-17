@@ -1,0 +1,65 @@
+name: "Trivy evidence integration example"
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  package-docker-image-with-trivy-evidence:
+    runs-on: ubuntu-latest
+    env:
+      REGISTRY_DOMAIN: ${{ vars.JF_URL }}
+      REPO_NAME: 'docker-trivy-repo'
+      IMAGE_NAME: 'docker-trivy-image'
+      VERSION: ${{ github.run_number }}
+      BUILD_NAME: 'trivy-docker-build'
+      ATTACH_OPTIONAL_CUSTOM_MARKDOWN_TO_EVIDENCE: true
+
+    steps:
+      # Build and publish the packages to JFrog Artifactory
+      - name: Setup jfrog cli
+        uses: jfrog/setup-jfrog-cli@v4
+        env:
+          JF_URL: ${{ vars.ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.ARTIFACTORY_ACCESS_TOKEN }}
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Build and publish Docker Image to Artifactory
+        run: |
+          docker build . --file ./examples/aquasecurity/trivy/Dockerfile --tag $REGISTRY_DOMAIN/$REPO_NAME/$IMAGE_NAME:$VERSION
+          echo "Pushing Docker Image to Artifactory"
+          jf rt docker-push $REGISTRY_DOMAIN/$REPO_NAME/$IMAGE_NAME:$VERSION $REPO_NAME --build-name=$BUILD_NAME --build-number=${{ github.run_number }}
+          echo "Pushing Docker Image to Artifactory completed"
+          echo "publishing build info"
+          jf rt build-publish $BUILD_NAME ${{ github.run_number }}
+
+      # Fetch Trivy Vulnerability Snapshot
+      - name: Run Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY_DOMAIN }}/${{ env.REPO_NAME }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}
+          severity: HIGH,CRITICAL
+          format: json
+          output: trivy-results.json
+
+      # This is an optional step to generate a custom markdown report
+      - name: Generate optional custom markdown report
+        if: env.ATTACH_OPTIONAL_CUSTOM_MARKDOWN_TO_EVIDENCE == 'true'
+        run: |
+          cat trivy-results.json
+          python ./examples/aquasecurity/trivy/trivy_json_to_markdown_helper.py trivy-results.json
+
+      # Attaching the evidence to associated package
+      - name: Attach evidence using jfrog cli
+        run: |
+          jf evd create \
+            --package-name $IMAGE_NAME \
+            --package-version $VERSION \
+            --package-repo-name $REPO_NAME \
+            --key "${{ secrets.PRIVATE_KEY }}" \
+            --key-alias "${{ vars.EVIDENCE_KEY_ALIAS }}" \
+            --predicate ./trivy-results.json \
+            --predicate-type http://aquasec.com/trivy/security-scan \
+            ${{ env.ATTACH_OPTIONAL_CUSTOM_MARKDOWN_TO_EVIDENCE == 'true' && '--markdown "trivy-results.md"' || '' }}

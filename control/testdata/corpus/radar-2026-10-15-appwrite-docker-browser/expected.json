@@ -1,0 +1,34 @@
+{
+  "source": "https://github.com/appwrite/docker-browser",
+  "commit": "cb8eab29d41f346ca34c624889306b1cb61e1552",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": false
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/check.yml": "active",
+    ".github/workflows/lint.yml": "active",
+    ".github/workflows/release.yml": "active",
+    ".github/workflows/test.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High `marocchino/sticky-pull-request-comment@v2` path was judged overstated: it reaches a pull-requests token in same-repository pull request runs and no code or package, Medium at most.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "marocchino/sticky-pull-request-comment@v2",
+        "tier": "medium",
+        "pending": "the spec counts any write scope of the token as a write token, while the assessment argued that a token scoped to issues, pull requests or checks only, in a job with no secret, is a Medium at most."
+      }
+    ]
+  }
+}

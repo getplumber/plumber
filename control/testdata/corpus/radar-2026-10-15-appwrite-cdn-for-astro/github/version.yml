@@ -1,0 +1,48 @@
+name: Version
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: version-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  version:
+    name: Open or update the version pull request
+    runs-on: ubuntu-latest
+    if: github.repository_owner == 'appwrite'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Collects the pending changesets into a "Version Packages" pull request
+      # that bumps package.json and writes CHANGELOG.md. Publishing is not done
+      # here: merging that pull request and publishing a GitHub Release for the
+      # new tag is what ships to npm, via release.yml.
+      - name: Create or update the version pull request
+        uses: changesets/action@v1
+        with:
+          version: npm run version
+          title: 'chore: version packages'
+          commit: 'chore: version packages'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

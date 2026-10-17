@@ -1,0 +1,59 @@
+name: test
+
+# Runs pytest, ruff, and mypy on the OS × Python matrix.
+#
+# The package is pure Python; the engine is a guest WASM module
+# (rquickjs/quickjs-ng compiled to wasm32-wasip1) driven by wasmtime-py.
+# CI builds the guest wasm fresh from source (cargo) and bundles it into the
+# package via `scripts/build_guest.py` — there is no native extension and no
+# committed binary. The `.wasm` is platform-independent; wasmtime-py supplies
+# the platform-specific runtime, so the same wasm runs on every OS.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.11", "3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          targets: wasm32-wasip1
+
+      - name: Cache cargo registry + build
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
+        with:
+          # Per-OS key so compiled artifacts don't leak across caches.
+          key: test-${{ matrix.os }}
+          workspaces: guest
+
+      - name: Build guest wasm + bundle into the package
+        run: python scripts/build_guest.py
+
+      - name: Install package + dev extras
+        run: python -m pip install --upgrade pip && pip install -e ".[dev]"
+
+      - name: ruff
+        run: ruff check .
+
+      - name: mypy
+        run: mypy quickjs_rs
+
+      - name: pytest
+        run: pytest -v

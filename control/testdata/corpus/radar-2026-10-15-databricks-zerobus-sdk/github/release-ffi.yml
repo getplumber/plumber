@@ -1,0 +1,155 @@
+name: Build FFI
+run-name: "Build FFI ${{ github.ref_name }}"
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-ffi:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: { group: databricks-protected-runner-group, labels: linux-ubuntu-latest }
+            target: x86_64-unknown-linux-gnu
+            static_lib: libzerobus_ffi.a
+            dynamic_lib: libzerobus_ffi.so
+            artifact_dir: linux-x86_64
+            cross: false
+          - runner: { group: databricks-protected-runner-group, labels: linux-ubuntu-latest }
+            target: aarch64-unknown-linux-gnu
+            static_lib: libzerobus_ffi.a
+            dynamic_lib: libzerobus_ffi.so
+            artifact_dir: linux-aarch64
+            cross: true
+          - runner: { group: databricks-protected-runner-group, labels: linux-ubuntu-latest }
+            target: x86_64-unknown-linux-musl
+            static_lib: libzerobus_ffi.a
+            dynamic_lib: libzerobus_ffi.so
+            artifact_dir: linux-musl-x86_64
+            cross: false
+            zigbuild: true
+            rustflags: "-C target-feature=-crt-static"
+          - runner: { group: databricks-protected-runner-group, labels: linux-ubuntu-latest }
+            target: aarch64-unknown-linux-musl
+            static_lib: libzerobus_ffi.a
+            dynamic_lib: libzerobus_ffi.so
+            artifact_dir: linux-musl-aarch64
+            cross: false
+            zigbuild: true
+            rustflags: "-C target-feature=-crt-static"
+          - runner: { group: databricks-protected-runner-group, labels: linux-ubuntu-latest }
+            target: x86_64-apple-darwin
+            static_lib: libzerobus_ffi.a
+            artifact_dir: darwin-x86_64
+            cross: false
+            zigbuild: true
+            static_only: true
+          - runner: { group: databricks-protected-runner-group, labels: linux-ubuntu-latest }
+            target: aarch64-apple-darwin
+            static_lib: libzerobus_ffi.a
+            artifact_dir: darwin-aarch64
+            cross: false
+            zigbuild: true
+            static_only: true
+          - runner: { group: databricks-protected-runner-group, labels: windows-server-latest }
+            target: x86_64-pc-windows-msvc
+            static_lib: zerobus_ffi.lib
+            dynamic_lib: zerobus_ffi.dll
+            artifact_dir: windows-x86_64
+            cross: false
+          - runner: { group: databricks-protected-runner-group, labels: linux-ubuntu-latest }
+            target: x86_64-pc-windows-gnu
+            static_lib: libzerobus_ffi.a
+            dynamic_lib: zerobus_ffi.dll
+            artifact_dir: windows-gnu-x86_64
+            cross: false
+            zigbuild: true
+
+    name: Build FFI - ${{ matrix.artifact_dir }}
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      id-token: write
+
+    defaults:
+      run:
+        working-directory: rust
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Get JFrog OIDC token
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/jfrog-oidc-token.sh"
+
+      - name: Configure cargo for JFrog
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/configure-cargo.sh"
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install cross-compilation toolchain (Linux ARM64)
+        if: matrix.cross
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc-aarch64-linux-gnu
+          mkdir -p .cargo
+          echo '[target.aarch64-unknown-linux-gnu]' > .cargo/config.toml
+          echo 'linker = "aarch64-linux-gnu-gcc"' >> .cargo/config.toml
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Zig (zigbuild targets)
+        if: matrix.zigbuild
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.13.0
+
+      - name: Install cargo-zigbuild (zigbuild targets)
+        if: matrix.zigbuild
+        run: cargo install cargo-zigbuild --locked --version 0.23.0
+
+      - name: Install mingw-w64 (windows-gnu dlltool)
+        if: matrix.target == 'x86_64-pc-windows-gnu'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mingw-w64
+          
+      - name: Build FFI library
+        if: '!matrix.zigbuild'
+        run: cargo build --release -p zerobus-ffi --target ${{ matrix.target }}
+
+      - name: Build FFI library (zigbuild)
+        if: matrix.zigbuild && !matrix.static_only
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
+        run: cargo zigbuild --release -p zerobus-ffi --target ${{ matrix.target }}
+
+      - name: Build FFI static library (zigbuild, static only)
+        if: matrix.zigbuild && matrix.static_only
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
+        run: cargo-zigbuild rustc --release -p zerobus-ffi --target ${{ matrix.target }} --crate-type staticlib
+
+      - name: Prepare artifacts
+        shell: bash
+        run: |
+          mkdir -p artifacts/${{ matrix.artifact_dir }}
+          cp target/${{ matrix.target }}/release/${{ matrix.static_lib }} artifacts/${{ matrix.artifact_dir }}/
+          if [ -n "${{ matrix.dynamic_lib }}" ]; then
+            cp target/${{ matrix.target }}/release/${{ matrix.dynamic_lib }} artifacts/${{ matrix.artifact_dir }}/
+          fi
+          cp ffi/zerobus.h artifacts/${{ matrix.artifact_dir }}/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ffi-${{ matrix.artifact_dir }}
+          path: rust/artifacts/${{ matrix.artifact_dir }}

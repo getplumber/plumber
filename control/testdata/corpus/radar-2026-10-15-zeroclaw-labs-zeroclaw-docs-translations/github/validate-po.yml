@@ -1,0 +1,64 @@
+name: Validate catalogues
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "**/*.po"
+  push:
+    branches: [main]
+    paths:
+      - "**/*.po"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-po-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install gettext
+        run: sudo apt-get update && sudo apt-get install -y gettext
+
+      - name: Check catalogue format and syntax
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          rc=0
+          for po in *.po; do
+            if ! msgfmt -c "$po" -o /dev/null; then
+              echo "::error file=${po}::msgfmt -c failed for ${po}"
+              rc=1
+            fi
+          done
+          exit $rc
+
+      - name: Check msgid parity across catalogues
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=( *.po )
+          if [ ${#files[@]} -lt 2 ]; then
+            echo "Fewer than two catalogues; parity check not applicable."
+            exit 0
+          fi
+          keys() { msgcat --no-wrap --sort-output "$1" | sed -n 's/^msgid //p'; }
+          ref="${files[0]}"
+          keys "$ref" > /tmp/ref.keys
+          rc=0
+          for po in "${files[@]}"; do
+            [ "$po" = "$ref" ] && continue
+            keys "$po" > /tmp/cur.keys
+            if ! diff -u /tmp/ref.keys /tmp/cur.keys > /tmp/keys.diff; then
+              echo "::error file=${po}::msgid set diverges from ${ref}"
+              head -40 /tmp/keys.diff
+              rc=1
+            fi
+          done
+          exit $rc

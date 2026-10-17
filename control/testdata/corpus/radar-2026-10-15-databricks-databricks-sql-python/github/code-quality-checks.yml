@@ -1,0 +1,303 @@
+name: Code Quality Checks
+
+on: [pull_request]
+
+# How fork PRs are made to work (issue #831)
+# ------------------------------------------
+# Every job below installs deps via .github/actions/setup-poetry ->
+# setup-jfrog, which needs a GitHub OIDC token to authenticate to the JFrog
+# PyPI proxy. GitHub withholds that token from fork `pull_request` runs, and
+# public PyPI is unreachable from the protected runners — so on a fork PR the
+# JFrog path cannot run at all (this is what made every fork check red).
+#
+# Each job therefore takes a cache-first path:
+#   1. restore-deps restores a fully-built .venv prewarmed by
+#      warm-deps-cache.yml (a trusted workflow that DOES have OIDC).
+#   2. On a cache HIT (the normal fork path) we run the tools directly from
+#      .venv/bin — NOT `poetry run` — because even bootstrapping Poetry
+#      (`pip install poetry`) would hit JFrog. The restored venv already
+#      contains pytest/black/mypy and the connector, so no install is needed.
+#   3. On a cache MISS (every same-repo PR, or a fork whose lockfiles changed
+#      before a maintainer re-warmed) we fall back to the original
+#      setup-poetry (JFrog OIDC) flow, unchanged. Same-repo PRs are unaffected.
+#
+# Each step branches on the restore step's output, `steps.deps.outputs.cache-hit`.
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  run-unit-tests:
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        dependency-version: ["default", "min"]
+        exclude:
+          - python-version: "3.12"
+            dependency-version: "min"
+          - python-version: "3.13"
+            dependency-version: "min"
+
+    name: "Unit Tests (Python ${{ matrix.python-version }}, ${{ matrix.dependency-version }} deps)"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      # --- Fork path: restore a prewarmed .venv and run offline -------------
+      # restore-deps also provisions the interpreter and probes it; venv-usable
+      # is false when the interpreter can't be provisioned offline (3.9), in
+      # which case we skip the offline run neutrally instead of failing.
+      - name: Restore prewarmed dependencies
+        id: deps
+        uses: ./.github/actions/restore-deps
+        with:
+          python-version: ${{ matrix.python-version }}
+          dependency-version: ${{ matrix.dependency-version }}
+      - name: Run tests (offline, from prewarmed venv)
+        if: steps.deps.outputs.venv-usable == 'true'
+        run: .venv/bin/python -m pytest tests/unit -m "not realkernel"
+
+      # --- Fallback path: same-repo PRs / cache miss use JFrog (unchanged) --
+      - name: Setup Poetry
+        if: steps.deps.outputs.cache-hit != 'true'
+        uses: ./.github/actions/setup-poetry
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache-suffix: "${{ matrix.dependency-version }}-"
+      - name: Install Python tools for custom versions
+        if: steps.deps.outputs.cache-hit != 'true' && matrix.dependency-version != 'default'
+        run: poetry run pip install toml packaging
+      - name: Generate requirements file
+        if: steps.deps.outputs.cache-hit != 'true' && matrix.dependency-version != 'default'
+        run: |
+          poetry run python scripts/dependency_manager.py ${{ matrix.dependency-version }} --output requirements-${{ matrix.dependency-version }}.txt
+          echo "Generated requirements for ${{ matrix.dependency-version }} versions:"
+          cat requirements-${{ matrix.dependency-version }}.txt
+      - name: Override with custom dependency versions
+        if: steps.deps.outputs.cache-hit != 'true' && matrix.dependency-version != 'default'
+        run: poetry run pip install -r requirements-${{ matrix.dependency-version }}.txt
+      - name: Show installed versions
+        if: steps.deps.outputs.cache-hit != 'true'
+        run: |
+          echo "=== Dependency Version: ${{ matrix.dependency-version }} ==="
+          poetry run pip list
+      - name: Run tests
+        if: steps.deps.outputs.cache-hit != 'true'
+        run: poetry run python -m pytest tests/unit -m "not realkernel"
+
+  run-unit-tests-with-arrow:
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        dependency-version: ["default", "min"]
+        exclude:
+          - python-version: "3.12"
+            dependency-version: "min"
+          - python-version: "3.13"
+            dependency-version: "min"
+
+    name: "Unit Tests + PyArrow (Python ${{ matrix.python-version }}, ${{ matrix.dependency-version }} deps)"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      # libkrb5 is a runtime system lib (not in the venv), so install it on
+      # both the fork and fallback paths.
+      - name: Install Kerberos system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libkrb5-dev
+
+      # --- Fork path: restore prewarmed pyarrow venv, run offline ------------
+      - name: Restore prewarmed dependencies
+        id: deps
+        uses: ./.github/actions/restore-deps
+        with:
+          python-version: ${{ matrix.python-version }}
+          dependency-version: ${{ matrix.dependency-version }}
+          extras: pyarrow
+      - name: Run tests (offline, from prewarmed venv)
+        if: steps.deps.outputs.venv-usable == 'true'
+        run: .venv/bin/python -m pytest tests/unit -m "not realkernel"
+
+      # --- Fallback path: same-repo PRs / cache miss use JFrog (unchanged) ---
+      - name: Setup Poetry
+        if: steps.deps.outputs.cache-hit != 'true'
+        uses: ./.github/actions/setup-poetry
+        with:
+          python-version: ${{ matrix.python-version }}
+          # Install ONLY the pyarrow extra (not --all-extras) so this
+          # tier isolates the "pyarrow present, kernel absent"
+          # configuration. --all-extras would also pull the kernel wheel,
+          # making this job redundant with "Unit Tests + Kernel".
+          install-args: "--extras pyarrow"
+          cache-suffix: "pyarrow-${{ matrix.dependency-version }}-"
+      - name: Install Python tools for custom versions
+        if: steps.deps.outputs.cache-hit != 'true' && matrix.dependency-version != 'default'
+        run: poetry run pip install toml packaging
+      - name: Generate requirements file with pyarrow
+        if: steps.deps.outputs.cache-hit != 'true' && matrix.dependency-version != 'default'
+        run: |
+          poetry run python scripts/dependency_manager.py ${{ matrix.dependency-version }} --output requirements-${{ matrix.dependency-version }}-arrow.txt
+          echo "Generated requirements for ${{ matrix.dependency-version }} versions with PyArrow:"
+          cat requirements-${{ matrix.dependency-version }}-arrow.txt
+      - name: Override with custom dependency versions
+        if: steps.deps.outputs.cache-hit != 'true' && matrix.dependency-version != 'default'
+        run: poetry run pip install -r requirements-${{ matrix.dependency-version }}-arrow.txt
+      - name: Show installed versions
+        if: steps.deps.outputs.cache-hit != 'true'
+        run: |
+          echo "=== Dependency Version: ${{ matrix.dependency-version }} with PyArrow ==="
+          poetry run pip list
+      - name: Run tests
+        if: steps.deps.outputs.cache-hit != 'true'
+        run: poetry run python -m pytest tests/unit -m "not realkernel"
+
+  run-unit-tests-with-kernel:
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    strategy:
+      matrix:
+        # Kernel wheel is cp310-abi3 (Requires-Python >=3.10), so this
+        # matrix omits 3.9 — the [kernel] extra is a no-op there.
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+
+    name: "Unit Tests + Kernel (Python ${{ matrix.python-version }})"
+    # base restore-deps entries omit 3.9-kernel (no kernel wheel there); this
+    # matrix already starts at 3.10, so every leg has a warmed counterpart.
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install Kerberos system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libkrb5-dev
+
+      # --- Fork path: restore prewarmed kernel venv, run offline ------------
+      # NOTE: the [kernel] extra pulls databricks-sql-kernel, the one PRIVATE
+      # (JFrog-only) package. Baking it into the warmed venv is precisely what
+      # lets a fork exercise the kernel routing without any JFrog credential.
+      - name: Restore prewarmed dependencies
+        id: deps
+        uses: ./.github/actions/restore-deps
+        with:
+          python-version: ${{ matrix.python-version }}
+          extras: kernel
+      - name: Assert the real kernel wheel is installed (offline)
+        if: steps.deps.outputs.venv-usable == 'true'
+        run: .venv/bin/python -c "import databricks_sql_kernel as k; assert k.__file__, 'kernel wheel missing __file__ — not the real wheel'; print('real kernel wheel:', k.__file__)"
+      - name: Unit tests, realkernel deselected (offline)
+        if: steps.deps.outputs.venv-usable == 'true'
+        run: .venv/bin/python -m pytest tests/unit -m "not realkernel"
+      - name: Drive use_kernel=True through the REAL wheel — routing (offline)
+        if: steps.deps.outputs.venv-usable == 'true'
+        run: .venv/bin/python -m pytest tests/unit/test_session.py -m realkernel -v
+
+      # --- Fallback path: same-repo PRs / cache miss use JFrog (unchanged) --
+      - name: Setup Poetry
+        if: steps.deps.outputs.cache-hit != 'true'
+        uses: ./.github/actions/setup-poetry
+        with:
+          python-version: ${{ matrix.python-version }}
+          # Install the kernel extra (pulls the published
+          # databricks-sql-kernel wheel, which transitively brings
+          # pyarrow). Explicit --extras kernel rather than --all-extras
+          # so this tier targets the kernel configuration specifically.
+          install-args: "--extras kernel"
+          cache-suffix: "kernel-"
+      - name: Show installed versions
+        if: steps.deps.outputs.cache-hit != 'true'
+        run: |
+          echo "=== with databricks-sql-kernel ==="
+          poetry run pip list
+      - name: Assert the real kernel wheel is installed (not a stub)
+        if: steps.deps.outputs.cache-hit != 'true'
+        run: |
+          poetry run python -c "import databricks_sql_kernel as k; assert k.__file__, 'kernel wheel missing __file__ — not the real wheel'; print('real kernel wheel:', k.__file__)"
+      - name: Unit tests (kernel wheel present, realkernel deselected)
+        if: steps.deps.outputs.cache-hit != 'true'
+        # The bulk of tests/unit fakes databricks_sql_kernel in
+        # sys.modules, so the real-wheel routing test is deselected here
+        # and run on its own below (a shared session would shadow the
+        # real wheel — both real-wheel tests fail loudly if that happens).
+        run: poetry run python -m pytest tests/unit -m "not realkernel"
+      - name: Drive use_kernel=True through the REAL wheel (routing)
+        if: steps.deps.outputs.cache-hit != 'true'
+        # Separate invocation, explicit file path: never collects the
+        # fake-module test file, so sys.modules stays unpolluted. This is
+        # the no-network proof that sql.connect(use_kernel=True) actually
+        # instantiates the real KernelDatabricksClient (not a stub, not a
+        # Thrift fallback). Fails loudly if the real wheel is shadowed.
+        run: poetry run python -m pytest tests/unit/test_session.py -m realkernel -v
+
+  check-linting:
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Restore prewarmed dependencies
+        id: deps
+        uses: ./.github/actions/restore-deps
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Black (offline, from prewarmed venv)
+        if: steps.deps.outputs.venv-usable == 'true'
+        run: .venv/bin/black --check src
+      - name: Setup Poetry
+        if: steps.deps.outputs.cache-hit != 'true'
+        uses: ./.github/actions/setup-poetry
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Black
+        if: steps.deps.outputs.cache-hit != 'true'
+        run: poetry run black --check src
+
+  check-types:
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Restore prewarmed dependencies
+        id: deps
+        uses: ./.github/actions/restore-deps
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Mypy (offline, from prewarmed venv)
+        if: steps.deps.outputs.venv-usable == 'true'
+        # The warmer already ran `mypy --install-types` to bake the stub
+        # packages into the venv, so just run mypy plainly here. (mypy rejects
+        # --non-interactive unless --install-types is also given, and
+        # --install-types would reach the index — neither is wanted offline.)
+        run: |
+          mkdir -p .mypy_cache
+          .venv/bin/mypy src
+      - name: Setup Poetry
+        if: steps.deps.outputs.cache-hit != 'true'
+        uses: ./.github/actions/setup-poetry
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Mypy
+        if: steps.deps.outputs.cache-hit != 'true'
+        run: |
+          mkdir .mypy_cache
+          poetry run mypy --install-types --non-interactive src

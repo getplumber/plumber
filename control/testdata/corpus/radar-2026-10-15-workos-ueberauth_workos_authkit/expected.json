@@ -1,0 +1,30 @@
+{
+  "source": "https://github.com/workos/ueberauth_workos_authkit",
+  "commit": "76016296ad924febfd44f3d1268b708f6912b946",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": false
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/main.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High unprotected `main` path was judged overstated: a writer pushing to main gets a job with no secret and a read-only or unproven token, nothing a fork pull request does not already get, Low.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "unprotected_push",
+        "subjectContains": "main",
+        "tier": "low"
+      }
+    ]
+  }
+}

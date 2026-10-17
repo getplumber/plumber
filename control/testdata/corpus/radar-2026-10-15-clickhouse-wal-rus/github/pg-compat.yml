@@ -1,0 +1,606 @@
+name: pg-compat
+
+# Integration tests adapted from wal-g's docker/pg_tests test scripts. Verifies
+# walrus against a real PostgreSQL cluster on the fs storage backend, plus
+# bidirectional bucket interop with an installed wal-g binary (forward:
+# walrus writes & wal-g reads, reverse: wal-g writes & walrus reads).
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  # Pinned wal-g release; bump deliberately so a wal-g change can't silently
+  # break the cross-tool gate. Release artifacts live at
+  # https://github.com/wal-g/wal-g/releases
+  WALG_VERSION: v3.0.8
+  WALG_ASSET: wal-g-pg-24.04-amd64
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked --bin walrus
+      - uses: actions/upload-artifact@v7
+        with:
+          name: walrus-bin
+          path: target/release/walrus
+          if-no-files-found: error
+          retention-days: 7
+
+  # Instrumented build of the same binary, under cargo-llvm-cov's rustc wrapper
+  # so running it emits .profraw. The shell ci/*.sh lanes (below) run this binary
+  # instead of the release one on their coverage cells; coverage-merge folds the
+  # profraw into the line number. Built once and shared so the lanes stay cheap
+  # and every lane's profraw maps to the one object coverage-merge exports.
+  cov-build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Distinct from the vm-test-pg17 job's cache: that build is
+          # --features vm-test, this is the plain binary, so the dep sets differ.
+          key: coverage-bin
+      - name: Build instrumented binary
+        run: |
+          source <(cargo llvm-cov show-env --sh)
+          cargo llvm-cov clean --workspace
+          cargo build --bin walrus --locked
+          # show-env picks the target dir; stage under the name the lanes expect.
+          mkdir -p cov-out
+          cp "${CARGO_LLVM_COV_TARGET_DIR:-target}/debug/walrus" cov-out/walrus
+      - uses: actions/upload-artifact@v7
+        with:
+          name: walrus-cov
+          path: cov-out/walrus
+          if-no-files-found: error
+          retention-days: 7
+
+  pg:
+    needs: [build, cov-build]
+    # PG 18 runs single-tool cells only: pinned wal-g v3.0.8 predates 18, so the
+    # cross-tool gate stays 13-17.
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        pg: [13, 14, 15, 16, 17]
+        test:
+          - full_backup
+          - backup_mark
+          - backup_show
+          - wal_overwrite
+          - daemon
+          - delta_sidecar
+          - cross_tool_forward
+          - cross_tool_reverse
+          - cross_tool_stream
+          - cross_tool_encryption
+          - cross_tool_retention
+          - cross_tool_lzma
+          - cross_tool_delta
+        exclude:
+          # wal-g v3.0.8 streams only the pre-PG15 BASE_BACKUP protocol; the
+          # PG15+ tagged-CopyData parser landed post-release (wal-g#2262), so
+          # streaming interop stays on 13/14 until the next wal-g release
+          - { pg: 15, test: cross_tool_stream }
+          - { pg: 16, test: cross_tool_stream }
+          - { pg: 17, test: cross_tool_stream }
+        include:
+          - { pg: 18, test: full_backup }
+          - { pg: 18, test: backup_mark }
+          - { pg: 18, test: backup_show }
+          - { pg: 18, test: wal_overwrite }
+          - { pg: 18, test: daemon }
+          - { pg: 18, test: delta_sidecar }
+    steps:
+      - uses: actions/checkout@v7
+
+      # PG17 cells run the instrumented binary so ci/*.sh coverage counts (folded
+      # by coverage-merge); other versions run the release binary, keeping the
+      # cross-version functional gate on the shipped build. Both unpack to bin/
+      # so the run step is identical.
+      - name: Fetch release walrus
+        if: matrix.pg != 17
+        uses: actions/download-artifact@v8
+        with:
+          name: walrus-bin
+          path: bin
+      - name: Fetch instrumented walrus
+        if: matrix.pg == 17
+        uses: actions/download-artifact@v8
+        with:
+          name: walrus-cov
+          path: bin
+      - name: Prepare binary + coverage env
+        run: |
+          chmod +x bin/walrus && bin/walrus --version
+          echo "WALRUS_BIN=$GITHUB_WORKSPACE/bin/walrus" >>"$GITHUB_ENV"
+          if [ "${{ matrix.pg }}" = 17 ]; then
+            mkdir -p "$RUNNER_TEMP/prof"
+            echo "LLVM_PROFILE_FILE=$RUNNER_TEMP/prof/pg-${{ matrix.test }}-%p-%16m.profraw" >>"$GITHUB_ENV"
+          fi
+
+      - name: Install PostgreSQL ${{ matrix.pg }}
+        uses: ./.github/actions/install-pg
+        with:
+          pg-version: ${{ matrix.pg }}
+
+      - name: Install wal-g ${{ env.WALG_VERSION }}
+        if: ${{ startsWith(matrix.test, 'cross_tool') }}
+        run: |
+          set -eux
+          url="https://github.com/wal-g/wal-g/releases/download/${WALG_VERSION}/${WALG_ASSET}.tar.gz"
+          curl -fsSL -o /tmp/wal-g.tar.gz "$url"
+          tar -C /tmp -xzf /tmp/wal-g.tar.gz
+          sudo install -m 0755 "/tmp/${WALG_ASSET}" /usr/local/bin/wal-g
+          wal-g --version
+
+      - name: Run ${{ matrix.test }}
+        env:
+          PG_VERSION: ${{ matrix.pg }}
+          PG_BIN: /usr/lib/postgresql/${{ matrix.pg }}/bin
+          WALG_BIN: /usr/local/bin/wal-g
+        run: ci/${{ matrix.test }}.sh
+
+      - name: Upload coverage profraw
+        if: matrix.pg == 17
+        uses: actions/upload-artifact@v7
+        with:
+          name: cov-profraw-pg-${{ matrix.test }}
+          # daemon's server process is SIGTERM-killed so flushes no profraw; its
+          # client calls and every other lane still do. ignore = tolerate none.
+          path: ${{ runner.temp }}/prof/*.profraw
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Collect PG logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: logs-pg${{ matrix.pg }}-${{ matrix.test }}
+          path: |
+            /tmp/walrus-ci-*/**/*.log
+            /tmp/walrus-ci-*/**/log/*
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # Run the live-PG suite (tests/vm_live.rs, gated on the vm-test feature)
+  # against a real PGDG cluster. Previously VM-only; this brings backup-push,
+  # wal-receive, encryption & retention live exercises into GitHub CI. Covers
+  # 13-16 and 18; 17 is the vm-test-pg17 job (instrumented, same suite).
+  pg-vm-test:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        pg: [13, 14, 15, 16, 18]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install PostgreSQL ${{ matrix.pg }}
+        uses: ./.github/actions/install-pg
+        with:
+          pg-version: ${{ matrix.pg }}
+
+      - name: vm-test against PG ${{ matrix.pg }}
+        env:
+          PG_VERSION: ${{ matrix.pg }}
+          PG_BIN: /usr/lib/postgresql/${{ matrix.pg }}/bin
+          # Unused by the cargo tests (they call library functions directly),
+          # but lib.sh requires it set; point at the build output.
+          WALRUS_BIN: ${{ github.workspace }}/target/debug/walrus
+        run: ci/vm_test_cluster.sh cargo test --features vm-test --locked
+
+      - name: Collect PG logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: logs-vmtest-pg${{ matrix.pg }}
+          path: |
+            /tmp/walrus-ci-*/**/*.log
+            /tmp/walrus-ci-*/**/log/*
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # Object-storage lane: drive the same shell tests against SeaweedFS (S3) and
+  # fsouza/fake-gcs-server (GCS) so the hand-rolled S3/GCS clients get exercised
+  # against real APIs (SigV4 path-style, multipart, listing, server-side copy).
+  pg-storage:
+    needs: cov-build
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [s3, gcs]
+        test: [full_backup, storage_copy]
+    steps:
+      - uses: actions/checkout@v7
+
+      # Instrumented binary: storage_copy is the only live cover for server-side
+      # copy_within, and s3.rs/gcs.rs run live only here (vm-test is file:// only).
+      - name: Fetch instrumented walrus
+        uses: actions/download-artifact@v8
+        with:
+          name: walrus-cov
+          path: bin
+      - name: Prepare binary + coverage env
+        run: |
+          chmod +x bin/walrus && bin/walrus --version
+          echo "WALRUS_BIN=$GITHUB_WORKSPACE/bin/walrus" >>"$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/prof"
+          echo "LLVM_PROFILE_FILE=$RUNNER_TEMP/prof/storage-${{ matrix.backend }}-${{ matrix.test }}-%p-%16m.profraw" >>"$GITHUB_ENV"
+
+      - name: Install PostgreSQL 16
+        uses: ./.github/actions/install-pg
+        with:
+          pg-version: 16
+
+      - name: Start object-storage emulators + bootstrap buckets
+        run: |
+          set -eux
+          docker run -d --name seaweedfs -p 8333:8333 \
+            -e AWS_ACCESS_KEY_ID=walrus -e AWS_SECRET_ACCESS_KEY=walrussecret \
+            chrislusf/seaweedfs server -s3 -ip.bind=0.0.0.0
+          docker run -d --name fakegcs -p 4443:4443 \
+            fsouza/fake-gcs-server -scheme http -port 4443 -public-host 127.0.0.1:4443
+          for _ in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:8333/status >/dev/null 2>&1 && break; sleep 1
+          done
+          for _ in $(seq 1 60); do
+            curl -fsS "http://127.0.0.1:4443/storage/v1/b?project=test" >/dev/null 2>&1 && break; sleep 1
+          done
+          AWS_ACCESS_KEY_ID=walrus AWS_SECRET_ACCESS_KEY=walrussecret \
+            aws --endpoint-url http://127.0.0.1:8333 s3 mb s3://walrus
+          curl -fsS -X POST "http://127.0.0.1:4443/storage/v1/b?project=test" \
+            -H 'Content-Type: application/json' -d '{"name":"walrus"}'
+
+      - name: Run ${{ matrix.test }} against ${{ matrix.backend }}
+        env:
+          PG_VERSION: 16
+          PG_BIN: /usr/lib/postgresql/16/bin
+          WALRUS_STORAGE_BACKEND: ${{ matrix.backend }}
+          WALRUS_S3_ENDPOINT: http://127.0.0.1:8333
+          FAKE_GCS_ENDPOINT: http://127.0.0.1:4443
+        run: ci/${{ matrix.test }}.sh
+
+      - name: Upload coverage profraw
+        uses: actions/upload-artifact@v7
+        with:
+          name: cov-profraw-storage-${{ matrix.backend }}-${{ matrix.test }}
+          path: ${{ runner.temp }}/prof/*.profraw
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Collect logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: logs-storage-${{ matrix.backend }}-${{ matrix.test }}
+          path: |
+            /tmp/walrus-ci-*/**/*.log
+            /tmp/walrus-ci-*/**/log/*
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # TLS + SCRAM live handshakes. Auth/TLS code is PG-version-independent, so one
+  # version suffices. These need TCP (TLS is skipped on unix sockets).
+  pg-tls-scram:
+    needs: cov-build
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        test: [tls_replication, scram_auth, client_cert]
+    steps:
+      - uses: actions/checkout@v7
+
+      # Instrumented binary: the server-side TLS/client-cert handshakes here are
+      # the only live cover for that code (vm-test runs over unix sockets, which
+      # skip TLS).
+      - name: Fetch instrumented walrus
+        uses: actions/download-artifact@v8
+        with:
+          name: walrus-cov
+          path: bin
+      - name: Prepare binary + coverage env
+        run: |
+          chmod +x bin/walrus && bin/walrus --version
+          echo "WALRUS_BIN=$GITHUB_WORKSPACE/bin/walrus" >>"$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/prof"
+          echo "LLVM_PROFILE_FILE=$RUNNER_TEMP/prof/tlsscram-${{ matrix.test }}-%p-%16m.profraw" >>"$GITHUB_ENV"
+
+      - name: Install PostgreSQL 16
+        uses: ./.github/actions/install-pg
+        with:
+          pg-version: 16
+
+      - name: Run ${{ matrix.test }}
+        env:
+          PG_VERSION: 16
+          PG_BIN: /usr/lib/postgresql/16/bin
+        run: ci/${{ matrix.test }}.sh
+
+      - name: Upload coverage profraw
+        uses: actions/upload-artifact@v7
+        with:
+          name: cov-profraw-tlsscram-${{ matrix.test }}
+          path: ${{ runner.temp }}/prof/*.profraw
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Collect logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: logs-tlsscram-${{ matrix.test }}
+          path: |
+            /tmp/walrus-ci-*/**/*.log
+            /tmp/walrus-ci-*/**/log/*
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # Non-zstd codecs end-to-end (push → fetch → WAL replay). zstd is already the
+  # default exercised by the main `pg` matrix; this covers the rest on one PG.
+  pg-codec:
+    needs: cov-build
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        codec: [brotli, lz4, lzma, gzip]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Fetch instrumented walrus
+        uses: actions/download-artifact@v8
+        with:
+          name: walrus-cov
+          path: bin
+      - name: Prepare binary + coverage env
+        run: |
+          chmod +x bin/walrus && bin/walrus --version
+          echo "WALRUS_BIN=$GITHUB_WORKSPACE/bin/walrus" >>"$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/prof"
+          echo "LLVM_PROFILE_FILE=$RUNNER_TEMP/prof/codec-${{ matrix.codec }}-%p-%16m.profraw" >>"$GITHUB_ENV"
+
+      - name: Install PostgreSQL 16
+        uses: ./.github/actions/install-pg
+        with:
+          pg-version: 16
+
+      - name: full_backup with ${{ matrix.codec }}
+        env:
+          PG_VERSION: 16
+          PG_BIN: /usr/lib/postgresql/16/bin
+          WALG_COMPRESSION_METHOD: ${{ matrix.codec }}
+        run: ci/full_backup.sh
+
+      - name: Upload coverage profraw
+        uses: actions/upload-artifact@v7
+        with:
+          name: cov-profraw-codec-${{ matrix.codec }}
+          path: ${{ runner.temp }}/prof/*.profraw
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Collect logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: logs-codec-${{ matrix.codec }}
+          path: |
+            /tmp/walrus-ci-*/**/*.log
+            /tmp/walrus-ci-*/**/log/*
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # PG17 vm-test lane + line-coverage baseline. Runs the vm-test suite
+  # (tests/vm_live.rs) against a real PG 17 cluster under cargo-llvm-cov
+  vm-test-pg17:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # cargo-llvm-cov needs llvm-profdata + llvm-cov from this component.
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Instrumented builds differ from the other jobs'; isolate the cache.
+          key: vm-test-pg17
+
+      - name: Install PostgreSQL 17
+        uses: ./.github/actions/install-pg
+        with:
+          pg-version: 17
+
+      # Single instrumented pass (--no-report); the report steps re-read the
+      # cached profdata to emit summary + lcov.
+      - name: Run instrumented vm-test suite (cargo llvm-cov)
+        env:
+          PG_VERSION: 17
+          PG_BIN: /usr/lib/postgresql/17/bin
+          # Unused by the cargo tests (they call library functions directly),
+          # but lib.sh requires it set; point at the build output.
+          WALRUS_BIN: ${{ github.workspace }}/target/debug/walrus
+        run: |
+          cargo llvm-cov clean
+          ci/vm_test_cluster.sh \
+            cargo llvm-cov --no-report --features vm-test --locked -- --nocapture
+
+      - name: Coverage summary (job log)
+        run: cargo llvm-cov report --summary-only
+
+      - name: Coverage lcov.info
+        run: cargo llvm-cov report --lcov --output-path lcov.info
+
+      - name: Upload vm-test lcov
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-vmtest
+          path: lcov.info
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Collect PG logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: logs-vm-test-pg17
+          path: |
+            /tmp/walrus-ci-*/**/*.log
+            /tmp/walrus-ci-*/**/log/*
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # Restate the line number with the shell ci/*.sh lanes folded in, then gate on
+  # it. Each instrumented lane uploaded .profraw from the one cov-build binary;
+  # merge them against that exact object (raw llvm-cov export reproduces
+  # cargo-llvm-cov's filtering) and sum per-line hits with the vm-test lcov. Runs
+  # even if a lane failed so the number is always produced. The hard 0%-file gate
+  # fires on the merged report, but only when the merge is complete (every
+  # coverage lane green and both inputs present); a partial merge reports 0%
+  # files as a warning instead, since a missing lane's profraw would masquerade
+  # as a coverage hole. genhtml renders the merged lcov into the HTML report.
+  coverage-merge:
+    needs: [vm-test-pg17, cov-build, pg, pg-storage, pg-codec, pg-tls-scram]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # llvm-profdata + llvm-cov for the shell-lane profraw merge/export.
+          components: llvm-tools-preview
+      - name: Fetch vm-test coverage
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: coverage-vmtest
+          path: vmtest
+      - name: Fetch instrumented binary
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: walrus-cov
+          path: cov
+      - name: Fetch shell-lane profraw
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          pattern: cov-profraw-*
+          path: profraw
+          merge-multiple: true
+      - name: Merge coverage
+        run: |
+          set -euo pipefail
+          llvmbin="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/host: //p')/bin"
+          inputs=()
+          have_vmtest=false; have_shell=false
+          if [ -f vmtest/lcov.info ]; then inputs+=(vmtest/lcov.info); have_vmtest=true; else echo "::warning::no vm-test lcov"; fi
+          mkdir -p profraw
+          find profraw -name '*.profraw' -type f >profraw.list || true
+          if [ -f cov/walrus ] && [ -s profraw.list ]; then
+            # failure-mode=all: a SIGTERM-killed lane (daemon) may leave a partial
+            # profraw; tolerate individual bad files, fail only if all are bad.
+            "$llvmbin/llvm-profdata" merge -sparse --failure-mode=all -f profraw.list -o shell.profdata
+            "$llvmbin/llvm-cov" export --instr-profile shell.profdata --object cov/walrus \
+              --ignore-filename-regex '(/\.cargo/registry/|/rustc/|library/std/)' \
+              --format lcov >shell.lcov
+            inputs+=(shell.lcov)
+            have_shell=true
+            echo "shell-lane profraw merged: $(wc -l <profraw.list) file(s)"
+          else
+            echo "::warning::no shell-lane profraw; merged number is vm-test only"
+          fi
+          [ ${#inputs[@]} -gt 0 ] || { echo "::error::no coverage inputs"; exit 1; }
+          awk -f ci/lcov_merge.awk "${inputs[@]}" >merged.lcov
+          # Gate only when both streams folded in; a missing one means absent
+          # coverage, not a real hole (see the 0%-gate step).
+          if [ "$have_vmtest" = true ] && [ "$have_shell" = true ]; then
+            echo true >merge_complete.flag
+          else
+            echo false >merge_complete.flag
+          fi
+      - name: Coverage summary
+        run: |
+          awk -F: '/^LH:/{h+=$2} /^LF:/{f+=$2} END{if(f>0) printf "merged line coverage: %d/%d = %.2f%%\n",h,f,100*h/f}' merged.lcov
+
+      - name: Fail on any 0%-coverage file (merged)
+        # Lane results gate enforcement: a failed coverage lane already reds CI
+        # and may have dropped its profraw, so 0% then is an artifact gap, not a
+        # real hole. Enforce only on a complete, all-green merge; else warn.
+        env:
+          R_VM_TEST: ${{ needs.vm-test-pg17.result }}
+          R_COV_BUILD: ${{ needs.cov-build.result }}
+          R_PG: ${{ needs.pg.result }}
+          R_PG_STORAGE: ${{ needs.pg-storage.result }}
+          R_PG_CODEC: ${{ needs.pg-codec.result }}
+          R_PG_TLS_SCRAM: ${{ needs.pg-tls-scram.result }}
+        run: |
+          set -euo pipefail
+          zero=$(awk '
+            /^SF:/ { f = substr($0, 4) }
+            /^LF:/ { lf = substr($0, 4) + 0 }
+            /^LH:/ {
+              if (substr($0, 4) + 0 == 0 && lf > 0) {
+                i = index(f, "/src/"); if (i) f = substr(f, i + 1)
+                print f
+              }
+            }
+          ' merged.lcov)
+          if [ -z "$zero" ]; then
+            echo "OK: all merged files have >0% line coverage."
+            exit 0
+          fi
+          count=$(printf '%s\n' "$zero" | grep -c .)
+          complete=$(cat merge_complete.flag 2>/dev/null || echo false)
+          lanes_ok=true
+          for r in "$R_VM_TEST" "$R_COV_BUILD" "$R_PG" "$R_PG_STORAGE" "$R_PG_CODEC" "$R_PG_TLS_SCRAM"; do
+            [ "$r" = success ] || lanes_ok=false
+          done
+          if [ "$complete" = true ] && [ "$lanes_ok" = true ]; then
+            echo "Files with 0% line coverage in merged report (every source file must be exercised by a test):"
+            printf '%s\n' "$zero" | sed 's/^/  /'
+            echo "::error::${count} file(s) have 0% line coverage"
+            exit 1
+          fi
+          echo "::warning::${count} file(s) at 0% but merge incomplete (lanes_ok=$lanes_ok complete=$complete); not gating"
+          printf '%s\n' "$zero" | sed 's/^/  0%: /'
+      - name: Install genhtml
+        run: sudo apt-get update && sudo apt-get install -y lcov
+      - name: Coverage HTML (merged)
+        run: |
+          # lcov 2.x (noble) genhtml is strict; ignore render-only mapping
+          # complaints from llvm-cov data. Extend list if CI flags more.
+          genhtml merged.lcov --output-directory html \
+            --prefix "$GITHUB_WORKSPACE" --title 'walrus merged coverage' \
+            --legend --quiet --ignore-errors inconsistent,unmapped
+      - name: Upload merged coverage
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-merged
+          path: |
+            merged.lcov
+            html
+          if-no-files-found: error
+          retention-days: 30

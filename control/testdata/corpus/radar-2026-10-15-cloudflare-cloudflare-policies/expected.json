@@ -1,0 +1,30 @@
+{
+  "source": "https://github.com/cloudflare/Cloudflare-Policies",
+  "commit": "b1daed11ee7f2bd55787f556aeaf57ceace0770e",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "master",
+  "branches": [
+    {
+      "name": "master",
+      "protected": false
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/semgrep.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High unprotected-branch path from the organisation-wide `semgrep.yml` was judged overstated: the job runs on `ubuntu-20.04`, a hosted runner label GitHub retired in April 2025, so it can never run and starts no path at all (the assessment argued Low or Medium for a scanner token once it runs again).",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "unprotected_push",
+        "subjectContains": "master",
+        "tier": "none"
+      }
+    ]
+  }
+}

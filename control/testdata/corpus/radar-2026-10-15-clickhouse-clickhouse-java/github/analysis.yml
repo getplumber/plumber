@@ -1,0 +1,115 @@
+name: Coverage
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "**.md"
+      - "**/docs/**"
+      - "**/LICENSE"
+      - "**/NOTICE"
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+    paths-ignore:
+      - "**.md"
+      - "**/docs/**"
+      - "**/LICENSE"
+      - "**/NOTICE"
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "Pull request#"
+        required: false
+
+env:
+  PREFERRED_LTS_VERSION: "25.8"
+  PR_NUMBER: ${{ github.event.pull_request.number || '' }}
+
+jobs:
+  sonarcloud:
+    name: SonarCloud
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    timeout-minutes: 30
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check out head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+        if: github.event_name == 'pull_request'
+      - name: Check out PR
+        run: |
+          git fetch --no-tags --prune --progress --no-recurse-submodules --depth=1 \
+            origin pull/${{ github.event.inputs.pr }}/head:the-pr && git checkout the-pr
+        if: github.event.inputs.pr != ''
+      - name: Install JDK and Maven
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: 17
+          cache: "maven"
+      - name: Setup Toolchain
+        shell: bash
+        run: |
+          mkdir -p $HOME/.m2 \
+          && cat << EOF > $HOME/.m2/toolchains.xml
+          <?xml version="1.0" encoding="UTF8"?>
+          <toolchains>
+            <toolchain>
+              <type>jdk</type>
+              <provides>
+                <version>17</version>
+              </provides>
+              <configuration>
+                <jdkHome>${{ env.JAVA_HOME }}</jdkHome>
+              </configuration>
+            </toolchain>
+          </toolchains>
+          EOF
+      - name: Cache SonarCloud packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
+      - name: Update sonar config
+        run: |
+          sed -i -e 's|^\(.*<sonar.projectKey>\).*\(</sonar.projectKey>\)$|\1ClickHouse_clickhouse-java\2|' \
+            -e 's|^\(.*<sonar.organization>\).*\(</sonar.organization>\)$|\1clickhouse-java\2|' pom.xml
+        if: github.repository_owner == 'ClickHouse'
+      - name: Build and install
+        run: |
+          find . -type f -name "simplelogger.*" -exec rm -fv '{}' \;
+          mvn -q --no-transfer-progress --batch-mode -DskipTests install
+      - name: Generate coverage report
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Needed to get PR information, if any
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          TEST_CLICKHOUSE_IMAGE_VERSION: ${{ env.PREFERRED_LTS_VERSION }}
+        run: |
+          mvn -fn --no-transfer-progress --batch-mode \
+            -Pcoverage verify org.sonarsource.scanner.maven:sonar-maven-plugin:sonar -Dsonar.projectKey=ClickHouse_clickhouse-java
+        continue-on-error: true
+      - name: Generate and post coverage report
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_ARG=''
+          if [ ! -z $PR_NUMBER ]; then PR_ARG="--pr $PR_NUMBER"; fi;
+          node jacoco-report-generator.mjs ./client-v2/target/site/jacoco-aggregate/jacoco.csv client-v2-cov.md --title "Client V2 Coverage" ${PR_ARG}
+          node jacoco-report-generator.mjs ./jdbc-v2/target/site/jacoco-aggregate/jacoco.csv jdbc-v2-cov.md --title "JDBC V2 Coverage" ${PR_ARG}
+          node jacoco-report-generator.mjs ./clickhouse-jdbc/target/site/jacoco-aggregate/jacoco.csv jdbc-v1-cov.md --title "JDBC V1 Coverage" ${PR_ARG}
+          node jacoco-report-generator.mjs ./clickhouse-client/target/site/jacoco-aggregate/jacoco.csv client-v1-cov.md --title "Client V1 Coverage" ${PR_ARG}
+          cat *-cov.md

@@ -1,0 +1,54 @@
+{
+  "source": "https://github.com/langchain-ai/langchain-azure",
+  "commit": "7dc739416dce5de16c205b238831044ab5648180",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "cicd-integration-azureai",
+      "known": true
+    },
+    {
+      "name": "copilot",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/_azure_cosmosdb_ci.yml": "active",
+    ".github/workflows/_codespell.yml": "active",
+    ".github/workflows/_compile_integration_test.yml": "active",
+    ".github/workflows/_lint.yml": "active",
+    ".github/workflows/_release.yml": "active",
+    ".github/workflows/_release_backup.yml": "active",
+    ".github/workflows/_test.yml": "active",
+    ".github/workflows/_test_release.yml": "active",
+    ".github/workflows/check_diffs.yml": "active",
+    ".github/workflows/issue-triage.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "`_codespell.yml` is a `workflow_call`-only workflow that no workflow of the repository calls, so its job never runs and the High path through `codespell-project/actions-codespell@v2` was judged false; the High `Ana06/get-changed-files` path in `check_diffs/build` was judged overstated: a compromised action runs code on a runner with a read-only token and no secret, Medium at most.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "codespell-project/actions-codespell@v2",
+        "tier": "none"
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "Ana06/get-changed-files@v2.3.0",
+        "tier": "medium",
+        "pending": "a `needs` output passed to a reusable workflow's inputs is read as executed although the callee only uses it as a `working-directory` and an action's version input, so the secrets the callee inherits join the reach of the entry job."
+      }
+    ]
+  }
+}

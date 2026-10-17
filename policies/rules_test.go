@@ -5842,9 +5842,57 @@ func TestIssue415_PullRequestTargetWithHeadCheckout(t *testing.T) {
 		{"violation_head_ref.yml", []string{"violation_head_ref/preview"}},
 		{"clean_no_ref.yml", nil},
 		{"clean_pull_request.yml", nil},
-		{"clean_fork_guard.yml", nil},
+		{"downgraded_fork_guard.yml", []string{"downgraded_fork_guard/preview"}},
 	}
 	runGitHubFixtureCases(t, "ISSUE-804", cases)
+}
+
+// TestIssue804_ForkGuardDowngradesNeverSuppresses pins that a job whose
+// `if:` restricts it to same-repository pull requests still carries its
+// head-checkout finding, marked forkGuard: the guard is read off the
+// condition's text, a downgrade (control.markGatedFindings prices it Low
+// with the gate note), never a proof strong enough to drop the finding.
+func TestIssue804_ForkGuardDowngradesNeverSuppresses(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	const guard = "github.event.pull_request.head.repo.full_name == github.repository"
+	checkout := ir.Action{Uses: "actions/checkout@v4", With: map[string]any{"ref": "${{ github.event.pull_request.head.sha }}"}}
+	guardedCheckout := checkout
+	guardedCheckout.If = guard
+	cases := []struct {
+		name    string
+		job     ir.Job
+		guarded bool
+	}{
+		// The job-level if: gates every step, the checkout included.
+		{"job level if", ir.Job{Name: "preview", Triggers: []string{"pull_request_target"}, If: guard, Conditions: []string{guard}, Uses: []ir.Action{checkout}}, true},
+		// The checkout step's own if: gates the checkout.
+		{"checkout step if", ir.Job{Name: "preview", Triggers: []string{"pull_request_target"}, Conditions: []string{guard}, Uses: []ir.Action{guardedCheckout}}, true},
+		// A guard on another step (a deploy after the build) gates nothing
+		// the checkout runs: the fork code already executed unguarded.
+		{"unrelated step if", ir.Job{Name: "preview", Triggers: []string{"pull_request_target"}, Conditions: []string{guard}, Uses: []ir.Action{checkout}}, false},
+		{"no guard", ir.Job{Name: "preview", Triggers: []string{"pull_request_target"}, Uses: []ir.Action{checkout}}, false},
+	}
+	for _, c := range cases {
+		findings, err := evaluateStrict(engine, context.Background(), &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{c.job}}, nil)
+		if err != nil {
+			t.Fatalf("%s: evaluate: %v", c.name, err)
+		}
+		var hit *opaengine.Finding
+		for i := range findings {
+			if findings[i].Code == "ISSUE-804" {
+				hit = &findings[i]
+			}
+		}
+		if hit == nil {
+			t.Fatalf("%s: no ISSUE-804 finding", c.name)
+		}
+		if got, _ := hit.Data["forkGuard"].(bool); got != c.guarded {
+			t.Errorf("%s: forkGuard = %v, want %v (Data=%+v)", c.name, hit.Data["forkGuard"], c.guarded, hit.Data)
+		}
+	}
 }
 
 // TestIssue215_TemplateInjectionVars flags scripts that expand

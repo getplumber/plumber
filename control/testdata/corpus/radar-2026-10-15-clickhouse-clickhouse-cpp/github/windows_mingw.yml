@@ -1,0 +1,95 @@
+name: Windows mingw
+
+on:
+  schedule:
+    - cron: '0 0 * * 1'
+  push:
+    branches: [ '*' ]
+  pull_request:
+    branches: [ master ]
+
+  release:
+    types:
+      - published
+      - prereleased
+
+env:
+  BUILD_TYPE: Release
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { sys: mingw64, env: x86_64 }
+          - { sys: ucrt64,  env: ucrt-x86_64 }  # Experimental!
+         # - { sys: clang64, env: clang-x86_64 } # have issues with linking see comments in Clang-related section in clickhouse/CMakeLists.txt
+
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 100
+          fetch-tags: true
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.sys }}
+          update: true
+          install: >-
+            mingw-w64-${{matrix.env}}-cmake
+            mingw-w64-${{matrix.env}}-make
+            mingw-w64-${{matrix.env}}-gcc
+            mingw-w64-${{matrix.env}}-openssl
+            mingw-w64-${{matrix.env}}-ninja
+            mingw-w64-${{matrix.env}}-wget
+            mingw-w64-${{matrix.env}}-ca-certificates
+            tar
+
+      - name: Configure CMake
+        run: cmake -B build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DCH_MAP_BOOL_TO_UINT8=OFF -DBUILD_TESTS=ON -DCHECK_VERSION=OFF
+        # -DWITH_OPENSSL=ON was not able to make it work (some strange issues with CA paths, need debug)
+        # -DCHECK_VERSION=OFF since it requires git, which can't be found from within cmake for some reason.
+
+      - name: Build
+        run: cmake --build build --config ${{env.BUILD_TYPE}} --target all
+
+      - name: Enable WSL and Install Dependencies
+        uses: Vampire/setup-wsl@v5
+        with:
+            distribution: Ubuntu-24.04
+            additional-packages:
+              podman
+              podman-compose
+
+      - name: Start ClickHouse Server
+        shell: wsl-bash {0}
+        run: |
+          echo "Starting ClickHouse container"
+          cd $(wslpath -u "${{ github.workspace }}/ci/")
+          podman-compose up -d
+
+          echo "Waiting for ClickHouse to start..."
+          timeout 60s bash -c \
+              'until curl -s -o /dev/null -w "%{http_code}" http://localhost:8123 | grep -q "200"; do sleep 2; done'
+
+          echo "Checking ClickHouse version"
+          curl -s http://localhost:8123/?query=SELECT%20VERSION%28%29
+
+      - name: Ping ClickHouse Server from Windows
+        run: |
+            curl.exe http://localhost:8123/?query=SELECT%20VERSION%28%29
+
+      - name: Test
+        run: ./build/ut/clickhouse-cpp-ut.exe ${GTEST_FILTER}
+
+      - name: Test (simple)
+        run: ./build/tests/simple/simple-test.exe

@@ -1,0 +1,233 @@
+# Reusable: invoked by build-gate.yml behind the `build-gate` approval.
+# Do not add pull_request, pull_request_target, or workflow_dispatch here —
+# that would either withhold secrets (fork PRs) or run untrusted code with
+# secrets and no gate.
+on:
+  workflow_call:
+
+name: Terraform & OpenTofu Acceptance Tests
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  acceptance-tests-matrix:
+    name: ${{ matrix.cli }}
+    runs-on: ubuntu-latest
+    continue-on-error: false
+    # Secret/var source only. Required reviewers belong on `build-gate`, not here.
+    environment: development
+    strategy:
+      fail-fast: true
+      matrix:
+        cli: [terraform, tofu]
+    outputs:
+      tf_version: ${{ steps.get_terraform_cli_version.outputs.version }}
+      tofu_version: ${{ steps.get_opentofu_cli_version.outputs.version }}
+      artifactory_version: ${{ steps.run_artifactory_container.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # pull_request_target defaults to the base branch; test the PR SHA.
+          # Safe: this job only runs after human approval via build-gate.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+          # checkout refuses fork PR code under pull_request_target by default.
+          # Building and running the customer's code is the whole point of this
+          # suite, so the untrusted-code risk is carried by the build-gate
+          # approval instead: no fork code is fetched before a maintainer approves.
+          allow-unsafe-pr-checkout: true
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.26.6
+      - name: Install Helm
+        uses: azure/setup-helm@v4.2.0
+      - name: Install Terraform CLI
+        uses: hashicorp/setup-terraform@v3
+        if: ${{ matrix.cli == 'terraform' }}
+      - name: Get Terraform CLI version
+        id: get_terraform_cli_version
+        if: ${{ matrix.cli == 'terraform' }}
+        run: |
+          TF_VERSION=$(terraform -v -json | jq -r .terraform_version)
+          echo $TF_VERSION
+          echo "version=$TF_VERSION" >> "$GITHUB_OUTPUT"
+      - name: Install OpenTofu CLI
+        uses: opentofu/setup-opentofu@v1
+        if: ${{ matrix.cli == 'tofu' }}
+        with:
+          tofu_wrapper: false
+      - name: Get OpenTofu CLI version
+        id: get_opentofu_cli_version
+        if: ${{ matrix.cli == 'tofu' }}
+        run: |
+          echo "TF_ACC_TERRAFORM_PATH=$(which tofu)" >> "$GITHUB_ENV"
+          echo "TF_ACC_PROVIDER_NAMESPACE=hashicorp" >> "$GITHUB_ENV"
+          echo "TF_ACC_PROVIDER_HOST=registry.opentofu.org" >> "$GITHUB_ENV"
+          TOFU_VERSION=$(tofu -v -json | jq -r .terraform_version)
+          echo $TOFU_VERSION
+          echo "version=$TOFU_VERSION" >> "$GITHUB_OUTPUT"
+      - name: Install GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          install-only: true
+      - name: Create Artifactory data directories and copy data
+        env:
+          ARTIFACTORY_LICENSE: ${{ secrets.ARTIFACTORY_LICENSE }}
+        run: |
+          mkdir -p ${{ runner.temp }}/artifactory/extra_conf
+          mkdir -p ${{ runner.temp }}/artifactory/var/etc
+          echo $ARTIFACTORY_LICENSE > ${{ runner.temp }}/artifactory/extra_conf/artifactory.lic
+          cp ${{ github.workspace }}/scripts/system.yaml ${{ runner.temp }}/artifactory/var/etc/system.yaml
+          sudo chown -R 1030:1030 ${{ runner.temp }}/artifactory/var
+      - name: Run Artifactory container
+        id: run_artifactory_container
+        run: |
+          echo "Get latest Artifactory image tag"
+          helm repo add artifactory https://charts.jfrog.io
+          helm repo update
+          ARTIFACTORY_VERSION=$(helm search repo | grep "artifactory " | awk '{$1=$1};1' | cut -f3 -d " ")
+          echo "version=$ARTIFACTORY_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Start up Artifactory container"
+          docker run -i --name artifactory -d --rm \
+            -v ${{ runner.temp }}/artifactory/extra_conf:/artifactory_extra_conf \
+            -v ${{ runner.temp }}/artifactory/var:/var/opt/jfrog/artifactory \
+            -p 8081:8081 -p 8082:8082 \
+            releases-docker.jfrog.io/jfrog/artifactory-pro:${ARTIFACTORY_VERSION}
+          echo "Set localhost to a container IP address, since we run docker inside of docker"
+          export LOCALHOST=$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.Gateway}}{{end}}' artifactory)
+          export JFROG_URL="http://${LOCALHOST}:8082"
+          echo "JFROG_URL=$JFROG_URL" >> "$GITHUB_ENV"
+          echo "Waiting for Artifactory services to start at ${JFROG_URL}"
+          until $(curl -sf -o /dev/null -m 5 ${JFROG_URL}/artifactory/api/system/ping/); do
+            printf '.'
+            sleep 5
+          done
+          echo "Waiting for Artifactory UI to start"
+          until $(curl -sf -o /dev/null -m 5 ${JFROG_URL}/ui/login/); do
+            printf '.'
+            sleep 5
+          done
+          export COOKIES=$(curl -s -c - "${JFROG_URL}/ui/api/v1/ui/auth/login?_spring_security_remember_me=false" \
+            --header "accept: application/json, text/plain, */*" \
+            --header "content-type: application/json;charset=UTF-8" \
+            --header "x-requested-with: XMLHttpRequest" \
+            -d '{"user":"admin","password":"'"${{ secrets.ARTIFACTORY_PASSWORD }}"'","type":"login"}' | grep FALSE)
+          export REFRESHTOKEN=$(echo $COOKIES | grep REFRESHTOKEN | awk '{print $7}')
+          export ACCESSTOKEN=$(echo $COOKIES | grep ACCESSTOKEN | awk '{print $14}')
+          export JFROG_ACCESS_TOKEN=$(curl -s -g --request GET "${JFROG_URL}/ui/api/v1/system/security/token?services[]=all" \
+            --header "accept: application/json, text/plain, */*" \
+            --header "x-requested-with: XMLHttpRequest" \
+            --header "cookie: ACCESSTOKEN=${ACCESSTOKEN}; REFRESHTOKEN=${REFRESHTOKEN}")
+          echo "::add-mask::$JFROG_ACCESS_TOKEN"
+          echo "JFROG_ACCESS_TOKEN=$JFROG_ACCESS_TOKEN" >> "$GITHUB_ENV"
+      - name: Execute acceptance tests
+        run: make acceptance
+      - name: Install provider
+        run: |
+          export PROVIDER_VERSION=$(git describe --tags --abbrev=0 | sed  -n 's/v\([0-9]*\).\([0-9]*\).\([0-9]*\)/\1.\2.\3/p')
+          cat sample.tf | sed -e "s/version =.*/version = \"${PROVIDER_VERSION}\"/g" > sample.tf.tmp
+          cp sample.tf.tmp sample.tf && rm sample.tf.tmp
+          TERRAFORM_CLI=${{ matrix.cli }} make install
+      - name: Clean up Docker container
+        if: always()
+        run: docker stop artifactory
+      - name: Send workflow status to Slack
+        uses: slackapi/slack-github-action@v1.26.0
+        if: always() && ${{ steps.run_artifactory_container.outcome == 'success' }}
+        with:
+          payload: |
+            {
+              "text": "${{ github.workflow }} https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}/job/${{ github.job }} ${{ matrix.cli }} GitHub Action result: ${{ job.status == 'success' && ':white_check_mark:' || ':x:' }}\n${{ github.event.pull_request.html_url || github.event.head_commit.url }}",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "${{ github.workflow }} <https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}/job/${{ github.job }}|${{ matrix.cli }} GitHub Action result>: ${{ job.status == 'success' && ':white_check_mark:' || ':x:' }}\n${{ github.event.pull_request.html_url || github.event.head_commit.url }}"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_PR_WEBHOOK }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+  update-changelog:
+    runs-on: ubuntu-latest
+    needs: [acceptance-tests-matrix]
+    if: |
+      always() &&
+      (github.event_name == 'pull_request' || github.event_name == 'pull_request_target') &&
+      needs.acceptance-tests-matrix.result == 'success'
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Skip changelog push on fork PRs
+        if: github.event.pull_request.head.repo.full_name != github.repository
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Fork PR — GITHUB_TOKEN cannot push CHANGELOG.md to ${{ github.event.pull_request.head.repo.full_name }}."
+          echo "Apply the tested-on Artifactory line after merge, or on a same-repo branch."
+          gh pr comment "${{ github.event.pull_request.number }}" --body "Acceptance tests passed. CHANGELOG.md was **not** updated on this fork branch (no write access to the customer repo). After merge, add the tested Artifactory / Terraform / OpenTofu versions to the latest CHANGELOG heading, or cherry-pick onto a same-repo branch if you need the line before merge."
+      - uses: actions/checkout@v4
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        with:
+          fetch-depth: 0
+          # Same SHA the suite tested. Do not checkout the branch name — it may
+          # have moved, and a later push would land the changelog on untested code.
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Update CHANGELOG and push commit
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          ARTIFACTORY_VERSION: ${{ needs.acceptance-tests-matrix.outputs.artifactory_version }}
+          TERRAFORM_VERSION: ${{ needs.acceptance-tests-matrix.outputs.tf_version }}
+          OPENTOFU_VERSION: ${{ needs.acceptance-tests-matrix.outputs.tofu_version }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          echo "Adding Artifactory version to CHANGELOG.md"
+          sed -i -E "0,/(##\s.+\..+\..+\s\(.+\)).*/ s/(##\s.+\..+\..+\s\(.+\)).*/\1. Tested on Artifactory $ARTIFACTORY_VERSION with Terraform $TERRAFORM_VERSION and OpenTofu $OPENTOFU_VERSION/" CHANGELOG.md
+          head -10 CHANGELOG.md
+          git add CHANGELOG.md
+          export REGEX="Changes to be committed*"
+          export GIT_STATUS=$(git status)
+          if [[ ${GIT_STATUS} =~ ${REGEX} ]]; then
+            echo "Commiting changes"
+            git config --global user.name 'JFrog CI'
+            git config --global user.email 'jfrog-solutions-ci+1@jfrog.com'
+            git config --get user.name
+            git config --get user.email
+            git commit --author="JFrog CI <jfrog-solutions-ci+1@jfrog.com>" -m "JFrog Pipelines - Add Artifactory version to CHANGELOG.md"
+            git push --force-with-lease="refs/heads/${PR_HEAD_REF}:${PR_HEAD_SHA}" origin "HEAD:refs/heads/${PR_HEAD_REF}"
+          else
+            echo "There is nothing to commit: Artifactory version hadn't changed."
+          fi
+      - name: Send workflow status to Slack
+        uses: slackapi/slack-github-action@v1.26.0
+        if: success()
+        with:
+          payload: |
+            {
+              "text": "Terraform Provider Platform. A new PR was submitted by ${{ github.event.pull_request.user.login }} - ${{ github.event.pull_request.html_url }}, branch ${{ github.event.pull_request.base.ref }}. Changes tested successfully. <@U953714BC>, <@U61EEPXRV>, <@UPJ95RNSE> or <@U03KYAAS248>  please, review and merge.",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "<http://github.com/${{ github.repository }}|Terraform Provider Platform>. A new PR was submitted by *${{ github.event.pull_request.user.login }}* - <${{ github.event.pull_request.html_url }}|${{ github.event.pull_request.title }}>, branch *${{ github.event.pull_request.base.ref }}*. Changes tested successfully. <@U953714BC>, <@U61EEPXRV>, <@UPJ95RNSE> or <@U03KYAAS248> please, review and merge."
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_PR_WEBHOOK }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK

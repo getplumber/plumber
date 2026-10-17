@@ -82,6 +82,7 @@ type jsonPathBlock struct {
 	Environment     []string               `json:"environment,omitempty"`
 	Fix             string                 `json:"fix,omitempty"`
 	Findings        []jsonPathBlockFinding `json:"findings"`
+	ClaimsNote      string                 `json:"claimsNote,omitempty"`
 }
 
 type jsonPathBlockBranch struct {
@@ -119,7 +120,8 @@ func jsonPathBlockOf(id string, b control.PathBlock) jsonPathBlock {
 		ID: id, Tier: b.Tier, Unverified: b.Unverified, Loss: b.Loss, Entry: b.Entry, EntrySubject: b.EntrySubject,
 		EntryUnverified: b.EntryUnverified, RunsIn: b.RunsIn, ReachesShort: b.ReachesShort,
 		ReachUnverified: b.ReachUnverified, So: b.So, Cap: b.Cap, Environment: b.Environment, Fix: b.Fix,
-		Branches: []jsonPathBlockBranch{}, Findings: []jsonPathBlockFinding{},
+		ClaimsNote: b.ClaimsNote,
+		Branches:   []jsonPathBlockBranch{}, Findings: []jsonPathBlockFinding{},
 	}
 	for _, br := range b.Branches {
 		j.Branches = append(j.Branches, jsonPathBlockBranch(br))
@@ -135,6 +137,7 @@ func (j jsonPathBlock) block() control.PathBlock {
 		Tier: j.Tier, Unverified: j.Unverified, Loss: j.Loss, Entry: j.Entry, EntrySubject: j.EntrySubject,
 		EntryUnverified: j.EntryUnverified, RunsIn: j.RunsIn, ReachesShort: j.ReachesShort,
 		ReachUnverified: j.ReachUnverified, So: j.So, Cap: j.Cap, Environment: j.Environment, Fix: j.Fix,
+		ClaimsNote: j.ClaimsNote,
 	}
 	for _, br := range j.Branches {
 		b.Branches = append(b.Branches, control.PathBlockBranch(br))
@@ -243,6 +246,46 @@ func addFindingDetails(j *jsonPathBlock, p control.AttackPath, paths []control.A
 	}
 }
 
+// claimLines is the Claims section of `plumber explain -a`: one line per
+// claim, in claim order, its kind, subject, state and source (when it has
+// one) aligned in columns under the "Claims" label. nil when the path
+// carries no claim (a report written before claims existed), so an older
+// cached run prints nothing new. Subjects and sources are repository
+// text (job and environment names, action refs, expression references),
+// so every field goes through sanitizeTerminal first and the columns
+// are measured on what is printed.
+func claimLines(claims []control.Claim) []string {
+	if len(claims) == 0 {
+		return nil
+	}
+	type printed struct{ kind, subject, state, source string }
+	rows := make([]printed, 0, len(claims))
+	kindWidth, subjectWidth, stateWidth := 0, 0, 0
+	for _, c := range claims {
+		r := printed{
+			kind:    sanitizeTerminal(c.Kind),
+			subject: sanitizeTerminal(c.Subject),
+			state:   sanitizeTerminal(string(c.State)),
+			source:  sanitizeTerminal(c.Source),
+		}
+		kindWidth = max(kindWidth, len(r.kind))
+		subjectWidth = max(subjectWidth, len(r.subject))
+		stateWidth = max(stateWidth, len(r.state))
+		rows = append(rows, r)
+	}
+	out := []string{blockIndent + "Claims"}
+	for _, r := range rows {
+		line := fmt.Sprintf("%-*s  %-*s  ", kindWidth, r.kind, subjectWidth, r.subject)
+		if r.source != "" {
+			line += fmt.Sprintf("%-*s  %s", stateWidth, r.state, r.source)
+		} else {
+			line += r.state
+		}
+		out = append(out, findingIndent+line)
+	}
+	return out
+}
+
 // attackSource is the report `explain -a` reads: a file written by
 // --output (run), a project's cached run (project, under provider when
 // set), or the last cached run.
@@ -343,6 +386,9 @@ func runExplainAttack(out io.Writer, sel string, src attackSource, caps termCaps
 		opts := explainBlock
 		opts.Details = j.details(paths[n-1])
 		renderPathBlock(out, n, j.block(), caps, opts)
+		for _, l := range claimLines(paths[n-1].Claims) {
+			_, _ = fmt.Fprintln(out, l)
+		}
 	}
 	return nil
 }

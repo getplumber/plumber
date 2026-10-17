@@ -1,0 +1,51 @@
+name: Python Docstring Format Check
+
+on:
+  push:
+    branches:
+      - main
+  pull_request: {}
+
+permissions:
+  contents: read
+
+jobs:
+  python-docstring-format-check:
+    name: Python Docstring Format Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Check for reST double-backticks  # IGNORE:RST
+        run: |
+          # Detect reST-style double-backtick inline markup (``like this``) in Python files.
+          # Markdown uses single backticks (`like this`) for inline code.
+          # Lines containing IGNORE:RST are excluded (for legitimate uses).
+          # Lines containing triple backticks (```) are excluded (code fences).
+
+          echo "Checking for reST double-backtick patterns in Python files..."
+
+          # Use git ls-files to only check tracked .py files
+          # Pattern: two backticks followed by a non-backtick char (start of ``word``)
+          # Exclude lines with triple backticks (code fences) or IGNORE:RST
+
+          FOUND=$(git ls-files '*.py' \
+            | xargs grep -n '``[^`]' 2>/dev/null \
+            | grep -v '```' \
+            | grep -v 'IGNORE:RST' \
+            || true)
+
+          if [ -n "$FOUND" ]; then
+            echo ""
+            echo "ERROR: Found reST double-backtick patterns that should use Markdown single backticks:"
+            echo ""
+            echo "$FOUND"
+            echo ""
+            echo "Replace reST \`\`double backticks\`\` with Markdown \`single backticks\`."
+            echo "To suppress a false positive, add 'IGNORE:RST' on the same line."
+            echo ""
+            exit 1
+          else
+            echo "No reST double-backtick patterns found."
+          fi

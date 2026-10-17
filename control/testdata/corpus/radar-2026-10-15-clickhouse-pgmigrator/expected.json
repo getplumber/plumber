@@ -1,0 +1,32 @@
+{
+  "source": "https://github.com/ClickHouse/pgmigrator",
+  "commit": "59505fc2d8a51ffc97f0dd4b71bc8c7e649e7ffd",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/ci.yml": "active",
+    ".github/workflows/pg_dump.yml": "active",
+    ".github/workflows/release.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High setup-go cache path into `release.yml` was judged overstated: its default-branch writers are pushes by writers, fork pull requests write only their own scope, Medium at most. Corrected after reading the workflows: the assessment named only insiders as writers, but a push or dispatch run whose job is entered through an unauthorized mutable action (a High dependency path of the same repository) also writes the default-branch cache the release restores, so the cache path holds at the High ceiling of that writer, not at Medium. No job here declares cache-mode, so GitHub keeps the cache of every low-trust run read-only and grants no job cache write: ISSUE-705 is silent and no cache path exists, so the cache ceiling admits none.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "poisoned_cache",
+        "subjectContains": "",
+        "tier": "none"
+      }
+    ]
+  }
+}

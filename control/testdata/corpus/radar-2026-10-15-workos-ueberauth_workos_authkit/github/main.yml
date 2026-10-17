@@ -1,0 +1,75 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches:
+      - main
+      - release/**
+
+  pull_request:
+
+env:
+  MIX_ENV: test
+
+jobs:
+  test:
+    name: Test (Elixir ${{ matrix.elixir }}, OTP ${{ matrix.otp }})
+
+    runs-on: ubuntu-20.04
+    strategy:
+      matrix:
+        # https://hexdocs.pm/elixir/compatibility-and-deprecations.html#compatibility-between-elixir-and-erlang-otp
+        include:
+          # Newest supported Elixir/Erlang pair.
+          - elixir: '1.15'
+            otp: '26.0'
+            lint: true
+
+          # One version before the last supported one.
+          - elixir: '1.14.5'
+            otp: '25.3'
+
+    steps:
+    - name: Check out this repository
+      uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744  # v3
+
+    - name: Setup Elixir and Erlang
+      uses: erlef/setup-beam@5304e04ea2b355f03681464e683d92e3b2f18451 # v1.18.2
+      with:
+        elixir-version: ${{ matrix.elixir }}
+        otp-version: ${{ matrix.otp }}
+
+    # We need to manually restore and then save, so that we can save the "_build" directory
+    # *without* the Elixir compiled code in it.
+    - name: Restore Mix dependencies cache
+      uses: actions/cache/restore@6f8efc29b200d32929f49075959781ed54ec270c  # v3
+      id: mix-deps-cache
+      with:
+        path: |
+          _build
+          deps
+        key: |
+          ${{ runner.os }}-${{ matrix.otp }}-${{ matrix.elixir }}-mix-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}
+        restore-keys: |
+          ${{ runner.os }}-${{ matrix.otp }}-${{ matrix.elixir }}-mix-
+
+    - name: Install and compile Mix dependencies
+      if: steps.mix-deps-cache.outputs.cache-hit != 'true'
+      run: mix do deps.get, deps.compile
+
+    - name: Save Mix dependencies cache
+      uses: actions/cache/save@6f8efc29b200d32929f49075959781ed54ec270c  # v3
+      if: steps.mix-deps-cache.outputs.cache-hit != 'true'
+      with:
+        path: |
+          _build
+          deps
+        key: |
+          ${{ steps.mix-deps-cache.outputs.cache-primary-key }}
+
+    - name: Check compiler warnings
+      if: matrix.lint
+      run: mix compile --warnings-as-errors
+
+    - name: Run tests
+      run: mix test

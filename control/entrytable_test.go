@@ -301,7 +301,7 @@ func TestGateWordsPerReason(t *testing.T) {
 	for _, tc := range []struct{ reason, nature, actor string }{
 		{"label tests:run-cloud", ", gated by the label `tests:run-cloud`", "as anyone whose pull request a maintainer labels `tests:run-cloud`"},
 		{"author octocat", ", author `octocat` only", "as `octocat`, and only `octocat`"},
-		{"actor dependabot[bot]", ", actor `dependabot[bot]` only", "as `dependabot[bot]`, and only `dependabot[bot]`"},
+		{"actor dependabot[bot]", ", actor `dependabot[bot]` only", "as anyone who can make `dependabot[bot]` the actor"},
 		{"environment frogbot requires reviewers", ", approved in environment `frogbot`", "as anyone whose deployment a maintainer approves in `frogbot`"},
 		{"merged", ", after merge only", "as anyone whose pull request a maintainer merges"},
 		{"types labeled", ", on labeled only", "as anyone a maintainer lets in"},

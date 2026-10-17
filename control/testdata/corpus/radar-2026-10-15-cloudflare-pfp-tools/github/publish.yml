@@ -1,0 +1,277 @@
+name: Publish to crates.io
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: pfp-tools-release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  publish:
+    name: Publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: "recursive"
+
+      - name: Verify release commit is main
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "Manual releases must be dispatched from main" >&2
+            exit 1
+          fi
+
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          if [[ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]]; then
+            echo "Releases must run from the current origin/main commit" >&2
+            exit 1
+          fi
+
+      - name: Validate release metadata
+        id: release
+        run: |
+          version="$(bash .github/scripts/release-version.sh)"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Check publication state
+        id: crates
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          crate_is_published() {
+            local crate="$1"
+            local status
+            status="$(curl --silent --show-error --retry 3 --retry-all-errors \
+              --header "User-Agent: cloudflare-pfp-tools-release" \
+              --output /dev/null --write-out '%{http_code}' \
+              "https://crates.io/api/v1/crates/${crate}/${VERSION}")"
+            case "${status}" in
+              200) return 0 ;;
+              404) return 1 ;;
+              *)
+                echo "Unexpected crates.io response for ${crate} ${VERSION}: ${status}" >&2
+                exit 1
+                ;;
+            esac
+          }
+
+          published_sha() {
+            local crate="$1"
+            curl --fail --silent --show-error --location --retry 3 --retry-all-errors \
+              --header "User-Agent: cloudflare-pfp-tools-release" \
+              "https://crates.io/api/v1/crates/${crate}/${VERSION}/download" |
+              tar -xzO "${crate}-${VERSION}/.cargo_vcs_info.json" |
+              jq -er 'select(.git.dirty != true) | .git.sha1 | select(test("^[0-9a-f]{40}$"))'
+          }
+
+          if crate_is_published pfp-headers; then
+            headers_published=true
+            headers_sha="$(published_sha pfp-headers)"
+          else
+            headers_published=false
+            headers_sha=""
+          fi
+          if crate_is_published pfp-verifier; then
+            verifier_published=true
+            verifier_sha="$(published_sha pfp-verifier)"
+          else
+            verifier_published=false
+            verifier_sha=""
+          fi
+
+          if [[ "${verifier_published}" == true && "${headers_published}" != true ]]; then
+            echo "pfp-verifier is published without its matching pfp-headers release" >&2
+            exit 1
+          fi
+          if [[ -n "${headers_sha}" && -n "${verifier_sha}" && "${headers_sha}" != "${verifier_sha}" ]]; then
+            echo "Published crates came from different commits: ${headers_sha}, ${verifier_sha}" >&2
+            exit 1
+          fi
+
+          release_sha="${headers_sha:-${verifier_sha:-$(git rev-parse HEAD)}}"
+          if ! object_type="$(git cat-file -t "${release_sha}" 2>/dev/null)" || [[ "${object_type}" != commit ]]; then
+            echo "Published source ${release_sha} is not a commit in this repository" >&2
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "${release_sha}" origin/main; then
+            echo "Published source ${release_sha} is not reachable from main" >&2
+            exit 1
+          fi
+
+          echo "headers_published=${headers_published}" >> "${GITHUB_OUTPUT}"
+          echo "verifier_published=${verifier_published}" >> "${GITHUB_OUTPUT}"
+          echo "release_sha=${release_sha}" >> "${GITHUB_OUTPUT}"
+          if [[ "${headers_published}" == true && "${verifier_published}" == true ]]; then
+            echo "release_needed=false" >> "${GITHUB_OUTPUT}"
+            echo "Version ${VERSION} is already published"
+          else
+            echo "release_needed=true" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Verify release tag state
+        if: steps.crates.outputs.release_needed == 'true'
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          if git rev-parse --verify --quiet "refs/tags/${VERSION}" >/dev/null; then
+            echo "Tag ${VERSION} exists before both crates have been published" >&2
+            exit 1
+          fi
+
+      - name: Check out release commit
+        if: steps.crates.outputs.release_needed == 'true'
+        env:
+          RELEASE_SHA: ${{ steps.crates.outputs.release_sha }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          git checkout --detach "${RELEASE_SHA}"
+          release_version="$(bash .github/scripts/release-version.sh)"
+          if [[ "${release_version}" != "${VERSION}" ]]; then
+            echo "Release commit ${RELEASE_SHA} has version ${release_version}, expected ${VERSION}" >&2
+            exit 1
+          fi
+
+      - name: Package crates
+        if: steps.crates.outputs.release_needed == 'true'
+        run: |
+          cargo package --locked --no-verify -p pfp-headers
+          cargo package --locked --no-verify -p pfp-verifier \
+            --config 'patch.crates-io.pfp-headers.path="pfp-headers"'
+
+      - uses: rust-lang/crates-io-auth-action@v1
+        if: steps.crates.outputs.release_needed == 'true'
+        id: auth
+
+      - name: Publish pfp-headers
+        if: steps.crates.outputs.headers_published != 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          RELEASE_SHA: ${{ steps.crates.outputs.release_sha }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          if cargo publish --locked -p pfp-headers; then
+            exit 0
+          fi
+
+          for attempt in {1..12}; do
+            if published_sha="$(
+              curl --fail --silent --show-error --location --retry 3 --retry-all-errors \
+                --header "User-Agent: cloudflare-pfp-tools-release" \
+                "https://crates.io/api/v1/crates/pfp-headers/${VERSION}/download" |
+                tar -xzO "pfp-headers-${VERSION}/.cargo_vcs_info.json" |
+                jq -er 'select(.git.dirty != true) | .git.sha1 | select(test("^[0-9a-f]{40}$"))'
+            )"; then
+              if [[ "${published_sha}" != "${RELEASE_SHA}" ]]; then
+                echo "pfp-headers ${VERSION} was published from unexpected commit ${published_sha}" >&2
+                exit 1
+              fi
+              echo "pfp-headers ${VERSION} was accepted despite the publish command failure"
+              exit 0
+            fi
+            sleep 10
+          done
+
+          echo "pfp-headers ${VERSION} was not published" >&2
+          exit 1
+
+      - name: Publish pfp-verifier
+        if: steps.crates.outputs.verifier_published != 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          RELEASE_SHA: ${{ steps.crates.outputs.release_sha }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          for attempt in {1..12}; do
+            if cargo publish --locked -p pfp-verifier; then
+              exit 0
+            fi
+
+            if published_sha="$(
+              curl --fail --silent --show-error --location --retry 3 --retry-all-errors \
+                --header "User-Agent: cloudflare-pfp-tools-release" \
+                "https://crates.io/api/v1/crates/pfp-verifier/${VERSION}/download" |
+                tar -xzO "pfp-verifier-${VERSION}/.cargo_vcs_info.json" |
+                jq -er 'select(.git.dirty != true) | .git.sha1 | select(test("^[0-9a-f]{40}$"))'
+            )"; then
+              if [[ "${published_sha}" != "${RELEASE_SHA}" ]]; then
+                echo "pfp-verifier ${VERSION} was published from unexpected commit ${published_sha}" >&2
+                exit 1
+              fi
+              echo "pfp-verifier ${VERSION} was accepted despite the publish command failure"
+              exit 0
+            fi
+
+            if [[ ${attempt} -eq 12 ]]; then
+              echo "Failed to publish pfp-verifier after waiting for pfp-headers to be indexed" >&2
+              exit 1
+            fi
+
+            sleep 10
+          done
+
+      - name: Reconcile release tag
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          published_sha() {
+            local crate="$1"
+            local sha
+            for attempt in {1..12}; do
+              if sha="$(
+                curl --fail --silent --show-error --location --retry 3 --retry-all-errors \
+                  --header "User-Agent: cloudflare-pfp-tools-release" \
+                  "https://crates.io/api/v1/crates/${crate}/${VERSION}/download" |
+                  tar -xzO "${crate}-${VERSION}/.cargo_vcs_info.json" |
+                  jq -er 'select(.git.dirty != true) | .git.sha1 | select(test("^[0-9a-f]{40}$"))'
+              )"; then
+                printf '%s\n' "${sha}"
+                return 0
+              fi
+              sleep 10
+            done
+            echo "Could not determine the source commit for ${crate} ${VERSION}" >&2
+            return 1
+          }
+
+          headers_sha="$(published_sha pfp-headers)"
+          verifier_sha="$(published_sha pfp-verifier)"
+          if [[ "${headers_sha}" != "${verifier_sha}" ]]; then
+            echo "Published crates came from different commits: ${headers_sha}, ${verifier_sha}" >&2
+            exit 1
+          fi
+          if ! object_type="$(git cat-file -t "${headers_sha}" 2>/dev/null)" || [[ "${object_type}" != commit ]]; then
+            echo "Published source ${headers_sha} is not a commit in this repository" >&2
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "${headers_sha}" origin/main; then
+            echo "Published commit ${headers_sha} is not reachable from main" >&2
+            exit 1
+          fi
+
+          if git rev-parse --verify --quiet "refs/tags/${VERSION}" >/dev/null; then
+            if [[ "$(git rev-list -n 1 "refs/tags/${VERSION}")" != "${headers_sha}" ]]; then
+              echo "Tag ${VERSION} does not match published commit ${headers_sha}" >&2
+              exit 1
+            fi
+            echo "Tag ${VERSION} already matches the published crates"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag --annotate "${VERSION}" "${headers_sha}" --message "Release ${VERSION}"
+          git push origin "refs/tags/${VERSION}"

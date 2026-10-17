@@ -1,0 +1,71 @@
+{
+  "source": "https://github.com/databricks/databricks-sql-python",
+  "commit": "9eb024c605aa004919c6d80ffd4cc035d2a8615a",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "azure-prod",
+      "known": true
+    },
+    {
+      "name": "copilot",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/code-coverage.yml": "active",
+    ".github/workflows/code-quality-checks.yml": "active",
+    ".github/workflows/coverage-check-dynamic-e2e-parallel.yml": "active",
+    ".github/workflows/coverage-check-parallel.yml": "active",
+    ".github/workflows/coverage-check.yml": "active",
+    ".github/workflows/dbr-lts-install.yml": "active",
+    ".github/workflows/dco-check.yml": "active",
+    ".github/workflows/engineer-bot-e2e.yml": "active",
+    ".github/workflows/engineer-bot-followup.yml": "active",
+    ".github/workflows/engineer-bot-learning.yml": "active",
+    ".github/workflows/engineer-bot.yml": "active",
+    ".github/workflows/integration.yml": "active",
+    ".github/workflows/kernel-e2e.yml": "active",
+    ".github/workflows/publish-test.yml": "active",
+    ".github/workflows/reviewer-bot-followup.yml": "active",
+    ".github/workflows/reviewer-bot-unit-tests.yml": "active",
+    ".github/workflows/reviewer-bot.yml": "active",
+    ".github/workflows/securityScan.yml": "active",
+    ".github/workflows/skip-checks-reporter.yml": "active",
+    ".github/workflows/test-telemetry-only.yml": "active",
+    ".github/workflows/trigger-integration-tests.yml": "active",
+    ".github/workflows/warm-deps-cache.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "actionMetadata": {
+    "actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c": {
+      "refKind": "commit",
+      "mutableRemoteExec": {
+        "tier": "exec",
+        "url": "https://sh.rustup.rs",
+        "file": "action.yml",
+        "downloadGuard": "rustup"
+      }
+    }
+  },
+  "note": "The High path through the SHA-pinned `actions-rust-lang/setup-rust-toolchain` was judged overstated: the SHA-pinned Rust toolchain action only fetches `sh.rustup.rs` under `if ! command -v rustup`, and the next step downloads the toolchain from the same vendor, so the actor is the Rust distribution on a runner without rustup, Medium at most.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "actions-rust-lang/setup-rust-toolchain@1780873c7b57",
+        "tier": "medium"
+      }
+    ]
+  }
+}

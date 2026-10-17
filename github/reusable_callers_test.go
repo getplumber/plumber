@@ -95,6 +95,36 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.github-token }}
 `
 
+// TestReusableCallerCarriesTheCallingJobsIf pins that a call records the
+// calling job's own `if:`: the called workflow runs only on the events
+// that condition lets through, which is what decides who can make the
+// called jobs run (ir.ClassifyGates).
+func TestReusableCallerCarriesTheCallingJobsIf(t *testing.T) {
+	jobs := scanWorkflows(t, map[string]string{
+		"ci.yml": `
+name: ci
+on: [push, pull_request_target]
+jobs:
+  warm-cache:
+    if: github.event_name == 'push'
+    uses: ./.github/workflows/_warm.yml
+`,
+		"_warm.yml": `
+name: warm
+on: workflow_call
+jobs:
+  warm:
+    runs-on: x
+    steps:
+      - run: npm ci
+`,
+	})
+	callers := jobs["_warm/warm"].Callers
+	if len(callers) != 1 || callers[0].Job != "ci/warm-cache" || callers[0].If != "github.event_name == 'push'" {
+		t.Errorf("callers = %+v, want ci/warm-cache with its if:", callers)
+	}
+}
+
 // TestReusableWorkflowCallersAreRecordedOnTheCallee pins the caller map of
 // a local reusable workflow: each job of the called workflow lists every
 // job calling it, with the permissions, the events, the secrets (the
@@ -204,6 +234,122 @@ jobs:
 	if got := jobs["build/pipeline"].ReusableCallees; !reflect.DeepEqual(got, []string{"pipeline/segment", "segment/build"}) {
 		t.Errorf("root callees = %v, want both levels", got)
 	}
+}
+
+// TestRepositoryQualifiedSelfCallIsLinked pins the other spelling of a
+// call to the repository's own workflow, `owner/repo/.github/workflows/
+// x.yml@ref` naming the scanned repository (any case): the callee
+// records the caller exactly as for `./.github/workflows/x.yml`, so a
+// protected callee's claim stays capped by who can run its caller.
+func TestRepositoryQualifiedSelfCallIsLinked(t *testing.T) {
+	jobs := scanWorkflows(t, map[string]string{
+		"ci.yml": `
+name: ci
+on: pull_request_target
+jobs:
+  call:
+    uses: Acme/App/.github/workflows/_upload.yml@main
+`,
+		"_upload.yml": `
+name: upload
+on: workflow_call
+jobs:
+  upload:
+    runs-on: x
+    steps:
+      - run: make
+`,
+	})
+	callers := jobs["_upload/upload"].Callers
+	if len(callers) != 1 || callers[0].Job != "ci/call" || !reflect.DeepEqual(callers[0].Triggers, []string{"pull_request_target"}) {
+		t.Errorf("callers = %+v, want ci/call on pull_request_target", callers)
+	}
+	if got := jobs["ci/call"].ReusableCallees; !reflect.DeepEqual(got, []string{"_upload/upload"}) {
+		t.Errorf("callees = %v, want _upload/upload", got)
+	}
+	for _, c := range []struct{ uses, want string }{
+		{"acme/app/.github/workflows/_upload.yml@main", "_upload.yml"},
+		{"ACME/APP/.github/workflows/_upload.yml@v1", "_upload.yml"},
+		{"acme/other/.github/workflows/_upload.yml@main", ""},
+		{"acme/app-fork/.github/workflows/_upload.yml@main", ""},
+	} {
+		if got := localWorkflowFile(c.uses, "acme/app"); got != c.want {
+			t.Errorf("localWorkflowFile(%q) = %q, want %q", c.uses, got, c.want)
+		}
+	}
+}
+
+// TestNestedReusableCallersResolveForwardedSecrets pins the secrets a
+// callee two calls down receives: a secret the middle workflow forwards
+// under a new name (`INNER: ${{ secrets.TOK }}`) resolves to what the
+// root passes for TOK, a forwarded secret the root never passes is
+// dropped, and a middle workflow that inherits takes the root's explicit
+// map as its own.
+func TestNestedReusableCallersResolveForwardedSecrets(t *testing.T) {
+	root := `
+name: root
+on: push
+jobs:
+  mid:
+    uses: ./.github/workflows/mid.yml
+    secrets:
+      TOK: ${{ secrets.MASTER }}
+`
+	leaf := `
+name: leaf
+on: workflow_call
+jobs:
+  deploy:
+    runs-on: x
+    steps:
+      - run: make
+`
+	t.Run("renamed secret", func(t *testing.T) {
+		jobs := scanWorkflows(t, map[string]string{
+			"root.yml": root,
+			"mid.yml": `
+name: mid
+on: workflow_call
+jobs:
+  leaf:
+    uses: ./.github/workflows/leaf.yml
+    secrets:
+      INNER: ${{ secrets.TOK }}
+      MISSING: ${{ secrets.NOT_PASSED }}
+`,
+			"leaf.yml": leaf,
+		})
+		callers := jobs["leaf/deploy"].Callers
+		if len(callers) != 1 {
+			t.Fatalf("callers = %+v", callers)
+		}
+		want := map[string]string{"INNER": "${{ secrets.MASTER }}"}
+		if callers[0].SecretsInherit || !reflect.DeepEqual(callers[0].Secrets, want) {
+			t.Errorf("caller secrets = %v (inherit %v), want %v", callers[0].Secrets, callers[0].SecretsInherit, want)
+		}
+	})
+	t.Run("inherit takes the root's map", func(t *testing.T) {
+		jobs := scanWorkflows(t, map[string]string{
+			"root.yml": root,
+			"mid.yml": `
+name: mid
+on: workflow_call
+jobs:
+  leaf:
+    uses: ./.github/workflows/leaf.yml
+    secrets: inherit
+`,
+			"leaf.yml": leaf,
+		})
+		callers := jobs["leaf/deploy"].Callers
+		if len(callers) != 1 {
+			t.Fatalf("callers = %+v", callers)
+		}
+		want := map[string]string{"TOK": "${{ secrets.MASTER }}"}
+		if callers[0].SecretsInherit || !reflect.DeepEqual(callers[0].Secrets, want) {
+			t.Errorf("caller secrets = %v (inherit %v), want %v and no inherit", callers[0].Secrets, callers[0].SecretsInherit, want)
+		}
+	})
 }
 
 // TestCallerImageThatIsAnExpressionAloneStaysUnresolved pins that a

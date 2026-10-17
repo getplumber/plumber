@@ -1,0 +1,27 @@
+name: ClickHouse versions
+
+on:
+  workflow_call:
+    outputs:
+      matrix:
+        description: Supported ClickHouse release series as a JSON array
+        value: ${{ jobs.versions.outputs.matrix }}
+      default:
+        description: Oldest supported LTS used by single-version jobs
+        value: ${{ jobs.versions.outputs.default }}
+
+jobs:
+  versions:
+    runs-on: ubuntu-26.04
+    outputs:
+      matrix: ${{ steps.versions.outputs.matrix }}
+      default: ${{ steps.versions.outputs.default }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Read server versions
+        id: versions
+        shell: bash
+        run: |
+          matrix=$(jq -ce '.matrix' .github/clickhouse-versions.json)
+          default=$(jq -er '.default' .github/clickhouse-versions.json)
+          printf 'matrix=%s\ndefault=%s\n' "$matrix" "$default" >> "$GITHUB_OUTPUT"

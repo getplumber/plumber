@@ -1,0 +1,155 @@
+# Copyright (c) 2024 Cloudflare, Inc.
+# Licensed under the Apache 2.0 license found in the LICENSE file or at:
+#     https://opensource.org/licenses/Apache-2.0
+
+name: CI
+
+on:
+  push:
+  pull_request:
+    types: [opened, reopened, synchronize]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # GitHub Actions is eager to spawn jobs, so duplicate runs are common on PRs
+  # from internal branches. This guard skips redundant runs of the rest of the
+  # workflow.
+  skip-duplicate-jobs:
+    runs-on: ubuntu-latest
+    outputs:
+      should_skip: ${{ steps.skip_check.outputs.should_skip }}
+    steps:
+      - id: skip_check
+        uses: fkirc/skip-duplicate-actions@v5
+        with:
+          concurrent_skipping: 'same_content_newer'
+          skip_after_successful_duplicate: 'true'
+
+  release-metadata:
+    name: release metadata
+    needs: skip-duplicate-jobs
+    if: needs.skip-duplicate-jobs.outputs.should_skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+      - name: Validate release metadata
+        run: bash .github/scripts/release-version.sh
+
+  fmt:
+    name: rustfmt
+    needs: skip-duplicate-jobs
+    if: needs.skip-duplicate-jobs.outputs.should_skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: clippy
+    needs: skip-duplicate-jobs
+    if: needs.skip-duplicate-jobs.outputs.should_skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libclang-dev
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-features --all-targets -- -D warnings
+
+  docs:
+    name: docs
+    needs: skip-duplicate-jobs
+    if: needs.skip-duplicate-jobs.outputs.should_skip != 'true'
+    runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libclang-dev
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo doc --workspace --no-deps --all-features
+
+  test:
+    name: test (${{ matrix.os }}, ${{ matrix.rust }})
+    needs: skip-duplicate-jobs
+    if: needs.skip-duplicate-jobs.outputs.should_skip != 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        rust: [stable, "1.89.0", nightly]
+        include:
+          - rust: nightly
+            continue-on-error: true
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.continue-on-error || false }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libclang-dev
+
+      - name: Install build dependencies (Windows)
+        if: runner.os == 'Windows'
+        run: choco install -y llvm
+
+      - name: Set LIBCLANG_PATH (Windows)
+        if: runner.os == 'Windows'
+        run: echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
+
+      - name: Install Rust (${{ matrix.rust }})
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.rust }}
+
+      - name: cargo check (all features)
+        run: cargo check --workspace --all-features --all-targets
+
+      - name: cargo check (no default features)
+        run: cargo check --workspace --no-default-features --all-targets
+
+      - name: cargo test (all features)
+        run: cargo test --workspace --all-features
+
+  deny:
+    name: cargo-deny
+    needs: skip-duplicate-jobs
+    if: needs.skip-duplicate-jobs.outputs.should_skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check

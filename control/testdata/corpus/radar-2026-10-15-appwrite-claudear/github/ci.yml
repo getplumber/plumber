@@ -1,0 +1,241 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUSTFLAGS: "-Dwarnings -C linker=clang -C link-arg=-fuse-ld=mold"
+  FASTEMBED_CACHE_DIR: /home/runner/.cache/fastembed
+  HF_HOME: /home/runner/.cache/fastembed
+
+jobs:
+  compile:
+    name: Compile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install system dependencies
+        run: sudo apt-get install -y mold
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@main
+
+      - name: Install cargo-tarpaulin
+        run: cargo binstall --no-confirm cargo-tarpaulin
+
+      - name: Restore cargo cache
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Create dashboard dist stub
+        run: mkdir -p dashboard/dist && touch dashboard/dist/index.html
+
+      - name: Compile all test targets via tarpaulin
+        run: cargo tarpaulin --workspace --all-features --skip-clean --no-run
+
+      - name: Save compiled cache
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-compiled-${{ github.sha }}
+
+  lint:
+    name: Lint
+    needs: [compile]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install system dependencies
+        run: sudo apt-get install -y mold
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Restore compiled cache
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-compiled-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-compiled-
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings -A clippy::double_must_use
+
+  test:
+    name: Test (${{ matrix.crate }})
+    needs: [compile]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        crate:
+          - claudear-core
+          - claudear-config
+          - claudear-storage
+          - claudear-analysis
+          - claudear-engine
+          - claudear-integrations
+          - claudear
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install system dependencies
+        run: sudo apt-get install -y mold
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore compiled cache
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-compiled-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-compiled-
+
+      - name: Cache fastembed model
+        if: matrix.crate == 'claudear-analysis' || matrix.crate == 'claudear'
+        id: fastembed-cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.FASTEMBED_CACHE_DIR }}
+          key: fastembed-nomic-embed-text-v1.5
+          enableCrossOsArchive: true
+
+      - name: Download embedding model
+        if: (matrix.crate == 'claudear-analysis' || matrix.crate == 'claudear') && steps.fastembed-cache.outputs.cache-hit != 'true'
+        run: |
+          python3 -m pip install -q huggingface-hub
+          python3 -c "
+          from huggingface_hub import snapshot_download
+          snapshot_download(
+              'nomic-ai/nomic-embed-text-v1.5',
+              allow_patterns=['onnx/model.onnx', 'tokenizer.json', 'config.json', 'special_tokens_map.json'],
+              cache_dir='${FASTEMBED_CACHE_DIR}',
+          )
+          "
+
+      - name: Create dashboard dist stub
+        if: matrix.crate == 'claudear-engine' || matrix.crate == 'claudear'
+        run: mkdir -p dashboard/dist && touch dashboard/dist/index.html
+
+      # Vector search (code/Discord) needs the vectorlite SQLite extension. Pull
+      # the prebuilt .so from the vectorlite-py wheel and point the loader at it
+      # so the semantic-search tests exercise real, populated results.
+      - name: Install vectorlite extension
+        if: matrix.crate == 'claudear-analysis' || matrix.crate == 'claudear'
+        run: |
+          python3 -m pip install -q vectorlite-py
+          # vectorlite_path() returns the path without a file extension, but the
+          # loader does an exists() check, so resolve the real .so/.dylib file.
+          VL_BASE="$(python3 -c 'import vectorlite_py; print(vectorlite_py.vectorlite_path())')"
+          if [ -f "${VL_BASE}.so" ]; then VL_PATH="${VL_BASE}.so";
+          elif [ -f "${VL_BASE}.dylib" ]; then VL_PATH="${VL_BASE}.dylib";
+          elif [ -f "${VL_BASE}" ]; then VL_PATH="${VL_BASE}";
+          else echo "vectorlite library not found near ${VL_BASE}" >&2; exit 1; fi
+          echo "Using vectorlite at: $VL_PATH"
+          echo "CLAUDEAR_VECTORLITE_PATH=$VL_PATH" >> "$GITHUB_ENV"
+
+      - name: Run tests
+        run: cargo tarpaulin -p ${{ matrix.crate }} --all-features --skip-clean --out Xml
+
+      - name: Upload coverage to Codecov
+        if: env.CODECOV_TOKEN != ''
+        uses: codecov/codecov-action@v5
+        with:
+          fail_ci_if_error: true
+          flags: ${{ matrix.crate }}
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  build:
+    name: Build (macOS)
+    runs-on: macos-latest
+    env:
+      RUSTFLAGS: "-Dwarnings"
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Create dashboard dist stub
+        run: mkdir -p dashboard/dist && touch dashboard/dist/index.html
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: claudear-macos
+          path: target/release/claudear
+
+  dashboard:
+    name: Dashboard
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Test
+        run: bun test

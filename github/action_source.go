@@ -296,7 +296,7 @@ type fetchHit struct {
 // isProtected reports whether this single hit, on its own, would never
 // actually execute: guarded (whether the guarded tool is actually
 // preinstalled on a given job's runner is decided later, downstream,
-// by control/trust.go's Suppressed + runners.Preinstalled; a non-empty
+// by control/trust.go's suppressed + runners.Preinstalled; a non-empty
 // guard here is a candidate) or verified.
 func (h fetchHit) isProtected() bool {
 	return h.guard != "" || h.verified
@@ -695,17 +695,30 @@ func downloadedFileFor(line string) string {
 //     anywhere in the step and the file name anywhere in the step")
 //     that could never fail, since the download line itself always
 //     names the file.
+//
+// Whatever the shape, the check counts only on a line strictly between
+// the download line and the first line that runs the file (a shell or
+// interpreter given the file, `./file`, `source file`, `chmod +x
+// file`): a digest checked after the code already ran, or a signature
+// verified before the file exists, proves nothing about what executed.
+// When no later line runs the file the window stays open to the end
+// of the step. The file is always matched as a whole shell token: a
+// digest of nodejs.tar.gz is no verification of a file called node.
 func fileVerifiedInStep(stepText string, downloadLineStart int, file string) bool {
 	if file == "" {
 		return false
+	}
+	runLineStart := firstRunLineStart(stepText, downloadLineStart, file)
+	inWindow := func(lineStart int) bool {
+		return lineStart > downloadLineStart && (runLineStart < 0 || lineStart < runLineStart)
 	}
 	for _, loc := range reLiteralDigest.FindAllStringIndex(stepText, -1) {
 		if isContainerImageDigest(stepText, loc[0]) {
 			continue
 		}
 		lineStart := enclosingLineStart(stepText, loc[0])
-		if lineStart <= downloadLineStart {
-			continue // on, or before, the download line itself
+		if !inWindow(lineStart) {
+			continue // on or before the download line, or once the file already ran
 		}
 		// A digest inside a trailing shell comment proves nothing: only
 		// the code before the comment is read.
@@ -714,16 +727,19 @@ func fileVerifiedInStep(stepText string, downloadLineStart int, file string) boo
 			continue
 		}
 		digest := stepText[loc[0]:loc[1]]
-		if strings.Contains(code, file) && digestFeedsCheck(code, digest) {
+		if namesFile(code, file) && digestFeedsCheck(code, digest) {
 			return true
 		}
 	}
+	offset := 0
 	for _, line := range strings.Split(stepText, "\n") {
-		if !reVerifyCommand.MatchString(line) {
+		lineStart := offset
+		offset += len(line) + 1
+		if !inWindow(lineStart) || !reVerifyCommand.MatchString(line) {
 			continue
 		}
 		lower := strings.ToLower(line)
-		if (strings.Contains(lower, "gpg") || strings.Contains(lower, "cosign")) && strings.Contains(line, file) {
+		if (strings.Contains(lower, "gpg") || strings.Contains(lower, "cosign")) && namesFile(line, file) {
 			return true
 		}
 		if sums := sumsFileArg(line); sums != "" && sumsFileNamesDownload(stepText, sums, file) {
@@ -731,6 +747,39 @@ func fileVerifiedInStep(stepText string, downloadLineStart int, file string) boo
 		}
 	}
 	return false
+}
+
+// namesFile reports whether text names file as a whole shell token:
+// preceded by the start of the text, whitespace, a quote, `=` or a
+// path separator, and followed by the end, whitespace, a quote or a
+// shell separator. `nodejs.tar.gz` does not name `node`.
+func namesFile(text, file string) bool {
+	re := regexp.MustCompile(`(?:^|[\s"'=/])` + regexp.QuoteMeta(file) + `(?:$|[\s"';|&)])`)
+	return re.MatchString(text)
+}
+
+// firstRunLineStart is the start offset of the first line after the
+// download line that runs file: a shell or interpreter given the file
+// (optionally through sudo and with a leading path), `./file`,
+// `source file` or `chmod +x file`. -1 when no later line runs it.
+func firstRunLineStart(stepText string, downloadLineStart int, file string) int {
+	quoted := regexp.QuoteMeta(file)
+	re := regexp.MustCompile(`(?:^|[\s;&|(])(?:` +
+		`(?:sudo\s+(?:-\S+\s+)*)?(?:bash|sh|zsh|dash|ksh|source|\.|python3?|node|perl|ruby|chmod\s+\+x)\s+(?:\S*/)?` + quoted +
+		`|\./` + quoted +
+		`)(?:$|[\s;&|)])`)
+	offset := 0
+	for _, line := range strings.Split(stepText, "\n") {
+		lineStart := offset
+		offset += len(line) + 1
+		if lineStart <= downloadLineStart {
+			continue
+		}
+		if re.MatchString(stripShellComment(line)) {
+			return lineStart
+		}
+	}
+	return -1
 }
 
 // digestFeedsCheck reports whether line, which already carries a
@@ -793,7 +842,7 @@ func sumsFileNamesDownload(stepText, sums, file string) bool {
 			continue
 		}
 		for _, m := range reRedirectTarget.FindAllStringSubmatch(line, -1) {
-			if strings.Trim(m[1], `"'`) == sums && strings.Contains(line, file) && reLiteralDigest.MatchString(line) {
+			if strings.Trim(m[1], `"'`) == sums && namesFile(line, file) && reLiteralDigest.MatchString(line) {
 				return true
 			}
 		}
@@ -825,7 +874,7 @@ func heredocSumsFileNamesDownload(stepText, sums, file string) bool {
 			body = append(body, lines[j])
 		}
 		bodyText := strings.Join(body, "\n")
-		if strings.Contains(bodyText, file) && reLiteralDigest.MatchString(bodyText) {
+		if namesFile(bodyText, file) && reLiteralDigest.MatchString(bodyText) {
 			return true
 		}
 	}

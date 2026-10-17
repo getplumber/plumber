@@ -1,0 +1,57 @@
+name: Slash Command Dispatch
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  slashCommandDispatch:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Authenticate as GitHub App
+        uses: actions/create-github-app-token@v2
+        id: get-app-token
+        with:
+          owner: "airbytehq"
+          repositories: "airbyte-python-cdk"
+          app-id: ${{ secrets.OCTAVIA_BOT_APP_ID }}
+          private-key: ${{ secrets.OCTAVIA_BOT_PRIVATE_KEY }}
+      - name: Slash Command Dispatch
+        id: dispatch
+        uses: peter-evans/slash-command-dispatch@v4
+        with:
+          repository: ${{ github.repository }}
+          token: ${{ steps.get-app-token.outputs.token }}
+          dispatch-type: workflow
+          issue-type: both
+
+          # Only run for users with 'write' permission on the main repository
+          permission: write
+
+          commands: |
+            autofix
+            test
+            poetry-lock
+            poe
+            prerelease
+
+          # Notes regarding static-args:
+          # - Slash commands can be invoked from both issues and comments.
+          # - If the slash command is invoked from an issue, we intentionally pass 'null' as the PR number.
+          # - Comment ID will always be sent, and this is sufficient to post back status updates to the originating comment.
+          static-args: |
+            pr=${{ github.event.issue.pull_request != null && github.event.issue.number || '' }}
+            comment-id=${{ github.event.comment.id }}
+
+      - name: Edit comment with error message
+        if: steps.dispatch.outputs.error-message
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ github.event.comment.id }}
+          body: |
+            > Error: ${{ steps.dispatch.outputs.error-message }}

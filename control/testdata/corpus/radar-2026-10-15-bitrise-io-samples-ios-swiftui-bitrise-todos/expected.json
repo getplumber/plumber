@@ -1,0 +1,30 @@
+{
+  "source": "https://github.com/bitrise-io/samples-ios-swiftui-bitrise-todos",
+  "commit": "15ed0584461c61d2cacbd8373c38c7bf561c1ede",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": false
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/ios.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High path through `raw.githubusercontent.com/bitrise-io/bitrise-build-cache-cli/main/install.sh` was judged overstated: the script belongs to the same organisation and runs only on a manual dispatch, an insider fetch, Medium at most.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "https://raw.githubusercontent.com/bitrise-io/bitrise-build-cache-cli/main/install/installer.sh",
+        "tier": "medium"
+      }
+    ]
+  }
+}

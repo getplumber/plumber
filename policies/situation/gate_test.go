@@ -78,6 +78,31 @@ func TestPrivilegedTriggersMatchTheSituation(t *testing.T) {
 	}
 }
 
+// TestNoOutsiderRanksWithSameRepo pins that the merged gate ranks
+// no_outsider with same_repo (ir.GateNoOutsider, the same rank in Go's
+// gateStrength): above a maintainer's gate, so a maintainer-approved
+// sibling is the weaker, and tied with same_repo, the first in input
+// order then winning.
+func TestNoOutsiderRanksWithSameRepo(t *testing.T) {
+	p := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitHub,
+		Jobs: []ir.Job{
+			{Name: "ci/label", OriginFile: "a.yml", Triggers: []string{"pull_request_target"}, Gate: &ir.Gate{Class: ir.GateNoOutsider, Reason: "event push"}},
+			{Name: "ci/label", OriginFile: "b.yml", Triggers: []string{"pull_request_target"}, Gate: &ir.Gate{Class: ir.GateMaintainerApproved, Reason: "label ok"}},
+			{Name: "ci/tie", OriginFile: "c.yml", Triggers: []string{"pull_request_target"}, Gate: &ir.Gate{Class: ir.GateSameRepo, Reason: "same repository"}},
+			{Name: "ci/tie", OriginFile: "d.yml", Triggers: []string{"pull_request_target"}, Gate: &ir.Gate{Class: ir.GateNoOutsider, Reason: "event push"}},
+		},
+	}
+	var r gateFacts
+	evaluateInto(t, p, nil, &r)
+	if g := r.Jobs["ci/label"].Gate; g == nil || g.Class != "maintainer_approved" {
+		t.Errorf("ci/label gate = %+v, want the maintainer's (weaker than no_outsider)", g)
+	}
+	if g := r.Jobs["ci/tie"].Gate; g == nil || g.Class != "same_repo" {
+		t.Errorf("ci/tie gate = %+v, want same_repo (a tie keeps the first)", g)
+	}
+}
+
 // TestSiblingWithoutAGateIsAnOutsider pins that a same-named job carrying a
 // privileged trigger but no gate (never classified) makes the merged gate
 // an outsider's, whatever its sibling's gate says.

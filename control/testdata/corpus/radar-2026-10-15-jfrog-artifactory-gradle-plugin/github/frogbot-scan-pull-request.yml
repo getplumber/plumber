@@ -1,0 +1,30 @@
+name: "Frogbot Scan"
+on:
+  pull_request_target:
+    types: [opened, synchronize]
+permissions:
+  pull-requests: write
+  contents: read
+jobs:
+  scan-pull-request:
+    runs-on: ubuntu-latest
+    environment: frogbot
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      # Install prerequisites
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "zulu"
+
+      - uses: jfrog/frogbot@v2
+        env:
+          JF_URL: ${{ secrets.FROGBOT_URL }}
+
+          JF_ACCESS_TOKEN: ${{ secrets.FROGBOT_ACCESS_TOKEN }}
+
+          JF_GIT_TOKEN: ${{ secrets.GITHUB_TOKEN }}

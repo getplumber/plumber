@@ -1,0 +1,344 @@
+name: 'Lint and Test'
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths-ignore:
+      - 'VERSION'
+      - 'LICENSE'
+      - '**.md'
+      - 'examples'
+      - 'publish.yaml'
+      - '.github/workflows/clickhouse_ci.yml'
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'VERSION'
+      - 'LICENSE'
+      - '**.md'
+      - 'examples'
+      - 'publish.yaml'
+      - '.github/workflows/clickhouse_ci.yml'
+
+jobs:
+  clickhouse-versions:
+    uses: ./.github/workflows/clickhouse-versions.yml
+
+  lint:
+    runs-on: ubuntu-26.04
+    name: Ruff
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - name: Install Ruff
+        run: |
+          python -m pip install --upgrade pip
+          pip install "ruff==0.15.8"
+      - name: Ruff format check
+        run: ruff format --check clickhouse_connect tests examples setup.py
+      - name: Ruff lint check
+        run: ruff check clickhouse_connect tests examples setup.py
+
+  typecheck:
+    runs-on: ubuntu-26.04
+    name: Mypy
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r tests/test_requirements.txt
+      - name: Mypy check
+        run: mypy
+
+  public-api-types:
+    runs-on: ubuntu-26.04
+    name: Public API Type Surface
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install into a clean consumer environment
+        run: |
+          python -m venv "$RUNNER_TEMP/consumer"
+          pip install build
+          CLICKHOUSE_CONNECT_SKIP_CYTHON=1 python -m build --sdist --outdir "$RUNNER_TEMP/dist"
+          CLICKHOUSE_CONNECT_SKIP_CYTHON=1 "$RUNNER_TEMP/consumer/bin/pip" install "$RUNNER_TEMP"/dist/*.tar.gz
+          # Stub packages are intentionally unpinned. If the ratchet count shifts without a repo change, pin them here.
+          "$RUNNER_TEMP/consumer/bin/pip" install numpy pandas pandas-stubs pyarrow polars "sqlalchemy>=2.0,<3.0"
+          "$RUNNER_TEMP/consumer/bin/pip" install "mypy==2.1.0" "pyright==1.1.408"
+      - name: Confirm py.typed shipped with the install
+        run: test -f "$RUNNER_TEMP"/consumer/lib/python*/site-packages/clickhouse_connect/py.typed
+      - name: Build wheel and install it into a separate consumer environment
+        run: |
+          python -m venv "$RUNNER_TEMP/wheel-consumer"
+          CLICKHOUSE_CONNECT_SKIP_CYTHON=1 python -m build --wheel --outdir "$RUNNER_TEMP/wheel-dist"
+          "$RUNNER_TEMP/wheel-consumer/bin/pip" install "$RUNNER_TEMP"/wheel-dist/*.whl
+          "$RUNNER_TEMP/wheel-consumer/bin/pip" install "sqlalchemy[asyncio]>=2.0.44,<3.0" aiohttp
+      - name: Installed wheel SQLAlchemy entry point smoke test
+        run: |
+          cp tests/type_check/installed_sqlalchemy_smoke.py "$RUNNER_TEMP"
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/wheel-consumer/bin/python" installed_sqlalchemy_smoke.py
+      - name: Consumer smoke test (mypy --strict against installed sdist)
+        run: |
+          cp tests/type_check/consumer_smoke.py "$RUNNER_TEMP"
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/consumer/bin/mypy" --strict --follow-imports=silent consumer_smoke.py
+      - name: Public type completeness ratchet
+        # SQLAlchemy must be installed while verifytypes scans the public cc_sqlalchemy annotations.
+        # Clean Python 3.12 consumer measurement with Pyright 1.1.408 is 1037, plus one symbol of headroom.
+        run: python scripts/check_public_types.py clickhouse_connect --max-untyped 1038 --python "$RUNNER_TEMP/consumer/bin/python"
+      - name: SQLAlchemy Select typing smoke test
+        run: |
+          cp tests/type_check/sqlalchemy_select_smoke.py "$RUNNER_TEMP"
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/consumer/bin/mypy" --strict --follow-imports=silent sqlalchemy_select_smoke.py
+
+  bare-import-test:
+    runs-on: ubuntu-26.04
+    needs: [lint, typecheck, public-api-types, clickhouse-versions]
+    name: Bare Install Test (no extras)
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Start ClickHouse (${{ needs.clickhouse-versions.outputs.default }}) in Docker
+        env:
+          CLICKHOUSE_CONNECT_TEST_CH_VERSION: ${{ needs.clickhouse-versions.outputs.default }}
+          COMPOSE_PROJECT_NAME: clickhouse-connect-ci
+        run: docker compose -f docker-compose.yml up -d --wait
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install only core dependencies (no extras)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e . --no-deps
+          pip install certifi urllib3 backports.zstd lz4
+      - name: Bare import test and basic query
+        run: python tests/test_bare_install.py
+      - name: Stop ClickHouse
+        if: ${{ always() && hashFiles('docker-compose.yml') != '' }}
+        env:
+          COMPOSE_PROJECT_NAME: clickhouse-connect-ci
+        run: docker compose -f docker-compose.yml down --volumes --remove-orphans
+
+  tests:
+    runs-on: ubuntu-26.04
+    needs: [bare-import-test, clickhouse-versions]
+    strategy:
+      matrix:
+        python-version:
+          - '3.10'
+          - '3.11'
+          - '3.12'
+          - '3.13'
+          - '3.14'
+        clickhouse-version: ${{ fromJSON(needs.clickhouse-versions.outputs.matrix) }}
+        use-c:
+          - '1'
+        include:
+          - python-version: '3.10'
+            clickhouse-version: ${{ needs.clickhouse-versions.outputs.default }}
+            use-c: '0'
+          - python-version: '3.14'
+            clickhouse-version: ${{ needs.clickhouse-versions.outputs.default }}
+            use-c: '0'
+          # Free-threaded build (experimental). PYTHON_GIL=0 keeps the GIL off when
+          # dependencies that have not declared free-threading compatibility are imported.
+          - python-version: '3.14t'
+            clickhouse-version: ${{ needs.clickhouse-versions.outputs.default }}
+            use-c: '1'
+            python-gil: '0'
+
+    # The free-threaded job is non-blocking while support is experimental
+    continue-on-error: ${{ matrix.python-version == '3.14t' }}
+    name: Local Tests Py=${{ matrix.python-version }} CH=${{ matrix.clickhouse-version }} C=${{ matrix.use-c }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Start ClickHouse (version - ${{ matrix.clickhouse-version }}) in Docker
+        env:
+          CLICKHOUSE_CONNECT_TEST_CH_VERSION: ${{ matrix.clickhouse-version }}
+          COMPOSE_PROJECT_NAME: clickhouse-connect-ci
+        run: docker compose -f docker-compose.yml up -d --wait
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install pip
+        run:  python -m pip install --upgrade pip
+      - name: Install Test Dependencies
+        # polars ships no free-threaded wheels and its sdist needs a long Rust nightly
+        # build, so it is excluded on 3.14t and its tests skip
+        run: |
+          if [ "${{ matrix.python-version }}" = "3.14t" ]; then
+            grep -v '^polars' tests/test_requirements.txt > /tmp/test_requirements.txt
+            pip install -r /tmp/test_requirements.txt
+          else
+            pip install -r tests/test_requirements.txt
+          fi
+      - name: Build cython extensions
+        run: python setup.py build_ext --inplace
+      - name: "Add distribution info"  #  This lets SQLAlchemy find entry points
+        run: pip install -e . --no-deps
+      - name: Add ClickHouse TLS instance to /etc/hosts
+        run: |
+          sudo echo "127.0.0.1 server1.clickhouse.test" | sudo tee -a /etc/hosts
+      - name: Run tests
+        env:
+          CLICKHOUSE_CONNECT_USE_C: ${{ matrix.use-c }}
+          CLICKHOUSE_CONNECT_TEST_TLS: 1
+          CLICKHOUSE_CONNECT_TEST_DOCKER: 'False'
+          CLICKHOUSE_CONNECT_TEST_FUZZ: 50
+          SQLALCHEMY_SILENCE_UBER_WARNING: 1
+          # Empty for non-free-threaded entries, CPython ignores an empty value
+          PYTHON_GIL: ${{ matrix.python-gil }}
+        run: pytest -n 4 tests
+      - name: Stop ClickHouse
+        if: ${{ always() && hashFiles('docker-compose.yml') != '' }}
+        env:
+          COMPOSE_PROJECT_NAME: clickhouse-connect-ci
+        run: docker compose -f docker-compose.yml down --volumes --remove-orphans
+
+  pandas-3x-compat-test:
+    runs-on: ubuntu-26.04
+    needs: [bare-import-test, clickhouse-versions]
+    name: Pandas 3.x Compatibility Tests
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Start ClickHouse (${{ needs.clickhouse-versions.outputs.default }}) in Docker
+        env:
+          CLICKHOUSE_CONNECT_TEST_CH_VERSION: ${{ needs.clickhouse-versions.outputs.default }}
+          COMPOSE_PROJECT_NAME: clickhouse-connect-ci
+        run: docker compose -f docker-compose.yml up -d --wait
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install pip
+        run:  python -m pip install --upgrade pip
+      - name: Install Test Dependencies
+        run: pip install -r tests/test_requirements.txt
+      - name: Install pandas 3.x
+        run: pip install "pandas>=3,<4" # Override pandas version
+      - name: Build cython extensions
+        run: python setup.py build_ext --inplace
+      - name: "Add distribution info"  #  This lets SQLAlchemy find entry points
+        run: pip install -e . --no-deps
+      - name: Add ClickHouse TLS instance to /etc/hosts
+        run: |
+          sudo echo "127.0.0.1 server1.clickhouse.test" | sudo tee -a /etc/hosts
+      - name: Run tests
+        env:
+          CLICKHOUSE_CONNECT_TEST_TLS: 1
+          CLICKHOUSE_CONNECT_TEST_DOCKER: 'False'
+          SQLALCHEMY_SILENCE_UBER_WARNING: 1
+        run: pytest -n 4 tests/unit_tests/test_pandas.py tests/integration_tests/test_pandas.py tests/integration_tests/test_async_features.py -k "pandas or arrow"
+      - name: Stop ClickHouse
+        if: ${{ always() && hashFiles('docker-compose.yml') != '' }}
+        env:
+          COMPOSE_PROJECT_NAME: clickhouse-connect-ci
+        run: docker compose -f docker-compose.yml down --volumes --remove-orphans
+
+  sqlalchemy-1x-compat-test:
+    runs-on: ubuntu-26.04
+    needs: [bare-import-test, clickhouse-versions]
+    name: SQLAlchemy 1.x Compatibility Tests
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Start ClickHouse (${{ needs.clickhouse-versions.outputs.default }}) in Docker
+        env:
+          CLICKHOUSE_CONNECT_TEST_CH_VERSION: ${{ needs.clickhouse-versions.outputs.default }}
+          COMPOSE_PROJECT_NAME: clickhouse-connect-ci
+        run: docker compose -f docker-compose.yml up -d --wait
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Install pip
+        run:  python -m pip install --upgrade pip
+      - name: Install Test Dependencies
+        run: pip install -r tests/test_requirements.txt
+      - name: Install SQLAlchemy 1.x and compatible Alembic
+        run: |
+          # Resolve both together because newer Alembic versions require SQLAlchemy 2.x.
+          pip install "sqlalchemy>=1.4.40,<2.0" "alembic>=1.18"
+          pip check
+      - name: Build cython extensions
+        run: python setup.py build_ext --inplace
+      - name: "Add distribution info"  #  This lets SQLAlchemy find entry points
+        run: pip install -e . --no-deps
+      - name: Add ClickHouse TLS instance to /etc/hosts
+        run: |
+          sudo echo "127.0.0.1 server1.clickhouse.test" | sudo tee -a /etc/hosts
+      - name: Run tests
+        env:
+          CLICKHOUSE_CONNECT_TEST_TLS: 1
+          CLICKHOUSE_CONNECT_TEST_DOCKER: 'False'
+          SQLALCHEMY_SILENCE_UBER_WARNING: 1
+        run: pytest -n 4 tests/integration_tests/test_sqlalchemy tests/unit_tests/test_sqlalchemy
+      - name: Stop ClickHouse
+        if: ${{ always() && hashFiles('docker-compose.yml') != '' }}
+        env:
+          COMPOSE_PROJECT_NAME: clickhouse-connect-ci
+        run: docker compose -f docker-compose.yml down --volumes --remove-orphans
+
+  check-secret:
+    runs-on: ubuntu-26.04
+    needs: [bare-import-test, tests, pandas-3x-compat-test, sqlalchemy-1x-compat-test]
+    outputs:
+      has_secrets: ${{ steps.has_secrets.outputs.HAS_SECRETS }}
+    steps:
+      - id: has_secrets
+        env:
+          CLOUD_HOST: ${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_HOST }}
+        if: "${{ env.CLOUD_HOST != '' }}"
+        run: echo "HAS_SECRETS=true" >> $GITHUB_OUTPUT
+
+  cloud-tests:
+    runs-on: ubuntu-26.04
+    name: Cloud Tests Py=3.12
+    needs: check-secret
+    if: needs.check-secret.outputs.has_secrets == 'true'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r tests/test_requirements.txt
+      - name: Build cython extensions
+        run: python setup.py build_ext --inplace
+      - name: "Add distribution info"  #  This lets SQLAlchemy find entry points
+        run: pip install -e . --no-deps
+      - name: Run tests
+        env:
+          CLICKHOUSE_CONNECT_TEST_FUZZ: 10
+          CLICKHOUSE_CONNECT_TEST_CLOUD: 'True'
+          CLICKHOUSE_CONNECT_TEST_PORT: 8443
+          CLICKHOUSE_CONNECT_TEST_HOST: ${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_HOST_SMT_PROD }}
+          CLICKHOUSE_CONNECT_TEST_PASSWORD: ${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_PASSWORD_SMT_PROD }}
+          CLICKHOUSE_CONNECT_TEST_JWT_SECRET: ${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_JWT_DESERT_VM_43 }}
+          SQLALCHEMY_SILENCE_UBER_WARNING: 1
+        run: pytest -n 4 tests/integration_tests

@@ -1,0 +1,125 @@
+# Release Drafter Workflow
+#
+# This workflow automatically creates and updates draft releases based on merged PRs.
+# It uses semantic PR titles (conventional commits format) to categorize changes.
+#
+# How it works:
+# - On push to main: Updates the draft release with the merged PR and pre-built assets
+# - Categories are determined by conventional commit type (feat, fix, chore, etc.)
+# - The release body is rendered from `.github/release-drafter.yml`
+#
+# The draft is prepared in three stages, including two passes of semantic-pr-release-drafter:
+# 1. A fast, separate job on a standard runner creates/updates the draft with a
+#    "NOT READY FOR PUBLISHING" banner and pins the release to the commit it evaluated.
+#    Keeping this pass separate makes the banner visible while the build job starts.
+# 2. The build job waits for the first pass, then GoReleaser builds and uploads the
+#    assets to that same draft.
+# 3. The second pass finalizes the same release by id, which removes the banner.
+#    It attaches nothing and keeps the GoReleaser assets in place.
+# If the build fails, the banner stays put and the draft is not publishable.
+#
+# To publish a release:
+# 1. Go to the Releases page
+# 2. Find the draft release (assets are already attached!)
+# 3. Edit the version number if needed
+# 4. Click "Publish release" - this creates the git tag and triggers the Release workflow
+#
+# Note: This workflow builds and attaches assets to the draft release to prevent
+# checksum mismatches with the Terraform Registry. The Registry syncs checksums
+# when a release is published, so assets must be present at that time.
+
+name: Release Drafter
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: release-drafter
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  prepare-empty-draft:
+    name: Prepare Empty Draft
+    permissions:
+      contents: write
+      pull-requests: write
+    runs-on: ubuntu-latest
+    steps:
+      # Create/update the draft before the build runner is provisioned.
+      - name: Create empty draft
+        uses: aaronsteers/semantic-pr-release-drafter@v2.3.4
+        id: prepare-empty-draft
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          not-ready: true
+          # Drop any assets left over from an earlier run before GoReleaser uploads.
+          reset-files: 'true'
+    outputs:
+      release-id: ${{ steps.prepare-empty-draft.outputs.id }}
+      resolved-version: ${{ steps.prepare-empty-draft.outputs.resolved-version }}
+      resolved-sha: ${{ steps.prepare-empty-draft.outputs.resolved-sha }}
+
+  build-and-attach-assets:
+    name: Draft Release with Assets
+    needs: prepare-empty-draft
+    permissions:
+      contents: write
+      pull-requests: write
+    # If resource contention occurs, bump this to ubuntu-latest-16core.
+    runs-on: ubuntu-latest
+    steps:
+      # Step 2: Checkout the exact commit the draft was pinned to, to build assets
+      - uses: actions/checkout@8f4b7f84864484a7bf31766abe9204da3cbe65b3 # v3.5.0
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.prepare-empty-draft.outputs.resolved-sha }}
+
+      - uses: actions/setup-go@4d34df0c2316fe8122ab82dc22947d607c0c91f9 # v4.0.0
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      # Step 3: Import GPG key for signing
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@111c56156bcc6918c056dbef52164cfa583dc549 # v5.2.0
+        id: import_gpg
+        with:
+          gpg_private_key: ${{ secrets.TERRAFORM_GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.TERRAFORM_GPG_PASSPHRASE }}
+
+      # Step 4: Create local tag for GoReleaser (not pushed)
+      - name: Create local tag
+        run: |
+          VERSION="${{ needs.prepare-empty-draft.outputs.resolved-version }}"
+          git tag "v${VERSION}" || true  # Ignore if tag already exists locally
+
+      # Step 5: Build and upload assets using GoReleaser
+      # GoReleaser will find the existing draft release and upload assets to it.
+      # Configured with `draft: true` and `use_existing_draft: true` in `.goreleaser.yml`.
+      - name: Build and upload release assets
+        uses: goreleaser/goreleaser-action@f82d6c1c344bcacabba2c841718984797f664a6b # v4.2.0
+        with:
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GPG_FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}
+          GORELEASER_CURRENT_TAG: v${{ needs.prepare-empty-draft.outputs.resolved-version }}
+
+      # Step 6: Finalize the same draft: removes the "not ready" banner.
+      # Targets the release created in step 1 by id, so version, tag and target
+      # commit come from that release and cannot drift if main moved meanwhile.
+      - name: Finalize draft release
+        uses: aaronsteers/semantic-pr-release-drafter@v2.3.4
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          prepared-release-id: ${{ needs.prepare-empty-draft.outputs.release-id }}
+          # Keep the assets GoReleaser just uploaded.
+          reset-files: 'false'

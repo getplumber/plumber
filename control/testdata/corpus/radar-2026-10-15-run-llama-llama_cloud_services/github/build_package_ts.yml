@@ -1,0 +1,34 @@
+name: Build Package - TypeScript
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "ts/**"
+  pull_request:
+    paths:
+      - "ts/**"
+
+jobs:
+  pre_release:
+    name: Pre Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: "ts/llama_cloud_services/.nvmrc"
+
+      - name: Install dependencies
+        working-directory: ts/llama_cloud_services/
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build
+        working-directory: ts/llama_cloud_services/
+        run: pnpm run build

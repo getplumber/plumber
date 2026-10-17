@@ -1,0 +1,55 @@
+# This workflow is triggered when a GitHub release is created.
+# It can also be run manually to re-publish to NPM in case it failed for some reason.
+# You can run this workflow by navigating to https://www.github.com/stainless-api/stainless-api-typescript/actions/workflows/publish-npm.yml
+name: Publish NPM
+on:
+  workflow_dispatch:
+    inputs:
+      path:
+        description: The path to run the release in, e.g. '.' or 'packages/mcp-server'
+        required: true
+
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    name: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v3
+        with:
+          node-version: "20"
+
+      - name: Update npm to latest
+        run: npm install -g npm@latest && npm --version
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install dependencies
+        run: |
+          pnpm install
+
+      - name: Publish to NPM
+        run: |
+          if [ -n "${{ github.event.inputs.path }}" ]; then
+            PATHS_RELEASED='[\"${{ github.event.inputs.path }}\"]'
+          else
+            PATHS_RELEASED='[\".\", \"packages/mcp-server\"]'
+          fi
+          pnpm tsn scripts/publish-packages.ts "{ \"paths_released\": \"$PATHS_RELEASED\" }"
+
+      - name: Upload MCP Server DXT GitHub release asset
+        run: |
+          gh release upload ${{ github.event.release.tag_name }} \
+            packages/mcp-server/stainless_api_sdk_api.mcpb
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

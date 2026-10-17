@@ -1,0 +1,23 @@
+name: Publish to Crates.io
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  publish:
+    name: Build and publish to crates.io
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@bd41891a8e7f4b8649f6d684415e1a6155fe4e22 # 1.83.0
+
+      - name: Run tests
+        run: cargo test --all-features
+
+      - name: Publish to crates.io
+        run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}

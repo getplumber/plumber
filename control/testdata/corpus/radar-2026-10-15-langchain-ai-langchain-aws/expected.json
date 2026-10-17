@@ -1,0 +1,50 @@
+{
+  "source": "https://github.com/langchain-ai/langchain-aws",
+  "commit": "a0e80b9febaf21cf1cead8f0dc16b3ffd8633976",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "copilot",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/_compile_integration_test.yml": "active",
+    ".github/workflows/_lint.yml": "active",
+    ".github/workflows/_release.yml": "active",
+    ".github/workflows/_test.yml": "active",
+    ".github/workflows/_test_conformance.yml": "active",
+    ".github/workflows/_test_optional_dependencies.yml": "active",
+    ".github/workflows/_test_release.yml": "active",
+    ".github/workflows/check_diffs.yml": "active",
+    ".github/workflows/integration_test.yml": "active",
+    ".github/workflows/pr_lint.yml": "active",
+    ".github/workflows/refresh_model_profiles.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High `Ana06/get-changed-files` path in `check_diffs/build` was judged overstated: a compromised action runs code on a runner with a read-only token and no secret, Medium at most; the High `amannn/action-semantic-pull-request@v6` path runs with a read-only token, Low.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "Ana06/get-changed-files@v2.3.0",
+        "tier": "medium"
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "amannn/action-semantic-pull-request@v6",
+        "tier": "low"
+      }
+    ]
+  }
+}

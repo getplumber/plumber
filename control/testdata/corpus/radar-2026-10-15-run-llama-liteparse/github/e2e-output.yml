@@ -1,0 +1,148 @@
+name: E2E Output Validation
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# For PRs, we need write permissions to add labels
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  compare-outputs:
+    runs-on: ubuntu-latest
+    outputs:
+      has_changes: ${{ steps.compare.outputs.has_changes }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libtesseract-dev libleptonica-dev \
+            tesseract-ocr libreoffice imagemagick ghostscript
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cache/pdfium-rs
+            target
+          key: ${{ runner.os }}-cargo-e2e-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Download from HuggingFace
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          pip install huggingface_hub
+          hf download 'llamaindex/liteparse_cicd_data' --local-dir expected-dataset --repo-type dataset
+
+      - name: Compare outputs
+        id: compare
+        run: ./scripts/compare-outputs.sh expected-dataset
+
+      - name: Upload comparison results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: comparison-results
+          path: comparison-output.txt
+
+      - name: Add label for changed outputs (PR only)
+        if: github.event_name == 'pull_request' && steps.compare.outputs.has_changes == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              labels: ['output-changed']
+            })
+
+      - name: Check for approval label (PR only)
+        id: check-approved
+        if: github.event_name == 'pull_request' && steps.compare.outputs.has_changes == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: labels } = await github.rest.issues.listLabelsOnIssue({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number
+            });
+            const hasApproval = labels.some(label => label.name === 'output-approved');
+            core.setOutput('has_approval', hasApproval.toString());
+            console.log(`Has output-approved label: ${hasApproval}`);
+
+      - name: Require approval for output changes
+        if: steps.compare.outputs.has_changes == 'true' && github.event_name == 'pull_request' && steps.check-approved.outputs.has_approval != 'true'
+        run: |
+          echo "::warning::This PR changes liteparse output. Please review the comparison results."
+          echo ""
+          echo "To approve these changes:"
+          echo "1. Review the comparison output in the artifacts"
+          echo "2. Add the 'output-approved' label to this PR"
+          echo "3. Re-run this workflow"
+          exit 1
+
+  # This job only runs on main branch after merge when outputs changed
+  upload-dataset:
+    runs-on: ubuntu-latest
+    needs: compare-outputs
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.compare-outputs.outputs.has_changes == 'true'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libtesseract-dev libleptonica-dev \
+            tesseract-ocr libreoffice imagemagick ghostscript
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cache/pdfium-rs
+            target
+          key: ${{ runner.os }}-cargo-e2e-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install huggingface_hub
+
+      - name: Download existing dataset from HuggingFace
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          hf download 'llamaindex/liteparse_cicd_data' --local-dir expected-dataset --repo-type dataset
+
+      - name: Generate and upload dataset
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          if [ -z "$HF_TOKEN" ]; then
+            echo "Warning: HF_TOKEN not set, skipping upload"
+            exit 0
+          fi
+          ./scripts/upload-dataset.sh expected-dataset ${{ vars.HF_DATASET_REPO || 'llamaindex/liteparse_cicd_data' }}

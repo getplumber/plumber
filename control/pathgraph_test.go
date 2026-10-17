@@ -668,3 +668,22 @@ func TestBlockBranchesNameTheTypedFeedKinds(t *testing.T) {
 		t.Errorf("branches = %+v, want FedVia %v", got, want)
 	}
 }
+
+// An edge whose FeedsVia names both the compared and the executed output
+// kind, with no other kind linking the pair, falls back to the executed
+// kind, not the compared one: strengthOfFeed in control/paths.go already
+// prices such an edge as a full feed, so its line must never read as
+// compared-only.
+func TestBlockBranchesPreferAnExecutedOutputOverComparedOnlyInTheFallback(t *testing.T) {
+	p := AttackPath{Jobs: []string{"w/build"}, Branches: []PathBranch{{
+		Job: "w/build", Jobs: []string{"w/build", "w/deploy"},
+		FeedsVia: map[string][]string{
+			"w/deploy": {FeedOutputCompared, FeedOutputExecuted},
+		},
+	}}}
+	got := blockBranches(p, nil)
+	want := [][]string{{FeedOutputExecuted}}
+	if len(got) != 1 || !reflect.DeepEqual(got[0].FedVia, want) {
+		t.Errorf("branches = %+v, want FedVia %v", got, want)
+	}
+}

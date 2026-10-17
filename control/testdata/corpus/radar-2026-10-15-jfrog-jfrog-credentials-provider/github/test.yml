@@ -1,0 +1,174 @@
+name: Test Jfrog Kubelet Plugin
+on:
+  workflow_dispatch:
+    inputs:
+      JFROG_CREDENTIAL_PLUGIN_BINARY_URL:
+        description: 'BINARY_URL (CI adds arch suffix automatically)'
+        required: true
+        default: "https://releases.jfrog.io/artifactory/run/jfrog-credentials-provider/1.0.0/jfrog-credential-provider-linux"
+        type: string
+      DISABLE_TERRAFORM_DESTROY:
+        description: 'DISABLE_TERRAFORM_DESTROY'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  id-token: write
+  contents: read 
+
+env:
+  AWS_REGION: ap-northeast-3
+  TF_VERSION: 1.5.7
+
+jobs:
+  verify-kubelet-plugin-aws:
+    runs-on: self-hosted
+    env:
+      ARTIFACTORY_TOKEN: ${{ secrets.ARTIFACTORY_TOKEN }}
+      JFROG_CREDENTIAL_PLUGIN_BINARY_URL: ${{ github.event.inputs.JFROG_CREDENTIAL_PLUGIN_BINARY_URL }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Configure aws credentials
+        uses: aws-actions/configure-aws-credentials@v4.1.0
+        with:
+          role-to-assume: arn:aws:iam::095132750011:role/github-actions-kubelet-ci-role
+          role-session-name: kubelettestcisession
+          aws-region: ap-northeast-3
+      
+      - name: Verify if aws is connected
+        run: |
+          aws sts get-caller-identity
+
+      - name: Login to Azure with Federated Credentials
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_APP_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_APP_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_APP_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Initialise Terraform
+        id: init
+        env:
+          AZURE_APP_SUBSCRIPTION_ID: ${{ secrets.AZURE_APP_SUBSCRIPTION_ID }}
+        run: |
+          echo "" >> build/terraform.tfvars.aws
+          echo "jfrog_credential_provider_binary_url=\"$JFROG_CREDENTIAL_PLUGIN_BINARY_URL\"" >> build/terraform.tfvars.aws
+          # for azure, it is not possible to avoid azure authentication check, even when azure is disabled
+          echo "azure_subscription_id=\"$AZURE_APP_SUBSCRIPTION_ID\"" >> build/terraform.tfvars.aws
+          cp build/terraform.tfvars.aws terraform-ci/terraform.tfvars
+          cd terraform-ci
+          terraform init
+      
+      - name: Run AWS Terraform CI
+        id: apply
+        run: |
+          cd terraform-ci
+          terraform apply -input=false -auto-approve
+          terraform output -json > terraform_output.json
+          echo "Terraform output: $(cat terraform_output.json)"
+
+      - name: Destroy AWS terraform resources
+        id: destroy
+        if: always() && !env.DISABLE_TERRAFORM_DESTROY
+        continue-on-error: true 
+        run: |
+          cd terraform-ci
+          terraform destroy -input=false -auto-approve
+          rm terraform.tfstate terraform.tfstate.backup terraform_output.json
+
+      - name: Upload Terraform context for manual cleanup
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-context-for-manual-cleanup-aws
+          path: |
+            terraform-ci/**/*.tf
+            terraform-ci/terraform.tfstate
+            terraform-ci/terraform.tfstate.backup
+            terraform-ci/terraform.tfvars
+            terraform-ci/.terraform.lock.hcl
+            terraform-ci/terraform_output.json
+          retention-days: 1
+  
+  verify-kubelet-plugin-azure:
+    runs-on: self-hosted
+    env:
+      ARTIFACTORY_TOKEN: ${{ secrets.ARTIFACTORY_TOKEN }}
+      JFROG_CREDENTIAL_PLUGIN_BINARY_URL: ${{ github.event.inputs.JFROG_CREDENTIAL_PLUGIN_BINARY_URL }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Install Azure CLI
+        uses: pietrobolcato/install-azure-cli-action@main
+        
+      - name: Login to Azure with Federated Credentials
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_APP_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_APP_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_APP_SUBSCRIPTION_ID }}
+          
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Initialise Terraform
+        id: init
+        env:
+          AZURE_APP_SUBSCRIPTION_ID: ${{ secrets.AZURE_APP_SUBSCRIPTION_ID }}
+        run: |
+          echo "" >> build/terraform.tfvars.azure
+          echo "jfrog_credential_provider_binary_url=\"$JFROG_CREDENTIAL_PLUGIN_BINARY_URL\"" >> build/terraform.tfvars.azure
+          echo "azure_subscription_id=\"$AZURE_APP_SUBSCRIPTION_ID\"" >> build/terraform.tfvars.azure
+          cp build/terraform.tfvars.azure terraform-ci/terraform.tfvars
+          cd terraform-ci
+          terraform init
+
+      - name: Run Azure Terraform CI
+        id: apply
+        run: |
+          # to avoid credentials check for aws
+          cd terraform-ci
+          cat terraform.tfvars
+          terraform apply -input=false -auto-approve
+          terraform output -json > terraform_output.json
+          echo "Terraform output: $(cat terraform_output.json)"
+
+      - name: Destroy Azure terraform resources
+        id: destroy
+        if: always() && !env.DISABLE_TERRAFORM_DESTROY
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 20
+          max_attempts: 3
+          continue-on-error: true 
+          command: |
+            cd terraform-ci
+            terraform destroy -input=false -auto-approve
+            rm terraform.tfstate terraform.tfstate.backup terraform_output.json
+
+      - name: Upload Terraform context for manual cleanup
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-context-for-manual-cleanup-azure
+          path: |
+            terraform-ci/**/*.tf
+            terraform-ci/terraform.tfstate
+            terraform-ci/terraform.tfstate.backup
+            terraform-ci/terraform.tfvars
+            terraform-ci/.terraform.lock.hcl
+            terraform-ci/terraform_output.json
+          retention-days: 1

@@ -1,0 +1,48 @@
+{
+  "source": "https://github.com/jfrog/artifactory-client-java",
+  "commit": "eece1d4c9729cdfaf2bb6af1a6ff2df49708b0d6",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "master",
+  "branches": [
+    {
+      "name": "master",
+      "protected": false
+    }
+  ],
+  "environments": [
+    {
+      "name": "frogbot",
+      "known": true,
+      "requiredReviewers": true,
+      "reviewers": 1
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/cla.yml": "active",
+    ".github/workflows/monitorISsues.yml": "disabled_inactivity",
+    ".github/workflows/removeLabel.yml": "active",
+    ".github/workflows/tests.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The Critical pull_request_target path from the test workflow was judged false: it runs only on `types: [labeled]` when a maintainer applies `safe to test`, at the labelled head commit, so the path holds as a maintainer-approved Medium at most.",
+  "expect": {
+    "paths": [
+      {
+        "entryKind": "pr_target",
+        "tier": "medium",
+        "subjectContains": "github.event.pull_request.head.sha",
+        "actor": "maintainer_approved"
+      }
+    ],
+    "ceilings": [
+      {
+        "entryKind": "pr_target",
+        "subjectContains": "github.event.pull_request.head.sha",
+        "tier": "medium"
+      }
+    ]
+  }
+}

@@ -1,0 +1,132 @@
+name: TypeScript CI
+
+on:
+  workflow_call:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: { group: databricks-protected-runner-group, labels: linux-ubuntu-latest }
+            target: x86_64-unknown-linux-gnu
+          - runner: { group: databricks-protected-runner-group, labels: linux-ubuntu-latest }
+            target: aarch64-unknown-linux-gnu
+          - runner: { group: databricks-protected-runner-group, labels: windows-server-latest }
+            target: x86_64-pc-windows-msvc
+    name: Build - ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        working-directory: typescript
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Get JFrog OIDC token
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/jfrog-oidc-token.sh"
+      - name: Configure Cargo registry
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/configure-cargo.sh"
+      - name: Configure npm registry
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/configure-npm.sh"
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: typescript/package-lock.json
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            typescript/target/
+          key: ${{ matrix.target }}-cargo-${{ hashFiles('typescript/Cargo.lock') }}
+
+      - name: Install cross-compilation tools (Linux ARM64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Build
+        run: npm run build:arrow -- --target ${{ matrix.target }}
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bindings-${{ matrix.target }}
+          path: 'typescript/*.node'
+          if-no-files-found: error
+
+  test:
+    name: Test Node.js ${{ matrix.node }} - ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux-ubuntu-latest
+            runner: { group: databricks-protected-runner-group, labels: linux-ubuntu-latest }
+            node: '16'
+          - os: linux-ubuntu-latest
+            runner: { group: databricks-protected-runner-group, labels: linux-ubuntu-latest }
+            node: '18'
+          - os: linux-ubuntu-latest
+            runner: { group: databricks-protected-runner-group, labels: linux-ubuntu-latest }
+            node: '20'
+          - os: windows-server-latest
+            runner: { group: databricks-protected-runner-group, labels: windows-server-latest }
+            node: '20'
+    defaults:
+      run:
+        working-directory: typescript
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Get JFrog OIDC token
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/jfrog-oidc-token.sh"
+      - name: Configure Cargo registry
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/configure-cargo.sh"
+      - name: Configure npm registry
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/configure-npm.sh"
+      - name: Setup Node.js ${{ matrix.node }}
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: 'npm'
+          cache-dependency-path: typescript/package-lock.json
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: stable
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Build
+        run: npm run build:debug:arrow
+
+      - name: Test
+        run: npm run test:unit

@@ -1,0 +1,53 @@
+{
+  "source": "https://github.com/jfrog/jfrog-client-go",
+  "commit": "3b4b900d8174ba878d1ce7ef1df8d18fad341472",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "master",
+  "branches": [
+    {
+      "name": "master",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "build-gate",
+      "known": true,
+      "requiredReviewers": true,
+      "reviewers": 3
+    },
+    {
+      "name": "frogbot",
+      "known": true,
+      "requiredReviewers": true,
+      "reviewers": 1
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/cla.yml": "active",
+    ".github/workflows/tests.yml": "active",
+    ".github/workflows/analysis.yml": "active",
+    ".github/workflows/frogbot-scan-pull-request.yml": "active",
+    ".github/workflows/frogbot-scan-repository.yml": "active",
+    ".github/workflows/monitor-stale.yml": "active",
+    ".github/workflows/dependabot-auto-merge.yml": "active",
+    ".github/workflows/update-jf-dependencies.yml": "active",
+    ".github/workflows/build-gate.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The Critical pull_request_target path from `dependabot-auto-merge.yml` was judged false (the jfrog-cli shape of plumber issue 532): the job runs only when the pull request author is `dependabot[bot]`, a login nobody else can take, so no outsider entry exists.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "pr_target",
+        "subjectContains": "github.event.pull_request.head.sha",
+        "tier": "none",
+        "job": "dependabot-auto-merge/dependabot",
+        "pending": "the gate facts resolve `github.repository` to a stand-in instead of the scanned repository, so a condition comparing it with the repository's own name reads false and the gate is credited to \"condition\" instead of the fact that really decides it (the bot author, the same repository). Here `user.login == 'dependabot[bot]' && github.repository == 'jfrog/<repo>'` keeps the bot-only job on a maintainer-approved Medium path."
+      }
+    ]
+  }
+}

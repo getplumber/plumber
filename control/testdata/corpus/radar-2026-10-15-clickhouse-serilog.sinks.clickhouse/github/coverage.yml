@@ -1,0 +1,45 @@
+name: Code Coverage
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**/*.md"
+  pull_request:
+    branches: [main]
+
+jobs:
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Cache NuGet
+        uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: |
+            10.x
+
+      - name: Test with Coverage
+        run: dotnet test Serilog.Sinks.ClickHouse.Tests/Serilog.Sinks.ClickHouse.Tests.csproj --framework net10.0 --configuration Release --verbosity normal --logger GitHubActions --filter "Category!=Cluster" /clp:ErrorsOnly /p:CollectCoverage=true /p:CoverletOutputFormat=opencover /p:SkipAutoProps=true
+
+      - name: Upload Coverage
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+          disable_search: true
+          verbose: true
+          files: ./Serilog.Sinks.ClickHouse.Tests/coverage.net10.0.opencover.xml

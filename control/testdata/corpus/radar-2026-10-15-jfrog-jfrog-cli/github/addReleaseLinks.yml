@@ -1,0 +1,27 @@
+name: Add links on release
+on:
+  release:
+    types: [created]
+
+jobs:
+  add-links-on-release:
+    name: Add links on release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Create markdown download links
+        run: |
+          # Remove the prefix 'v' from version.
+          RELEASE_VERSION=$(echo "${{ github.event.release.tag_name }}" | sed 's/^v//')
+
+          # Replace the place-holders '{version}' with the actual release version.
+          sed "s/{version}/$RELEASE_VERSION/g" ./.github/RELEASE_LINK_TEMPLATE.md > ./temp_releaseLinkTemplate.md
+
+      - name: Add links to release notes
+        uses: softprops/action-gh-release@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          body_path: "temp_releaseLinkTemplate.md"
+          append_body: true

@@ -1,0 +1,255 @@
+{
+  "source": "https://github.com/mastra-ai/mastra",
+  "commit": "6bfa29c6b77645fb680bde7db1c7323529dedd7d",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "copilot",
+      "known": true
+    },
+    {
+      "name": "experiment-worker-e2e-gated",
+      "known": true
+    },
+    {
+      "name": "next \u2013 mastra-docs",
+      "known": true
+    },
+    {
+      "name": "Preview",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 agent-chatbot",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 arkwright-admin",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 assistant-ui",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 bird-checker",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 crypto-chatbot",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 mastra",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 mastra-1741209732137-5THg",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 mastra-chatbot-admin",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 mastra-docs",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 mastra-docs-1.x",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 mastra-docs-1727958321845-OQSy",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 mastra-docusaurus",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 mastra-example-chatbot",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 mastra-playground-ui",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 mastra-studio-preview",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 openapi-spec-writer",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 travel-ai",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 travel-ai-1747663930742-zFQ9",
+      "known": true
+    },
+    {
+      "name": "Production",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 agent-chatbot",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 arkwright-admin",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 assistant-ui",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 bird-checker",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 crypto-chatbot",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 crypto-chatbot-new",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 mastra",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 mastra-1738844079900-1eWf",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 mastra-chatbot-admin",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 mastra-docs",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 mastra-docs-1.x",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 mastra-docusaurus",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 mastra-example-chatbot",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 mastra-playground-ui",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 mastra-studio-preview",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 openapi-spec-writer",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 openapi-spec-writer-new",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 travel-ai",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 travel-ai-1747663930742-zFQ9",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/spec-writer.yaml": "active",
+    ".github/workflows/version-packages.yml": "active",
+    ".github/workflows/link-checker.yml": "active",
+    ".github/workflows/test-combined-stores.yml": "active",
+    ".github/workflows/lint.yml": "active",
+    ".github/workflows/sync-templates.yml": "active",
+    ".github/workflows/sync_renovate-changesets.yml": "active",
+    ".github/workflows/renovate.yml": "active",
+    ".github/workflows/regenerate-provider-registry.yml": "active",
+    ".github/workflows/backport-auto.yml": "active",
+    ".github/workflows/check-redirects.yml": "active",
+    ".github/workflows/npm-publish.yml": "active",
+    ".github/workflows/validate-drizzle-schemas.yml": "active",
+    ".github/workflows/test-bun.yml": "active",
+    ".github/workflows/major-version-check.yml": "active",
+    ".github/workflows/trigger-cloud-tests.yml": "active",
+    ".github/workflows/prebuild.yml": "active",
+    ".github/workflows/test-workspaces.yml": "active",
+    ".github/workflows/labeler.yml": "active",
+    ".github/workflows/secrets.test-workspaces.yml": "active",
+    ".github/workflows/vitest-all.yml": "active",
+    ".github/workflows/lint-docs.yml": "active",
+    ".github/workflows/e2e-docs.yml": "active",
+    ".github/workflows/cron-alpha-publish.yml": "active",
+    ".github/workflows/upload-studio-r2.yml": "active",
+    ".github/workflows/test-suite.yml": "active",
+    ".github/workflows/e2e-tests.yml": "active",
+    ".github/workflows/changed-test-gate.yml": "active",
+    ".github/workflows/changed-test-gate-labeler.yml": "active",
+    ".github/workflows/flag-spam-comments.yml": "active",
+    ".github/workflows/issue-pending-release.yml": "active",
+    ".github/workflows/mastracode-e2e.yml": "active",
+    ".github/workflows/mastracode-apps.yml": "active",
+    ".github/workflows/discord-release.yml": "active",
+    ".github/workflows/validate-softwarefactory-template.yml": "active",
+    ".github/workflows/sync-softwarefactory-template.yml": "active",
+    ".github/workflows/e2e-experiment-worker.yml": "active",
+    ".github/workflows/2027dev-evals.yml": "active",
+    ".github/workflows/api-reference.yml": "active",
+    ".github/workflows/knowledge-adapter-proof.yml": "active",
+    ".github/workflows/knowledge-w2-triggers-preview.yml": "active",
+    ".github/workflows/knowledge-segment-audit.yml": "active",
+    ".github/workflows/knowledge-e2e-split.yml": "active",
+    ".github/workflows/knowledge-w2-boundary.yml": "active",
+    ".github/workflows/knowledge-generated-files.yml": "active",
+    ".github/workflows/knowledge-w1-dump.yml": "active",
+    ".github/workflows/knowledge-w1-snapshots.yml": "active",
+    ".github/workflows/knowledge-w1-seed.yml": "active",
+    ".github/workflows/release.yaml": "disabled_manually",
+    ".github/workflows/examples-validator.yml": "disabled_manually",
+    ".github/workflows/issue-triage.yml": "disabled_manually"
+  },
+  "workflowStatesKnown": true,
+  "note": "Both Critical paths were judged false: the workflow_run job `test-cloud` runs only when `workflow_run.head_repository.full_name == github.repository`, so no fork reaches it and it starts no path; the pnpm cache the release jobs restore is written in the default-branch scope only by runs of writers (pull_request runs save under their merge ref, the one base-context runner of fork code is same-repository only), so the cache path holds at Medium at most. No job here declares cache-mode, so GitHub keeps the cache of every low-trust run read-only and grants no job cache write: ISSUE-705 is silent and no cache path exists, so the cache ceiling admits none.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "pr_target",
+        "subjectContains": "github.event.workflow_run.head_sha",
+        "tier": "none",
+        "pending": "the gate facts resolve `github.repository` to a stand-in instead of the scanned repository, so a condition comparing it with the repository's own name reads false and the gate is credited to \"condition\" instead of the fact that really decides it (the bot author, the same repository). Here `check-changes` and `test-cloud` both test `github.repository == 'mastra-ai/mastra'`, so the same-repository job keeps a maintainer-approved Medium path."
+      },
+      {
+        "entryKind": "poisoned_cache",
+        "subjectContains": "",
+        "tier": "none"
+      }
+    ]
+  }
+}

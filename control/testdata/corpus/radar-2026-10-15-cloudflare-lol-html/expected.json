@@ -1,0 +1,36 @@
+{
+  "source": "https://github.com/cloudflare/lol-html",
+  "commit": "608cc4a66b7ab4fcbe1bbdeb25df8f265572b11c",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/ci.yml": "active",
+    ".github/workflows/semgrep.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High `dtolnay/rust-toolchain@stable` and `obi1kenobi/cargo-semver-checks-action@v2` paths were judged overstated: a mutable third-party action in a CI job with no secret and no write token (or only an assumed one) gives code execution on a runner, Medium at most.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "dtolnay/rust-toolchain@stable",
+        "tier": "medium"
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "obi1kenobi/cargo-semver-checks-action@v2",
+        "tier": "medium"
+      }
+    ]
+  }
+}

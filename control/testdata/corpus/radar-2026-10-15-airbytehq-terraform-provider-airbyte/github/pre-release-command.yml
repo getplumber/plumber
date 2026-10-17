@@ -1,0 +1,229 @@
+# Pre-Release Workflow
+#
+# Builds and publishes a pre-release version of the Terraform provider.
+# Pre-releases are visible on the Terraform Registry but are NOT the default
+# version, so existing users are unaffected.
+#
+# Triggers:
+# - Manual workflow_dispatch: From the Actions tab
+# - Slash command: `/pre-release version=v1.3.0-rc1` on a PR comment
+#   (optionally: `/pre-release version=v1.3.0-rc1 ref=my-branch`)
+#
+# Inputs:
+#
+#   version (REQUIRED): The pre-release version tag.
+#     Must contain a pre-release suffix: -rcN, -betaN, -alphaN, etc.
+#     Do NOT use dots in the suffix (e.g. use -rc1, not -rc.1).
+#     Examples: v1.3.0-rc1, v1.3.0-beta1, v2.0.0-alpha3
+#
+#   ref (optional, default: main): The branch, tag, or commit SHA to build from.
+#     Use a feature branch name to test unreleased code, or a PR merge-commit
+#     SHA for validating community contributions. When triggered via slash
+#     command on a PR, this defaults to the PR's head branch.
+#
+# How it works:
+#   1. Validates that `version` is valid semver with a pre-release suffix (safety check).
+#   2. Checks out the specified ref.
+#   3. Fails if the version has already been published (existing release or tag).
+#   4. Creates and pushes a git tag for the pre-release version.
+#   5. Runs GoReleaser with .goreleaser.prerelease.yml, which publishes a
+#      non-draft, prerelease GitHub Release with GPG-signed cross-platform
+#      binaries and the terraform-registry-manifest.json.
+#   6. The Terraform Registry picks up the prerelease automatically.
+#
+# This workflow does NOT conflict with the Release Drafter workflow:
+#   - Release Drafter → draft releases for stable versions
+#   - This workflow   → non-draft pre-releases for testing
+#
+# To install a pre-release in Terraform:
+#
+#   terraform {
+#     required_providers {
+#       airbyte = {
+#         source  = "airbytehq/airbyte"
+#         version = "1.3.0-rc1"  # note: no 'v' prefix in Terraform
+#       }
+#     }
+#   }
+
+name: Pre-Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: >-
+          Pre-release version tag (e.g. v1.3.0-rc1, v1.3.0-beta1).
+          MUST contain a pre-release suffix (no dots in the suffix).
+        required: true
+        type: string
+      ref:
+        description: 'Branch, tag, or commit SHA to build from'
+        required: false
+        default: 'main'
+        type: string
+      pr:
+        description: 'PR number (for slash command triggers)'
+        required: false
+        type: string
+      comment-id:
+        description: 'Comment ID (for slash command triggers)'
+        required: false
+        type: string
+
+concurrency:
+  group: pre-release-${{ inputs.version }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pre_release:
+    name: Build & Publish Pre-Release
+    permissions:
+      contents: write
+      pull-requests: write
+    runs-on: ubuntu-latest-16core
+    steps:
+      # ── Slash command: post starting comment ────────────────────────
+      - name: Authenticate as GitHub App
+        if: ${{ inputs.pr != '' }}
+        uses: actions/create-github-app-token@v3
+        id: get-app-token
+        with:
+          app-id: ${{ secrets.OCTAVIA_BOT_APP_ID }}
+          private-key: ${{ secrets.OCTAVIA_BOT_PRIVATE_KEY }}
+
+      - name: Post starting comment
+        if: ${{ inputs.pr != '' }}
+        id: start-comment
+        uses: peter-evans/create-or-update-comment@v5
+        with:
+          token: ${{ steps.get-app-token.outputs.token }}
+          issue-number: ${{ inputs.pr }}
+          comment-id: ${{ inputs.comment-id || '' }}
+          body: |
+            > **Pre-Release Job Info**
+            >
+            > Building pre-release `${{ inputs.version }}` from ref `${{ inputs.ref || 'PR head branch' }}`.
+
+            > Job started... [Check job output.](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+      # ── Resolve ref from PR if not explicitly provided ──────────────
+      - name: Resolve PR head branch
+        if: ${{ inputs.pr != '' && inputs.ref == 'main' }}
+        id: resolve-ref
+        env:
+          GH_TOKEN: ${{ steps.get-app-token.outputs.token || secrets.GITHUB_TOKEN }}
+        run: |
+          PR_HEAD=$(gh pr view "${{ inputs.pr }}" --repo "${{ github.repository }}" --json headRefName -q '.headRefName')
+          echo "ref=$PR_HEAD" >> "$GITHUB_OUTPUT"
+
+      # ── Validate version input ──────────────────────────────────────
+      - name: Validate pre-release version
+        run: |
+          VERSION="${{ inputs.version }}"
+
+          # Ensure version starts with 'v'
+          if [[ ! "$VERSION" =~ ^v ]]; then
+            echo "::error::Version must start with 'v' (e.g. v1.3.0-rc1). Got: $VERSION"
+            exit 1
+          fi
+
+          # Strict version validation: vMAJOR.MINOR.PATCH-SUFFIX where:
+          #   - No leading zeros in numeric parts
+          #   - Pre-release suffix is a single alphanumeric+digit token (no dots)
+          #   - e.g. v1.3.0-rc1, v1.3.0-beta1, v2.0.0-alpha3
+          # Dots in the suffix (e.g. -rc.1) are disallowed because the Terraform
+          # Registry convention uses -rcN without dots.
+          SEMVER_RE='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-([0-9A-Za-z-]+)$'
+          if [[ ! "$VERSION" =~ $SEMVER_RE ]]; then
+            echo "::error::Invalid version or missing pre-release suffix. Expected format: vMAJOR.MINOR.PATCH-SUFFIX (e.g. v1.3.0-rc1). Got: $VERSION"
+            echo "::error::Do NOT use dots in the suffix (use -rc1, not -rc.1)."
+            echo "::error::This workflow is for pre-releases only. Use the Release Drafter for stable releases."
+            exit 1
+          fi
+
+          # Reject dots in the pre-release suffix
+          SUFFIX="${BASH_REMATCH[4]}"
+          if [[ "$SUFFIX" == *.* ]]; then
+            echo "::error::Pre-release suffix must not contain dots. Use e.g. -rc1, not -rc.1. Got suffix: $SUFFIX"
+            exit 1
+          fi
+
+          echo "Pre-release version validated: $VERSION"
+
+      # ── Checkout ────────────────────────────────────────────────────
+      - uses: actions/checkout@8f4b7f84864484a7bf31766abe9204da3cbe65b3 # v3.5.0
+        with:
+          ref: ${{ steps.resolve-ref.outputs.ref || inputs.ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-go@4d34df0c2316fe8122ab82dc22947d607c0c91f9 # v4.0.0
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      # ── GPG signing (same setup as release-drafter.yml) ─────────────
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@111c56156bcc6918c056dbef52164cfa583dc549 # v5.2.0
+        id: import_gpg
+        with:
+          gpg_private_key: ${{ secrets.TERRAFORM_GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.TERRAFORM_GPG_PASSPHRASE }}
+
+      # ── Check if version is already published ─────────────────────
+      - name: Check for existing release or tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ inputs.version }}"
+
+          # Fail if a GitHub Release already exists for this version
+          if gh release view "$VERSION" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "::error::Release $VERSION already exists. Use a different version or delete the existing release first."
+            exit 1
+          fi
+
+          # Fail if the tag already exists on the remote (even without a release)
+          if git ls-remote --tags origin "refs/tags/$VERSION" | grep -q .; then
+            echo "::error::Tag $VERSION already exists on the remote. Use a different version."
+            exit 1
+          fi
+
+      # ── Tag the commit ──────────────────────────────────────────────
+      - name: Create and push tag
+        run: |
+          VERSION="${{ inputs.version }}"
+          git config user.name "${{ steps.import_gpg.outputs.name }}"
+          git config user.email "${{ steps.import_gpg.outputs.email }}"
+          git tag -a "$VERSION" -m "Pre-release $VERSION"
+          git push origin "$VERSION"
+
+      # ── Build and publish with GoReleaser ───────────────────────────
+      # Uses .goreleaser.prerelease.yml which sets draft=false (no prerelease flag).
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@f82d6c1c344bcacabba2c841718984797f664a6b # v4.2.0
+        with:
+          args: release --clean --config .goreleaser.prerelease.yml
+          version: latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GPG_FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}
+          GORELEASER_CURRENT_TAG: ${{ inputs.version }}
+
+      # ── Slash command: post result comment ──────────────────────────
+      - name: Post success comment
+        if: ${{ always() && inputs.pr != '' }}
+        uses: peter-evans/create-or-update-comment@v5
+        with:
+          token: ${{ steps.get-app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          issue-number: ${{ inputs.pr }}
+          body: |
+            > **Pre-Release Result:** ${{ job.status == 'success' && '✅ Published' || '❌ Failed' }}
+            >
+            > Version: `${{ inputs.version }}`
+            > Ref: `${{ steps.resolve-ref.outputs.ref || inputs.ref }}`
+            > [View run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            ${{ job.status == 'success' && format('> [View release]({0}/{1}/releases/tag/{2})', github.server_url, github.repository, inputs.version) || '' }}

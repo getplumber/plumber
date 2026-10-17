@@ -1,0 +1,58 @@
+{
+  "source": "https://github.com/ClickHouse/click-ui",
+  "commit": "529463cac6c54cf554dcf9d38a836ae0dde1c7e2",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "copilot",
+      "known": true
+    },
+    {
+      "name": "Preview",
+      "known": true
+    },
+    {
+      "name": "Production",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/build-dry-run.yml": "active",
+    ".github/workflows/build-health-checkup.yml": "active",
+    ".github/workflows/chromatic-deployment.yml": "active",
+    ".github/workflows/chromatic-pr-comment.yml": "active",
+    ".github/workflows/code-quality.yml": "active",
+    ".github/workflows/deployment.yml": "active",
+    ".github/workflows/llm-code-review.yml": "active",
+    ".github/workflows/monorepo-package-release.yml": "active",
+    ".github/workflows/pr-title-verification.yml": "active",
+    ".github/workflows/publish.yml": "active",
+    ".github/workflows/pull-request-slack-notification.yml": "active",
+    ".github/workflows/storybook-vercel.yml": "active",
+    ".github/workflows/test-slack-notification.yml": "active",
+    ".github/workflows/tokens-guard.yml": "active",
+    ".github/workflows/unit-tests.yml": "active",
+    ".github/workflows/visual-regression-tests.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High `amannn/action-semantic-pull-request@v6` path was judged overstated: the job has no checkout, no cache, no upload and a read-only token, nothing to poison, Low.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "amannn/action-semantic-pull-request@v6",
+        "tier": "low"
+      }
+    ]
+  }
+}

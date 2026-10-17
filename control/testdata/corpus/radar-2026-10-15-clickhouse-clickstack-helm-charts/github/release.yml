@@ -1,0 +1,61 @@
+name: Release Helm Charts
+on:
+  workflow_run:
+    workflows: ["Helm Chart Tests", "Helm Chart Integration Test"]
+    types:
+      - completed
+    branches:
+      - main
+
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - name: Configure Git user
+        run: |
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Install Dependencies
+        run: yarn
+      - name: Create Release Pull Request
+        id: changesets
+        uses: changesets/action@v1
+        with:
+          commit: 'chore(release): bump version'
+          title: 'Release ClickStack Helm Charts'
+          version: yarn run version
+          publish: yarn run release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Add Helm dependency repositories
+        run: |
+          helm repo add mongodb https://mongodb.github.io/helm-charts
+          helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts
+          helm repo update
+      - name: Generate release notes from CHANGELOG.md
+        if: steps.changesets.outputs.hasChangesets == 'false'
+        run: node scripts/extract-release-notes.js
+      - name: Run chart-releaser job
+        if: steps.changesets.outputs.hasChangesets == 'false'
+        uses: helm/chart-releaser-action@v1.7.0
+        with:
+          skip_existing: true
+          config: .github/cr.yaml
+        env:
+          CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"

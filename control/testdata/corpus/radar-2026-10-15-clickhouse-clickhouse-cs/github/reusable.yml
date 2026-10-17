@@ -1,0 +1,71 @@
+name: Build & Test
+
+on:
+  workflow_call:
+    inputs:
+      framework:
+        default: net10.0
+        required: false
+        type: string
+      clickhouse-version:
+        default: latest
+        required: false
+        type: string
+      coverage:
+        default: false
+        required: false
+        type: boolean
+      ref:
+        required: false
+        type: string
+
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - uses: actions/cache@v6
+        name: Cache NuGet
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Setup .NET Core
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: |
+            3.1.x
+            5.x
+            6.x
+            8.x
+            9.x
+            10.x
+
+      # The framework is passed through the environment rather than interpolated into the run
+      # script, so a caller-supplied input cannot inject shell.
+      - name: Test
+        run: dotnet test ClickHouse.Driver.Tests/ClickHouse.Driver.Tests.csproj --framework "$FRAMEWORK" --configuration Release --verbosity normal --logger GitHubActions /clp:ErrorsOnly ${{ inputs.coverage && '/p:CollectCoverage=true /p:CoverletOutputFormat=opencover /p:SkipAutoProps=true' || '' }}
+        env:
+          CLICKHOUSE_VERSION: ${{ inputs.clickhouse-version }}
+          FRAMEWORK: ${{ inputs.framework }}
+
+      # Codecov records the upload for the commit that started the workflow. With an explicit ref, that is
+      # not the commit under test, so the job does not upload.
+      - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
+        if: inputs.coverage && !inputs.ref
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: true
+          disable_search: true
+          verbose: true
+          flags: http
+          files: ./ClickHouse.Driver.Tests/coverage.${{ inputs.framework }}.opencover.xml

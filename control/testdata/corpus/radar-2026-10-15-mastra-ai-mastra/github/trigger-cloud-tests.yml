@@ -1,0 +1,25 @@
+name: Trigger Cloud Integration Tests
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - 0.x
+
+jobs:
+  trigger:
+    # Only run on the main repository, not on forks
+    if: ${{ github.repository == 'mastra-ai/mastra' }}
+    runs-on: starsling-ubuntu-26.04
+    steps:
+      - name: Trigger mastra-cloud integration tests
+        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4
+        with:
+          token: ${{ secrets.MASTRA_CLOUD_PAT }}
+          repository: mastra-ai/mastra-cloud
+          event-type: test-mastra-branch
+          client-payload: '{"branch": "${{ github.ref_name }}", "sha": "${{ github.sha }}"}'

@@ -1,0 +1,486 @@
+name: Integration Tests
+on:
+  push:
+  # Triggers the workflow on labeled PRs only.
+  pull_request_target:
+    types: [ labeled ]
+# Ensures that only the latest commit is running for each PR at a time.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  Pretest:
+    if: contains(github.event.pull_request.labels.*.name, 'safe to test') || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Unlabel 'safe to test'
+        uses: actions-ecosystem/action-remove-labels@v1
+        if: ${{github.event_name != 'push' }}
+        with:
+          labels: 'safe to test'
+  Distribution:
+    needs: Pretest
+    name: Distribution (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, macos-latest, windows-latest ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Install Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: "8"
+          distribution: "zulu"
+
+      - name: Cache local Maven repository
+        uses: actions/cache@v3
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      # Run tests
+      - name: Run Tests
+        uses: gradle/gradle-build-action@v2
+        with:
+          arguments: clean build-info-extractor:test --tests *DistributionManagerTest*
+        env:
+          BITESTS_PLATFORM_URL: ${{ secrets.PLATFORM_URL }}
+          BITESTS_PLATFORM_USERNAME: ${{ secrets.PLATFORM_USER }}
+          BITESTS_PLATFORM_ADMIN_TOKEN: ${{ secrets.PLATFORM_ADMIN_TOKEN }}
+
+  Extractor:
+    needs: Pretest
+    name: Extractor (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, macos-latest, windows-latest ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Install Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: "8"
+          distribution: "zulu"
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.22.x
+          cache: false
+
+      - name: Cache local Maven repository
+        uses: actions/cache@v3
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      - name: Setup Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+
+      # Run tests
+      - name: Run Tests
+        uses: gradle/gradle-build-action@v2
+        with:
+          arguments: clean build-info-api:test build-info-client:test build-info-extractor:test build-info-vcs:test -PexcludeTests=**/*DistributionManager*
+        env:
+          BITESTS_PLATFORM_ADMIN_TOKEN: ${{ env.JFROG_TESTS_LOCAL_ACCESS_TOKEN }}
+
+  Go:
+    needs: Pretest
+    name: Go (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, macos-latest, windows-latest ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Install Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: "8"
+          distribution: "zulu"
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.22.x
+          cache: false
+
+      - name: Cache local Maven repository
+        uses: actions/cache@v3
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      # Run tests
+      - name: Run Tests
+        uses: gradle/gradle-build-action@v2
+        with:
+          arguments: clean build-info-extractor-go:test
+        env:
+          BITESTS_PLATFORM_URL: ${{ secrets.PLATFORM_URL }}
+          BITESTS_PLATFORM_USERNAME: ${{ secrets.PLATFORM_USER }}
+          BITESTS_PLATFORM_ADMIN_TOKEN: ${{ secrets.PLATFORM_ADMIN_TOKEN }}
+
+  Gradle:
+    needs: Pretest
+    name: Gradle (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, macos-13, windows-latest ]
+    runs-on: ${{ matrix.os }}
+    env:
+      GRADLE_OPTS: -Dorg.gradle.daemon=false
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Install Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: "8"
+          distribution: "zulu"
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.22.x
+          cache: false
+
+      - name: Cache local Maven repository
+        uses: actions/cache@v3
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      - name: Setup Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+
+      # Run tests
+      - name: Run Tests
+        uses: gradle/gradle-build-action@v2
+        with:
+          arguments: clean build-info-extractor-gradle:test
+
+  Ivy:
+    needs: Pretest
+    name: Ivy (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, macos-latest, windows-latest ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Install Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: "8"
+          distribution: "zulu"
+
+      - name: Cache local Maven repository
+        uses: actions/cache@v3
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      # Run tests
+      - name: Run Tests
+        uses: gradle/gradle-build-action@v2
+        with:
+          arguments: clean build-info-extractor-ivy:test
+
+  Maven:
+    needs: Pretest
+    name: Maven (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, macos-latest, windows-latest ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Install Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: "8"
+          distribution: "zulu"
+
+      - name: Cache local Maven repository
+        uses: actions/cache@v3
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      # Run tests
+      - name: Run Tests
+        uses: gradle/gradle-build-action@v2
+        with:
+          arguments: clean build-info-extractor-maven3:test
+
+  npm:
+    needs: Pretest
+    name: npm (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, macos-13, windows-latest ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Install npm
+        uses: actions/setup-node@v3
+        with:
+          node-version: "15"
+      - name: Config list
+        run: npm config ls -l
+      - name: Install Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: "8"
+          distribution: "zulu"
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.22.x
+          cache: false
+
+      - name: Cache local Maven repository
+        uses: actions/cache@v3
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      - name: Setup Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+
+      # Run tests
+      - name: Run Tests
+        uses: gradle/gradle-build-action@v2
+        with:
+          arguments: clean build-info-extractor-npm:test
+        env:
+          # We use localhost because npm does not support authenticating with registries started with 127.0.0.1
+          BITESTS_PLATFORM_URL: http://localhost:8081
+
+  NuGet:
+    needs: Pretest
+    name: NuGet (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, macos-13, windows-latest ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      # Prepare ubuntu by installing Mono and handle dotnet installation issues.
+      - name: Prepare ubuntu
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          # Install Mono
+          sudo apt-get update
+          sudo apt-get install -y apt-transport-https dirmngr gnupg ca-certificates
+          sudo apt-key adv --recv-keys --keyserver hkp://keyserver.ubuntu.com:80 3FA7E0328081BFF6A14DA29AA6A19B38D3D831EF
+          echo "deb https://download.mono-project.com/repo/ubuntu stable-focal main" | sudo tee /etc/apt/sources.list.d/mono-official-stable.list
+          sudo apt-get update
+          sudo apt-get install -y mono-complete
+          # Fixes dotnet installation issues, see https://github.com/jfrog/jfrog-cli/pull/2808 for more details.
+          echo "DOTNET_INSTALL_DIR=/usr/share/dotnet" >> $GITHUB_ENV
+          sudo mkdir -p /usr/share/dotnet
+          sudo chmod 777 /usr/share/dotnet
+
+      - name: Install dotnet
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "6.x"
+
+      - name: Install NuGet
+        uses: nuget/setup-nuget@v2
+        with:
+          nuget-version: 6.x
+
+      - name: Install Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: "8"
+          distribution: "zulu"
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.22.x
+          cache: false
+
+      - name: Cache local Maven repository
+        uses: actions/cache@v3
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      - name: Setup Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+
+      # Run tests
+      - name: Run Tests
+        uses: gradle/gradle-build-action@v2
+        with:
+          arguments: clean build-info-extractor-nuget:test
+
+  Python:
+    needs: Pretest
+    name: Python (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, windows-latest ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Install Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: "8"
+          distribution: "zulu"
+      - name: Setup Python3
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.x"
+      - name: Setup Virtualenv
+        run: python -m venv env
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.22.x
+          cache: false
+
+      - name: Cache local Maven repository
+        uses: actions/cache@v3
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      - name: Setup Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+
+      # Run tests
+      - name: Run Tests
+        uses: gradle/gradle-build-action@v2
+        with:
+          arguments: clean build-info-extractor-pip:test
+        env:
+          BITESTS_ARTIFACTORY_PIP_ENV: fromJSON('{"Linux":"env/bin","macOS":"env/bin","Windows":"env\\Scripts"}')[runner.os]
+
+  Docker:
+    needs: Pretest
+    name: Docker
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Install Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: "8"
+          distribution: "zulu"
+
+      - name: Cache local Maven repository
+        uses: actions/cache@v3
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      - name: Containerize Artifactory
+        run: |
+          cd ./build-info-extractor-docker/src/test/resources/artifactory/
+          ./start.sh
+        env:
+          RTLIC: ${{secrets.RTLIC}}
+          GOPROXY: direct
+      - name: Wait for Artifactory to finish loading
+        uses: nev7n/wait_for_response@v1
+        with:
+          url: "http://localhost:8082"
+          responseCode: 200
+          timeout: 600000
+          interval: 500
+
+      # Run tests
+      - name: Run Tests
+        uses: gradle/gradle-build-action@v2
+        with:
+          arguments: clean build-info-extractor-docker:test

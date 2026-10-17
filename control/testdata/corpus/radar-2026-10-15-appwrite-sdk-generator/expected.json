@@ -1,0 +1,78 @@
+{
+  "source": "https://github.com/appwrite/sdk-generator",
+  "commit": "30f776190e3255bb204301332b491bfb8f270265",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "copilot",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/ci.yml": "active",
+    ".github/workflows/compatibility.yml": "active",
+    ".github/workflows/generate-unity-alf.yml": "active",
+    ".github/workflows/push-device.yml": "active",
+    ".github/workflows/renovate.yml": "active",
+    ".github/workflows/validation.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "actionMetadata": {
+    "dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8": {
+      "refKind": "commit",
+      "mutableRemoteExec": {
+        "tier": "exec",
+        "url": "https://sh.rustup.rs",
+        "file": "action.yml",
+        "downloadGuard": "rustup"
+      }
+    },
+    "dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249": {
+      "refKind": "commit",
+      "mutableRemoteExec": {
+        "tier": "exec",
+        "url": "https://sh.rustup.rs",
+        "file": "action.yml",
+        "downloadGuard": "rustup"
+      }
+    },
+    "dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772": {
+      "refKind": "commit",
+      "mutableRemoteExec": {
+        "tier": "exec",
+        "url": "https://sh.rustup.rs",
+        "file": "action.yml",
+        "downloadGuard": "rustup"
+      }
+    },
+    "dtolnay/rust-toolchain@bd41891a8e7f4b8649f6d684415e1a6155fe4e22": {
+      "refKind": "commit",
+      "mutableRemoteExec": {
+        "tier": "exec",
+        "url": "https://sh.rustup.rs",
+        "file": "action.yml",
+        "downloadGuard": "rustup"
+      }
+    }
+  },
+  "note": "The High toolchain path in `validation.yml` was judged false: `dtolnay/rust-toolchain` is pinned to a full commit SHA and its `curl https://sh.rustup.rs | sh` sits under `if ! command -v rustup` on a hosted image that ships rustup, so the fetch never runs and no path starts.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "dtolnay/rust-toolchain@bd41891a8e7f",
+        "tier": "none"
+      }
+    ]
+  }
+}

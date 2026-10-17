@@ -1,0 +1,151 @@
+name: Slack PR Notification
+
+# Posts a message to the configured Slack channel whenever a PR is opened, or
+# when a draft is marked ready for review, mentioning the configured user group.
+#
+# Uses `pull_request_target` rather than `pull_request` so that the Slack bot
+# token resolves for PRs from forks -- `pull_request` workflows triggered by a
+# fork receive no secrets, which would silently drop community PRs, the ones
+# most in need of a nudge. This is safe here because the workflow never checks
+# out or executes PR code; it only reads the webhook payload. The job requests
+# no token permissions at all, and all contributor-controlled fields (title,
+# author) are passed through `env:` and JSON-escaped by `jq` before reaching
+# the Slack payload.
+#
+# MANUAL TESTING INSTRUCTIONS:
+# To manually test this workflow, temporarily uncomment the "synchronize" event
+# type below. The workflow will then run for all new commits. Remember to
+# comment it out again before merging.
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - ready_for_review
+      # Toggle this line, uncommenting for testing:
+      # - synchronize
+
+env:
+  # Destination channel for PR notifications.
+  SLACK_CHANNEL_ID: C0BHDAPNPCY
+  # Slack user group mentioned in each notification.
+  SLACK_GROUP_ID: S077U1TH43D
+
+jobs:
+  notify-slack:
+    name: Post New PR to Slack
+    # Draft PRs stay quiet until their author flips them to ready for review.
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-24.04
+    # No GitHub API calls are made -- everything comes from the webhook payload.
+    permissions: {}
+    steps:
+      # ---------- Resolve message headline ----------
+
+      - name: Resolve headline (opened)
+        if: github.event.action == 'opened'
+        id: headline-opened
+        run: echo "text=New pull request opened" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Resolve headline (ready for review)
+        if: github.event.action == 'ready_for_review'
+        id: headline-ready
+        run: echo "text=Pull request ready for review" | tee -a "$GITHUB_OUTPUT"
+
+      # Keeps the documented `synchronize` testing toggle -- and any event type
+      # added later -- from posting a message with an empty headline.
+      - name: Resolve headline (other events)
+        if: github.event.action != 'opened' && github.event.action != 'ready_for_review'
+        id: headline-other
+        run: echo "text=Pull request updated" | tee -a "$GITHUB_OUTPUT"
+
+      # ---------- Build and send ----------
+
+      - name: Build Slack payload
+        id: payload
+        env:
+          HEADLINE: ${{ steps.headline-opened.outputs.text || steps.headline-ready.outputs.text || steps.headline-other.outputs.text }}
+          PAYLOAD_FILE: ${{ runner.temp }}/slack-payload.json
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_AUTHOR_URL: ${{ github.event.pull_request.user.html_url }}
+          PR_ADDITIONS: ${{ github.event.pull_request.additions }}
+          PR_DELETIONS: ${{ github.event.pull_request.deletions }}
+          PR_CHANGED_FILES: ${{ github.event.pull_request.changed_files }}
+          PR_IS_FORK: ${{ github.event.pull_request.head.repo.fork }}
+        run: |
+          set -euo pipefail
+          jq -n \
+            --arg headline "$HEADLINE" \
+            --arg channel "$SLACK_CHANNEL_ID" \
+            --arg group_id "$SLACK_GROUP_ID" \
+            --arg repo "$GITHUB_REPOSITORY" \
+            --arg number "$PR_NUMBER" \
+            --arg title "$PR_TITLE" \
+            --arg url "$PR_URL" \
+            --arg author "$PR_AUTHOR" \
+            --arg author_url "$PR_AUTHOR_URL" \
+            --arg additions "$PR_ADDITIONS" \
+            --arg deletions "$PR_DELETIONS" \
+            --arg changed_files "$PR_CHANGED_FILES" \
+            --arg is_fork "$PR_IS_FORK" \
+            '
+            # Contributor-controlled text is escaped so that a crafted PR title
+            # cannot inject Slack markup such as <!channel> or a fake link.
+            def esc: gsub("&"; "&amp;") | gsub("<"; "&lt;") | gsub(">"; "&gt;");
+            {
+              channel: $channel,
+              text: "<!subteam^\($group_id)> \($headline): #\($number) \($title | esc)",
+              unfurl_links: false,
+              unfurl_media: false,
+              blocks: [
+                {
+                  type: "section",
+                  text: {
+                    type: "mrkdwn",
+                    text: "<!subteam^\($group_id)> *\($headline)* in `\($repo)`"
+                  }
+                },
+                {
+                  type: "section",
+                  text: {
+                    type: "mrkdwn",
+                    text: "*<\($url)|#\($number) — \($title | esc)>*\nby <\($author_url)|\($author | esc)>"
+                  }
+                },
+                {
+                  type: "context",
+                  elements: [
+                    {
+                      type: "mrkdwn",
+                      text: (
+                        (if $is_fork == "true" then ":globe_with_meridians: community fork" else ":lock: internal branch" end)
+                        + "  ·  `+\($additions)` `-\($deletions)` across \($changed_files) file(s)"
+                      )
+                    }
+                  ]
+                }
+              ]
+            }
+            ' | tee "$PAYLOAD_FILE"
+          echo "file=$PAYLOAD_FILE" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Post to Slack channel
+        # Pinned to an immutable SHA rather than a tag: this workflow runs on
+        # `pull_request_target` with a Slack bot token in scope, so a retagged
+        # release must not be able to execute with that secret. Same pattern as
+        # `label-community-prs.yml`, the repo's other `pull_request_target` job.
+        uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
+        # Slack being down, or the bot being removed from the channel, must
+        # never turn a contributor's PR checks red. The step still surfaces as
+        # a warning in the Actions UI thanks to `errors: true`.
+        continue-on-error: true
+        with:
+          method: chat.postMessage
+          token: ${{ secrets.SLACK_BOT_TOKEN_AIRBYTE_TEAM }}
+          # `payload-templated` defaults to false, so nothing in this file is
+          # re-expanded as a GitHub expression.
+          payload-file-path: ${{ steps.payload.outputs.file }}
+          errors: true

@@ -1,0 +1,40 @@
+name: 🔎 Lint
+on:
+  push:
+    branches: [main, wip/**]
+  pull_request:
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: 🔎 Lint Code
+    runs-on: ubuntu-latest
+    env: { pg: 19, BUNDLE_LIBCHDB: 1 }
+    steps:
+      - name: Checkout the Repository
+        uses: actions/checkout@v7
+        with: { submodules: recursive }
+      - name: Start Postgres ${{ env.pg }}
+        uses: pgxn/postgres-action@v0
+        with:
+          version: ${{ env.pg }}
+          packages: clang-tidy bear
+      - name: Install pre-commit
+        run: make debian-install-lint
+      # make BUNDLE_LIBCHDB=1 installs libchdb if missing.
+      - name: Get chDB Version
+        id: chdb
+        run: make libchdb-variables >> $GITHUB_OUTPUT
+      - name: Cache chDB
+        id: cache-chdb
+        uses: actions/cache@v6
+        with:
+          key: ${{ steps.chdb.outputs.directory }}-${{ steps.chdb.outputs.version }}
+          path: |
+            ${{ steps.chdb.outputs.directory }}/lib/libchdb.*
+            ${{ steps.chdb.outputs.directory }}/include/chdb.h
+      - name: Generate compile_commands.json
+        run: make compile_commands.json
+      - name: Lint the Code
+        run: make lint

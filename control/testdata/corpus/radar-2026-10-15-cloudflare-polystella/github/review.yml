@@ -1,0 +1,132 @@
+name: Review PR
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+jobs:
+  review:
+    name: Run /review
+    if: >-
+      github.event.sender.type != 'Bot'
+      && contains(github.event.comment.body, '/review')
+      && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+      && (github.event_name != 'issue_comment' || github.event.issue.pull_request != null)
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.event.issue.number || github.event.pull_request.number || github.ref }}
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Resolve PR number
+        id: pr-number
+        env:
+          PR_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
+        run: echo "number=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify PR exists
+        id: verify-pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.pr-number.outputs.number }}
+        run: |
+          if gh api "/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" > /dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::PR #${PR_NUMBER} not found; skipping review."
+          fi
+
+      - name: Checkout repository
+        if: steps.verify-pr.outputs.exists == 'true'
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup Node.js
+        if: steps.verify-pr.outputs.exists == 'true'
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24.x
+
+      - name: Check pollystellabot secrets
+        if: steps.verify-pr.outputs.exists == 'true'
+        env:
+          POLYSTELLABOT_APP_ID: ${{ secrets.POLYSTELLABOT_APP_ID }}
+          POLYSTELLABOT_PRIVATE_KEY: ${{ secrets.POLYSTELLABOT_PRIVATE_KEY }}
+        run: |
+          if [[ -z "$POLYSTELLABOT_APP_ID" || -z "$POLYSTELLABOT_PRIVATE_KEY" ]]; then
+            echo "::error::Set POLYSTELLABOT_APP_ID and POLYSTELLABOT_PRIVATE_KEY as Actions secrets before using /review."
+            exit 1
+          fi
+
+      - name: Generate pollystellabot token
+        if: steps.verify-pr.outputs.exists == 'true'
+        id: pollystellabot-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.POLYSTELLABOT_APP_ID }}
+          private-key: ${{ secrets.POLYSTELLABOT_PRIVATE_KEY }}
+          permission-contents: read
+          permission-issues: write
+          permission-pull-requests: write
+
+      - name: Install opencode
+        if: steps.verify-pr.outputs.exists == 'true'
+        run: npm install --global "opencode-ai@1.15.7"
+
+      - name: Get PR details
+        if: steps.verify-pr.outputs.exists == 'true'
+        id: pr-details
+        env:
+          GH_TOKEN: ${{ steps.pollystellabot-token.outputs.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.pr-number.outputs.number }}
+        run: |
+          gh api "/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" > /tmp/pr.json
+          {
+            echo 'title<<PR_TITLE_EOF'
+            jq -r '.title // ""' /tmp/pr.json
+            echo PR_TITLE_EOF
+            echo "head_sha=$(jq -r .head.sha /tmp/pr.json)"
+            echo 'body<<PR_BODY_EOF'
+            jq -r '.body // ""' /tmp/pr.json
+            echo PR_BODY_EOF
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Run Review
+        if: steps.verify-pr.outputs.exists == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_GATEWAY_ID: ${{ secrets.CLOUDFLARE_GATEWAY_ID }}
+          GH_TOKEN: ${{ steps.pollystellabot-token.outputs.token }}
+          GITHUB_TOKEN: ${{ steps.pollystellabot-token.outputs.token }}
+          MODEL: ${{ vars.POLYSTELLABOT_MODEL || 'opencode/claude-opus-4-5' }}
+          AGENT: auto-reviewer
+          SHARE: "false"
+          USE_GITHUB_TOKEN: "true"
+          MENTIONS: "/review"
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          OPENCODE_CONFIG_CONTENT: '{"permission":{"external_directory":{"*":"deny","/tmp/**":"allow","~/.local/share/opencode/tool-output/**":"allow"},"doom_loop":"deny"}}'
+          PROMPT: |
+            Review pull request #${{ steps.pr-number.outputs.number }} ("${{ steps.pr-details.outputs.title }}").
+
+            Follow your auto-reviewer instructions for investigation, severity calibration, and posting. Post a single GitHub PR review with line-anchored comments when you find actionable issues. If there are no actionable issues, respond with only "LGTM!" and do not post a PR review.
+
+            <pr_number>${{ steps.pr-number.outputs.number }}</pr_number>
+            <head_sha>${{ steps.pr-details.outputs.head_sha }}</head_sha>
+            <pr_description>
+            ${{ steps.pr-details.outputs.body }}
+            </pr_description>
+        run: opencode github run

@@ -63,7 +63,7 @@ type detailedFinding struct {
 	Inert string
 	// GateNote says why the finding anchors no path although its code is
 	// an entry: no outsider can make its job run
-	// (control.MarkGatedFindings, Data "gateNote"). Printed after the
+	// (control.markGatedFindings, Data "gateNote"). Printed after the
 	// location line, like Inert. Empty otherwise.
 	GateNote string
 	// DetailLines is optional (e.g. ISSUE-505: one headline, several sub-reasons).

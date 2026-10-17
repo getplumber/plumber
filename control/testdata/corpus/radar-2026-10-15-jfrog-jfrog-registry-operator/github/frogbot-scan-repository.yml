@@ -1,0 +1,30 @@
+name: "Jfrog Registry Operator Scan Repository"
+on:
+  workflow_dispatch:
+  schedule:
+    # The repository will be scanned once a day at 00:00 GMT.
+    - cron: "0 0 * * *"
+permissions:
+  contents: write
+  pull-requests: write
+  security-events: write
+jobs:
+  scan-repository:
+    runs-on: ubuntu-latest
+    name: Scan Repository (${{ matrix.branch }} branch)
+    strategy:
+      matrix:
+        # The repository scanning will be triggered periodically on the following branches.
+        branch: [ "master" ]
+    steps:
+      - uses: jfrog/jfrog-registry-operator
+        env:
+          JFROG_CLI_LOG_LEVEL: "DEBUG"
+
+          # [Mandatory]
+          # The GitHub token is automatically generated for the job
+          JF_GIT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+          # [Mandatory]
+          # The name of the branch on which jfrog-registry-operator will perform the scan
+          JF_GIT_BASE_BRANCH: ${{ matrix.branch }}

@@ -1,0 +1,58 @@
+name: Agent Skills Tests
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  Agent-Skills-Tests:
+    name: agent-skills ${{ matrix.os.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: windows
+            version: 2022
+          - name: macos
+            version: 14
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    steps:
+      - name: Skip macOS - JGC-413
+        if: matrix.os.name == 'macos'
+        run: |
+          echo "::warning::JGC-413 - Skip until artifactory bootstrap in osx is fixed"
+          exit 0
+
+      - name: Checkout code
+        if: matrix.os.name != 'macos'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+          # Safe: this workflow only runs after human approval via the build-gate environment.
+          allow-unsafe-pr-checkout: true
+
+      - name: Setup FastCI
+        if: matrix.os.name != 'macos'
+        uses: jfrog-fastci/fastci@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          fastci_otel_token: ${{ secrets.FASTCI_TOKEN }}
+
+      - name: Setup Go with cache
+        if: matrix.os.name != 'macos'
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Install local Artifactory
+        if: matrix.os.name != 'macos'
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          # No VERSION pin: releases.jfrog.io keeps only a subset of patch
+          # releases, so pinning breaks once that version is pruned.
+          RT_CONNECTION_TIMEOUT_SECONDS: ${{ env.RT_CONNECTION_TIMEOUT_SECONDS || '1200' }}
+
+      - name: Run agent skills tests
+        if: matrix.os.name != 'macos'
+        shell: bash
+        run: go test -v github.com/jfrog/jfrog-cli --timeout 0 -test.agentSkills=true

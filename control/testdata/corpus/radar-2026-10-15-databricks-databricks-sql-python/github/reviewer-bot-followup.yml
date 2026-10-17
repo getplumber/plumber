@@ -1,0 +1,96 @@
+# Reviewer Bot — follow-up on review-comment replies.
+#
+# Own-job workflow (see reviewer-bot.yml: an external repo can't `uses:` the
+# internal engine's actions/workflows; the engine is pip-installed via the local
+# bot-prelude -> install-bot-engine composites). This file owns checkout, the
+# base-commit fetch, Setup Python, and the followup run; bot-prelude mints tokens
+# + Node + installs the engine, PAT-free.
+#
+# Enablement: no label gate — engage every non-fork open PR (this repo's policy).
+# The security floor (fork==false, PR open) is the job `if:` below; loop-
+# prevention lives in the engine's followup.py post-checkout.
+name: Reviewer Bot — Follow-up
+
+on:
+  pull_request_review_comment:
+    types: [created]
+  pull_request:
+    types: [synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write   # JFrog OIDC exchange for the engine/SDK/CLI install
+
+jobs:
+  followup:
+    # SECURITY FLOOR: never run the agent on a fork PR (keeps App + model tokens
+    # off untrusted code); only act on OPEN PRs.
+    if: >-
+      github.event.pull_request.head.repo.fork == false
+      && github.event.pull_request.state == 'open'
+    environment: azure-prod   # DATABRICKS_HOST / DATABRICKS_TOKEN live here
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: [linux-ubuntu-latest]
+    timeout-minutes: 20
+    concurrency:
+      group: reviewer-bot-followup-pr-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout PR head (read-only; agent only POSTS via GH_TOKEN)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # followup.py runs `git rev-list <base>..<head>` for finding-anchor SHA
+      # verification. fetch-depth:0 usually brings the base along, but not
+      # guaranteed. Best-effort fetch when missing; NEVER fatal — a missing base
+      # makes the rev-list helper fail-closed to an empty allowlist (SHA
+      # verification degrades, reconciliation still runs). The persist-
+      # credentials:false checkout means this fetch has no auth, so it may fail
+      # on a private repo; swallow it and warn.
+      - name: Ensure PR base commit is present (for rev-list base..head)
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if git cat-file -e "${PR_BASE_SHA}^{commit}" 2>/dev/null; then
+            exit 0
+          fi
+          if ! git fetch --no-tags --depth=1 origin "$PR_BASE_SHA"; then
+            echo "::warning::Could not fetch PR base commit ${PR_BASE_SHA}. Continuing: followup.py fail-closes to an empty SHA allowlist, so SHA verification degrades gracefully but reconciliation still runs." >&2
+          fi
+
+      # Reviewer reads code, doesn't run the connector — Python interpreter only.
+      - name: Setup Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          python-version: '3.11'
+
+      # Shared prelude: mint the review-bot token (posts replies / resolves
+      # threads) + the engine-scoped token, set up Node, install the engine.
+      - name: Bot prelude (tokens + Node + engine install)
+        id: prelude
+        uses: ./.github/actions/bot-prelude
+        with:
+          app-id: ${{ secrets.REVIEW_BOT_APP_ID }}
+          private-key: ${{ secrets.REVIEW_BOT_APP_PRIVATE_KEY }}
+          # Engine pin lives in ONE place: bot-prelude's `engine-ref` default.
+          # Bump it there to move all four bots in lockstep; override here only
+          # to run this workflow against a different engine commit.
+
+      - name: Run reviewer follow-up
+        env:
+          GH_TOKEN: ${{ steps.prelude.outputs.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          TRIGGER_COMMENT_ID: ${{ github.event.comment.id }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          MODEL_ENDPOINT: https://${{ secrets.DATABRICKS_HOST }}/serving-endpoints/databricks-claude-opus-4-8/invocations
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+          DRY_RUN: 'false'
+          RUNNER_TEMP: ${{ runner.temp }}
+        run: python -m databricks_bot_engine.reviewer_bot.followup

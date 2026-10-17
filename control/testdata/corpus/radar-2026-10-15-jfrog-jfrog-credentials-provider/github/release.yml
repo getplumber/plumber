@@ -1,0 +1,57 @@
+name: Release Jfrog Kubelet Plugin
+# # This workflow releases the Jfrog Kubelet Plugin
+on:
+  push:
+    tags:
+      - v*
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g., v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+jobs:
+  release:
+    environment: production
+    runs-on: self-hosted
+    permissions:
+      contents: write 
+    steps:
+      - name: Set up Go
+        uses: actions/setup-go@v2
+        with:
+          go-version: '1.23'
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build
+        env:
+          VERSION: ${{ github.event.inputs.tag }}
+        run: |
+          cd build/
+          make build-all
+
+      - name: Import GPG Private Key
+        run: |
+          echo -n "$GPG_SIGNING_KEY" | base64 -d | gpg --batch --yes --import
+        env:
+          GPG_SIGNING_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+
+      - name: Sign Binaries
+        run: |
+          cd build/bin/
+          echo "${{ secrets.GPG_PASSPHRASE }}" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --detach-sign --armor jfrog-credential-provider-linux-amd64
+          echo "${{ secrets.GPG_PASSPHRASE }}" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --detach-sign --armor jfrog-credential-provider-linux-arm64
+
+      - name: Upload release artifacts
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag }}
+          generate_release_notes: true
+          files: |
+            build/bin/jfrog-credential-provider-linux-amd64
+            build/bin/jfrog-credential-provider-linux-arm64
+            build/bin/jfrog-credential-provider-linux-amd64.asc
+            build/bin/jfrog-credential-provider-linux-arm64.asc
+    

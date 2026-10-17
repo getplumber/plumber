@@ -1,0 +1,176 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_call:
+    inputs:
+      tag:
+        description: "Tag to build and publish, e.g. v0.2.2"
+        required: true
+        type: string
+  workflow_dispatch: {}
+
+# Least privilege by default: only the publish job may write to the repo.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      label: ${{ steps.resolve.outputs.label }}
+    steps:
+      - id: resolve
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.tag }}"
+          if [ -z "${tag}" ] && [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            tag="${GITHUB_REF_NAME}"
+          fi
+          # Empty tag => manual smoke test: build everything, publish nothing.
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "label=${tag:-dev}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: resolve
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+          - target: aarch64-apple-darwin
+            runner: macos-14
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+
+          # TODO: test on these:
+          # - target: aarch64-unknown-linux-gnu
+          #   runner: ubuntu-24.04-arm
+          # - target: x86_64-apple-darwin
+          #   runner: macos-15-intel
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.resolve.outputs.tag || github.ref }}
+          fetch-depth: 1
+          # These jobs execute third-party build scripts (boring-sys compiles
+          # vendored BoringSSL); keep the token out of .git/config.
+          persist-credentials: false
+
+      # BoringSSL assembles its x86_64 code with NASM on MSVC, and bindgen needs
+      # libclang from the image's LLVM install.
+      - name: Set up Windows build prerequisites
+        if: runner.os == 'Windows'
+        run: |
+          choco install nasm --no-progress -y
+          echo "C:\Program Files\NASM" >> $env:GITHUB_PATH
+          echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
+
+      - name: Set up Rust
+        run: |
+          rustup update stable --no-self-update
+          rustup default stable
+          rustup target add ${{ matrix.target }}
+
+      - name: Build mach
+        run: cargo build --release --locked --bin mach --target ${{ matrix.target }}
+
+      - name: Package (unix)
+        if: runner.os != 'Windows'
+        run: |
+          set -euo pipefail
+          staging="mach-${{ needs.resolve.outputs.label }}-${{ matrix.target }}"
+          mkdir -p "$staging"
+          cp "target/${{ matrix.target }}/release/mach" "$staging/"
+          strip "$staging/mach" || true
+          cp README.md LICENSE "$staging/"
+          tar -czf "${staging}.tar.gz" "$staging"
+          shasum -a 256 "${staging}.tar.gz" > "${staging}.tar.gz.sha256"
+
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $staging = "mach-${{ needs.resolve.outputs.label }}-${{ matrix.target }}"
+          New-Item -ItemType Directory -Path $staging | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/mach.exe" $staging
+          Copy-Item README.md,LICENSE $staging
+          Compress-Archive -Path $staging -DestinationPath "$staging.zip"
+          $hash = (Get-FileHash "$staging.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  $staging.zip" | Out-File "$staging.zip.sha256" -Encoding ascii
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mach-${{ matrix.target }}
+          path: |
+            mach-*.tar.gz
+            mach-*.zip
+            mach-*.sha256
+          if-no-files-found: error
+
+  publish:
+    needs: [resolve, build]
+    if: needs.resolve.outputs.tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release and upload assets
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Assemble checksum file
+        run: |
+          set -euo pipefail
+          cd artifacts
+          cat *.sha256 > SHA256SUMS
+          rm -f *.sha256
+          ls -l
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release create "${{ needs.resolve.outputs.tag }}" \
+            --title "${{ needs.resolve.outputs.tag }}" \
+            --generate-notes \
+            artifacts/*
+
+  crates-io:
+    needs: [resolve, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC exchange for a short-lived crates.io token
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+          persist-credentials: false
+
+      - name: Authenticate to crates.io (trusted publishing)
+        id: auth
+        uses: rust-lang/crates-io-auth-action@v1
+
+      - name: Publish cf-mach
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: cargo publish --locked --no-verify

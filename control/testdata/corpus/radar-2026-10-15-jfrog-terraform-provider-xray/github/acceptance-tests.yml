@@ -1,0 +1,433 @@
+# Reusable: invoked by build-gate.yml behind the `build-gate` approval.
+# Do not add pull_request, pull_request_target, or workflow_dispatch here —
+# that would either withhold secrets (fork PRs) or run untrusted code with
+# secrets and no gate.
+on:
+  workflow_call:
+
+name: Terraform & OpenTofu Acceptance Tests
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  acceptance-tests-matrix:
+    name: ${{ matrix.cli }}
+    runs-on: ubuntu-latest
+    # Secret/var source only. Required reviewers belong on `build-gate`, not here.
+    environment: development
+    strategy:
+      fail-fast: true
+      matrix:
+        cli: [terraform, tofu]
+    outputs:
+      platform_version: ${{ steps.get_versions.outputs.platform_version }}
+      artifactory_version: ${{ steps.get_versions.outputs.rt_version }}
+      xray_version: ${{ steps.get_versions.outputs.xray_version }}
+      catalog_version: ${{ steps.get_versions.outputs.catalog_version }}
+      tf_version: ${{ steps.get_terraform_cli_version.outputs.version }}
+      tofu_version: ${{ steps.get_opentofu_cli_version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # pull_request_target defaults to the base branch; test the PR SHA.
+          # Safe: this job only runs after human approval via build-gate.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+          # checkout refuses fork PR code under pull_request_target by default.
+          # Building and running the customer's code is the whole point of this
+          # suite, so the untrusted-code risk is carried by the build-gate
+          # approval instead: no fork code is fetched before a maintainer approves.
+          allow-unsafe-pr-checkout: true
+      - name: Install Helm
+        uses: azure/setup-helm@v4.2.0
+      - name: Get JFrog Platform component versions
+        id: get_versions
+        env:
+          PLATFORM_HELM_CHART_VERSION: ${{ vars.PLATFORM_HELM_CHART_VERSION }}
+        run: |
+          # This step fetches the latest individual component chart versions and 
+          # modifies the JFrog Platform Chart.yaml to use those latest versions
+          # before installation. This ensures we test with the most recent components.
+          helm repo add jfrog https://charts.jfrog.io/
+          helm repo update
+          PLATFORM_HELM_CHART_VERSION=${PLATFORM_HELM_CHART_VERSION:=$(helm search repo | grep "jfrog/jfrog-platform " | awk '{$1=$1};1' | cut -f2 -d " ")}
+          echo "PLATFORM_HELM_CHART_VERSION=$PLATFORM_HELM_CHART_VERSION" >> "$GITHUB_ENV"
+          
+          # Get platform chart app version
+          PLATFORM_VERSION=$(helm search repo | grep "jfrog/jfrog-platform " | awk '{$1=$1};1' | cut -f2 -d " ")
+          echo "Platform version: $PLATFORM_VERSION"
+          
+          # Fetch latest component versions from individual charts with override support
+          echo "Fetching latest component chart versions..."
+          
+          # Get latest Artifactory chart version
+          LATEST_ARTIFACTORY_VERSION=$(helm search repo | grep "jfrog/artifactory " | awk '{$1=$1};1' | cut -f2 -d " " | head -1)
+          echo "Latest Artifactory chart version: $LATEST_ARTIFACTORY_VERSION"
+          
+          # Get latest Xray chart version with override support
+          XRAY_VERSION_OVERRIDE=${XRAY_VERSION}
+          LATEST_XRAY_VERSION=$(helm search repo | grep "jfrog/xray " | awk '{$1=$1};1' | cut -f2 -d " " | head -1)
+          LATEST_XRAY_VERSION=${XRAY_VERSION_OVERRIDE:-$LATEST_XRAY_VERSION}
+          echo "Latest Xray chart version: $LATEST_XRAY_VERSION"
+          
+          # Get latest Catalog chart version with override support
+          CATALOG_VERSION_OVERRIDE=${CATALOG_VERSION}
+          LATEST_CATALOG_VERSION=$(helm search repo | grep "jfrog/catalog " | awk '{$1=$1};1' | cut -f2 -d " " | head -1)
+          LATEST_CATALOG_VERSION=${CATALOG_VERSION_OVERRIDE:-$LATEST_CATALOG_VERSION}
+          echo "Latest Catalog chart version: $LATEST_CATALOG_VERSION"
+          
+          # Download platform chart and modify Chart.yaml with latest component versions
+          echo "Downloading and modifying JFrog Platform chart..."
+          helm pull jfrog/jfrog-platform --version $PLATFORM_HELM_CHART_VERSION --untar --untardir /tmp/
+          
+          # Backup original Chart.yaml
+          cp /tmp/jfrog-platform/Chart.yaml /tmp/jfrog-platform/Chart.yaml.orig
+          
+          echo "Original Chart.yaml dependencies:"
+          grep -A 50 "dependencies:" /tmp/jfrog-platform/Chart.yaml.orig || echo "No dependencies section found"
+          echo "---"
+          
+          # Update component versions in Chart.yaml
+          echo "Updating component versions in Chart.yaml..."
+          
+          # Update Artifactory version
+          sed -i "/- name: artifactory/,/version:/ s/version: .*/version: \"$LATEST_ARTIFACTORY_VERSION\"/" /tmp/jfrog-platform/Chart.yaml
+          
+          # Update Xray version  
+          sed -i "/- name: xray/,/version:/ s/version: .*/version: \"$LATEST_XRAY_VERSION\"/" /tmp/jfrog-platform/Chart.yaml
+          
+          # Update Catalog version
+          sed -i "/- name: catalog/,/version:/ s/version: .*/version: \"$LATEST_CATALOG_VERSION\"/" /tmp/jfrog-platform/Chart.yaml
+          
+          echo "Updated Chart.yaml dependencies:"
+          grep -A 50 "dependencies:" /tmp/jfrog-platform/Chart.yaml || echo "No dependencies section found"
+          echo "---"
+          
+          # Update dependencies to fetch the latest component charts
+          echo "Updating chart dependencies..."
+          cd /tmp/jfrog-platform
+          helm dependency update
+          cd -
+          
+          # Store the modified chart path for later use
+          echo "MODIFIED_PLATFORM_CHART_PATH=/tmp/jfrog-platform" >> "$GITHUB_ENV"
+          
+          # Get app versions for the components for reporting
+          ARTIFACTORY_VERSION=$(helm search repo | grep "jfrog/artifactory " | awk '{$1=$1};1' | cut -f3 -d " " | head -1)
+          XRAY_APP_VERSION=$(helm search repo | grep "jfrog/xray " | awk '{$1=$1};1' | cut -f3 -d " " | head -1)
+          CATALOG_APP_VERSION=$(helm search repo | grep "jfrog/catalog " | awk '{$1=$1};1' | cut -f3 -d " " | head -1)
+          
+          # Use override values if they contain app versions, otherwise use extracted ones
+          XRAY_VERSION=${XRAY_VERSION_OVERRIDE:-$XRAY_APP_VERSION}
+          CATALOG_VERSION=${CATALOG_VERSION_OVERRIDE:-$CATALOG_APP_VERSION}
+          
+          echo "Component versions being used (chart version -> app version):"
+          echo "  Artifactory: $LATEST_ARTIFACTORY_VERSION -> $ARTIFACTORY_VERSION"
+          echo "  Xray: $LATEST_XRAY_VERSION -> $XRAY_VERSION"
+          echo "  Catalog: $LATEST_CATALOG_VERSION -> $CATALOG_VERSION"
+          
+          # Set outputs for use in other jobs
+          echo "platform_version=$PLATFORM_VERSION" >> "$GITHUB_OUTPUT"
+          echo "rt_version=$ARTIFACTORY_VERSION" >> "$GITHUB_OUTPUT"
+          echo "xray_version=$XRAY_VERSION" >> "$GITHUB_OUTPUT"
+          echo "catalog_version=$CATALOG_VERSION" >> "$GITHUB_OUTPUT"
+      - name: Authenticate with Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GKE_SERVICE_ACCOUNT_JSON_JFROG_DEV }}
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          install_components: gke-gcloud-auth-plugin
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+      - name: Setup k8s cluster
+        id: create_cluster
+        env:
+          GKE_ZONE: ${{ vars.GKE_ZONE_JFROG_DEV }}
+          GKE_PROJECT: ${{ vars.GKE_PROJECT_JFROG_DEV }}
+          MACHINE_TYPE: ${{ vars.GKE_MACHINE_TYPE_JFROG_DEV }}
+          NUM_NODES: ${{ vars.GKE_NUM_NODES_JFROG_DEV }} # default is 3
+          WHITELIST_CIDR_JFROG_DEV: ${{ secrets.WHITELIST_CIDR_JFROG_DEV }}
+        run: |
+          export GKE_CLUSTER=tf-provider-xray-${{ matrix.cli }}-$(date +%s)
+          echo "GKE_CLUSTER=$GKE_CLUSTER" >> "$GITHUB_ENV"
+          echo "Whitelist Pipelines Node CIDR to be able to run JFrog Platform tests. Same variable is used in gke/create_cluster step to restrict access to the control plane."
+          export WHITELIST_CIDR=$(curl -s ifconfig.me)/32
+          echo "WHITELIST_CIDR=$WHITELIST_CIDR" >> "$GITHUB_ENV"
+          echo "Creating GKE cluster ${GKE_CLUSTER} using default authentication"
+          gcloud container clusters create "$GKE_CLUSTER" \
+            --zone "$GKE_ZONE" \
+            --shielded-secure-boot \
+            --shielded-integrity-monitoring \
+            --node-locations "$GKE_ZONE" \
+            --num-nodes "${NUM_NODES:-5}" \
+            --enable-autoscaling \
+            --machine-type "$MACHINE_TYPE" \
+            --disk-size 50Gi \
+            --min-nodes 1 \
+            --max-nodes 5 \
+            --project "$GKE_PROJECT" \
+            --enable-master-authorized-networks \
+            --no-enable-ip-alias \
+            --master-authorized-networks "${WHITELIST_CIDR_JFROG_DEV}","${WHITELIST_CIDR}"
+            # add your NAT CIDR to whitelist local or CI/CD NAT IP. Set WHITELIST_CIDR in CI/CD to add CIDR to the list automatically.
+          gcloud container clusters get-credentials "$GKE_CLUSTER" --zone "$GKE_ZONE" --project "$GKE_PROJECT"
+      - name: Install JFrog Platform
+        id: install_platform
+        env:
+          PLATFORM_LICENSE: ${{ matrix.cli == 'terraform' && secrets.PLATFORM_LICENSE_TERRAFORM || secrets.PLATFORM_LICENSE_TOFU }}
+        run: |
+          echo "Creating JFrog Platform License Secret"
+          echo $PLATFORM_LICENSE > ${{ runner.temp }}/platform.cluster.license.${{ matrix.cli }}
+          kubectl create secret generic platform-license.${{ matrix.cli }} --from-file=${{ runner.temp }}/platform.cluster.license.${{ matrix.cli }}
+          MASTER_KEY=$(openssl rand -hex 32)
+          echo "::add-mask::$MASTER_KEY"
+          echo "MASTER_KEY=$MASTER_KEY" >> "$GITHUB_ENV"
+          JOIN_KEY=$(openssl rand -hex 32)
+          echo "::add-mask::$JOIN_KEY"
+          echo "JOIN_KEY=$JOIN_KEY" >> "$GITHUB_ENV"
+          # Package the modified platform chart
+          echo "Packaging modified platform chart..."
+          helm package $MODIFIED_PLATFORM_CHART_PATH -d /tmp/
+          MODIFIED_CHART_TGZ=$(ls /tmp/jfrog-platform-*.tgz)
+          echo "Modified chart package: $MODIFIED_CHART_TGZ"
+          
+          # Install using the modified local chart
+          helm upgrade --install jfrog-platform $MODIFIED_CHART_TGZ \
+            --set global.masterKey=$MASTER_KEY \
+            --set global.joinKey=$JOIN_KEY \
+            --set artifactory.artifactory.license.secret=platform-license.${{ matrix.cli }} \
+            --set artifactory.artifactory.license.dataKey=platform.cluster.license.${{ matrix.cli }} \
+            --set artifactory.nginx.service.ssloffload=true \
+            --set artifactory.artifactory.persistence.size=50Gi \
+            --set postgresql.primary.persistence.size=500Gi \
+            --set postgresql.primary.resourcesPreset=medium \
+            --set xray.serviceAccount.create=true \
+            --set xray.rbac.create=true \
+            --set jas.healthcheck.enabled=true \
+            --set catalog.enabled=true \
+            --set artifactory.nginx.generateSelfSignedCert=true
+            # --set artifactory.nginx.service.loadBalancerSourceRanges="{$WHITELIST_CIDR}" \
+          echo "Waiting for JFrog Platform services roll out"
+          kubectl rollout status statefulset/jfrog-platform-postgresql
+          kubectl rollout status statefulset/jfrog-platform-rabbitmq
+          kubectl rollout status statefulset/jfrog-platform-artifactory
+          kubectl rollout status deployment/jfrog-platform-artifactory-nginx
+          kubectl rollout status statefulset/jfrog-platform-xray
+          kubectl rollout status deployment/jfrog-platform-catalog
+          SERVICE_IP=$(kubectl get svc --namespace default jfrog-platform-artifactory-nginx -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          JFROG_URL=http://$SERVICE_IP
+          echo "JFROG_URL=$JFROG_URL" >> "$GITHUB_ENV"
+          echo "JFrog Platform URL: $JFROG_URL"
+      - name: Get access token
+        id: get_access_token
+        run: |
+          echo "Get cookie to generate Access token"
+          COOKIES=$(curl -s -c - "${JFROG_URL}/ui/api/v1/ui/auth/login?_spring_security_remember_me=false" \
+            --header "accept: application/json, text/plain, */*" \
+            --header "content-type: application/json;charset=UTF-8" \
+            --header "x-requested-with: XMLHttpRequest" \
+            -d '{"user":"admin","password":"${{ secrets.ARTIFACTORY_PASSWORD }}","type":"login"}' | grep FALSE)
+          REFRESHTOKEN=$(echo $COOKIES | grep REFRESHTOKEN | awk '{print $7}')
+          ACCESSTOKEN=$(echo $COOKIES | grep ACCESSTOKEN | awk '{print $14}')
+          JFROG_ACCESS_TOKEN=$(curl -s -g --request GET "${JFROG_URL}/ui/api/v1/system/security/token?services[]=all" \
+            --header "accept: application/json, text/plain, */*" \
+            --header "x-requested-with: XMLHttpRequest" \
+            --header "cookie: ACCESSTOKEN=${ACCESSTOKEN}; REFRESHTOKEN=${REFRESHTOKEN}")
+          echo "::add-mask::$JFROG_ACCESS_TOKEN"
+          echo "JFROG_ACCESS_TOKEN=$JFROG_ACCESS_TOKEN" >> "$GITHUB_ENV"
+
+      - name: Wait for Catalog API to be ready
+        run: |
+          # `kubectl rollout status` only confirms the Catalog pod passed its
+          # readiness probe. The provider's catalog resources additionally
+          # require /catalog/api/v1/system/app_health to report code "OK" (DB
+          # connection, entitlements, etc.), which lags well behind pod-ready.
+          # Poll that same endpoint so catalog tests don't run before it's healthy.
+          echo "Waiting for Catalog app_health to report OK..."
+          for i in $(seq 1 30); do
+            CODE=$(curl -s "${JFROG_URL}/catalog/api/v1/system/app_health" \
+              --header "Authorization: Bearer ${JFROG_ACCESS_TOKEN}" \
+              | jq -r '.code // empty' 2>/dev/null)
+            if [ "$CODE" = "OK" ]; then
+              echo "Catalog is healthy (attempt $i/30)"
+              break
+            fi
+            if [ "$i" = "30" ]; then
+              echo "Catalog did not become healthy in time (last code: '$CODE')"
+              exit 1
+            fi
+            echo "Attempt $i/30: catalog health code '$CODE'. Waiting 20s..."
+            sleep 20
+          done
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.13'
+      - name: Install Terraform CLI
+        uses: hashicorp/setup-terraform@v3
+        if: ${{ matrix.cli == 'terraform' }}
+      - name: Get Terraform CLI version
+        id: get_terraform_cli_version
+        if: ${{ matrix.cli == 'terraform' }}
+        run: |
+          TF_VERSION=$(terraform -v -json | jq -r .terraform_version)
+          echo $TF_VERSION
+          echo "version=$TF_VERSION" >> "$GITHUB_OUTPUT"
+      - name: Install OpenTofu CLI
+        uses: opentofu/setup-opentofu@v1
+        if: ${{ matrix.cli == 'tofu' }}
+        with:
+          tofu_wrapper: false
+      - name: Get OpenTofu CLI version
+        id: get_opentofu_cli_version
+        if: ${{ matrix.cli == 'tofu' }}
+        run: |
+          echo "TF_ACC_TERRAFORM_PATH=$(which tofu)" >> "$GITHUB_ENV"
+          echo "TF_ACC_PROVIDER_NAMESPACE=hashicorp" >> "$GITHUB_ENV"
+          echo "TF_ACC_PROVIDER_HOST=registry.opentofu.org" >> "$GITHUB_ENV"
+          TOFU_VERSION=$(tofu -v -json | jq -r .terraform_version)
+          echo $TOFU_VERSION
+          echo "version=$TOFU_VERSION" >> "$GITHUB_OUTPUT"
+      - name: Install GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          install-only: true
+      - name: Execute acceptance tests
+        run: make acceptance -e TARGET_ARCH=linux_amd64
+      - name: Cleanup Kubernetes persistent volumes
+        # Runs BEFORE cluster delete so the PD CSI driver can cascade
+        # PVC delete → PV delete → GCE Persistent Disk delete while the
+        # cluster is still alive. gcloud container clusters delete does
+        # NOT delete dynamically-provisioned PDs on its own, so skipping
+        # this step leaks ~650 GiB of orphaned disks per run.
+        if: always() && steps.install_platform.conclusion == 'success'
+        continue-on-error: true
+        run: |
+          echo "Uninstalling jfrog-platform Helm release..."
+          helm uninstall jfrog-platform --wait --timeout 5m --ignore-not-found || true
+          echo "Deleting any remaining PVCs (belt-and-braces)..."
+          kubectl delete pvc --all --all-namespaces --wait=true --timeout=5m --ignore-not-found || true
+          # Give the PD CSI driver a moment to complete delete-disk calls.
+          sleep 20
+          echo "Remaining PVs (should be empty):"
+          kubectl get pv 2>/dev/null || true
+      - name: Install provider
+        run: |
+          export PROVIDER_VERSION=$(git describe --tags --abbrev=0 | sed  -n 's/v\([0-9]*\).\([0-9]*\).\([0-9]*\)/\1.\2.\3/p')
+          cat sample.tf | sed -e "s/version =.*/version = \"${PROVIDER_VERSION}\"/g" > sample.tf.tmp
+          cp sample.tf.tmp sample.tf && rm sample.tf.tmp
+          TERRAFORM_CLI=${{ matrix.cli }} make install
+      - name: Send workflow status to Slack
+        uses: slackapi/slack-github-action@v1.26.0
+        if: always()
+        with:
+          payload: |
+            {
+              "text": "${{ github.workflow }} https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}/job/${{ github.job }} ${{ matrix.cli }} GitHub Action result: ${{ job.status == 'success' && ':white_check_mark:' || ':x:' }}\n${{ github.event.pull_request.html_url || github.event.head_commit.url }}",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "${{ github.workflow }} <https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}/job/${{ github.job }}|${{ matrix.cli }} GitHub Action result>: ${{ job.status == 'success' && ':white_check_mark:' || ':x:' }}\n${{ github.event.pull_request.html_url || github.event.head_commit.url }}"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_PR_WEBHOOK }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+      - name: Delete GKE cluster
+        if: always() && steps.create_cluster.conclusion == 'success'
+        env:
+          GKE_ZONE: ${{ vars.GKE_ZONE_JFROG_DEV }}
+          GKE_PROJECT: ${{ vars.GKE_PROJECT_JFROG_DEV }}
+        run: |
+          echo "Deleting GKE cluster ${GKE_CLUSTER} using default authentication"
+          gcloud container clusters delete "${GKE_CLUSTER}" --zone "${GKE_ZONE}" --project "${GKE_PROJECT}" --quiet
+          echo "GKE cluster ${GKE_CLUSTER} was successfully deleted"
+
+  update-changelog:
+    runs-on: ubuntu-latest
+    needs: [acceptance-tests-matrix]
+    if: |
+      always() &&
+      (github.event_name == 'pull_request' || github.event_name == 'pull_request_target') &&
+      needs.acceptance-tests-matrix.result == 'success'
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Skip changelog push on fork PRs
+        if: github.event.pull_request.head.repo.full_name != github.repository
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Fork PR — GITHUB_TOKEN cannot push CHANGELOG.md to ${{ github.event.pull_request.head.repo.full_name }}."
+          echo "Apply the tested-on platform line after merge, or on a same-repo branch."
+          gh pr comment "${{ github.event.pull_request.number }}" --body "Acceptance tests passed. CHANGELOG.md was **not** updated on this fork branch (no write access to the customer repo). After merge, add the tested JFrog Platform / Terraform / OpenTofu versions to the latest CHANGELOG heading, or cherry-pick onto a same-repo branch if you need the line before merge."
+      - uses: actions/checkout@v4
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        with:
+          fetch-depth: 0
+          # Same SHA the suite tested. Do not checkout the branch name — it may
+          # have moved, and a later push would land the changelog on untested code.
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Update CHANGELOG and push commit
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          PLATFORM_VERSION: ${{ needs.acceptance-tests-matrix.outputs.platform_version }}
+          ARTIFACTORY_VERSION: ${{ needs.acceptance-tests-matrix.outputs.artifactory_version }}
+          XRAY_VERSION: ${{ needs.acceptance-tests-matrix.outputs.xray_version }}
+          CATALOG_VERSION: ${{ needs.acceptance-tests-matrix.outputs.catalog_version }}
+          TERRAFORM_VERSION: ${{ needs.acceptance-tests-matrix.outputs.tf_version }}
+          OPENTOFU_VERSION: ${{ needs.acceptance-tests-matrix.outputs.tofu_version }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          echo "Adding JFrog Platform version to CHANGELOG.md"
+          sed -i -E "0,/(##\s.+\..+\..+\s\(.+\)).*/ s/(##\s.+\..+\..+\s\(.+\)).*/\1. Tested on JFrog Platform $PLATFORM_VERSION (Artifactory $ARTIFACTORY_VERSION, Xray $XRAY_VERSION, Catalog $CATALOG_VERSION) with Terraform $TERRAFORM_VERSION and OpenTofu $OPENTOFU_VERSION/" CHANGELOG.md
+          head -10 CHANGELOG.md
+          git add CHANGELOG.md
+          export REGEX="Changes to be committed*"
+          export GIT_STATUS=$(git status)
+          if [[ ${GIT_STATUS} =~ ${REGEX} ]]; then
+            echo "Commiting changes"
+            git config --global user.name 'JFrog CI'
+            git config --global user.email 'jfrog-solutions-ci+1@jfrog.com'
+            git config --get user.name
+            git config --get user.email
+            git commit --author="JFrog CI <jfrog-solutions-ci+1@jfrog.com>" -m "JFrog Pipelines - Add JFrog Platform version to CHANGELOG.md"
+            git push --force-with-lease="refs/heads/${PR_HEAD_REF}:${PR_HEAD_SHA}" origin "HEAD:refs/heads/${PR_HEAD_REF}"
+          else
+            echo "There is nothing to commit: JFrog Platform version hadn't changed."
+          fi
+      - name: Send workflow status to Slack
+        uses: slackapi/slack-github-action@v1.26.0
+        if: success()
+        with:
+          payload: |
+            {
+              "text": "Terraform Provider Platform. A new PR was submitted by ${{ github.event.pull_request.user.login }} - ${{ github.event.pull_request.html_url }}, branch ${{ github.event.pull_request.base.ref }}. Changes tested successfully. <@U953714BC>, <@U61EEPXRV>, <@UPJ95RNSE> or <@U03KYAAS248> please, review and merge.",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "<http://github.com/${{ github.repository }}|Terraform Provider Platform>. A new PR was submitted by *${{ github.event.pull_request.user.login }}* - <${{ github.event.pull_request.html_url }}|${{ github.event.pull_request.title }}>, branch *${{ github.event.pull_request.base.ref }}*. Changes tested successfully. <@U953714BC>, <@U61EEPXRV>, <@UPJ95RNSE> or <@U03KYAAS248> please, review and merge."
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_PR_WEBHOOK }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK

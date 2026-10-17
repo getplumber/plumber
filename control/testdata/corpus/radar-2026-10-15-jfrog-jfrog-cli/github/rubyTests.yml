@@ -1,0 +1,60 @@
+name: Ruby Tests
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  Ruby-Tests:
+    name: Ruby tests (${{ matrix.os.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: macos
+            version: 14
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    steps:
+      - name: Skip macOS - JGC-413
+        if: matrix.os.name == 'macos'
+        run: |
+          echo "::warning::JGC-413 - Skip until artifactory bootstrap in osx is fixed"
+          exit 0
+
+      - name: Checkout code
+        if: matrix.os.name != 'macos'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+
+      - name: Setup FastCI
+        if: matrix.os.name != 'macos'
+        uses: jfrog-fastci/fastci@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          fastci_otel_token: ${{ secrets.FASTCI_TOKEN }}
+
+      - name: Setup Go with cache
+        if: matrix.os.name != 'macos'
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Setup Ruby
+        if: matrix.os.name != 'macos'
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.2"
+          bundler-cache: false
+
+      - name: Install local Artifactory
+        if: matrix.os.name != 'macos'
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: '1200'
+
+      - name: Run Ruby tests
+        if: matrix.os.name != 'macos'
+        run: >-
+          go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.ruby
+          ${{ env.JFROG_TESTS_IS_EXTERNAL == 'true' && format('--jfrog.url={0} --jfrog.adminToken={1}', env.JFROG_TESTS_URL, env.JFROG_TESTS_LOCAL_ACCESS_TOKEN) || '' }}

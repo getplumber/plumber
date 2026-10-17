@@ -1,0 +1,73 @@
+# Run formatting on all PRs
+
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch: # Allows triggering the workflow manually in GitHub UI
+
+# If another push to the same PR or branch happens while this workflow is still running,
+# cancel the earlier run in favor of the next run.
+#
+# There's no point in testing an outdated version of the code. GitHub only allows
+# a limited number of job runners to be active at the same time, so it's better to cancel
+# pointless jobs early so that more useful jobs can run sooner.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  format:
+    name: Check formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Use Node.js 22.x
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.x
+          cache: "yarn"
+      - name: Install dependencies
+        run: yarn install --immutable --mode=skip-build
+      - name: Check formatting
+        run: yarn format:check
+
+  lint:
+    name: Check linting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Use Node.js 22.x
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.x
+          cache: "yarn"
+      - name: Install dependencies
+        run: yarn install --immutable --mode=skip-build
+      - name: Check linting
+        run: yarn run lint:all
+
+  readme-spelling:
+    name: Check README spelling
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: codespell-project/actions-codespell@v2
+        with:
+          ignore_words_file: .codespellignore
+          path: README.md
+
+  check-spelling:
+    name: Check code spelling
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: codespell-project/actions-codespell@v2
+        with:
+          ignore_words_file: .codespellignore
+          path: src

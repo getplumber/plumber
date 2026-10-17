@@ -1,0 +1,65 @@
+{
+  "source": "https://github.com/ClickHouse/clickhouse-go",
+  "commit": "c5dd9ce2d46fdea42cbffcf2d270406e89e6c503",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "copilot",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/check-maintainer-edit.yml": "active",
+    ".github/workflows/check-pr-links.yml": "active",
+    ".github/workflows/claude-code-review.yml": "active",
+    ".github/workflows/codeql-analysis.yml": "active",
+    ".github/workflows/cross-repo-bug-relay.yml": "active",
+    ".github/workflows/docs_drift_check.yml": "active",
+    ".github/workflows/docs_sync.yml": "active",
+    ".github/workflows/docs_verify.yml": "active",
+    ".github/workflows/release.yml": "active",
+    ".github/workflows/run-lint.yml": "active",
+    ".github/workflows/run-tests-cloud.yml": "active",
+    ".github/workflows/run-tests-head.yml": "active",
+    ".github/workflows/run-tests.yml": "active",
+    ".github/workflows/stresshouse-benchmark-compare.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "defaultTokenWrite": "false",
+  "defaultTokenSource": "log",
+  "note": "The Critical pull_request_target path from `run-tests-cloud.yml` was judged false: it runs on `types: [labeled]` only when a maintainer applies `tests:run-cloud`, at the labelled head commit, so it holds as a maintainer-approved Medium at most; the High `lycheeverse/lychee-action@v2` path was judged overstated: the job holds no secret and the repository default token is read-only (the `GITHUB_TOKEN Permissions` block of a recent run log), so a compromised action only runs code on the runner, Medium at most.",
+  "expect": {
+    "paths": [
+      {
+        "entryKind": "pr_target",
+        "tier": "medium",
+        "subjectContains": "github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.ref",
+        "actor": "maintainer_approved",
+        "pending": "a checkout of the pull request head SHA written with a fallback (`head.sha || github.sha`, `head.sha || github.ref`, `event_name == 'pull_request_target' && head.sha || github.ref`) is not read as a pinned head commit, although under pull_request_target it is always the head SHA, so the maintainer-approved path holds at High instead of Medium."
+      }
+    ],
+    "ceilings": [
+      {
+        "entryKind": "pr_target",
+        "subjectContains": "github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.ref",
+        "tier": "medium",
+        "pending": "a checkout of the pull request head SHA written with a fallback (`head.sha || github.sha`, `head.sha || github.ref`, `event_name == 'pull_request_target' && head.sha || github.ref`) is not read as a pinned head commit, although under pull_request_target it is always the head SHA, so the maintainer-approved path holds at High instead of Medium."
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "lycheeverse/lychee-action@v2",
+        "tier": "medium"
+      }
+    ]
+  }
+}

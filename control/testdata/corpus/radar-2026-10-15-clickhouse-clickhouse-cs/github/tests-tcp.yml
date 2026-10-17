@@ -1,0 +1,147 @@
+name: TCP Tests
+
+# Runs the ClickHouse.Driver.Tcp test suite. The TCP projects do not reference ClickHouse.Driver, so an
+# HTTP-only change does not run this suite. They do reference ClickHouse.Driver.Common, so the path filters
+# select it, together with the shared build inputs, the workflows of this suite, and codecov.yml (the
+# Codecov settings for its coverage report). tests.yml and examples.yml list the same shared build inputs;
+# keep the three lists the same.
+on:
+  push:
+    # Only the long-lived integration branches run on push (validating what landed). The per-epic tcp/**
+    # branches are validated by the pull_request trigger below; keeping them off push avoids a duplicate
+    # run every time a commit is pushed to an epic branch that already has an open PR.
+    branches: [main, tcp-client]
+    paths:
+      - "ClickHouse.Driver.Tcp/**"
+      - "ClickHouse.Driver.Tcp.Tests/**"
+      - "ClickHouse.Driver.Common/**"
+      - "Directory.Packages.props"
+      - "Directory.Build.*"
+      - "global.json"
+      - "[Nn]u[Gg]et.[Cc]onfig"
+      - ".editorconfig"
+      - "sgKey.snk"
+      - "codecov.yml"
+      - ".github/workflows/tests-tcp.yml"
+      - ".github/workflows/reusable-tcp.yml"
+      - ".github/workflows/tests-cloud-tcp.yml"
+      - "!**/*.md"
+  pull_request:
+    # Matches the PR's base branch, so a PR stacked onto another tcp/** epic branch triggers too.
+    branches: [main, tcp-client, "tcp/**"]
+    paths:
+      - "ClickHouse.Driver.Tcp/**"
+      - "ClickHouse.Driver.Tcp.Tests/**"
+      - "ClickHouse.Driver.Common/**"
+      - "Directory.Packages.props"
+      - "Directory.Build.*"
+      - "global.json"
+      - "[Nn]u[Gg]et.[Cc]onfig"
+      - ".editorconfig"
+      - "sgKey.snk"
+      - "codecov.yml"
+      - ".github/workflows/tests-tcp.yml"
+      - ".github/workflows/reusable-tcp.yml"
+      - ".github/workflows/tests-cloud-tcp.yml"
+      - "!**/*.md"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag, or commit SHA to run on"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  coverage-tcp:
+    name: Code Coverage (TCP)
+    uses: $/.github/workflows/reusable-tcp.yml
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+    with:
+      coverage: true
+      ref: ${{ inputs.ref }}
+
+  regress-clickhouse-tcp:
+    name: ClickHouse regression (TCP)
+    uses: $/.github/workflows/reusable-tcp.yml
+    with:
+      clickhouse-version: ${{ matrix.version }}
+      ref: ${{ inputs.ref }}
+    strategy:
+      fail-fast: false
+      matrix:
+        version:
+          - "latest"
+          - "26.9"
+          - "26.8"
+          - "26.7"
+          - "26.3"
+
+  regress-dotnet-tcp:
+    name: .NET regression (TCP)
+    # Framework axis: each TFM runs against clickhouse-version 'latest' (the reusable default).
+    uses: $/.github/workflows/reusable-tcp.yml
+    with:
+      framework: ${{ matrix.framework }}
+      ref: ${{ inputs.ref }}
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: ["net10.0", "net9.0", "net8.0"] # TCP library targets net8.0+ only
+
+  build-http-driver:
+    name: HTTP driver build (TCP)
+    # ClickHouse.Driver references ClickHouse.Driver.Tcp for net8.0 and later and compiles against its public
+    # types, so a TCP change can break the HTTP driver build, possibly on some target frameworks only.
+    # tests.yml does not run for a TCP-only change, so this job builds ClickHouse.Driver for every target
+    # framework.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          # No step here talks to git again, so the job token does not need to stay in .git/config.
+          persist-credentials: false
+
+      - uses: actions/cache@v6
+        name: Cache NuGet
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      # The .NET 10 SDK builds the older target frameworks too: their reference packs come from NuGet.
+      - name: Setup .NET Core
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: |
+            10.x
+
+      # GeneratePackageOnBuild=false: compile only, without the NuGet package.
+      - name: Build
+        run: dotnet build ClickHouse.Driver/ClickHouse.Driver.csproj --configuration Release -p:GeneratePackageOnBuild=false
+
+  cloud-tcp:
+    name: Cloud (TCP)
+    # On a pull request only when its branch is in this repository, which needs write access to push. Dependabot
+    # pull requests do not get the Actions secrets. A fork gets a run from the tests:run-cloud label
+    # (tests-cloud-tcp-label.yml).
+    if: >-
+      github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+      || (github.event_name == 'pull_request'
+          && github.event.pull_request.head.repo.full_name == github.repository
+          && github.event.pull_request.user.login != 'dependabot[bot]')
+    uses: $/.github/workflows/tests-cloud-tcp.yml
+    secrets:
+      CLICKHOUSE_CLOUD_HOST: ${{ secrets.CLICKHOUSE_CLOUD_HOST }}
+      CLICKHOUSE_CLOUD_USER: ${{ secrets.CLICKHOUSE_CLOUD_USER }}
+      CLICKHOUSE_CLOUD_PASSWORD: ${{ secrets.CLICKHOUSE_CLOUD_PASSWORD }}
+    with:
+      ref: ${{ inputs.ref }}

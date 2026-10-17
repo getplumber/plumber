@@ -1,0 +1,199 @@
+{
+  "source": "https://github.com/airbytehq/airbyte",
+  "commit": "bf548810a2aad784e81d87b77ab477a8746eafd7",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "master",
+  "branches": [
+    {
+      "name": "master",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "copilot",
+      "known": true
+    },
+    {
+      "name": "docs-production",
+      "known": true
+    },
+    {
+      "name": "ghcr.io/airbytehq",
+      "known": true
+    },
+    {
+      "name": "ghcr.io/airbytehq/java-connector-base",
+      "known": true
+    },
+    {
+      "name": "ghcr.io/airbytehq/python-connector-base",
+      "known": true
+    },
+    {
+      "name": "hub.docker.com/r/airbyte",
+      "known": true
+    },
+    {
+      "name": "kotlin-cdk-docs",
+      "known": true
+    },
+    {
+      "name": "kotlin-cdk-docs-preview",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 airbyte-docs",
+      "known": true
+    },
+    {
+      "name": "Production",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 airbyte-docs",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/gradle.yml": "active",
+    ".github/workflows/slash-commands.yml": "active",
+    ".github/workflows/publish-external-command.yml": "active",
+    ".github/workflows/run-specific-test-command.yml": "active",
+    ".github/workflows/label-prs-by-context.yml": "active",
+    ".github/workflows/label-github-issues-by-context.yml": "active",
+    ".github/workflows/connector_teams_review_requirements.yml": "active",
+    ".github/workflows/publish_connectors.yml": "active",
+    ".github/workflows/publish-java-cdk-command.yml": "active",
+    ".github/workflows/connector-performance-cron.yml": "active",
+    ".github/workflows/format_check.yml": "active",
+    ".github/workflows/stale-community-issues.yaml": "active",
+    ".github/workflows/stale-routed-issues.yaml": "active",
+    ".github/workflows/format-fix-command.yml": "active",
+    ".github/workflows/finalize_rollout.yml": "active",
+    ".github/workflows/bump-version-command.yml": "active",
+    ".github/workflows/poe-command.yml": "active",
+    ".github/workflows/docker-connector-base-image-tests.yml": "active",
+    ".github/workflows/docker-image-pruning.yml": "active",
+    ".github/workflows/autodoc.yml": "active",
+    ".github/workflows/docker-connector-image-publishing.yml": "active",
+    ".github/workflows/run-connector-tests-command.yml": "active",
+    ".github/workflows/gradle-dependency-diff.yml": "active",
+    ".github/workflows/connector-ci-checks.yml": "active",
+    ".github/workflows/java-cdk-tests.yml": "active",
+    ".github/workflows/welcome-message.yml": "active",
+    ".github/workflows/build-connector-images-command.yml": "active",
+    ".github/workflows/connector-image-build.yml": "active",
+    ".github/workflows/docs-build.yml": "active",
+    ".github/workflows/generate-connector-registries.yml": "active",
+    ".github/workflows/canonical_check_version_increase.yml": "active",
+    ".github/workflows/canonical_ci.yml": "active",
+    ".github/workflows/test2.yml": "active",
+    ".github/workflows/docs-markdownlint.yml": "active",
+    ".github/workflows/docs-vale.yml": "active",
+    ".github/workflows/reviewdog.yml": "active",
+    ".github/workflows/update-connector-cdk-version-command.yml": "active",
+    ".github/workflows/changelog_update_check.yml": "active",
+    ".github/workflows/cdk-connector-compatibility-test.yml": "active",
+    ".github/workflows/connector_cdk_version_check.yml": "active",
+    ".github/workflows/jvm-connector-pr-structure.yml": "active",
+    ".github/workflows/connectors-cdk-version-check.yml": "active",
+    ".github/workflows/auto-upgrade-certified-connectors-cdk.yml": "active",
+    ".github/workflows/fork-connector-tests.yml": "active",
+    ".github/workflows/community-pr-permissions-check.yml": "active",
+    ".github/workflows/bulk-cdk-dokka-publish.yml": "active",
+    ".github/workflows/kotlin-bulk-cdk-dokka-publish.yml": "active",
+    ".github/workflows/publish-connectors-prerelease-command.yml": "active",
+    ".github/workflows/bump-progressive-rollout-version-command.yml": "active",
+    ".github/workflows/label-community-prs.yml": "active",
+    ".github/workflows/ai-canary-prerelease-command.yml": "active",
+    ".github/workflows/ai-prove-fix-command.yml": "active",
+    ".github/workflows/ai-release-watch-command.yml": "active",
+    ".github/workflows/kotlin-bulk-cdk-dokka-publish 2.yml": "active",
+    ".github/workflows/sync-ai-connector-docs.yml": "active",
+    ".github/workflows/autodoc-pre-merge.yml": "active",
+    ".github/workflows/pyairbyte-docs-generate.yml": "active",
+    ".github/workflows/pr-ai-review-submit.yml": "active",
+    ".github/workflows/ai-create-docs-pr-command.yml": "active",
+    ".github/workflows/ai-docs-review-command.yml": "active",
+    ".github/workflows/ai-pr-review-signals.yml": "active",
+    ".github/workflows/ai-review-command.yml": "active",
+    ".github/workflows/force-merge-command.yml": "active",
+    ".github/workflows/enforce-draft-pr-status.yml": "active",
+    ".github/workflows/java-bulk-cdk-base-publish.yml": "active",
+    ".github/workflows/tk-todo-check.yml": "active",
+    ".github/workflows/java-bulk-cdk-extract-publish.yml": "active",
+    ".github/workflows/java-bulk-cdk-load-publish.yml": "active",
+    ".github/workflows/regenerate-agent-engine-api-spec.yml": "active",
+    ".github/workflows/cdk-source-connector-compatibility-test.yml": "active",
+    ".github/workflows/cdk-destination-connector-compatibility-test.yml": "active",
+    ".github/workflows/semantic-pr-check.yml": "active",
+    ".github/workflows/notify-on-replication-version-change.yml": "active",
+    ".github/workflows/auto-ai-review-label.yml": "active",
+    ".github/workflows/ai-dev-command.yml": "active",
+    ".github/workflows/auto-merge-labels.yml": "active",
+    ".github/workflows/auto-merge-toggle.yml": "active",
+    ".github/workflows/connectors-up-to-date.yml": "active",
+    ".github/workflows/auto-merge-cron.yml": "active",
+    ".github/workflows/oss-pr-merge-unpin.yml": "active",
+    ".github/workflows/agent-sdk-docs-generate.yml": "active",
+    ".github/workflows/pr-ai-unpin-connection.yml": "active",
+    ".github/workflows/stale-discussions-autoclose.yml": "active",
+    ".github/workflows/connector-active-progressive-rollout-checks.yml": "active",
+    ".github/workflows/docs-vercel-production-rebuild.yml": "active",
+    ".github/workflows/block-release-check.yml": "active",
+    ".github/workflows/block-release.yml": "active",
+    ".github/workflows/ai-ready-command.yml": "active",
+    ".github/workflows/hydra-automerge.yml": "active",
+    ".github/workflows/version-yank-command.yml": "active",
+    ".github/workflows/codeql.yml": "active",
+    ".github/workflows/enable-autopilot-rollouts-command.yml": "active",
+    ".github/workflows/stale-autogen-docs-prs.yml": "active",
+    ".github/workflows/daily-release-notes.yml": "active",
+    ".github/workflows/autopilot-rollout-suggestion.yml": "active",
+    ".github/workflows/ci.yml": "active",
+    ".github/workflows/ai-resolve-conflicts-command.yml": "active",
+    ".github/workflows/community-api-source-pr-board.yml": "active",
+    ".github/workflows/hydra-failure-command.yml": "active",
+    ".github/workflows/stripe_contract_validation.yml": "active",
+    ".github/workflows/backfill-issues-by-connector.yml": "active",
+    ".github/workflows/label-issues-by-connector.yml": "active",
+    ".github/workflows/autopilot-release-immediately-checkbox.yml": "active",
+    ".github/workflows/ai-breaking-change-review-command.yml": "active",
+    ".github/workflows/ci-scripts-tests.yml": "active",
+    ".github/workflows/db-harness-canary.yml": "active",
+    ".github/workflows/ai-breaking-change-review-auto.yml": "active",
+    ".github/workflows/hydra-stage-handoff.yml": "active",
+    ".github/workflows/hydra-state-demo.yml": "active",
+    ".github/workflows/ai-breaking-change-ready-command.yml": "active",
+    ".github/workflows/breaking-change-ready-script-tests.yml": "active",
+    ".github/workflows/test1.yml": "disabled_manually",
+    ".github/workflows/oss-issue-triage.yml": "disabled_manually",
+    ".github/workflows/resolve-stale-metadata.yml": "disabled_manually"
+  },
+  "workflowStatesKnown": true,
+  "note": "Three High paths were judged overstated: `dorny/paths-filter@v4.0.1` is an output-only action (it computes changed paths or a branch status) in a job with no secret and a token whose write scope is assumed or scoped, Medium at most; `amannn/action-semantic-pull-request@v6` reaches a pull-requests token on same-repository runs, Medium at most; `aaronsteers/tk-todo-check-action@v1.0.0` runs with a read-only token, Low.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "dorny/paths-filter@v4.0.1",
+        "tier": "medium"
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "amannn/action-semantic-pull-request@v6",
+        "tier": "medium",
+        "pending": "the spec counts any write scope of the token as a write token, while the assessment argued that a token scoped to issues, pull requests or checks only, in a job with no secret, is a Medium at most."
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "aaronsteers/tk-todo-check-action@v1.0.0",
+        "tier": "low"
+      }
+    ]
+  }
+}

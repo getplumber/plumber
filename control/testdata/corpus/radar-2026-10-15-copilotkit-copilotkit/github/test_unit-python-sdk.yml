@@ -1,0 +1,83 @@
+name: test / unit / python-sdk
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "sdk-python/**"
+      - ".github/workflows/test_unit-python-sdk.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "sdk-python/**"
+      - ".github/workflows/test_unit-python-sdk.yml"
+
+# Least-privilege by default. Individual jobs/steps can widen when needed.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: depot-ubuntu-24.04-4
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      # id-token: write is required for Depot OIDC auth (runs-on: depot-ubuntu-*).
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        # The declared floor and the newest release, across every supported
+        # Python. Covering the floor in CI is what lets the runtime floor stay
+        # at 0.0.42: raising it for test coverage alone would also raise the
+        # effective LangGraph floor from >=0.3.25 to >=0.6.0 for every
+        # consumer.
+        ag-ui-langgraph-version: ["0.0.42", "0.0.44"]
+        # 0.0.43 is the one still-supported version whose clone() forwards
+        # its behavior flags unconditionally, so it is the only leg that
+        # reproduces the default-construction 500 this shim fixes. 0.0.44's
+        # clone() is signature-aware and omits default-valued flags, which
+        # means the clone tests pass there even without the passthrough. One
+        # representative Python is enough for a regression leg; the flag
+        # forwarding it exercises is not version-specific.
+        include:
+          - python-version: "3.12"
+            ag-ui-langgraph-version: "0.0.43"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install Poetry
+        uses: snok/install-poetry@a783c322200f0519c7926aa6faa857c4e23e9263 # v1.4.2
+        with:
+          version: latest
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+
+      - name: Install dependencies
+        working-directory: sdk-python
+        run: poetry lock && poetry install --with dev
+
+      - name: Pin ag-ui-langgraph for this matrix leg
+        working-directory: sdk-python
+        # Installed after the lock resolve rather than by editing pyproject, so
+        # the declared floor stays untouched and only the installed version
+        # varies across legs.
+        run: |
+          poetry run pip install "ag-ui-langgraph[fastapi]==${{ matrix.ag-ui-langgraph-version }}"
+          poetry run python -c "import importlib.metadata as m; print('ag-ui-langgraph', m.version('ag-ui-langgraph'))"
+
+      - name: Run tests
+        working-directory: sdk-python
+        run: poetry run python -m pytest tests/ -v

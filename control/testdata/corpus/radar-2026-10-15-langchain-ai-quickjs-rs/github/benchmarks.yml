@@ -1,0 +1,96 @@
+name: benchmarks
+
+# Runs the performance benchmarks under pytest-codspeed and uploads
+# to CodSpeed for regression detection.
+#
+# Mode is walltime: simulation (Valgrind) can't see QuickJS bytecode execution
+# inside the wasm module — walltime captures the full stack, which is what users
+# actually experience.
+#
+# The engine is a guest WASM module; CI builds it fresh from source (cargo,
+# wasm32-wasip1) and bundles it via scripts/build_guest.py before installing the
+# (pure-Python) package.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  benchmarks:
+    name: Run benchmarks
+    runs-on: codspeed-macro
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.12"
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          targets: wasm32-wasip1
+
+      - name: Cache cargo registry + build
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
+        with:
+          key: benchmarks
+          workspaces: crates/quickjs-wasm
+
+      - name: Build guest wasm + bundle
+        run: python scripts/build_guest.py
+
+      - name: Install package + bench + dev extras
+        # `bench` for pytest-codspeed; `dev` for pytest-asyncio — the async
+        # benchmarks use an async_ctx fixture that only resolves when
+        # pytest-asyncio is installed.
+        run: python -m pip install --upgrade pip && pip install -e ".[dev,bench]"
+
+      - name: Run benchmarks
+        uses: CodSpeedHQ/action@dfaf2584d705312e4ab4e23a4dd3e2f56b71ef3b # v4
+        with:
+          mode: walltime
+          run: pytest benchmarks/ --codspeed --ignore benchmarks/test_memory.py
+
+      - name: Run memory benchmarks
+        # CodSpeed memory mode tracks allocation regressions on a
+        # small deterministic subset designed for heap behavior.
+        uses: CodSpeedHQ/action@dfaf2584d705312e4ab4e23a4dd3e2f56b71ef3b # v4
+        with:
+          mode: memory
+          run: pytest benchmarks/test_memory.py --codspeed --codspeed-mode memory -q
+
+      - name: Emit threaded TPS summary
+        # Keep a human-readable throughput line in the job summary so
+        # reviewers don't need to inspect raw benchmark tables.
+        run: |
+          set -euo pipefail
+          LOG_FILE=/tmp/threaded-stress.log
+
+          pytest benchmarks/test_threaded_stress.py::bench_threaded_runtime_context_isolation_tps \
+            --codspeed -q -s -p no:cacheprovider | tee "$LOG_FILE"
+
+          CONFIG_LINE="$(grep -E 'threaded_stress_config=' "$LOG_FILE" | tail -n 1 || true)"
+          TPS_LINE="$(grep -E 'threaded_stress_tps=' "$LOG_FILE" | tail -n 1 || true)"
+          if [ -z "$CONFIG_LINE" ]; then
+            echo "Failed to capture threaded_stress_config line from benchmark output." >&2
+            exit 1
+          fi
+          if [ -z "$TPS_LINE" ]; then
+            echo "Failed to capture threaded_stress_tps line from benchmark output." >&2
+            exit 1
+          fi
+          CONFIG_PAYLOAD="${CONFIG_LINE#threaded_stress_config=}"
+
+          {
+            echo "### Threaded Stress TPS"
+            echo
+            echo "- \`$TPS_LINE\`"
+            echo "- Config: $CONFIG_PAYLOAD"
+            echo "- Note: TPS is derived from fixed-workload benchmark runtime."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,424 @@
+name: Build all
+
+permissions:
+  contents: read
+  actions: write # to upload artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: PDFium branch
+        required: false
+        default: main
+      version:
+        description: PDFium version
+        required: false
+        default: ""
+      enable_v8:
+        description: Enable V8
+        type: boolean
+        required: false
+        default: false
+      is_debug:
+        description: Is debug
+        type: boolean
+        required: false
+        default: false
+      release:
+        description: Publish GitHub release
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  # ── Linux ──────────────────────────────────────────────
+
+  linux_arm:
+    name: Linux ARM
+    uses: ./.github/workflows/build.yml
+    with:
+      branch: ${{ github.event.inputs.branch }}
+      version: ${{ github.event.inputs.version }}
+      is_debug: ${{ github.event.inputs.is_debug == 'true' }}
+      target_os: linux
+      target_cpu: arm
+      enable_v8: false
+
+  linux_arm_v8:
+    name: Linux ARM V8
+    if: github.event.inputs.enable_v8 == 'true'
+    needs: linux_arm
+    uses: ./.github/workflows/build.yml
+    with:
+      branch: ${{ github.event.inputs.branch }}
+      version: ${{ github.event.inputs.version }}
+      is_debug: ${{ github.event.inputs.is_debug == 'true' }}
+      target_os: linux
+      target_cpu: arm
+      enable_v8: true
+
+  linux_arm64:
+    name: Linux ARM64
+    uses: ./.github/workflows/build.yml
+    with:
+      branch: ${{ github.event.inputs.branch }}
+      version: ${{ github.event.inputs.version }}
+      is_debug: ${{ github.event.inputs.is_debug == 'true' }}
+      target_os: linux
+      target_cpu: arm64
+      enable_v8: false
+
+  linux_arm64_v8:
+    name: Linux ARM64 V8
+    if: github.event.inputs.enable_v8 == 'true'
+    needs: linux_arm64
+    uses: ./.github/workflows/build.yml
+    with:
+      branch: ${{ github.event.inputs.branch }}
+      version: ${{ github.event.inputs.version }}
+      is_debug: ${{ github.event.inputs.is_debug == 'true' }}
+      target_os: linux
+      target_cpu: arm64
+      enable_v8: true
+
+  linux_ppc64:
+    name: Linux ppc64
+    uses: ./.github/workflows/build.yml
+    with:
+      branch: ${{ github.event.inputs.branch }}
+      version: ${{ github.event.inputs.version }}
+      is_debug: ${{ github.event.inputs.is_debug == 'true' }}
+      target_os: linux
+      target_cpu: ppc64
+      enable_v8: false
+
+  linux_x64:
+    name: Linux x64
+    uses: ./.github/workflows/build.yml
+    with:
+      branch: ${{ github.event.inputs.branch }}
+      version: ${{ github.event.inputs.version }}
+      is_debug: ${{ github.event.inputs.is_debug == 'true' }}
+      target_os: linux
+      target_cpu: x64
+      enable_v8: false
+
+  linux_x64_v8:
+    name: Linux x64 V8
+    if: github.event.inputs.enable_v8 == 'true'
+    needs: linux_x64
+    uses: ./.github/workflows/build.yml
+    with:
+      branch: ${{ github.event.inputs.branch }}
+      version: ${{ github.event.inputs.version }}
+      is_debug: ${{ github.event.inputs.is_debug == 'true' }}
+      target_os: linux
+      target_cpu: x64
+      enable_v8: true
+
+  linux_x86:
+    name: Linux x86
+    uses: ./.github/workflows/build.yml
+    with:
+      branch: ${{ github.event.inputs.branch }}
+      version: ${{ github.event.inputs.version }}
+      is_debug: ${{ github.event.inputs.is_debug == 'true' }}
+      target_os: linux
+      target_cpu: x86
+      enable_v8: false
+
+  linux_x86_v8:
+    name: Linux x86 V8
+    if: github.event.inputs.enable_v8 == 'true'
+    needs: linux_x86
+    uses: ./.github/workflows/build.yml
+    with:
+      branch: ${{ github.event.inputs.branch }}
+      version: ${{ github.event.inputs.version }}
+      is_debug: ${{ github.event.inputs.is_debug == 'true' }}
+      target_os: linux
+      target_cpu: x86
+      enable_v8: true
+
+  linux_x64_musl:
+    name: Linux x64 MUSL
+    needs: linux_x64
+    uses: ./.github/workflows/build.yml
+    with:
+      branch: ${{ github.event.inputs.branch }}
+      version: ${{ github.event.inputs.version }}
+      is_debug: ${{ github.event.inputs.is_debug == 'true' }}
+      target_os: linux
+      target_cpu: x64
+      target_environment: musl
+      enable_v8: false
+
+  linux_x64_musl_v8:
+    name: Linux x64 MUSL V8
+    if: github.event.inputs.enable_v8 == 'true'
+    needs: linux_x64_v8
+    uses: ./.github/workflows/build.yml
+    with:
+      branch: ${{ github.event.inputs.branch }}
+      version: ${{ github.event.inputs.version }}
+      is_debug: ${{ github.event.inputs.is_debug == 'true' }}
+      target_os: linux
+      target_cpu: x64
+      target_environment: musl
+      enable_v8: true
+
+  # ── macOS ──────────────────────────────────────────────
+
+  mac_arm64:
+    name: macOS ARM64
+    uses: ./.github/workflows/build.yml
+    with:
+      branch: ${{ github.event.inputs.branch }}
+      version: ${{ github.event.inputs.version }}
+      is_debug: ${{ github.event.inputs.is_debug == 'true' }}
+      target_os: mac
+      target_cpu: arm64
+      enable_v8: false
+
+  mac_arm64_v8:
+    name: macOS ARM64 V8
+    if: github.event.inputs.enable_v8 == 'true'
+    needs: mac_arm64
+    uses: ./.github/workflows/build.yml
+    with:
+      branch: ${{ github.event.inputs.branch }}
+      version: ${{ github.event.inputs.version }}
+      is_debug: ${{ github.event.inputs.is_debug == 'true' }}
+      target_os: mac
+      target_cpu: arm64
+      enable_v8: true
+
+  mac_x64:
+    name: macOS x64
+    uses: ./.github/workflows/build.yml
+    with:
+      branch: ${{ github.event.inputs.branch }}
+      version: ${{ github.event.inputs.version }}
+      is_debug: ${{ github.event.inputs.is_debug == 'true' }}
+      target_os: mac
+      target_cpu: x64
+      enable_v8: false
+
+  mac_x64_v8:
+    name: macOS x64 V8
+    if: github.event.inputs.enable_v8 == 'true'
+    needs: mac_x64
+    uses: ./.github/workflows/build.yml
+    with:
+      branch: ${{ github.event.inputs.branch }}
+      version: ${{ github.event.inputs.version }}
+      is_debug: ${{ github.event.inputs.is_debug == 'true' }}
+      target_os: mac
+      target_cpu: x64
+      enable_v8: true
+
+  mac_univ:
+    name: macOS univ
+    needs:
+      - mac_arm64
+      - mac_x64
+    uses: ./.github/workflows/mac-univ.yml
+    with:
+      artifact_x64: ${{ needs.mac_x64.outputs.artifact }}
+      artifact_arm64: ${{ needs.mac_arm64.outputs.artifact }}
+
+  mac_univ_v8:
+    name: macOS univ V8
+    if: github.event.inputs.enable_v8 == 'true'
+    needs:
+      - mac_arm64_v8
+      - mac_x64_v8
+    uses: ./.github/workflows/mac-univ.yml
+    with:
+      artifact_x64: ${{ needs.mac_x64_v8.outputs.artifact }}
+      artifact_arm64: ${{ needs.mac_arm64_v8.outputs.artifact }}
+
+  # ── Windows ────────────────────────────────────────────
+
+  win_arm64:
+    name: Windows ARM64
+    uses: ./.github/workflows/build.yml
+    with:
+      branch: ${{ github.event.inputs.branch }}
+      version: ${{ github.event.inputs.version }}
+      is_debug: ${{ github.event.inputs.is_debug == 'true' }}
+      target_os: win
+      target_cpu: arm64
+      enable_v8: false
+
+  win_arm64_v8:
+    name: Windows ARM64 V8
+    if: github.event.inputs.enable_v8 == 'true'
+    needs: win_arm64
+    uses: ./.github/workflows/build.yml
+    with:
+      branch: ${{ github.event.inputs.branch }}
+      version: ${{ github.event.inputs.version }}
+      is_debug: ${{ github.event.inputs.is_debug == 'true' }}
+      target_os: win
+      target_cpu: arm64
+      enable_v8: true
+
+  win_x64:
+    name: Windows x64
+    uses: ./.github/workflows/build.yml
+    with:
+      branch: ${{ github.event.inputs.branch }}
+      version: ${{ github.event.inputs.version }}
+      is_debug: ${{ github.event.inputs.is_debug == 'true' }}
+      target_os: win
+      target_cpu: x64
+      enable_v8: false
+
+  win_x64_v8:
+    name: Windows x64 V8
+    if: github.event.inputs.enable_v8 == 'true'
+    needs: win_x64
+    uses: ./.github/workflows/build.yml
+    with:
+      branch: ${{ github.event.inputs.branch }}
+      version: ${{ github.event.inputs.version }}
+      is_debug: ${{ github.event.inputs.is_debug == 'true' }}
+      target_os: win
+      target_cpu: x64
+      enable_v8: true
+
+  win_x86:
+    name: Windows x86
+    uses: ./.github/workflows/build.yml
+    with:
+      branch: ${{ github.event.inputs.branch }}
+      version: ${{ github.event.inputs.version }}
+      is_debug: ${{ github.event.inputs.is_debug == 'true' }}
+      target_os: win
+      target_cpu: x86
+      enable_v8: false
+
+  win_x86_v8:
+    name: Windows x86 V8
+    if: github.event.inputs.enable_v8 == 'true'
+    needs: win_x86
+    uses: ./.github/workflows/build.yml
+    with:
+      branch: ${{ github.event.inputs.branch }}
+      version: ${{ github.event.inputs.version }}
+      is_debug: ${{ github.event.inputs.is_debug == 'true' }}
+      target_os: win
+      target_cpu: x86
+      enable_v8: true
+
+  # ── WASM ───────────────────────────────────────────────
+
+  wasm-emscripten:
+    name: WASM (emscripten)
+    uses: ./.github/workflows/build.yml
+    with:
+      branch: ${{ github.event.inputs.branch }}
+      version: ${{ github.event.inputs.version }}
+      is_debug: ${{ github.event.inputs.is_debug == 'true' }}
+      target_os: emscripten
+      target_cpu: wasm
+      enable_v8: false
+
+  wasm-wasi:
+    name: WASM (wasi)
+    uses: ./.github/workflows/build.yml
+    with:
+      branch: ${{ github.event.inputs.branch }}
+      version: ${{ github.event.inputs.version }}
+      is_debug: ${{ github.event.inputs.is_debug == 'true' }}
+      target_os: wasi
+      target_cpu: wasm
+      enable_v8: false
+
+  # ── Release ────────────────────────────────────────────
+
+  publish:
+    name: Publish Release
+    outputs:
+      hashes: ${{ steps.hash.outputs.hashes }}
+      tagname: ${{ github.event.inputs.branch }}
+    if: ${{ !failure() && !cancelled() && startsWith(github.event.inputs.branch, 'chromium/') && github.event.inputs.version && github.event.inputs.release == 'true' }}
+    runs-on: ubuntu-latest
+    needs:
+      - linux_arm
+      - linux_arm_v8
+      - linux_arm64
+      - linux_arm64_v8
+      - linux_ppc64
+      - linux_x64
+      - linux_x64_v8
+      - linux_x86
+      - linux_x86_v8
+      - linux_x64_musl
+      - linux_x64_musl_v8
+      - mac_arm64
+      - mac_arm64_v8
+      - mac_x64
+      - mac_x64_v8
+      - mac_univ
+      - mac_univ_v8
+      - win_arm64
+      - win_arm64_v8
+      - win_x64
+      - win_x64_v8
+      - win_x86
+      - win_x86_v8
+      - wasm-emscripten
+      - wasm-wasi
+    permissions:
+      contents: write # to create releases
+      id-token: write # to attest build provenance
+      attestations: write # to attest build provenance
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v7
+      - name: Create tarballs
+        run: |
+          for DIR in pdfium-*; do
+            echo "::group::$DIR"
+            (cd $DIR; tar czf ../$DIR.tgz *)
+            echo "::endgroup::"
+          done
+      - name: Write release body
+        run: echo "This version was built with branch \`$BRANCH\` of PDFium" > RELEASE.md
+        env:
+          BRANCH: ${{ github.event.inputs.branch }}
+      - name: Get changes
+        continue-on-error: true
+        run: |
+          CURRENT_REV=$BRANCH
+          PREVIOUS_REV=$(curl --silent "https://api.github.com/repos/${{ github.repository }}/releases/latest" | jq -r ".tag_name")
+          git clone -b "$BRANCH" https://pdfium.googlesource.com/pdfium.git
+          cat <<END >> RELEASE.md
+          ### Changes
+          Commits between \`$PREVIOUS_REV\` and \`$CURRENT_REV\`:
+          END
+          git -C "pdfium" log origin/${PREVIOUS_REV}.. --pretty=format:'* [%s](https://pdfium.googlesource.com/pdfium/+/%H)' >> RELEASE.md
+        env:
+          BRANCH: ${{ github.event.inputs.branch }}
+      - name: Generate artifacts checksums
+        id: hash
+        run: echo "hashes=$(sha256sum pdfium-*.tgz | base64 -w0)" >> "$GITHUB_OUTPUT"
+      - name: Attest build provenance
+        id: provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: pdfium-*.tgz
+      - name: Rename provenance file
+        run: mv "${{ steps.provenance.outputs.bundle-path }}" pdfium-attestation.json
+      - name: Publish Release
+        uses: ncipollo/release-action@v1
+        with:
+          immutableCreate: true
+          bodyFile: RELEASE.md
+          token: ${{ secrets.GITHUB_TOKEN }}
+          name: PDFium ${{ github.event.inputs.version }}
+          tag: ${{ github.event.inputs.branch }}
+          artifacts: pdfium-*.tgz, pdfium-attestation.json

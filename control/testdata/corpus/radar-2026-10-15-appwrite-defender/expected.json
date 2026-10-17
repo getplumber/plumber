@@ -1,0 +1,70 @@
+{
+  "source": "https://github.com/appwrite/defender",
+  "commit": "e059226afbc3e369490d09a34cfe0d24d6e79527",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": false
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/build.yml": "active",
+    ".github/workflows/release.yml": "active",
+    ".github/workflows/tests.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "actionMetadata": {
+    "dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8": {
+      "refKind": "commit",
+      "mutableRemoteExec": {
+        "tier": "exec",
+        "url": "https://sh.rustup.rs",
+        "file": "action.yml",
+        "downloadGuard": "rustup"
+      }
+    },
+    "dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249": {
+      "refKind": "commit",
+      "mutableRemoteExec": {
+        "tier": "exec",
+        "url": "https://sh.rustup.rs",
+        "file": "action.yml",
+        "downloadGuard": "rustup"
+      }
+    },
+    "dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772": {
+      "refKind": "commit",
+      "mutableRemoteExec": {
+        "tier": "exec",
+        "url": "https://sh.rustup.rs",
+        "file": "action.yml",
+        "downloadGuard": "rustup"
+      }
+    },
+    "dtolnay/rust-toolchain@bd41891a8e7f4b8649f6d684415e1a6155fe4e22": {
+      "refKind": "commit",
+      "mutableRemoteExec": {
+        "tier": "exec",
+        "url": "https://sh.rustup.rs",
+        "file": "action.yml",
+        "downloadGuard": "rustup"
+      }
+    }
+  },
+  "note": "The High toolchain path in `tests.yml` was judged false: `dtolnay/rust-toolchain` is pinned to a full commit SHA and its `curl https://sh.rustup.rs | sh` sits under `if ! command -v rustup` on a hosted image that ships rustup, so the fetch never runs and no path starts.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "dtolnay/rust-toolchain@6c977a6ca407",
+        "tier": "none"
+      }
+    ]
+  }
+}

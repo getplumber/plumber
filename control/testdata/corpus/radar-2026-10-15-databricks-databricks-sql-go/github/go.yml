@@ -1,0 +1,257 @@
+name: Go
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # The merge queue requires every required status check (Lint, Test and Build)
+  # to report on the queue's transient merge commit before it merges. Without a
+  # merge_group trigger these jobs never run there, so the required checks stay
+  # pending and the entry is evicted at the check-response timeout. See the
+  # sql-python go/py workflows for the same pattern.
+  merge_group:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  lint:
+    name: Lint
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+
+    steps:
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Setup JFrog
+        uses: ./.github/actions/setup-jfrog
+
+      - name: Set up Go Toolchain
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: '1.25.x'
+          cache: false
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@db582008a42febd596419635a5abc9d9815daa9c # v9.2.1
+        with:
+          # v2.x is built with go 1.25+, which is required so the
+          # linter can read Go 1.25 stdlib export data. The v1 family
+          # was built with go ≤1.23 and produces "could not import
+          # sync/atomic" typecheck errors against our `go 1.25.0`
+          # directive.
+          version: 'v2.12'
+  build-and-test:
+    name: Test and Build
+    strategy:
+      # Matches Go's release support window. Per go.dev/doc/devel/release,
+      # only the latest two major releases receive security patches.
+      # As of 2026-05 that's 1.25 (Active LTS) and 1.26. The protected
+      # runners pin GOTOOLCHAIN=local so we can't include 1.24 — Go would
+      # refuse to satisfy the `go 1.25.0` directive without auto-downloading.
+      matrix:
+        go-version: ['1.25.x', '1.26.x']
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+
+    steps:
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Setup JFrog
+        uses: ./.github/actions/setup-jfrog
+
+      - name: Set up Go Toolchain
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: ${{ matrix.go-version }}
+          cache: false
+
+      - name: Cache Go artifacts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-go-${{ matrix.go-version }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-${{ matrix.go-version }}-
+
+      - name: Get dependencies
+        run: |
+          if ! command -v make &> /dev/null ; then
+            echo "Installing make"
+            apt-get update
+            apt-get install -y make
+          fi
+          if ! command -v git &> /dev/null ; then
+            echo "Installing git"
+            apt-get update
+            apt-get install -y git
+          fi
+          go get -v -t -d ./...
+
+      # This matrix builds the default pure-Go driver (CGO_ENABLED=0), which does
+      # NOT compile the SEA-via-kernel backend (//go:build cgo && databricks_kernel).
+      # That opt-in path is exercised by the separate build-and-test-kernel job
+      # below, which builds the kernel static library and links it with CGO.
+      - name: Test
+        run: make test
+        env:
+          CGO_ENABLED: 0
+
+      - name: Test-Race
+        run: make test-race
+
+      - name: Build
+        run: make linux
+
+  build-and-test-kernel:
+    name: Test (kernel backend)
+    # Exercises the opt-in SEA-via-kernel backend: builds the Rust kernel static
+    # lib from the pinned KERNEL_REV and runs the `databricks_kernel`-tagged unit
+    # tests with CGO. Separate from build-and-test so that job's CGO_ENABLED=0
+    # pure-Go invariant is untouched. No warehouse creds here, so the live e2e /
+    # parity tests self-skip; only the tagged unit tests run.
+    #
+    # Bound the blast radius of the source build: it clones an external repo and
+    # cold-compiles ~200 Rust crates, so a network stall or hung cargo would
+    # otherwise hold a protected-runner slot up to the 360-min default. A tight
+    # per-ref concurrency group also collapses redundant heavy builds when the
+    # branch is pushed repeatedly (each push cancels the prior in-flight run).
+    timeout-minutes: 30
+    concurrency:
+      group: kernel-build-${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+
+    steps:
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      # Go module proxy (GOPROXY + ~/.netrc) via JFrog OIDC. Also exports
+      # JFROG_ACCESS_TOKEN, which the cargo step below reuses.
+      - name: Setup JFrog
+        uses: ./.github/actions/setup-jfrog
+
+      # The protected runner blocks direct crates.io access (go/hardened-gha),
+      # so point cargo at the JFrog crates proxy. This repo's setup-jfrog is
+      # Go-only, so configure cargo inline here reusing its JFROG_ACCESS_TOKEN.
+      # The token stays in ~/.cargo/credentials.toml (not a CARGO*-prefixed env
+      # var) so rust-cache keys stay stable across runs.
+      - name: Configure cargo to use JFrog
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.cargo
+          cat > ~/.cargo/config.toml << 'EOF'
+          [source.crates-io]
+          replace-with = "jfrog"
+
+          [source.jfrog]
+          registry = "sparse+https://databricks.jfrog.io/artifactory/api/cargo/db-cargo-remote/index/"
+
+          [registries.jfrog]
+          index = "sparse+https://databricks.jfrog.io/artifactory/api/cargo/db-cargo-remote/index/"
+          credential-provider = ["cargo:token"]
+          EOF
+          cat > ~/.cargo/credentials.toml << EOF
+          [registries.jfrog]
+          token = "Bearer ${JFROG_ACCESS_TOKEN}"
+          EOF
+          chmod 600 ~/.cargo/credentials.toml
+
+      - name: Set up Go Toolchain
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: '1.25.x'
+          cache: false
+
+      # Install the exact toolchain the kernel .a is built with. rust-toolchain.toml
+      # at the repo root is what actually governs the cargo build (it's a parent of
+      # build/kernel-src/, and the kernel repo pins no toolchain of its own), so a
+      # floating `stable` here would drift the archive under a fixed KERNEL_REV.
+      # Keep this in lockstep with rust-toolchain.toml's channel.
+      - name: Set up Rust Toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
+        with:
+          toolchain: 1.96.1
+
+      # The kernel repo (databricks/databricks-sql-kernel) is private, and the
+      # hardened runner has no ambient git credentials, so kernel-lib.sh's fetch
+      # fails with "could not read Username". Mint a repo-scoped token from the
+      # INTEGRATION_TEST_APP GitHub App (installed on the org with kernel read
+      # access — the same mechanism the ODBC driver uses) and rewrite the kernel
+      # HTTPS URL to carry it. This is transparent to kernel-lib.sh. Retire once
+      # the kernel publishes a release artifact (KERNEL_LOCAL_A / download path).
+      - name: Generate GitHub App token for databricks-sql-kernel
+        id: kernel-token
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        with:
+          app-id: ${{ secrets.INTEGRATION_TEST_APP_ID }}
+          private-key: ${{ secrets.INTEGRATION_TEST_PRIVATE_KEY }}
+          owner: databricks
+          repositories: databricks-sql-kernel
+
+      - name: Rewrite kernel repo URL to authenticated HTTPS
+        env:
+          TOKEN: ${{ steps.kernel-token.outputs.token }}
+        run: |
+          git config --global \
+            url."https://x-access-token:${TOKEN}@github.com/databricks/".insteadOf \
+            "https://github.com/databricks/"
+
+      # Cache the built kernel .a keyed on KERNEL_REV: rebuild only when the pin
+      # moves. The ~85MB archive dwarfs a rebuild trigger, so keep the key tight.
+      - name: Cache kernel static lib
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            internal/backend/kernel/lib
+            internal/backend/kernel/include
+          key: ${{ runner.os }}-kernellib-${{ hashFiles('KERNEL_REV', 'rust-toolchain.toml') }}
+
+      # Cache the cargo registry + kernel build tree so a cache miss on the .a
+      # is still an incremental Rust build, not a cold ~200-crate compile.
+      - name: Cache cargo + kernel build tree
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            build/kernel-src/target
+          key: ${{ runner.os }}-kernel-cargo-${{ hashFiles('KERNEL_REV', 'rust-toolchain.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-kernel-cargo-
+
+      # make (for the recipe) and a C compiler (cgo compiles the kernel binding
+      # stubs and links libdatabricks_sql_kernel.a). cc is preinstalled on the
+      # protected runner — the kernel repo's own c-abi job relies on the same —
+      # so these conditional installs are a no-op guard that keeps the job robust
+      # to a future image change rather than a known gap.
+      - name: Install build prerequisites (make, C compiler)
+        run: |
+          if ! command -v make &> /dev/null ; then
+            apt-get update && apt-get install -y make
+          fi
+          if ! command -v cc &> /dev/null ; then
+            apt-get update && apt-get install -y build-essential
+          fi
+
+      # make test-kernel builds the kernel lib (make kernel-lib) if the cache
+      # missed, then runs `CGO_ENABLED=1 go test -tags databricks_kernel ./...`.
+      #
+      # No warehouse creds here — this job runs only the tagged UNIT tests, so the
+      # live e2e / Thrift-parity tests self-skip (they need the DATABRICKS_PECOTESTING_*
+      # warehouse credentials). This matches how build-and-test treats the Thrift path
+      # (pure-Go unit tests only); the credentialed e2e suites for both backends run in
+      # the separate nightly-e2e workflow.
+      - name: Build kernel lib + run tagged tests
+        run: make test-kernel

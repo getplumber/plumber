@@ -1,0 +1,61 @@
+{
+  "source": "https://github.com/databricks/zerobus-sdk",
+  "commit": "5aaa115c3e5a72d0e8b292e7a5443f993b609341",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/ci-cpp.yml": "active",
+    ".github/workflows/ci-dotnet.yml": "active",
+    ".github/workflows/ci-go.yml": "active",
+    ".github/workflows/ci-java.yml": "active",
+    ".github/workflows/ci-purec.yml": "active",
+    ".github/workflows/ci-purego.yml": "active",
+    ".github/workflows/ci-python.yml": "active",
+    ".github/workflows/ci-rust.yml": "active",
+    ".github/workflows/ci-typescript.yml": "active",
+    ".github/workflows/issue-label.yml": "active",
+    ".github/workflows/push.yml": "active",
+    ".github/workflows/release-cpp.yml": "active",
+    ".github/workflows/release-dotnet.yml": "active",
+    ".github/workflows/release-ffi.yml": "active",
+    ".github/workflows/release-go.yml": "active",
+    ".github/workflows/release-java.yml": "active",
+    ".github/workflows/release-jni.yml": "active",
+    ".github/workflows/release-purego.yml": "active",
+    ".github/workflows/release-python.yml": "active",
+    ".github/workflows/release-typescript.yml": "active",
+    ".github/workflows/test-jni-aarch64.yml": "disabled_manually"
+  },
+  "workflowStatesKnown": true,
+  "actionMetadata": {
+    "dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8": {
+      "refKind": "commit",
+      "mutableRemoteExec": {
+        "tier": "exec",
+        "url": "https://sh.rustup.rs",
+        "file": "action.yml",
+        "downloadGuard": "rustup"
+      }
+    }
+  },
+  "note": "The High path through the SHA-pinned `dtolnay/rust-toolchain@29eef33` was judged overstated: the SHA-pinned Rust toolchain action only fetches `sh.rustup.rs` under `if ! command -v rustup`, and the next step downloads the toolchain from the same vendor, so the actor is the Rust distribution on a runner without rustup, Medium at most (OIDC token only, no secret).",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "dtolnay/rust-toolchain@29eef336d9b2",
+        "tier": "medium"
+      }
+    ]
+  }
+}

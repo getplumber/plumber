@@ -243,11 +243,65 @@ type PathBlock struct {
 	Environment []string
 	Fix         string
 	Findings    []PathBlockFinding
+	// ClaimsNote is what Plumber assumed and what it could not read, named
+	// by the subjects of the path's own assumed and unknown claims
+	// (claimsNote): "" when every claim
+	// (claimsFor) is proven. Notes() folds it onto the cap note, after a
+	// period, when ShowCap prints one; otherwise it opens a Note line of
+	// its own.
+	ClaimsNote string
 }
 
 // environmentReviewNote is the Note of an environment that requires a
 // review before the job runs.
 const environmentReviewNote = "the environment requires a review before the job runs"
+
+// claimsNoteShown is how many unknown claim subjects claimsNote names
+// before folding the rest into a count.
+const claimsNoteShown = 4
+
+// claimsNote is the terminal block's Note for what Plumber assumed and
+// what it could not read: "Plumber assumed the token can write: " and the
+// subject of every assumed claim (the token is the one claim that is ever
+// assumed: its subject is the scopes), then "Plumber could not read: " and the subject of every
+// unknown claim (claimsFor), each in claim order, deduplicated, the first
+// claimsNoteShown then a count of the rest, the two joined by a period.
+// "" when claims carries neither (every claim proven, or there are none
+// at all): a path need say nothing about what it never had to read.
+func claimsNote(claims []Claim) string {
+	var parts []string
+	if s := claimSubjects(claims, ClaimAssumed); s != "" {
+		parts = append(parts, "Plumber assumed the token can write: "+s)
+	}
+	if s := claimSubjects(claims, ClaimUnknown); s != "" {
+		parts = append(parts, "Plumber could not read: "+s)
+	}
+	return strings.Join(parts, ". ")
+}
+
+// claimSubjects lists the subjects of the claims in state, deduplicated,
+// the first claimsNoteShown then a count of the rest; "" for none.
+func claimSubjects(claims []Claim, state ClaimState) string {
+	var subjects []string
+	seen := map[string]bool{}
+	for _, c := range claims {
+		if c.State != state || seen[c.Subject] {
+			continue
+		}
+		seen[c.Subject] = true
+		subjects = append(subjects, c.Subject)
+	}
+	if len(subjects) == 0 {
+		return ""
+	}
+	shown := subjects
+	suffix := ""
+	if len(subjects) > claimsNoteShown {
+		shown = subjects[:claimsNoteShown]
+		suffix = fmt.Sprintf(" and %d more", len(subjects)-claimsNoteShown)
+	}
+	return strings.Join(shown, ", ") + suffix
+}
 
 // NewPathBlock reads p out as a block; findings supply the anchoring and
 // amplifying findings listed under it (nil lists none).
@@ -269,6 +323,7 @@ func NewPathBlock(p AttackPath, findings []opaengine.Finding) PathBlock {
 		So:           soLine(p),
 		Fix:          pathFixOf(p),
 		Findings:     pathBlockFindings(p, findings),
+		ClaimsNote:   claimsNote(p.Claims),
 	}
 	if len(p.Jobs) > 0 && p.situation != nil {
 		if name, reviewers, ok := environmentOf(p.situation.Jobs[p.Jobs[0]]); ok {

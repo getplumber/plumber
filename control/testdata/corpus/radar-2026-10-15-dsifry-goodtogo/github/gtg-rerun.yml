@@ -1,0 +1,269 @@
+name: GTG Re-run
+
+# Re-run GTG check without full CI rebuild
+# Triggers:
+#   1. Manual: workflow_dispatch with PR number input
+#   2. Comment: /rerun-gtg on a PR
+#
+# Use this when:
+#   - GTG shows "unresolved threads" but threads were just resolved
+#   - GTG ran before review comments were addressed
+#   - You need a fresh merge-readiness check without rebuilding
+#
+# Do NOT use when:
+#   - Actual CI failures (tests, lint, typecheck) - those need full CI
+#   - Code changes needed - push commits instead
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number to check"
+        required: true
+        type: number
+
+  issue_comment:
+    types: [created]
+
+permissions:
+  pull-requests: write  # write needed for reaction API calls
+  contents: read
+  checks: read
+  statuses: write
+  actions: read
+
+jobs:
+  gtg-rerun:
+    name: GTG Re-run
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Only run on:
+    # 1. workflow_dispatch (manual trigger)
+    # 2. /rerun-gtg comment on a PR (not an issue)
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request &&
+       contains(github.event.comment.body, '/rerun-gtg'))
+
+    steps:
+      - name: Get PR number
+        id: pr
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "number=${{ github.event.inputs.pr_number }}" >> $GITHUB_OUTPUT
+          else
+            echo "number=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Add reaction to comment
+        if: github.event_name == 'issue_comment'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: 'eyes'
+            });
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install gtg from source
+        run: pip install .
+
+      - name: Get PR head SHA
+        id: sha
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER=${{ steps.pr.outputs.number }}
+          HEAD_SHA=$(gh api repos/${{ github.repository }}/pulls/$PR_NUMBER --jq '.head.sha')
+          echo "head_sha=$HEAD_SHA" >> $GITHUB_OUTPUT
+          echo "Checking PR #$PR_NUMBER (SHA: $HEAD_SHA)"
+
+      - name: Run gtg check
+        id: gtg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -o pipefail
+          PR_NUMBER=${{ steps.pr.outputs.number }}
+          echo "Checking PR #${PR_NUMBER} readiness..."
+
+          # Disable errexit to capture gtg exit code for custom handling
+          set +e
+          gtg ${PR_NUMBER} \
+            --repo ${{ github.repository }} \
+            --semantic-codes \
+            --format text \
+            --verbose \
+            --exclude-checks "gtg-check" \
+            --exclude-checks "GTG Re-run" \
+            --exclude-checks "Claude Code Review" \
+            --exclude-checks "claude" \
+            --exclude-checks "CodeRabbit" 2>&1 | tee gtg-output.txt
+          EXIT_CODE=${PIPESTATUS[0]}
+          set -e  # Re-enable errexit
+
+          echo "::group::GTG Check Details"
+          cat gtg-output.txt
+          echo "::endgroup::"
+
+          # Write step summary
+          echo "## GTG Re-run Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**PR #${PR_NUMBER}**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          case $EXIT_CODE in
+            0)
+              echo "::notice::PR #${PR_NUMBER} is ready to merge"
+              echo "status=success" >> $GITHUB_OUTPUT
+              echo "message=✅ PR #${PR_NUMBER} is ready to merge" >> $GITHUB_OUTPUT
+              echo "### ✅ Good to Go!" >> $GITHUB_STEP_SUMMARY
+              echo "All CI checks passing, no actionable comments, all threads resolved." >> $GITHUB_STEP_SUMMARY
+              ;;
+            1)
+              # Exit code 1 = actionable comments. Check if threads are resolved.
+              if grep -q "Threads:.*resolved" gtg-output.txt && ! grep -q "unresolved" gtg-output.txt; then
+                echo "::warning::PR has comments requiring investigation, but all threads are resolved"
+                echo "status=success" >> $GITHUB_OUTPUT
+                echo "message=⚠️ PR has comments but all threads resolved" >> $GITHUB_OUTPUT
+                echo "### ⚠️ Comments Need Review" >> $GITHUB_STEP_SUMMARY
+                echo "Ambiguous comments exist but all threads are resolved." >> $GITHUB_STEP_SUMMARY
+              else
+                echo "::error::PR has actionable comments that need to be addressed"
+                echo "status=failure" >> $GITHUB_OUTPUT
+                echo "message=❌ PR has actionable comments" >> $GITHUB_OUTPUT
+                echo "### ❌ Action Required" >> $GITHUB_STEP_SUMMARY
+                echo "Actionable comments need attention." >> $GITHUB_STEP_SUMMARY
+                exit 1
+              fi
+              ;;
+            2)
+              echo "::error::PR has unresolved review threads"
+              echo "status=failure" >> $GITHUB_OUTPUT
+              echo "message=❌ PR has unresolved threads" >> $GITHUB_OUTPUT
+              echo "### 💬 Unresolved Threads" >> $GITHUB_STEP_SUMMARY
+              echo "Review threads need resolution." >> $GITHUB_STEP_SUMMARY
+              exit 2
+              ;;
+            3)
+              echo "::error::PR has failing CI checks"
+              echo "status=failure" >> $GITHUB_OUTPUT
+              echo "message=❌ PR has failing CI" >> $GITHUB_OUTPUT
+              echo "### ❌ CI Failing" >> $GITHUB_STEP_SUMMARY
+              echo "CI checks are failing - full CI rebuild needed." >> $GITHUB_STEP_SUMMARY
+              exit 3
+              ;;
+            4)
+              echo "::error::Error fetching PR data from GitHub API"
+              echo "status=failure" >> $GITHUB_OUTPUT
+              echo "message=❌ Error fetching PR data" >> $GITHUB_OUTPUT
+              echo "### ⚠️ Error" >> $GITHUB_STEP_SUMMARY
+              echo "Could not fetch PR data from GitHub API." >> $GITHUB_STEP_SUMMARY
+              exit 4
+              ;;
+            *)
+              echo "::error::GTG check failed with unexpected exit code: $EXIT_CODE"
+              echo "status=failure" >> $GITHUB_OUTPUT
+              echo "message=❌ GTG check failed (exit code: $EXIT_CODE)" >> $GITHUB_OUTPUT
+              echo "### ⚠️ Unexpected Error" >> $GITHUB_STEP_SUMMARY
+              echo "GTG check failed with exit code: $EXIT_CODE" >> $GITHUB_STEP_SUMMARY
+              exit $EXIT_CODE
+              ;;
+          esac
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "*Re-checked by [gtg](https://github.com/dsifry/goodtogo) - Good To Go PR readiness tool*" >> $GITHUB_STEP_SUMMARY
+
+      - name: Post status to PR
+        if: always() && steps.sha.outputs.head_sha != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          EXIT_CODE="${{ steps.gtg.outputs.status }}"
+          HEAD_SHA="${{ steps.sha.outputs.head_sha }}"
+
+          # Determine state from status output
+          if [ "$EXIT_CODE" = "success" ]; then
+            STATE="success"
+            DESC="✅ Good to Go!"
+          else
+            STATE="failure"
+            DESC="${{ steps.gtg.outputs.message }}"
+            # Default if message is empty
+            [ -z "$DESC" ] && DESC="❌ Check failed"
+          fi
+
+          # Create a commit status on the PR head
+          gh api repos/${{ github.repository }}/statuses/$HEAD_SHA \
+            -f state="$STATE" \
+            -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            -f description="$DESC" \
+            -f context="gtg-check"
+
+      - name: Update reaction on success
+        if: github.event_name == 'issue_comment' && steps.gtg.outputs.status == 'success'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Remove eyes reaction
+            const reactions = await github.rest.reactions.listForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+            });
+            const eyesReaction = reactions.data.find(r => r.content === 'eyes' && r.user.type === 'Bot');
+            if (eyesReaction) {
+              await github.rest.reactions.deleteForIssueComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: context.payload.comment.id,
+                reaction_id: eyesReaction.id,
+              });
+            }
+            // Add success reaction
+            await github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: 'rocket'
+            });
+
+      - name: Update reaction on failure
+        if: github.event_name == 'issue_comment' && steps.gtg.outputs.status == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Remove eyes reaction
+            const reactions = await github.rest.reactions.listForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+            });
+            const eyesReaction = reactions.data.find(r => r.content === 'eyes' && r.user.type === 'Bot');
+            if (eyesReaction) {
+              await github.rest.reactions.deleteForIssueComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: context.payload.comment.id,
+                reaction_id: eyesReaction.id,
+              });
+            }
+            // Add failure reaction
+            await github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: 'confused'
+            });

@@ -1,0 +1,19 @@
+name: "CLA Assistant"
+on:
+  # issue_comment triggers this action on each comment on issues and pull requests
+  issue_comment:
+    types: [ created ]
+  pull_request_target:
+    types: [ opened,synchronize ]
+
+jobs:
+  CLAssistant:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run CLA Check
+        uses: jfrog/.github/actions/cla@main
+        with:
+          event_comment_body: ${{ github.event.comment.body }}
+          event_name: ${{ github.event_name }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CLA_SIGN_TOKEN: ${{ secrets.CLA_SIGN_TOKEN }}

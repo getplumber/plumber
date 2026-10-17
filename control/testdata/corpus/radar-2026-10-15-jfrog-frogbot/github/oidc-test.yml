@@ -1,0 +1,95 @@
+name: "OIDC Test"
+on:
+  push:
+  pull_request_target:
+    types: [ labeled ]
+permissions:
+  contents: write
+  pull-requests: write
+  security-events: write
+  id-token: write
+jobs:
+  oidc-test:
+    environment: frogbot
+    if: contains(github.event.pull_request.labels.*.name, 'safe to test') || github.event_name == 'push'
+    name: OIDC-Access integration test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu, windows, macos ]
+    runs-on: ${{ matrix.os }}-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.23.x
+          cache: false
+
+      # Generating a unique name for the Integration Configuration that will be created in the following step
+      - name: Generate unique OIDC config name
+        shell: bash
+        run: echo "OIDC_PROVIDER_NAME=oidc-integration-test-provider-$(date +%Y%m%d%H%M%S)" >> $GITHUB_ENV
+
+      # Ths PLATFORM_URL may contain a trailing slash, and in this case we need to ensure we don't have a double slash in the URL
+      - name: Construct valid OIDC endpoint
+        shell: bash
+        run: |
+          if [[ "${{ secrets.PLATFORM_URL }}" == */ ]]; then
+            echo "OIDC_ENDPOINT=${{ secrets.PLATFORM_URL }}access/api/v1/oidc" >> $GITHUB_ENV
+          else
+            echo "OIDC_ENDPOINT=${{ secrets.PLATFORM_URL }}/access/api/v1/oidc" >> $GITHUB_ENV
+          fi
+
+      - name: Create OpenID Connect integration
+        shell: bash
+        run: |
+          curl -X POST "${{ env.OIDC_ENDPOINT }}" -H "Content-Type: application/json" -H "Authorization: Bearer ${{ secrets.PLATFORM_ADMIN_TOKEN }}" -d '{
+          "name": "${{ env.OIDC_PROVIDER_NAME }}",
+          "issuer_url": "https://token.actions.githubusercontent.com",
+          "provider_type": "GitHub",
+          "enable_permissive_configuration": "true",
+          "description": "This is a test configuration created for OIDC-Access integration test" }'
+
+      - name: Create OIDC integration Identity Mapping
+        shell: bash
+        run: |
+          curl -X POST ${{ env.OIDC_ENDPOINT }}/${{ env.OIDC_PROVIDER_NAME }}/identity_mappings \
+          -H 'Content-Type: application/json' \
+          -H 'Authorization: Bearer ${{ secrets.PLATFORM_ADMIN_TOKEN }}' \
+          -d '{
+                "name": "oidc-test-identity-mapping",
+                "priority": "1",
+                "claims": {
+                  "repository": "${{ github.repository_owner }}/frogbot"
+                },
+                "token_spec": { 
+                   "scope": "applied-permissions/admin",
+                   "audience": "*@*",
+                   "expires_in": 1200            
+                }
+          }'
+
+      # Running frogbot with the OIDC integration
+      - name: Run Frogbot
+        uses: ./
+        env:
+          ACTIONS_STEP_DEBUG: true
+          JF_URL: ${{ secrets.PLATFORM_URL }}
+          JF_GIT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          JF_GIT_BASE_BRANCH: ${{ matrix.branch }}
+          JF_FAIL: "FALSE"
+          JFROG_CLI_LOG_LEVEL: "DEBUG"
+        with:
+          oidc-provider-name: ${{ env.OIDC_PROVIDER_NAME }}
+
+      # Removing the OIDC integration will remove the Identity Mapping as well
+      - name: Delete OIDC integration
+        shell: bash
+        if: always()
+        run: |
+          curl -X DELETE ${{ secrets.PLATFORM_URL }}/access/api/v1/oidc/${{ env.OIDC_PROVIDER_NAME }} -H 'Authorization: Bearer ${{ secrets.PLATFORM_ADMIN_TOKEN }}'

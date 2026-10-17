@@ -1,0 +1,74 @@
+name: DCO Check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  dco-check:
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    name: Check DCO Sign-off
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Check DCO Sign-off
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          #!/bin/bash
+          set -e
+
+          echo "Checking commits from $BASE_SHA to $HEAD_SHA"
+
+          COMMITS=$(git rev-list --no-merges "$BASE_SHA..$HEAD_SHA")
+
+          if [ -z "$COMMITS" ]; then
+            echo "No commits found in this PR"
+            exit 0
+          fi
+
+          FAILED_COMMITS=()
+
+          for commit in $COMMITS; do
+            echo "Checking commit: $commit"
+            COMMIT_MSG=$(git log --format=%B -n 1 "$commit")
+            if echo "$COMMIT_MSG" | grep -q "^Signed-off-by: "; then
+              echo "  Commit $commit has DCO sign-off"
+            else
+              echo "  Commit $commit is missing DCO sign-off"
+              FAILED_COMMITS+=("$commit")
+            fi
+          done
+
+          if [ ${#FAILED_COMMITS[@]} -ne 0 ]; then
+            echo ""
+            echo "DCO Check Failed!"
+            echo "The following commits are missing the required 'Signed-off-by' line:"
+            for commit in "${FAILED_COMMITS[@]}"; do
+              echo "  - $commit: $(git log --format=%s -n 1 "$commit")"
+            done
+            echo ""
+            echo "To fix this, you need to sign off your commits. You can:"
+            echo "1. Add sign-off to new commits: git commit -s -m 'Your commit message'"
+            echo "2. Amend existing commits: git commit --amend --signoff"
+            echo "3. For multiple commits, use: git rebase --signoff HEAD~N (where N is the number of commits)"
+            echo ""
+            echo "The sign-off should be in the format:"
+            echo "Signed-off-by: Your Name <your.email@example.com>"
+            echo ""
+            echo "For more details, see CONTRIBUTING.md"
+            exit 1
+          else
+            echo ""
+            echo "All commits have proper DCO sign-off!"
+          fi

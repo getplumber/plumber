@@ -1,0 +1,60 @@
+{
+  "source": "https://github.com/ClickHouse/clickhouse-java",
+  "commit": "5392b642e5ca0375a77b8cc0f15b29b97a8f772f",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "copilot",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/build.yml": "active",
+    ".github/workflows/release.yml": "active",
+    ".github/workflows/analysis.yml": "active",
+    ".github/workflows/nightly.yml": "active",
+    ".github/workflows/stale.yml": "active",
+    ".github/workflows/run_examples.yml": "active",
+    ".github/workflows/test_head.yml": "active",
+    ".github/workflows/claude.yml": "active",
+    ".github/workflows/cross-repo-bug-relay.yml": "active",
+    ".github/workflows/claude-pr-triage.yml": "active",
+    ".github/workflows/claude-issue-triage.yml": "active",
+    ".github/workflows/triage-source-map-drift.yml": "active",
+    ".github/workflows/stresshouse-benchmark-compare.yml": "active",
+    ".github/workflows/docs_verify.yml": "active",
+    ".github/workflows/docs_sync.yml": "active",
+    ".github/workflows/jvm-compatibility.yml": "active",
+    ".github/workflows/docs_drift_check.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "defaultTokenWrite": "false",
+  "defaultTokenSource": "log",
+  "note": "The High Maven cache path into `release.yml` was judged overstated: its writers are pushes and schedules, Medium at most; the High `samuelmeuli/action-maven-publish@v1` path holds at High for its four secrets and the Maven publish, with no push (read-only default, run log). Corrected after reading the workflows: the assessment named only insiders as writers, but a push or dispatch run whose job is entered through an unauthorized mutable action (a High dependency path of the same repository) also writes the default-branch cache the release restores, so the cache path holds at the High ceiling of that writer, not at Medium. No job here declares cache-mode, so GitHub keeps the cache of every low-trust run read-only and grants no job cache write: ISSUE-705 is silent and no cache path exists, so the cache ceiling admits none.",
+  "expect": {
+    "paths": [
+      {
+        "entryKind": "mutable_dependency",
+        "tier": "high",
+        "subjectContains": "samuelmeuli/action-maven-publish@v1"
+      }
+    ],
+    "ceilings": [
+      {
+        "entryKind": "poisoned_cache",
+        "subjectContains": "",
+        "tier": "none"
+      }
+    ]
+  }
+}

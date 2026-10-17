@@ -1,0 +1,46 @@
+{
+  "source": "https://github.com/langchain-ai/langsmith-docs",
+  "commit": "500986273b4d1e6ea20c5cbc28afa690356902d8",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "Preview",
+      "known": true
+    },
+    {
+      "name": "Production",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/format-lint.yml": "active",
+    ".github/workflows/spell-check.yml": "active",
+    ".github/workflows/update-docs.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The two High spell-check paths (`https://git.io/misspell`, `codespell-project/actions-codespell@v2`) were judged overstated: code execution on a runner with no secret, no write token, nothing cached or uploaded, Low.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "https://git.io/misspell",
+        "tier": "low"
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "codespell-project/actions-codespell@v2",
+        "tier": "low"
+      }
+    ]
+  }
+}

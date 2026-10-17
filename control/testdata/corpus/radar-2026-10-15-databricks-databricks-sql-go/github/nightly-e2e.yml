@@ -1,0 +1,269 @@
+name: Nightly E2E
+
+# Runs the credential-gated end-to-end suites against a real test SQL warehouse.
+# These tests self-skip in the ordinary "Go" workflow (which injects no warehouse
+# secrets), so real-warehouse behaviour — large multi-page CloudFetch, S3 downloads,
+# drain-past-deadline, real auth — is otherwise not exercised in CI.
+#
+# Covers both backends against one test warehouse:
+#   - Thrift (default pure-Go) E2E — driver_e2e_test.go
+#   - SEA-via-kernel E2E          — kernel_e2e_test.go (cgo + databricks_kernel)
+#
+# Both suites read the same DATABRICKS_PECOTESTING_* warehouse credentials, so a
+# single secret set drives the whole workflow. A failed scheduled run surfaces via
+# GitHub's built-in notification.
+
+on:
+  schedule:
+    # 07:00 UTC daily (~midnight PT / mid-morning IST) — off-peak for the shared
+    # test warehouse. Scheduled workflows only run on the default branch.
+    - cron: '0 7 * * *'
+  # Manual trigger for on-demand runs (e.g. validating a fix or new secret wiring)
+  # without waiting for the nightly cron.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  thrift-e2e:
+    name: E2E (Thrift backend)
+    # Runs by default; disable by setting the NIGHTLY_E2E_ENABLED repo variable to
+    # 'false'. This is NOT a skip-on-missing-secret gate: if the variable is unset
+    # and the warehouse secrets aren't provisioned, the credential step below
+    # hard-fails by design (a silent skip reporting green is the gap being closed).
+    if: ${{ vars.NIGHTLY_E2E_ENABLED != 'false' }}
+    timeout-minutes: 20
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+
+    steps:
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Setup JFrog
+        uses: ./.github/actions/setup-jfrog
+
+      - name: Set up Go Toolchain
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: '1.25.x'
+          cache: false
+
+      - name: Get dependencies
+        run: |
+          if ! command -v make &> /dev/null ; then
+            apt-get update && apt-get install -y make
+          fi
+          go get -v -t -d ./...
+
+      # Guard: fail loudly if a credential is missing rather than letting the tests
+      # silently t.Skip() into a misleading green. The token may be provided as either
+      # _TOKEN or _TOKEN_PERSONAL (the tests accept either), so require at least one.
+      - name: Verify warehouse credentials are present
+        env:
+          HOST: ${{ secrets.DATABRICKS_PECOTESTING_SERVER_HOSTNAME }}
+          HTTP_PATH: ${{ secrets.DATABRICKS_PECOTESTING_HTTP_PATH2 }}
+          TOKEN: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN }}
+          TOKEN_PERSONAL: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN_PERSONAL }}
+        run: |
+          if [ -z "$HOST" ] || [ -z "$HTTP_PATH" ] || { [ -z "$TOKEN" ] && [ -z "$TOKEN_PERSONAL" ]; }; then
+            echo "::error::Nightly E2E warehouse secrets are not set (need DATABRICKS_PECOTESTING_SERVER_HOSTNAME, _HTTP_PATH2, and _TOKEN or _TOKEN_PERSONAL). Provision them in the repository settings." >&2
+            exit 1
+          fi
+
+      # The Thrift E2E tests read the DATABRICKS_PECOTESTING_* vars directly and run
+      # in the default pure-Go build (CGO_ENABLED=0). -run targets the high-value
+      # real-warehouse scenarios: large multi-page CloudFetch drain-past-caller-
+      # deadline and exact row count. -count=1 defeats the test cache so a scheduled
+      # run always re-exercises the warehouse. NOT -short, so
+      # TestE2ECloudFetchExactRowCount (guarded by -short) actually runs.
+      - name: Run Thrift E2E
+        env:
+          CGO_ENABLED: 0
+          DATABRICKS_PECOTESTING_SERVER_HOSTNAME: ${{ secrets.DATABRICKS_PECOTESTING_SERVER_HOSTNAME }}
+          DATABRICKS_PECOTESTING_HTTP_PATH2: ${{ secrets.DATABRICKS_PECOTESTING_HTTP_PATH2 }}
+          DATABRICKS_PECOTESTING_TOKEN: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN }}
+          DATABRICKS_PECOTESTING_TOKEN_PERSONAL: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN_PERSONAL }}
+        run: |
+          go test -count=1 -v -timeout 15m \
+            -run 'TestE2EArrowBatchesSurviveQueryContextCancellation|TestE2ECloudFetchExactRowCount' .
+
+  kernel-e2e:
+    name: E2E (kernel backend)
+    if: ${{ vars.NIGHTLY_E2E_ENABLED != 'false' }}
+    # Bounds the same source-build blast radius as the go.yml kernel job: an external
+    # clone + ~200-crate cold compile shouldn't hold a protected-runner slot to the
+    # 360-min default. Budget is split explicitly (see the per-step timeout on "Build
+    # kernel lib" below) so the job cap sits strictly above setup + build + the go
+    # test -timeout, letting Go's own timeout fire first and emit its which-test-hung
+    # goroutine dump instead of GitHub SIGKILLing the job mid-build on a cache miss.
+    timeout-minutes: 65
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+
+    steps:
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      # Go module proxy (GOPROXY + ~/.netrc) via JFrog OIDC. Also exports
+      # JFROG_ACCESS_TOKEN, which the cargo step below reuses.
+      - name: Setup JFrog
+        uses: ./.github/actions/setup-jfrog
+
+      # The protected runner blocks direct crates.io access (go/hardened-gha), so
+      # point cargo at the JFrog crates proxy, reusing setup-jfrog's JFROG_ACCESS_TOKEN.
+      - name: Configure cargo to use JFrog
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.cargo
+          cat > ~/.cargo/config.toml << 'EOF'
+          [source.crates-io]
+          replace-with = "jfrog"
+
+          [source.jfrog]
+          registry = "sparse+https://databricks.jfrog.io/artifactory/api/cargo/db-cargo-remote/index/"
+
+          [registries.jfrog]
+          index = "sparse+https://databricks.jfrog.io/artifactory/api/cargo/db-cargo-remote/index/"
+          credential-provider = ["cargo:token"]
+          EOF
+          cat > ~/.cargo/credentials.toml << EOF
+          [registries.jfrog]
+          token = "Bearer ${JFROG_ACCESS_TOKEN}"
+          EOF
+          chmod 600 ~/.cargo/credentials.toml
+
+      - name: Set up Go Toolchain
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: '1.25.x'
+          cache: false
+
+      # Keep in lockstep with rust-toolchain.toml's channel (it governs the archive
+      # under a fixed KERNEL_REV; a floating `stable` here would drift it).
+      - name: Set up Rust Toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
+        with:
+          toolchain: 1.96.1
+
+      # The kernel repo is private and the hardened runner has no ambient git creds.
+      # Mint a repo-scoped token from the INTEGRATION_TEST_APP GitHub App and rewrite
+      # the kernel HTTPS URL to carry it (same mechanism as the go.yml kernel job).
+      - name: Generate GitHub App token for databricks-sql-kernel
+        id: kernel-token
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        with:
+          app-id: ${{ secrets.INTEGRATION_TEST_APP_ID }}
+          private-key: ${{ secrets.INTEGRATION_TEST_PRIVATE_KEY }}
+          owner: databricks
+          repositories: databricks-sql-kernel
+
+      - name: Rewrite kernel repo URL to authenticated HTTPS
+        env:
+          TOKEN: ${{ steps.kernel-token.outputs.token }}
+        run: |
+          git config --global \
+            url."https://x-access-token:${TOKEN}@github.com/databricks/".insteadOf \
+            "https://github.com/databricks/"
+
+      - name: Cache kernel static lib
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            internal/backend/kernel/lib
+            internal/backend/kernel/include
+          key: ${{ runner.os }}-kernellib-${{ hashFiles('KERNEL_REV', 'rust-toolchain.toml') }}
+
+      - name: Cache cargo + kernel build tree
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            build/kernel-src/target
+          key: ${{ runner.os }}-kernel-cargo-${{ hashFiles('KERNEL_REV', 'rust-toolchain.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-kernel-cargo-
+
+      - name: Install build prerequisites (make, C compiler)
+        run: |
+          if ! command -v make &> /dev/null ; then
+            apt-get update && apt-get install -y make
+          fi
+          if ! command -v cc &> /dev/null ; then
+            apt-get update && apt-get install -y build-essential
+          fi
+
+      # Same guard as the Thrift job: require host, http path, and at least one of
+      # _TOKEN / _TOKEN_PERSONAL so a missing credential fails loud instead of skipping.
+      - name: Verify warehouse credentials are present
+        env:
+          HOST: ${{ secrets.DATABRICKS_PECOTESTING_SERVER_HOSTNAME }}
+          HTTP_PATH: ${{ secrets.DATABRICKS_PECOTESTING_HTTP_PATH2 }}
+          TOKEN: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN }}
+          TOKEN_PERSONAL: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN_PERSONAL }}
+        run: |
+          if [ -z "$HOST" ] || [ -z "$HTTP_PATH" ] || { [ -z "$TOKEN" ] && [ -z "$TOKEN_PERSONAL" ]; }; then
+            echo "::error::Nightly E2E warehouse secrets are not set (need DATABRICKS_PECOTESTING_SERVER_HOSTNAME, _HTTP_PATH2, and _TOKEN or _TOKEN_PERSONAL). Provision them in the repository settings." >&2
+            exit 1
+          fi
+
+      # Build the pinned kernel .a (make kernel-lib, cache permitting). Cap the Rust
+      # build explicitly so a cold ~200-crate compile that wedges is killed here as a
+      # build failure, rather than eating into the go test budget and letting GitHub
+      # SIGKILL the whole job before Go's -timeout can report which test hung. 25m
+      # (build) + 30m (go test) + setup stays under the 65m job cap.
+      - name: Build kernel lib
+        timeout-minutes: 25
+        run: make kernel-lib
+
+      # Run the kernel E2E tests tagged cgo+databricks_kernel. The kernel suite reads
+      # the same DATABRICKS_PECOTESTING_* credentials as the Thrift suite. -run selects
+      # the kernel E2E funcs plus the Thrift-vs-kernel parity funcs (TestKernelThriftParity
+      # / TestKernelParamsVsThrift) — the latter need both the kernel lib AND live
+      # credentials, so this is the only job that can run them. The tagged UNIT tests
+      # already run credential-free in the go.yml kernel job.
+      #
+      # TestKernelE2EM2M is excluded: -run matches it (unanchored prefix), but it needs
+      # a service principal (DATABRICKS_CLIENT_ID / _CLIENT_SECRET) that this warehouse
+      # secret set doesn't carry, so it would t.Skip() every run. -skip keeps it clearly
+      # out of scope here rather than a misleading silent skip; add M2M service-principal
+      # secrets + drop the -skip to cover it.
+      - name: Run kernel E2E
+        env:
+          CGO_LDFLAGS: -L${{ github.workspace }}/internal/backend/kernel/lib/linux_amd64 -l:libdatabricks_sql_kernel.a
+          DATABRICKS_PECOTESTING_SERVER_HOSTNAME: ${{ secrets.DATABRICKS_PECOTESTING_SERVER_HOSTNAME }}
+          DATABRICKS_PECOTESTING_HTTP_PATH2: ${{ secrets.DATABRICKS_PECOTESTING_HTTP_PATH2 }}
+          DATABRICKS_PECOTESTING_TOKEN: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN }}
+          DATABRICKS_PECOTESTING_TOKEN_PERSONAL: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN_PERSONAL }}
+        run: |
+          CGO_ENABLED=1 go test -tags databricks_kernel -count=1 -v -timeout 30m \
+            -run 'TestKernelE2E|TestKernelThriftParity|TestKernelParamsVsThrift' \
+            -skip 'TestKernelE2EM2M' .
+
+      # Non-blocking Reyden reference-engine leg: reruns the TestKernelE2E* funcs against
+      # the Reyden warehouse (TEST_WAREHOUSE=reyden + DATABRICKS_REYDEN_HTTP_PATH →
+      # kernelTestDBWith routes there; unsupported surfaces self-skip via skipOnReyden).
+      # continue-on-error because Reyden can be down or diverge from dbsql — a reyden-side
+      # failure surfaces in the log, not the nightly. Parity funcs are excluded (they
+      # compare kernel vs Thrift on one warehouse). Inert if the reyden path secret is
+      # unset: isReydenLeg() is false and the suite just re-runs on the normal warehouse.
+      - name: Run kernel E2E against Reyden (non-blocking)
+        continue-on-error: true
+        env:
+          CGO_LDFLAGS: -L${{ github.workspace }}/internal/backend/kernel/lib/linux_amd64 -l:libdatabricks_sql_kernel.a
+          DATABRICKS_PECOTESTING_SERVER_HOSTNAME: ${{ secrets.DATABRICKS_PECOTESTING_SERVER_HOSTNAME }}
+          DATABRICKS_PECOTESTING_HTTP_PATH2: ${{ secrets.DATABRICKS_PECOTESTING_HTTP_PATH2 }}
+          DATABRICKS_PECOTESTING_TOKEN: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN }}
+          DATABRICKS_PECOTESTING_TOKEN_PERSONAL: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN_PERSONAL }}
+          TEST_WAREHOUSE: reyden
+          DATABRICKS_REYDEN_HTTP_PATH: ${{ secrets.TEST_REYDEN_WAREHOUSE_HTTP_PATH }}
+        run: |
+          CGO_ENABLED=1 go test -tags databricks_kernel -count=1 -v -timeout 30m \
+            -run 'TestKernelE2E' \
+            -skip 'TestKernelE2EM2M' .

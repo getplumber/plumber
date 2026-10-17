@@ -1,0 +1,63 @@
+name: test
+
+on:
+  workflow_call:
+    inputs:
+      uv-version:
+        required: true
+        type: string
+        description: "uv version to install"
+      python-versions:
+        required: true
+        type: string
+        description: "JSON array of Python versions to run"
+      working-directory:
+        required: true
+        type: string
+        description: "From which folder this pipeline executes"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ${{ fromJson(inputs.python-versions) }}
+
+    name: "make test #${{ matrix.python-version }}"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python ${{ matrix.python-version }} + uv ${{ inputs.uv-version }}
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: ${{ inputs.uv-version }}
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          cache-dependency-glob: "${{ inputs.working-directory }}/uv.lock"
+
+      - name: Run core tests
+        shell: bash
+        run: |
+          make test
+        env:
+          PGHOST: ${{ secrets.PGHOST }}
+          PGPASSWORD: ${{ secrets.PGPASSWORD }}
+
+
+      - name: Ensure the tests did not create any additional files
+        shell: bash
+        run: |
+          set -eu
+
+          STATUS="$(git status)"
+          echo "$STATUS"
+
+          # grep will exit non-zero if the target message isn't found,
+          # and `set -e` above will cause the step to fail.
+          echo "$STATUS" | grep 'nothing to commit, working tree clean'

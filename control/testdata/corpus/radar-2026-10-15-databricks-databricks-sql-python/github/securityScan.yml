@@ -1,0 +1,295 @@
+name: Security Scan
+
+# Single workflow, single job. Triggered three ways with DIFFERENT
+# thresholds:
+#
+#   - pull_request to main: fail the job on any unsuppressed
+#     CVSS >= 7 finding (HIGH+), or any unscored finding. MEDIUM/LOW
+#     findings show in the step summary but don't block merges. Not yet
+#     required-to-merge in branch protection.
+#
+#   - cron (weekly): report ALL findings regardless of severity, fail the
+#     job on any finding, and upload the raw scan output as an artifact.
+#     The intent is full situational awareness -- emerging MEDIUM risks
+#     should be visible before they cross the PR gate. A separate
+#     cross-repo action collates the uploaded artifacts across all driver
+#     repos and sends a single digest; this job does NOT email directly.
+#
+#   - workflow_dispatch: behaves like the cron run (full reporting).
+#
+# Scanner: OSV-Scanner v2.3.8 (purl-based via OSV.dev; federates GHSA,
+# NVD, PyPA, RustSec, Go vuln DB). Reads `poetry.lock` natively --
+# no separate SBOM tool needed.
+#
+# NOTE: this scans BOTH runtime and dev dependencies (OSV treats
+# everything in poetry.lock equally). If a finding is dev-only and
+# shouldn't block merges, suppress it via osv-scanner.toml with a
+# justification ("dev-only, not shipped in the wheel").
+#
+# Suppressions live in `osv-scanner.toml` as [[IgnoredVulns]] entries
+# (CVE-id global; OSV-Scanner v2.3.8 doesn't support per-package CVE
+# scoping). Each entry has a justification comment and an `ignoreUntil`
+# expiry so suppressions re-surface for re-review rather than lingering.
+
+on:
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 0 * * 0' # Run every Sunday at midnight UTC
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  security-scan:
+    name: Security Scan
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      # JFrog OIDC + pip: skipped on fork PRs (no OIDC token from
+      # GitHub's perspective). OSV-Scanner reads poetry.lock directly
+      # without needing to download wheels, so fork PRs still work; we
+      # keep setup-jfrog here only for parity with the other workflows
+      # in this repo. If you remove it later, also remove the
+      # `id-token: write` permission above.
+      - name: Setup JFrog
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: ./.github/actions/setup-jfrog
+
+      - name: Install osv-scanner
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/osv-scanner \
+            https://github.com/google/osv-scanner/releases/download/v2.3.8/osv-scanner_linux_amd64
+          chmod +x /tmp/osv-scanner
+          /tmp/osv-scanner --version
+
+      - name: Run OSV-Scanner
+        # osv-scanner's exit codes are meaningful and we must NOT blanket
+        # `|| true` them: exit 0 = no vulns, exit 1 = vulns found (expected
+        # -- our real gate is the CVSS>=7 filter below), any OTHER non-zero
+        # (126/127/128+, network error reaching OSV.dev, corrupt binary,
+        # partial DB load) = a scanner error that must fail the job CLOSED.
+        # A blanket `|| true` + zero-byte guard let an errored-but-non-empty
+        # output pass as "clean" (fail-open); capture and classify the code.
+        run: |
+          set -uo pipefail
+
+          if [ ! -f poetry.lock ]; then
+            echo "::error::poetry.lock not found at repo root."
+            exit 1
+          fi
+
+          scan_rc=0
+          /tmp/osv-scanner scan source \
+            --lockfile=poetry.lock \
+            --config=osv-scanner.toml \
+            --format=json \
+            --output-file=/tmp/osv-out.json \
+            || scan_rc=$?
+
+          # Tolerate only 0 (clean) and 1 (findings present). Anything else
+          # is a scanner failure -> fail closed rather than reporting zero.
+          if [ "$scan_rc" -ne 0 ] && [ "$scan_rc" -ne 1 ]; then
+            echo "::error::OSV-Scanner exited $scan_rc (scanner error, not a findings result). Failing closed."
+            exit 1
+          fi
+
+          if [ ! -s /tmp/osv-out.json ]; then
+            echo "::error::OSV-Scanner did not produce an output file."
+            exit 1
+          fi
+
+          # Validate the output is well-formed JSON with a results array
+          # before any downstream parsing. A truncated/partial write is
+          # non-empty (defeats the -s guard) but unparseable -- catch it
+          # here so it fails closed instead of parsing to zero findings.
+          if ! jq -e 'has("results") and (.results | type == "array")' /tmp/osv-out.json >/dev/null 2>&1; then
+            echo "::error::OSV-Scanner output is not valid JSON with a .results array (partial/corrupt scan). Failing closed."
+            exit 1
+          fi
+
+      # Parse OSV's JSON into job outputs. The terminal steps below
+      # (PR-fail and scheduled-fail) consume these outputs.
+      #
+      # Two thresholds: PR gating uses CVSS >= 7 (high_count) so we don't
+      # block merges on MEDIUM/LOW noise; the weekly reports everything
+      # (total_findings) so the team has full situational awareness of
+      # emerging risk before it crosses the gate.
+      - name: Collect findings
+        id: findings
+        run: |
+          set -uo pipefail
+
+          # All findings (sorted by severity desc).
+          #
+          # Severity resolution is defense-in-depth against fail-open:
+          # OSV's group-level `.max_severity` is EMPTY ("") for advisory
+          # groups that lack a CVSS vector (common for GHSA-only and MAL-*
+          # malware advisories). jq's `//` only coalesces null/false -- an
+          # empty string is truthy and would pass through, then
+          # `"" | tonumber? // 0` scores it 0, silently sailing a real HIGH
+          # past the CVSS>=7 gate. So we do NOT trust max_severity alone:
+          #   1. Try group `.max_severity` (numeric only; empty/"" -> null).
+          #   2. Fall back to the max CVSS score across the group's own
+          #      vulnerabilities' `.severities[].score` (parsed from the
+          #      CVSS vector's numeric base score when present).
+          #   3. If still unresolved, emit the sentinel "UNKNOWN" (a
+          #      non-numeric string), never scored 0.
+          #
+          # BLOCKING RULE: unlike the Go driver (whose scoreless findings are
+          # mostly Go-stdlib advisories delivered via GOTOOLCHAIN and thus
+          # report-only), PyPA advisories reliably carry a CVSS score. A
+          # scoreless UNKNOWN here means a GHSA-only or MAL-* malware advisory
+          # on a package we depend on -- always BLOCKING (fail closed).
+          #
+          # NOTE ON jq NUMBER PARSING: use `try (x|tonumber) catch null`,
+          # NOT `x|tonumber?`. On a non-numeric string, `tonumber?` yields
+          # EMPTY (not null); inside an `... as $var` binding that makes the
+          # entire finding row vanish -- silently dropping a scoreless HIGH.
+          # try/catch normalizes non-numeric to null so the row survives and
+          # the fallback logic runs.
+          ALL_FINDINGS=$(jq -c '
+            def cvss_num($sev):
+              # OSV severity entries: {type:"CVSS_V3", score:"9.8"} (numeric)
+              # or a full vector string. Take numeric scores only; vectors
+              # without a bare numeric score contribute nothing (null).
+              ($sev // []) | map(try (.score | tonumber) catch null)
+                           | map(select(. != null)) | (max // null);
+            [
+              .results[].packages[]? |
+              .package as $pkg |
+              (.vulnerabilities // []) as $vulns |
+              .groups[]? |
+              .ids as $gids |
+              # max CVSS across the vulnerabilities referenced by this group
+              ([ $vulns[] | select(.id as $id | ($gids | index($id)) != null) | cvss_num(.severities) ]
+                 | map(select(. != null)) | (max // null)) as $vuln_score |
+              (try (.max_severity | tonumber) catch null) as $grp_score |
+              ($grp_score // $vuln_score) as $resolved |
+              {
+                pkg: ($pkg.name + "@" + $pkg.version),
+                ids: .ids,
+                severity: (if $resolved == null then "UNKNOWN" else ($resolved | tostring) end)
+              }
+            ] | sort_by(if (try (.severity | tonumber) catch null) == null then -1 else - (.severity | tonumber) end)
+          ' /tmp/osv-out.json)
+          TOTAL_FINDINGS=$(echo "$ALL_FINDINGS" | jq 'length')
+
+          # Scoreless (UNKNOWN) findings -- all blocking (see note above).
+          UNKNOWN_COUNT=$(echo "$ALL_FINDINGS" | jq '[.[] | select(.severity == "UNKNOWN")] | length')
+
+          # Blocking findings = CVSS >= 7 (any package) OR scoreless UNKNOWN.
+          HIGH_FINDINGS=$(echo "$ALL_FINDINGS" | jq -c '[.[] | select(((.severity | tonumber? // 0) >= 7) or (.severity == "UNKNOWN"))]')
+          HIGH_COUNT=$(echo "$HIGH_FINDINGS" | jq 'length')
+
+          # Guard against empty counts propagating to the numeric gates
+          # below. If any jq above failed, the var would be "" and
+          # `[ "$X" -gt 0 ]` errors / `'' != '0'` reads true. Default to 0
+          # and, since a failed parse should never be silently "clean",
+          # fail closed if the counts didn't resolve to integers.
+          TOTAL_FINDINGS=${TOTAL_FINDINGS:-}
+          HIGH_COUNT=${HIGH_COUNT:-}
+          UNKNOWN_COUNT=${UNKNOWN_COUNT:-}
+          if ! [[ "$TOTAL_FINDINGS" =~ ^[0-9]+$ ]] || ! [[ "$HIGH_COUNT" =~ ^[0-9]+$ ]]; then
+            echo "::error::Could not compute finding counts from OSV output (parse failure). Failing closed."
+            exit 1
+          fi
+
+          # Persist the full findings list to a file rather than a job
+          # output -- GitHub Actions outputs are size-capped at 1 MB and
+          # the formatted finding list can be larger than that.
+          echo "$ALL_FINDINGS" > /tmp/all-findings.json
+
+          echo "total_findings=$TOTAL_FINDINGS" >> "$GITHUB_OUTPUT"
+          echo "high_count=$HIGH_COUNT" >> "$GITHUB_OUTPUT"
+          echo "unknown_count=$UNKNOWN_COUNT" >> "$GITHUB_OUTPUT"
+
+          # Step summary so findings are visible in the GH Actions UI
+          # without downloading artifacts.
+          {
+            echo "## OSV-Scanner Findings"
+            echo ""
+            echo "- Total findings (any severity): \`$TOTAL_FINDINGS\`"
+            echo "- Blocking findings (CVSS >= 7, or unscored; PR-blocking): \`$HIGH_COUNT\`"
+            echo "- Unscored/UNKNOWN findings: \`$UNKNOWN_COUNT\` (all blocking)"
+            if [ "$TOTAL_FINDINGS" -gt 0 ]; then
+              echo ""
+              echo "All findings (sorted by severity desc):"
+              echo ""
+              echo "| Severity | Package | IDs |"
+              echo "|---|---|---|"
+              echo "$ALL_FINDINGS" | jq -r '.[] | "| \(.severity) | \(.pkg) | \(.ids | join(",")) |"'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # Also dump the findings to the job log so they're visible in
+          # the default "Logs" view, not just the step summary panel.
+          echo "OSV: $TOTAL_FINDINGS total findings, $HIGH_COUNT blocking (CVSS>=7 or unscored)"
+          if [ "$TOTAL_FINDINGS" -gt 0 ]; then
+            echo ""
+            echo "All findings (sorted by severity desc):"
+            echo "$ALL_FINDINGS" | jq -r '.[] | "  [\(.severity)] \(.pkg)  \(.ids | join(", "))"'
+          fi
+
+      # --- Terminal: PR event ---
+      # Fail the job so the PR's check goes red. No email.
+      # PR gate is CVSS >= 7 (or unscored) only; MEDIUM/LOW findings show
+      # up in the step summary but don't block merges.
+      - name: Fail on findings (PR)
+        if: github.event_name == 'pull_request' && steps.findings.outputs.high_count != '0'
+        run: |
+          set -uo pipefail
+          # List the actual blocking findings inline so the author sees what
+          # needs fixing without clicking through to the step summary
+          # panel or downloading artifacts.
+          HIGH_FINDINGS=$(jq -c '[.[] | select(((.severity | tonumber? // 0) >= 7) or (.severity == "UNKNOWN"))]' /tmp/all-findings.json)
+
+          echo "::error::${{ steps.findings.outputs.high_count }} unsuppressed blocking finding(s) (CVSS>=7, or unscored) in this PR:"
+          echo ""
+          echo "$HIGH_FINDINGS" | jq -r '.[] | "  [\(.severity)] \(.pkg)  \(.ids | join(", "))"'
+          echo ""
+          echo "Fix by either:"
+          echo "  1. Bumping the affected dependency to a patched version, or"
+          echo "  2. Adding a documented [[IgnoredVulns]] entry to osv-scanner.toml"
+          echo "     with a clear justification for why the CVE doesn't apply to our usage."
+          echo ""
+          echo "Full step summary: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          exit 1
+      # --- Terminal: scheduled/manual event ---
+      # Weekly reports ALL findings (not just CVSS >= 7) so emerging risk is
+      # visible before it crosses the PR gate. PR-time is narrower to avoid
+      # blocking on MEDIUM/LOW noise; weekly is broader for situational
+      # awareness.
+      #
+      # Notification is intentionally NOT done here: a separate cross-repo
+      # action collates findings from all driver repos and sends a single
+      # digest. This job's job is to (a) fail so the scheduled run is red
+      # when anything is found, and (b) upload the raw osv-out.json artifact
+      # for the collator to consume.
+      - name: Fail on findings (scheduled/manual)
+        if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && steps.findings.outputs.total_findings != '0'
+        run: |
+          echo "::error::${{ steps.findings.outputs.total_findings }} OSV finding(s) on main (${{ steps.findings.outputs.high_count }} blocking at CVSS>=7 or unscored). See the security-scan-reports artifact."
+          exit 1
+
+      # Always upload the raw scan output so triagers -- and the planned
+      # cross-repo collation/notification action -- can pull findings
+      # without rerunning. This is the machine-readable source of truth now
+      # that per-repo email has been removed.
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: security-scan-reports
+          path: |
+            /tmp/osv-out.json
+            /tmp/all-findings.json
+          if-no-files-found: ignore

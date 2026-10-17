@@ -1,0 +1,263 @@
+name: CI
+
+on:
+  # No `branches:` filter: a PR's base is not always `main` — a PR stacked on
+  # another open PR's branch (e.g. #38 based on #35) needs the same checks as
+  # any other, and this repo has that shape often enough to matter.
+  pull_request: {}
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    name: Rust checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: router
+    env:
+      # The DATABASE_URL-gated integration tests in router/tests/ skip silently
+      # when this is unset; the service container below keeps them running so
+      # a green build actually exercised the Postgres paths.
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/zerorouter_test
+    services:
+      postgres:
+        image: postgres:16-bookworm@sha256:da788743d2060767375896de4d646f7576f5911461444b372616f19ea61db2ec
+        env:
+          POSTGRES_DB: zerorouter_test
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d zerorouter_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: 1.96.1
+          components: clippy,rustfmt
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: router -> target
+          cache-on-failure: true
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Run Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Clippy (testing feature)
+        run: cargo clippy --locked --all-targets --features testing -- -D warnings
+      - name: Run tests
+        run: cargo test --locked
+      # AGENTS.md lists this among the gates and explains why it is not
+      # redundant with `cargo test`: it proves the test-only upstream
+      # substitution surface (`src/testing.rs`, behind the `testing` feature) is
+      # ABSENT from a production binary. `cargo test` cannot show that, because
+      # the self dev-dependency in Cargo.toml turns the feature ON for every
+      # test build — including the lib's own unit tests, via feature
+      # unification. So this is the only command in CI that compiles the crate
+      # the way it actually ships.
+      #
+      # It did already run in CI, but incidentally: the portal-e2e job builds a
+      # binary for the Playwright harness. That is a side effect of needing an
+      # executable, not a check of this invariant, and it would disappear the
+      # day the e2e harness changed how it starts the router.
+      - name: Build (production profile, testing feature must stay off)
+        run: cargo build --locked
+
+  portal:
+    name: Portal build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: portal
+    env:
+      # Corepack must never stop for an interactive download prompt in CI.
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Corepack ships with the runner's preinstalled Node; enabling it before
+      # setup-node lets the pnpm shim satisfy setup-node's cache resolution.
+      - name: Enable corepack
+        run: corepack enable
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: portal/pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build portal
+        run: pnpm build
+
+  portal-e2e:
+    name: Portal e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/zerorouter_test
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+    services:
+      postgres:
+        image: postgres:16-bookworm@sha256:da788743d2060767375896de4d646f7576f5911461444b372616f19ea61db2ec
+        env:
+          POSTGRES_DB: zerorouter_test
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d zerorouter_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: 1.96.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: router -> target
+          cache-on-failure: true
+      - name: Enable corepack
+        run: corepack enable
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: portal/pnpm-lock.yaml
+      - name: Build router
+        working-directory: router
+        run: cargo build --locked
+      - name: Install portal dependencies
+        working-directory: portal
+        run: pnpm install --frozen-lockfile
+      - name: Install Playwright chromium
+        working-directory: portal
+        # The CDN download has hung indefinitely on GitHub runners (twice on
+        # 2026-08-19, eating the full job timeout with the suite never run).
+        # Kill each attempt at 5 minutes and retry; a healthy install takes
+        # well under one.
+        timeout-minutes: 18
+        run: |
+          for attempt in 1 2 3; do
+            timeout 300 npx playwright install --with-deps chromium && exit 0
+            echo "::warning::Playwright install attempt ${attempt} failed or hung"
+          done
+          exit 1
+      - name: Build portal
+        working-directory: portal
+        run: pnpm build
+      - name: Run e2e suite
+        working-directory: portal
+        run: npx playwright test
+
+  workflows:
+    name: Workflow checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install and run actionlint
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/actionlint.tar.gz"
+          curl --fail --location --silent --show-error \
+            --output "${archive}" \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.7/actionlint_1.7.7_linux_amd64.tar.gz
+          echo "023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757  ${archive}" \
+            | sha256sum --check --status
+          tar --extract --gzip --file "${archive}" --directory "${RUNNER_TEMP}" actionlint
+          "${RUNNER_TEMP}/actionlint" \
+            .github/workflows/ci.yml \
+            .github/workflows/deploy.yml \
+            .github/workflows/security.yml \
+            .github/workflows/catalog-drift.yml \
+            .github/workflows/retention-drift.yml
+
+  arm64-container:
+    name: ARM64 container
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - name: Build ARM64 image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          # The Dockerfile lives at the repo root so its context reaches both
+          # router/ and portal/ (moved from router/Dockerfile).
+          context: .
+          file: ./Dockerfile
+          platforms: linux/arm64
+          push: false
+          cache-from: type=gha,scope=zerorouter-router-arm64
+          cache-to: type=gha,scope=zerorouter-router-arm64,mode=max
+
+  container-smoke:
+    name: Container smoke test
+    # A NATIVE arm64 runner, which is free for public repositories. This matters
+    # more than it looks:
+    #
+    #   * The Dockerfile REFUSES to build anything else — its first builder step
+    #     is `test "${TARGETARCH}" = "arm64"`. Producing an amd64 image would
+    #     mean relaxing that assertion, and the assertion is correct: deploy.yml
+    #     ships linux/arm64 and nothing else. A smoke test of an image the
+    #     project never ships would gate the wrong artifact.
+    #   * Running the arm64 image on an amd64 runner is possible through QEMU,
+    #     but then a boot failure could be an emulation artifact, and the whole
+    #     point of this job is to trust its verdict about booting.
+    #
+    # Separate from arm64-container rather than appended to it so the two run in
+    # parallel and a smoke failure is distinguishable at a glance from a build
+    # failure. It re-builds rather than importing that job's image because the
+    # buildx GHA cache makes the second build cheap, and `needs:` would
+    # serialize two jobs that are each useful on their own.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      # No setup-qemu-action here, deliberately: the runner is already arm64, so
+      # the build is native and emulation would only slow it down.
+      - name: Build the image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/arm64
+          push: false
+          # Loaded into the local daemon rather than left in the build cache,
+          # because the next step has to actually run it.
+          load: true
+          tags: zerorouter:smoke
+          # A cache scope of its own: this job builds natively while
+          # arm64-container cross-compiles from amd64, and the two produce
+          # different intermediate layers. Sharing one scope would make each
+          # run evict the other's cache.
+          cache-from: type=gha,scope=zerorouter-router-arm64-native
+          cache-to: type=gha,scope=zerorouter-router-arm64-native,mode=max
+      # Boots the image against Postgres and asserts /healthz, the /v1/models
+      # catalog shape including its retention claims, and that an
+      # unauthenticated completion is refused with the documented error body.
+      # The script owns its own Postgres container: the router must reach the
+      # database over LOOPBACK (router/src/db.rs refuses a non-loopback
+      # DATABASE_URL without a pinned CA), which a `services:` container on the
+      # host network cannot provide to a container.
+      - name: Smoke test the image
+        run: ./scripts/container-smoke.sh zerorouter:smoke

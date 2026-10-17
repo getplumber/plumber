@@ -1,0 +1,52 @@
+{
+  "source": "https://github.com/jfrog/artifactory-gradle-plugin",
+  "commit": "7a8a74acdd10e69a6e0e1055cea9f72e6ae50398",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": false
+    }
+  ],
+  "environments": [
+    {
+      "name": "frogbot",
+      "known": true,
+      "requiredReviewers": true,
+      "reviewers": 1
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/analysis.yml": "disabled_manually",
+    ".github/workflows/cla.yml": "active",
+    ".github/workflows/frogbot-scan-and-fix.yml": "disabled_inactivity",
+    ".github/workflows/frogbot-scan-pull-request.yml": "active",
+    ".github/workflows/gradle.yml": "disabled_inactivity",
+    ".github/workflows/monitorIssues.yml": "disabled_inactivity",
+    ".github/workflows/removeLabel.yml": "active",
+    ".github/workflows/test.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The Critical pull_request_target path from the Frogbot scan was judged false: the job runs under environment `frogbot`, whose required approvers approve each run before it starts, and it checks out the approved head commit, so the path holds as a maintainer-approved Medium at most.",
+  "expect": {
+    "paths": [
+      {
+        "entryKind": "pr_target",
+        "tier": "medium",
+        "subjectContains": "github.event.pull_request.head.sha",
+        "actor": "maintainer_approved"
+      }
+    ],
+    "ceilings": [
+      {
+        "entryKind": "pr_target",
+        "subjectContains": "github.event.pull_request.head.sha",
+        "tier": "medium"
+      }
+    ]
+  }
+}

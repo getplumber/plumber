@@ -1,0 +1,269 @@
+name: Release
+
+# Build the walshadow-stream / walshadow-classify / walshadow-filter binaries
+# and the pgext loadable module for linux x86_64 + aarch64, and publish them.
+#
+#   main push   -> one tar.gz per target as workflow artifacts
+#   v* tag push -> same archives + SHA256SUMS attached to a GitHub Release,
+#                  with a build-provenance attestation per archive
+#
+# Each arch builds natively on its own runner, same as docker.yml. Dynamic
+# glibc link: the binaries need liblz4.so.1 / libzstd.so.1 at runtime and a
+# glibc no newer than the oldest consumer's. The clickgres walshadow VM image
+# is Ubuntu 22.04 (glibc 2.35), so the unsuffixed archives build on 22.04
+# runners; moving them forward strands every VM already running that image.
+# Ubuntu 26.04 builds alongside them under an `-ubuntu26.04` suffix, for
+# images new enough to prefer a native build.
+#
+# Archive layout: walshadow-<version>-<target>[-ubuntu26.04]/{walshadow-*,
+# LICENSE,README.md} and walshadow-pgext-<version>-pg<major>-<target>[
+# -ubuntu26.04]/{walshadow.so,LICENSE}, where <version> is the tag without its
+# `v`, or `sha-<short>` on main, the same commit tag scheme docker.yml uses.
+#
+# pgext ships per PG major because it is compiled against that major's server
+# headers. The majors here are the ones the VM image caches; a shadow running
+# any other major cannot be upgraded from a release.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  # Build only, no release. Paths that change how the archives are produced
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - build.rs
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.image.target }} ${{ matrix.image.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+            suffix: ""
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
+            suffix: ""
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-26.04
+            suffix: -ubuntu26.04
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-26.04-arm
+            suffix: -ubuntu26.04
+    runs-on: ${{ matrix.image.runner }}
+    timeout-minutes: 45
+
+    steps:
+      # The Rust build does not touch pgext, so no submodules.
+      - name: Checkout walshadow
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.image.target }}
+
+      # The runner image belongs in the key: rust-cache keys on runner.os and
+      # the host triple, both identical across ubuntu releases, so a cache
+      # filled on a newer image hands this job dependency rlibs compiled
+      # against a newer glibc, and the link fails on symbols like
+      # __isoc23_sscanf that this image cannot resolve.
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.image.target }}-${{ matrix.image.runner }}
+
+      - name: Install C deps (lz4 + zstd for clickhouse-c-rs)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential liblz4-dev libzstd-dev
+
+      # Tags must match Cargo.toml so the archive name, the release and
+      # `--version` agree on what version this is.
+      - name: Resolve version
+        id: version
+        run: |
+          set -euo pipefail
+          crate=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "walshadow") | .version')
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+            if [[ "$version" != "$crate" ]]; then
+              echo "::error::tag $GITHUB_REF_NAME does not match Cargo.toml version $crate"
+              exit 1
+            fi
+          else
+            version="sha-$(git rev-parse --short HEAD)"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "archive=walshadow-$version-${{ matrix.image.target }}${{ matrix.image.suffix }}" >> "$GITHUB_OUTPUT"
+
+      # `-p walshadow --bins`: the bench workspace member has bins too, keep
+      # them out of the release. build.rs picks up the git sha for --version.
+      - name: Build
+        run: cargo build --release --locked -p walshadow --bins --target ${{ matrix.image.target }}
+
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          for bin in walshadow-stream walshadow-classify walshadow-filter; do
+            "target/${{ matrix.image.target }}/release/$bin" --version
+          done
+
+      - name: Package
+        env:
+          ARCHIVE: ${{ steps.version.outputs.archive }}
+        run: |
+          set -euo pipefail
+          mkdir -p "dist/$ARCHIVE"
+          cp target/${{ matrix.image.target }}/release/walshadow-{stream,classify,filter} \
+             LICENSE README.md "dist/$ARCHIVE/"
+          tar -czf "dist/$ARCHIVE.tar.gz" -C dist "$ARCHIVE"
+          ls -l dist/*.tar.gz
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.version.outputs.archive }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+
+  pgext:
+    name: pgext pg${{ matrix.pg-major }} ${{ matrix.image.target }} ${{ matrix.image.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        pg-major: [16, 17, 18]
+        image:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+            suffix: ""
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
+            suffix: ""
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-26.04
+            suffix: -ubuntu26.04
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-26.04-arm
+            suffix: -ubuntu26.04
+    runs-on: ${{ matrix.image.runner }}
+    timeout-minutes: 30
+
+    steps:
+      # pg-clickhouse-c is a recursive submodule native.o compiles against.
+      - name: Checkout walshadow
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      # The runner image ships one major; take the matrix major from PGDG so
+      # the majors here are independent of the runner's choice. Only the -dev
+      # package matters: PGXS reads pg_config, nothing is started.
+      - name: Install PostgreSQL ${{ matrix.pg-major }} headers (PGDG)
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential curl gnupg lsb-release
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | sudo gpg --dearmor -o /usr/share/keyrings/postgres-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/postgres-archive-keyring.gpg] https://apt.postgresql.org/pub/repos/apt/ $(lsb_release -cs)-pgdg main ${{ matrix.pg-major }}" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            postgresql-server-dev-${{ matrix.pg-major }}
+
+      # `build` validates a tag against Cargo.toml; this only has to agree
+      # with the version string that job produces.
+      - name: Resolve version
+        id: version
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="sha-$(git rev-parse --short HEAD)"
+          fi
+          echo "archive=walshadow-pgext-$version-pg${{ matrix.pg-major }}-${{ matrix.image.target }}${{ matrix.image.suffix }}" >> "$GITHUB_OUTPUT"
+
+      # with_llvm=no matches the VM image build: no bitcode, so no clang
+      # matching the server's LLVM is needed.
+      - name: Build
+        run: make -C pgext with_llvm=no PG_CONFIG=/usr/lib/postgresql/${{ matrix.pg-major }}/bin/pg_config
+
+      - name: Package
+        env:
+          ARCHIVE: ${{ steps.version.outputs.archive }}
+        run: |
+          set -euo pipefail
+          mkdir -p "dist/$ARCHIVE"
+          cp pgext/walshadow.so LICENSE "dist/$ARCHIVE/"
+          tar -czf "dist/$ARCHIVE.tar.gz" -C dist "$ARCHIVE"
+          ls -l dist/*.tar.gz
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.version.outputs.archive }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: github release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, pgext]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Fetch archives
+        uses: actions/download-artifact@v8
+        with:
+          pattern: walshadow-*
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          sha256sum -- *.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+
+      # Verify with: gh attestation verify <archive> --repo ClickHouse/walshadow
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist/*.tar.gz
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/SHA256SUMS \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            --verify-tag

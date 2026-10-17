@@ -1,0 +1,63 @@
+name: Apache Flink ClickHouse Connector Tests CI (Scala)
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - 'examples'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - 'examples'
+
+jobs:
+  test-flink-17:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        clickhouse: [ "25.3", "25.8", "25.10", "25.11", "25.12", "latest"]
+        flink: [ "1.17.2", "1.18.1", "1.19.3", "1.20.2"]
+    name: Apache Flink ${{ matrix.flink }} ClickHouse Connector scala tests with ClickHouse ${{ matrix.clickhouse }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'adopt'
+          architecture: x64
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+      - name: Execute Gradle 'test' task
+        env:
+          CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
+          FLINK_VERSION: ${{ matrix.flink }}
+        run: ./gradlew :flink-connector-clickhouse-1.17:runScalaTests
+  test-flink-2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        clickhouse: [ "23.7", "24.3", "latest" ]
+    name: Apache Flink 2.0.0 ClickHouse Connector tests with scala ClickHouse ${{ matrix.clickhouse }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'adopt'
+          architecture: x64
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+      - name: Execute Gradle 'test' task
+        env:
+          CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
+        run: ./gradlew :flink-connector-clickhouse-2.0.0:runScalaTests

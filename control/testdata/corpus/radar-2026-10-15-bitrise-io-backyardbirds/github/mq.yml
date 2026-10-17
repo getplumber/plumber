@@ -1,0 +1,14 @@
+name: hello-world
+on: 
+  merge_group:
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./scripts
+    steps:
+      - name: Check out the repository to the runner
+        uses: actions/checkout@v4  
+      - name: my-step 2
+        run: ./gitrise.sh --access-token ${{ secrets.BITRISE_TOKEN }} --slug ${{ vars.BITRISE_APP_SLUG }} --workflow script --branch ${{ github.ref_name }}  --stream -p 10

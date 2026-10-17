@@ -1,0 +1,21 @@
+name: Latest Grafana API compatibility check
+on: [pull_request]
+
+jobs:
+  compatibilitycheck:
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      - name: Build plugin
+        run: npm run build
+      - name: Compatibility check
+        run: npx --yes @grafana/levitate@latest is-compatible --path $(find ./src -type f \( -name "module.ts" -o -name "module.tsx" \)) --target @grafana/data,@grafana/ui,@grafana/runtime

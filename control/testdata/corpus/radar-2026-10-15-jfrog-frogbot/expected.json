@@ -1,0 +1,55 @@
+{
+  "source": "https://github.com/jfrog/frogbot",
+  "commit": "cbaeef9bb60fd74b9cb3410992a290a47acfe14a",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "frogbot",
+      "known": true,
+      "requiredReviewers": true,
+      "reviewers": 2
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/test.yml": "active",
+    ".github/workflows/action-test.yml": "active",
+    ".github/workflows/cla.yml": "active",
+    ".github/workflows/analysis.yml": "active",
+    ".github/workflows/frogbot-scan-pull-request.yml": "active",
+    ".github/workflows/frogbot-scan-repository.yml": "active",
+    ".github/workflows/validate-pr-target-branch.yml": "active",
+    ".github/workflows/oidc-test.yml": "active",
+    ".github/workflows/update-tag-according-to-version.yml": "active",
+    ".github/workflows/test-v2.yml": "active",
+    ".github/workflows/frogbot-auto-pr.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The Critical pull_request_target path from the test workflow was judged false: it runs only on `types: [labeled]` when a maintainer applies `safe to test`, at the labelled head commit, so the path holds as a maintainer-approved Medium at most.",
+  "expect": {
+    "paths": [
+      {
+        "entryKind": "pr_target",
+        "tier": "medium",
+        "subjectContains": "github.event.pull_request.head.sha",
+        "actor": "maintainer_approved"
+      }
+    ],
+    "ceilings": [
+      {
+        "entryKind": "pr_target",
+        "subjectContains": "github.event.pull_request.head.sha",
+        "tier": "medium"
+      }
+    ]
+  }
+}

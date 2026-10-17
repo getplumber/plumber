@@ -1,0 +1,53 @@
+{
+  "source": "https://github.com/jfrog/jfrog-idea-plugin",
+  "commit": "3370eb06f9238d0374848f1dac0fcb6a95ff5889",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "master",
+  "branches": [
+    {
+      "name": "master",
+      "protected": false
+    }
+  ],
+  "environments": [
+    {
+      "name": "frogbot",
+      "known": true,
+      "requiredReviewers": true,
+      "reviewers": 2
+    },
+    {
+      "name": "github-pages",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/cla.yml": "active",
+    ".github/workflows/frogbot-scan-pull-request.yml": "active",
+    ".github/workflows/integration-tests.yml": "active",
+    ".github/workflows/test.yml": "active",
+    ".github/workflows/verification.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The Critical pull_request_target path from the Frogbot scan was judged false: the job runs under environment `frogbot`, whose required approvers approve each run before it starts, and it checks out the approved head commit, so the path holds as a maintainer-approved Medium at most.",
+  "expect": {
+    "paths": [
+      {
+        "entryKind": "pr_target",
+        "tier": "medium",
+        "subjectContains": "github.event.pull_request.head.sha",
+        "actor": "maintainer_approved"
+      }
+    ],
+    "ceilings": [
+      {
+        "entryKind": "pr_target",
+        "subjectContains": "github.event.pull_request.head.sha",
+        "tier": "medium"
+      }
+    ]
+  }
+}

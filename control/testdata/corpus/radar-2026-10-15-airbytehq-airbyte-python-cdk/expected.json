@@ -1,0 +1,117 @@
+{
+  "source": "https://github.com/airbytehq/airbyte-python-cdk",
+  "commit": "73ccaa90aec2beddcf632f51701471430d59dfba",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "Connector Builder",
+      "known": true
+    },
+    {
+      "name": "copilot",
+      "known": true
+    },
+    {
+      "name": "DockerHub",
+      "known": true
+    },
+    {
+      "name": "github-pages",
+      "known": true,
+      "branchPolicy": true
+    },
+    {
+      "name": "PyPi",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/actionlint.yml": "active",
+    ".github/workflows/auto_merge_notification.yml": "active",
+    ".github/workflows/autofix-command.yml": "active",
+    ".github/workflows/codeql-vulnerability-checks.yml": "active",
+    ".github/workflows/codeql.yml": "active",
+    ".github/workflows/connector-tests.yml": "active",
+    ".github/workflows/docker-build-check.yml": "active",
+    ".github/workflows/label-community-issues.yml": "active",
+    ".github/workflows/label-community-prs.yml": "active",
+    ".github/workflows/oss-issue-triage.yml": "disabled_manually",
+    ".github/workflows/pdoc_preview.yml": "active",
+    ".github/workflows/pdoc_publish.yml": "active",
+    ".github/workflows/poe-command.yml": "active",
+    ".github/workflows/poetry-lock-command.yml": "active",
+    ".github/workflows/prerelease-command.yml": "active",
+    ".github/workflows/publish.yml": "active",
+    ".github/workflows/pytest_fast.yml": "active",
+    ".github/workflows/pytest_matrix.yml": "active",
+    ".github/workflows/python_dependency_analysis.yml": "active",
+    ".github/workflows/python_lint.yml": "active",
+    ".github/workflows/release_drafter.yml": "active",
+    ".github/workflows/semantic_pr_check.yml": "active",
+    ".github/workflows/slack-pr-notification.yml": "active",
+    ".github/workflows/slash_command_dispatch.yml": "active",
+    ".github/workflows/test-command.yml": "active",
+    ".github/workflows/welcome-message.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "actionMetadata": {
+    "pypa/gh-action-pypi-publish@v1.12.4": {
+      "refKind": "tag",
+      "advisories": [
+        "GHSA-vxmw-7h4f-hqxh"
+      ],
+      "advisorySeverities": {
+        "GHSA-vxmw-7h4f-hqxh": "low"
+      }
+    }
+  },
+  "note": "The Critical `pypa/gh-action-pypi-publish@v1.12.4` path was judged overstated: its advisory GHSA-vxmw-7h4f-hqxh is rated low, needs an attacker-controlled `github.ref_name` and does not apply to `push: tags`, so the path is the mutable tag of a trusted-owner action, Medium; `hynek/build-and-inspect-python-package@v2` and `mtkennerly/dunamai-action@v1` ship the release with no secret, High at most; `bcgov/action-pr-description-add` and `chuhlomin/render-template` reach a scoped token only, Medium at most; `amannn/action-semantic-pull-request@v5` runs with a read-only token, Low.",
+  "expect": {
+    "paths": [
+      {
+        "entryKind": "mutable_dependency",
+        "tier": "medium",
+        "subjectContains": "pypa/gh-action-pypi-publish@v1.12.4"
+      }
+    ],
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "hynek/build-and-inspect-python-package@v2",
+        "tier": "high"
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "mtkennerly/dunamai-action@v1",
+        "tier": "high"
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "bcgov/action-pr-description-add@v2.0.0",
+        "tier": "medium",
+        "pending": "the spec counts any write scope of the token as a write token, while the assessment argued that a token scoped to issues, pull requests or checks only, in a job with no secret, is a Medium at most."
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "chuhlomin/render-template@v1.4",
+        "tier": "medium",
+        "pending": "the spec counts any write scope of the token as a write token, while the assessment argued that a token scoped to issues, pull requests or checks only, in a job with no secret, is a Medium at most."
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "amannn/action-semantic-pull-request@v5",
+        "tier": "low"
+      }
+    ]
+  }
+}

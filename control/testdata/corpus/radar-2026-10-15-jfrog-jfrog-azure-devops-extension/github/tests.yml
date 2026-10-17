@@ -1,0 +1,84 @@
+# Tests that runs on a local Artifactory instance
+name: Tests
+on:
+  push:
+    branches:
+      - '**'
+    tags-ignore:
+      - '**'
+  # Triggers the workflow on labeled PRs only.
+  pull_request_target:
+    types: [ labeled ]
+# Ensures that only the latest commit is running for each PR at a time.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  Tests:
+    name: ${{ matrix.os }} Node ${{ matrix.node-version }}
+    if: contains(github.event.pull_request.labels.*.name, 'safe to test') || github.event_name == 'push'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu, windows ]
+        node-version: [ '16', '20', '22', '24' ]
+        include:
+          - os: windows
+            extraSkipTests: ",conan"
+    runs-on: ${{ matrix.os }}-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          # Safe here: this job only runs after a maintainer applies the 'safe to test'
+          # label (see the 'if' above), which is the trust decision this flag requires.
+          allow-unsafe-pr-checkout: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Install Conan
+        run: pip install "conan<2" -q
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '11'
+
+      # Pinned instead of relying on the OS image's bundled Maven: ubuntu-latest's
+      # image was bumped to Maven 3.10.0, whose maven-resolver/aether jars dropped
+      # DefaultArtifactResolver's no-arg constructor, breaking the Artifactory
+      # build-info-extractor Maven plugin (NoSuchMethodError) on ubuntu only.
+      - name: Setup Maven
+        uses: stCarolas/setup-maven@v5
+        with:
+          maven-version: '3.9.9'
+
+      - name: Install Mono
+        run: |
+          sudo apt update
+          sudo apt install mono-complete
+          mono --version
+        if: ${{ matrix.os == 'ubuntu' }}
+
+      - name: Install JFrog CLI
+        run: curl -fL https://install-cli.jfrog.io | sh
+
+      - name: Install local Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+
+      - name: Install
+        run: npm install --no-fund
+
+      - name: Run tests
+        run: npm t
+        env:
+          ADO_JFROG_PLATFORM_URL: http://localhost:8081/
+          ADO_JFROG_PLATFORM_USERNAME: admin
+          ADO_JFROG_PLATFORM_PASSWORD: password
+          ADO_SKIP_TESTS: docker,distribution${{ matrix.extraSkipTests }}

@@ -1,0 +1,470 @@
+# This workflow builds the python package.
+
+# When from from a release tags or a workflow dispatch, it also publishes to PyPI and DockerHub along
+# with bumping the Connector Builder pinned version.
+# Note: We may want to rename this file at some point. However, if we rename the workflow file name,
+# we have to also update the Trusted Publisher settings on PyPI.
+
+name: CDK Publish
+permissions:
+  contents: read
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: >
+          Note that this workflow is intended for prereleases. For public-facing stable releases,
+          please use the GitHub Releases workflow instead:
+          https://github.com/airbytehq/airbyte-python-cdk/blob/main/docs/RELEASES.md.
+          For prereleases, you can use the /prerelease slash command in a PR comment to trigger
+          this workflow with default arguments. Alternatively, you can manually trigger this workflow
+          and leave the version blank to use the detected version, or override the dynamic versioning
+          for special use cases.
+        required: false
+      publish_to_pypi:
+        description: "Publish to PyPI. If true, the workflow will publish to PyPI."
+        type: boolean
+        required: true
+        default: true
+      publish_to_dockerhub:
+        description: "Publish to DockerHub. If true, the workflow will publish the SDM connector to DockerHub."
+        type: boolean
+        required: true
+        default: true
+      publish_manifest_server:
+        description: "Publish Manifest Server to DockerHub. If true, the workflow will publish the Manifest Server to DockerHub."
+        type: boolean
+        required: true
+        default: true
+      update_connector_builder:
+        description: "Update Connector Builder. If true, the workflow will create a PR to bump the CDK version used by Connector Builder."
+        type: boolean
+        required: true
+        default: false
+
+jobs:
+  build:
+    name: Build Python Package
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout CDK Repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect Prerelease Version using Dunamai
+        uses: mtkennerly/dunamai-action@v1
+        with:
+          args: --format "{base}.post{distance}.dev${{ github.run_id }}"
+          env-var: DETECTED_VERSION
+
+      - name: Detect Release Tag Version from git ref ('${{ github.ref_name }}')
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          echo "Overriding Dunamai detected version: '${{ env.DETECTED_VERSION || 'none' }}'"
+          # Extract the version from the git ref
+          DETECTED_VERSION=${{ github.ref_name }}
+          # Remove the 'v' prefix if it exists
+          DETECTED_VERSION="${DETECTED_VERSION#v}"
+          echo "Setting detected version to '$DETECTED_VERSION'"
+          echo "DETECTED_VERSION=${DETECTED_VERSION}" >> $GITHUB_ENV
+
+      - name: Validate and set VERSION (detected='${{ env.DETECTED_VERSION }}', input='${{ github.event.inputs.version || 'none' }}')
+        id: set_version
+        run: |
+          INPUT_VERSION=${{ github.event.inputs.version }}
+          echo "Version input set to '${INPUT_VERSION}'"
+          # Exit with success if both detected and input versions are empty
+          if [ -z "${DETECTED_VERSION:-}" ] && [ -z "${INPUT_VERSION:-}" ]; then
+            echo "No version detected or input. Will publish to SHA tag instead."
+            echo 'VERSION=' >> $GITHUB_ENV
+            exit 0
+          fi
+          # Remove the 'v' prefix if it exists
+          INPUT_VERSION="${INPUT_VERSION#v}"
+          # Fail if detected version is non-empty and different from the input version
+          if [ -n "${DETECTED_VERSION:-}" ] && [ -n "${INPUT_VERSION:-}" ] && [ "${DETECTED_VERSION}" != "${INPUT_VERSION}" ]; then
+            echo "Warning: Version input '${INPUT_VERSION}' does not match detected version '${DETECTED_VERSION}'."
+            echo "Using input version '${INPUT_VERSION}' instead."
+          fi
+          # Set the version to the input version if non-empty, otherwise the detected version
+          VERSION="${INPUT_VERSION:-$DETECTED_VERSION}"
+          # Fail if the version is still empty
+          if [ -z "$VERSION" ]; then
+            echo "Error: VERSION is not set. Ensure the tag follows the format 'refs/tags/vX.Y.Z'."
+            exit 1
+          fi
+          echo "Setting version to '$VERSION'"
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+          # Check if version is a prerelease version (will not tag 'latest')
+          if [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "IS_PRERELEASE=false" >> $GITHUB_ENV
+            echo "IS_PRERELEASE=false" >> $GITHUB_OUTPUT
+          else
+            echo "IS_PRERELEASE=true" >> $GITHUB_ENV
+            echo "IS_PRERELEASE=true" >> $GITHUB_OUTPUT
+          fi
+
+      - uses: hynek/build-and-inspect-python-package@v2
+        env:
+          # Pass in the evaluated version from the previous step
+          # More info: https://github.com/mtkennerly/poetry-dynamic-versioning#user-content-environment-variables
+          POETRY_DYNAMIC_VERSIONING_BYPASS: ${{ env.VERSION || '0.0.0dev0'}}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Packages-${{ github.run_id }}
+          path: |
+            /tmp/baipp/dist/*.whl
+            /tmp/baipp/dist/*.tar.gz
+
+    outputs:
+      VERSION: ${{ steps.set_version.outputs.VERSION }}
+      IS_PRERELEASE: ${{ steps.set_version.outputs.IS_PRERELEASE }}
+
+  publish_cdk:
+    name: Publish CDK version to PyPI
+    runs-on: ubuntu-24.04
+    needs: [build]
+    permissions:
+      id-token: write
+      contents: write
+    environment:
+      name: PyPi
+      url: https://pypi.org/p/airbyte-cdk/
+    if: >
+      (github.event_name == 'push' &&
+       startsWith(github.ref, 'refs/tags/v')) ||
+      (github.event_name == 'workflow_dispatch' &&
+       (github.event.inputs.publish_to_pypi == 'true' ||
+        github.event.inputs.update_connector_builder == 'true'
+      ))
+    env:
+      VERSION: ${{ needs.build.outputs.VERSION }}
+      IS_PRERELEASE: ${{ needs.build.outputs.IS_PRERELEASE }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: Packages-${{ github.run_id }}
+          path: dist
+
+      - name: Upload wheel to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: dist/*.whl
+          tag: ${{ github.ref }}
+          overwrite: true
+          file_glob: true
+
+      - name: Publish to PyPI
+        if: >
+          (github.event_name == 'push' &&
+           startsWith(github.ref, 'refs/tags/v')
+          ) || github.event.inputs.publish_to_pypi == 'true'
+        uses: pypa/gh-action-pypi-publish@v1.12.4
+
+  publish_sdm:
+    name: Publish SDM to DockerHub
+    if: >
+      (github.event_name == 'push' &&
+       startsWith(github.ref, 'refs/tags/v')) ||
+      (github.event_name == 'workflow_dispatch' &&
+       github.event.inputs.publish_to_dockerhub == 'true'
+      )
+    runs-on: ubuntu-24.04
+    needs: [build]
+    environment:
+      name: DockerHub
+      url: https://hub.docker.com/r/airbyte/source-declarative-manifest/tags
+    env:
+      VERSION: ${{ needs.build.outputs.VERSION }}
+      IS_PRERELEASE: ${{ needs.build.outputs.IS_PRERELEASE }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # We need to download the build artifact again because the previous job was on a different runner
+      - name: Download Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Packages-${{ github.run_id }}
+          path: dist
+
+      - name: Set up QEMU for multi-platform builds
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_PASSWORD }}
+
+      - name: "Check for existing tag (version: ${{ env.VERSION || 'none' }} )"
+        if: env.VERSION != ''
+        uses: ./.github/actions/check-docker-tag
+        with:
+          image_name: airbyte/source-declarative-manifest
+          tag: ${{ env.VERSION }}
+
+      - name: "Build and push (sha tag: '${{ github.sha }}')"
+        # Only run if the version is not set
+        if: env.VERSION == ''
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            airbyte/source-declarative-manifest:${{ github.sha }}
+
+      - name: "Build and push (version tag: ${{ env.VERSION || 'none'}})"
+        # Only run if the version is set
+        if: env.VERSION != ''
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            airbyte/source-declarative-manifest:${{ env.VERSION }}
+
+      - name: Build and push ('latest' tag)
+        # Only run if version is set and IS_PRERELEASE is false
+        if: env.VERSION != '' && env.IS_PRERELEASE == 'false'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            airbyte/source-declarative-manifest:latest
+
+  publish_manifest_server:
+    name: Publish Manifest Server to DockerHub
+    if: >
+      (github.event_name == 'push' &&
+       startsWith(github.ref, 'refs/tags/v')) ||
+      (github.event_name == 'workflow_dispatch' &&
+       github.event.inputs.publish_manifest_server == 'true'
+      )
+    runs-on: ubuntu-24.04
+    needs: [build]
+    environment:
+      name: DockerHub
+      url: https://hub.docker.com/r/airbyte/manifest-server/tags
+    env:
+      VERSION: ${{ needs.build.outputs.VERSION }}
+      IS_PRERELEASE: ${{ needs.build.outputs.IS_PRERELEASE }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # We need to download the build artifact again because the previous job was on a different runner
+      - name: Download Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Packages-${{ github.run_id }}
+          path: dist
+
+      - name: Set up QEMU for multi-platform builds
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_PASSWORD }}
+
+      - name: "Check for existing tag (version: ${{ env.VERSION || 'none' }} )"
+        if: env.VERSION != ''
+        uses: ./.github/actions/check-docker-tag
+        with:
+          image_name: airbyte/manifest-server
+          tag: ${{ env.VERSION }}
+
+      - name: "Build and push (sha tag: '${{ github.sha }}')"
+        # Only run if the version is not set
+        if: env.VERSION == ''
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: airbyte_cdk/manifest_server/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            airbyte/manifest-server:${{ github.sha }}
+
+      - name: "Build and push (version tag: ${{ env.VERSION || 'none'}})"
+        # Only run if the version is set
+        if: env.VERSION != ''
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: airbyte_cdk/manifest_server/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            airbyte/manifest-server:${{ env.VERSION }}
+
+      - name: Build and push ('latest' tag)
+        # Only run if version is set and IS_PRERELEASE is false
+        if: env.VERSION != '' && env.IS_PRERELEASE == 'false'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: airbyte_cdk/manifest_server/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            airbyte/manifest-server:latest
+
+  update-connector-builder:
+    # Create a PR against the Builder, to update the CDK version that it uses.
+    # In the future, Builder may use the SDM docker image instead of the Python CDK package.
+    name: Bump Connector Builder CDK version
+    environment:
+      name: Connector Builder
+      url: https://github.com/airbytehq/airbyte-platform-internal/pulls?q=is%3Apr+automatic-cdk-release+
+    needs:
+      - build
+      - publish_manifest_server
+    if: >
+      (github.event_name == 'push' &&
+       needs.build.outputs.IS_PRERELEASE == 'false' &&
+       startsWith(github.ref, 'refs/tags/v')) ||
+      (github.event_name == 'workflow_dispatch' &&
+       github.event.inputs.update_connector_builder == 'true')
+    env:
+      VERSION: ${{ needs.build.outputs.VERSION }}
+      IS_PRERELEASE: ${{ needs.build.outputs.IS_PRERELEASE }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Authenticate as GitHub App
+        uses: actions/create-github-app-token@v2
+        id: get-app-token
+        with:
+          owner: "airbytehq"
+          repositories: "airbyte-platform-internal"
+          app-id: ${{ secrets.OCTAVIA_BOT_APP_ID }}
+          private-key: ${{ secrets.OCTAVIA_BOT_PRIVATE_KEY }}
+      - name: Checkout Airbyte Platform Internal
+        uses: actions/checkout@v4
+        with:
+          repository: airbytehq/airbyte-platform-internal
+          token: ${{ steps.get-app-token.outputs.token }}
+      - name: Update Builder's CDK version to ${{ env.VERSION }}
+        # The manifest-server Docker image already includes the CDK version.
+        # We just need to update the image tag in the Helm values file.
+        run: |
+          set -euo pipefail
+          VALUES_FILE="oss/charts/v2/airbyte/values.yaml"
+          # Get the current manifest-server tag from the values.yaml file
+          PREVIOUS_VERSION=$(grep -A15 "^manifestServer:" "$VALUES_FILE" | grep -A4 "image:" | grep "tag:" | awk '{print $2}')
+          echo "Previous version: ${PREVIOUS_VERSION}"
+          echo "New version: ${VERSION}"
+          # Update the manifest-server tag in the Helm values file (preserves formatting)
+          sed -i "/^manifestServer:/,/^[a-zA-Z]/ s/tag: ${PREVIOUS_VERSION}/tag: ${VERSION}/" "$VALUES_FILE"
+          # Also update the CDK version in the manifest-server-api build file
+          sed -i "s/refs\/tags\/v${PREVIOUS_VERSION}/refs\/tags\/v${VERSION}/g" "oss/airbyte-api/manifest-server-api/build.gradle.kts"
+          echo ${VERSION} > oss/airbyte-connector-builder-resources/CDK_VERSION
+      - name: Create Pull Request
+        id: create-pull-request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ steps.get-app-token.outputs.token }}
+          commit-message: "chore: update CDK version following release"
+          title: "chore: update CDK version following release"
+          body: This is an automatically generated PR triggered by a CDK release
+          branch: automatic-cdk-release
+          base: master
+          delete-branch: true
+      - name: Post success to Slack channel dev-connectors-extensibility
+        uses: slackapi/slack-github-action@v1.23.0
+        continue-on-error: true
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN_AIRBYTE_TEAM }}
+        with:
+          channel-id: C04J1M66D8B
+          # Channel: #dev-connectors-extensibility-releases
+          # Link (internal): https://airbytehq-team.slack.com/archives/C04J1M66D8B
+          payload: |
+            {
+                "text": "A new version of Python CDK has been released!",
+                "blocks": [
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": "Python CDK `v${{ env.VERSION }}` has been <https://github.com/airbytehq/airbyte-python-cdk/releases|released>\n\n"
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": "A PR has also been created for the <${{ steps.create-pull-request.outputs.pull-request-url }}|Connector Builder>\n"
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": "See details on <https://github.com/${{github.repository}}/actions/runs/${{github.run_id}}|GitHub>\n"
+                        }
+                    }
+                ]
+            }
+      - name: Post failure to Slack channel dev-connectors-extensibility
+        if: failure()
+        uses: slackapi/slack-github-action@v1.23.0
+        continue-on-error: true
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN_AIRBYTE_TEAM }}
+        with:
+          channel-id: C04J1M66D8B
+          # Channel: #dev-connectors-extensibility-releases
+          # Link (internal): https://airbytehq-team.slack.com/archives/C04J1M66D8B
+          payload: |
+            {
+                "text": ":warning: A new version of Python CDK has been released but Connector Builder hasn't been automatically updated",
+                "blocks": [
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": "Python CDK `v${{ env.VERSION }}` has been <https://github.com/airbytehq/airbyte-python-cdk/releases|released>\n\n"
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": ":warning: Could not automatically create a PR for Connector Builder>\n"
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": "See details on <https://github.com/${{github.repository}}/actions/runs/${{github.run_id}}|GitHub>\n"
+                        }
+                    }
+                ]
+            }

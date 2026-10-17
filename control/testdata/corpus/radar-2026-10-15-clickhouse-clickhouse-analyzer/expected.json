@@ -1,0 +1,50 @@
+{
+  "source": "https://github.com/ClickHouse/clickhouse-analyzer",
+  "commit": "b800708d0d0c0c4c30f89fbbde6f19a22e69d450",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": false
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/ci.yml": "active",
+    ".github/workflows/codegen-update.yml": "active",
+    ".github/workflows/corpus-coverage.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "Four High paths were judged overstated: the toolchain and cache actions reach a runner whose token scope is not established (no readable run log, and `peter-evans/create-pull-request` would need a write token the workflow never declares), Medium at most; the unprotected `main` gives a writer a runner with no secret, Low; `curl https://clickhouse.com/cli | sh` is the organisation's own installer, Low (the spec's insider ceiling would hold it at Medium, the same open question as the other first-party installers).",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "dtolnay/rust-toolchain@stable",
+        "tier": "medium",
+        "pending": "a path whose only reach is a push step under a default token whose scope could not be read stays proven at High, where the unknown token should leave it unverified one tier down."
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "Swatinem/rust-cache@v2",
+        "tier": "medium",
+        "pending": "a path whose only reach is a push step under a default token whose scope could not be read stays proven at High, where the unknown token should leave it unverified one tier down."
+      },
+      {
+        "entryKind": "unprotected_push",
+        "subjectContains": "main",
+        "tier": "low"
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "https://clickhouse.com/cli",
+        "tier": "low",
+        "pending": "the spec holds a first-party fetch (the organisation's own installer domain) at the insider ceiling, Medium (section 8.1), while the assessment argued Low: the repository already trusts its own release infrastructure."
+      }
+    ]
+  }
+}

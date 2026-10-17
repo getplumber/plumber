@@ -1,0 +1,31 @@
+{
+  "source": "https://github.com/ClickHouse/tachikoma",
+  "commit": "b52ee0fc44757d2a57088a2bc0e9f0029c684bbb",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/ci.yml": "active",
+    ".github/workflows/release.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High path through the SHA-pinned `dtolnay/rust-toolchain@29eef336` was judged overstated: the pin is immutable and the action only downloads the Rust toolchain from its own distribution, Low.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "dtolnay/rust-toolchain@29eef336d9b2",
+        "tier": "low"
+      }
+    ]
+  }
+}

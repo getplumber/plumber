@@ -75,10 +75,16 @@ func FetchGitHubEnvironments(host, owner, repo string) ([]ir.Environment, bool, 
 
 	var out []ir.Environment
 	path := fmt.Sprintf("repos/%s/%s/environments?per_page=%d", owner, repo, environmentsPerPage)
-	for path != "" {
+	for pages := 0; path != ""; pages++ {
+		if pages == maxLanePages {
+			// Still a next page after the cap: the list is not the
+			// whole one, so nothing about a missing environment holds.
+			return nil, false, nil
+		}
 		resp, rerr := rest.Request(http.MethodGet, path, nil)
 		if rerr != nil {
 			if isUnauthorized(rerr) || isNotFound(rerr) || isNetworkFailure(rerr) {
+				logRefusedLane("environments", rerr)
 				return nil, false, nil
 			}
 			return nil, false, rerr

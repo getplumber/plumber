@@ -1,0 +1,19 @@
+name: Validate Pull Request Target Branch
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+jobs:
+  validate-target-branch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Target Branch
+        run: |
+          if [ "${{ github.base_ref }}" != "master" ]; then
+            echo "Pull requests must target the 'master' branch."
+            exit 1
+          fi

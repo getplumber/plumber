@@ -1,0 +1,34 @@
+{
+  "source": "https://github.com/ClickHouse/Serilog.Sinks.ClickHouse",
+  "commit": "2269f09814a20fee80f0a55945fb8e0920d63d90",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/coverage.yml": "active",
+    ".github/workflows/release.yml": "active",
+    ".github/workflows/tests.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "defaultTokenWrite": "false",
+  "defaultTokenSource": "log",
+  "note": "The High `isbang/compose-action@v2.2.0` path in `tests.yml` was judged overstated: the job holds no secret and the repository default token is read-only (the `GITHUB_TOKEN Permissions` block of a recent run log), so a compromised action only runs code on the runner, Medium at most.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "isbang/compose-action@v2.2.0",
+        "tier": "medium"
+      }
+    ]
+  }
+}

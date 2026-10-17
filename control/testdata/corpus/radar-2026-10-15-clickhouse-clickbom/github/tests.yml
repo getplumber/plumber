@@ -1,0 +1,424 @@
+name: 💣 ClickBOM Tests
+on: [push]
+permissions:
+  security-events: write
+  contents: write
+jobs:
+  # Unit tests
+  test_unit:
+    name: 🧪 Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 🧾 Checkout
+        uses: actions/checkout@v7
+
+      - name: 🔧 Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.1'
+          cache: true
+
+      - name: 📦 Download dependencies
+        run: go mod download
+
+      - name: 🧪 Run unit tests
+        run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: 📊 Upload coverage to Codecov
+        uses: codecov/codecov-action@v7
+        with:
+          files: ./coverage.out
+          flags: unittests
+          name: codecov-umbrella
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  # Integration tests
+  test_integration:
+    name: 🔗 Integration Tests
+    runs-on: ubuntu-latest
+
+    services:
+      # ClickHouse for the integration tests. Current images refuse the
+      # passwordless `default` user from outside the container, so provision a
+      # dedicated user (the image entrypoint creates it with network access
+      # from anywhere) and hand the same credentials to the tests below.
+      clickhouse:
+        image: clickhouse/clickhouse-server:latest
+        ports:
+          - 8123:8123
+        env:
+          CLICKHOUSE_USER: clickbom
+          CLICKHOUSE_PASSWORD: clickbom
+        options: >-
+          --health-cmd "wget --spider -q localhost:8123/ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: 🧾 Checkout
+        uses: actions/checkout@v7
+
+      - name: 🔧 Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.1'
+          cache: true
+
+      - name: 📦 Install CycloneDX CLI
+        run: |
+          wget -O /tmp/cyclonedx "https://github.com/CycloneDX/cyclonedx-cli/releases/download/v0.27.2/cyclonedx-linux-x64"
+          sudo mv /tmp/cyclonedx /usr/local/bin/cyclonedx
+          sudo chmod +x /usr/local/bin/cyclonedx
+
+      # Mock S3 with RustFS (Apache-2.0, MinIO-compatible API): same port 9000,
+      # same /minio/health/live probe, static root credentials via env and no
+      # command argument, so the test env below is unchanged. Started as a
+      # plain `docker run` step rather than a service container so the explicit
+      # readiness loop can gate the bucket step and dump the log on failure.
+      # Why not MinIO: github.com/minio/minio is archived and source-only since
+      # RELEASE.2025-10-15; docker.io/minio/minio was deleted in September 2026
+      # and quay.io/minio/minio stopped serving anonymous pulls between
+      # 2026-09-21 and 2026-09-24 ("unauthorized"), which broke this job on
+      # 2026-09-28. Why not LocalStack: its community edition is archived and
+      # the remaining image needs an account plus auth token.
+      # The tag is pinned on purpose: Dependabot does not track images in
+      # `run:` steps and a CI fixture should not move underneath us. Bump it
+      # deliberately.
+      - name: 🪣 Start RustFS (S3-compatible)
+        run: |
+          docker run -d --name rustfs \
+            -p 9000:9000 \
+            -e RUSTFS_ACCESS_KEY=minioadmin \
+            -e RUSTFS_SECRET_KEY=minioadmin \
+            rustfs/rustfs:1.0.0
+          # Wait up to 60s for RustFS to be live before continuing.
+          for i in $(seq 1 60); do
+            if curl --silent --fail --output /dev/null http://localhost:9000/minio/health/live; then
+              echo "RustFS ready after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+          # Fail here, with the server log, instead of in the bucket step.
+          # RustFS logs to /logs inside the container, not to stdout; `docker cp`
+          # (unlike `docker exec`) still works when the container has exited.
+          curl --silent --fail --output /dev/null http://localhost:9000/minio/health/live \
+            || { docker logs rustfs; docker cp rustfs:/logs/rustfs.log /tmp/rustfs.log && cat /tmp/rustfs.log; exit 1; }
+
+      - name: ⚙️ Create S3 bucket
+        run: |
+          aws --endpoint-url=http://localhost:9000 s3 mb s3://test-bucket
+        env:
+          AWS_ACCESS_KEY_ID: minioadmin
+          AWS_SECRET_ACCESS_KEY: minioadmin
+          AWS_DEFAULT_REGION: us-east-1
+
+      # The S3 client switches to path-style addressing whenever
+      # AWS_ENDPOINT_URL is set, which is what RustFS (like MinIO) requires.
+      - name: 🧪 Run integration tests
+        run: go test -v -tags=integration ./...
+        env:
+          AWS_ENDPOINT_URL: http://localhost:9000
+          CLICKHOUSE_URL: http://localhost:8123
+          CLICKHOUSE_USERNAME: clickbom
+          CLICKHOUSE_PASSWORD: clickbom
+          # Lets the GitHub SBOM client's live test run against this repository.
+          GITHUB_TOKEN: ${{ github.token }}
+          AWS_ACCESS_KEY_ID: minioadmin
+          AWS_SECRET_ACCESS_KEY: minioadmin
+          AWS_DEFAULT_REGION: us-east-1
+          AWS_REGION: us-east-1
+
+  # Lint and format checks
+  test_lint:
+    name: 🔍 Lint & Format
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 🧾 Checkout
+        uses: actions/checkout@v7
+
+      - name: 🔧 Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.1'
+          cache: true
+
+      - name: 🔍 Run golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: latest
+          args: --timeout=5m
+
+      - name: 📝 Check formatting
+        run: |
+          if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
+            echo "Code is not formatted. Run 'gofmt -s -w .'"
+            gofmt -s -l .
+            exit 1
+          fi
+
+      - name: 🔒 Run gosec security scanner
+        uses: securego/gosec@master
+        with:
+          args: '-severity high -confidence high -no-fail -fmt sarif -out results.sarif ./...'
+
+      - name: 📤 Upload SARIF file
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: results.sarif
+
+  # Build tests
+  test_build:
+    name: 🏗️ Build Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+        exclude:
+          - goos: windows
+            goarch: arm64
+
+    steps:
+      - name: 🧾 Checkout
+        uses: actions/checkout@v7
+
+      - name: 🔧 Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.1'
+          cache: true
+
+      - name: 🏗️ Build for ${{ matrix.goos }}/${{ matrix.goarch }}
+        run: |
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
+          go build -v -o clickbom-${{ matrix.goos }}-${{ matrix.goarch }} \
+          ./cmd/clickbom
+
+      - name: 📤 Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: clickbom-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: clickbom-${{ matrix.goos }}-${{ matrix.goarch }}*
+
+  # Docker build test
+  test_docker:
+    name: 🐳 Docker Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 🧾 Checkout
+        uses: actions/checkout@v7
+
+      - name: 🔧 Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: 🏗️ Build Docker image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: false
+          load: true
+          tags: clickbom:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=test
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            VCS_REF=${{ github.sha }}
+
+      # The runtime image is distroless, so the only way to prove the bundled
+      # tools can execute (correct libc, ICU-free .NET startup, ...) is to run
+      # them. The previous `docker run ... || true` could never fail — and the
+      # image was not even loaded into the daemon — which is how an unrunnable
+      # cyclonedx binary shipped to production.
+      - name: 🧪 Smoke-test runtime tools inside the image
+        run: |
+          set -euo pipefail
+          echo "--- cyclonedx"
+          docker run --rm --entrypoint /usr/local/bin/cyclonedx clickbom:test --version
+          echo "--- trivy"
+          docker run --rm --entrypoint /usr/local/bin/trivy clickbom:test --version
+
+      - name: 🧪 Smoke-test an SPDX -> CycloneDX conversion inside the image
+        run: |
+          set -euo pipefail
+          mkdir -p smoke && chmod 777 smoke
+          cat > smoke/in.spdx.json <<'EOF'
+          {
+            "spdxVersion": "SPDX-2.3",
+            "dataLicense": "CC0-1.0",
+            "SPDXID": "SPDXRef-DOCUMENT",
+            "name": "smoke",
+            "documentNamespace": "https://example.com/smoke",
+            "creationInfo": {"created": "2026-01-01T00:00:00Z", "creators": ["Tool: clickbom-smoke"]},
+            "packages": [
+              {
+                "name": "example-lib",
+                "SPDXID": "SPDXRef-Package-example-lib",
+                "versionInfo": "1.2.3",
+                "downloadLocation": "NOASSERTION",
+                "filesAnalyzed": false,
+                "licenseConcluded": "MIT",
+                "licenseDeclared": "MIT",
+                "copyrightText": "NOASSERTION"
+              }
+            ]
+          }
+          EOF
+          docker run --rm -v "$PWD/smoke:/smoke" --entrypoint /usr/local/bin/cyclonedx clickbom:test \
+            convert --input-file /smoke/in.spdx.json --output-file /smoke/out.cdx.json \
+            --input-format spdxjson --output-format json --output-version v1_6
+          jq -e '.bomFormat == "CycloneDX" and .specVersion == "1.6" and (.components | length) == 1' smoke/out.cdx.json
+
+      - name: 🧪 Binary rejects an empty configuration (proves the entrypoint runs)
+        run: |
+          set -euo pipefail
+          # With no S3_BUCKET the binary must exit non-zero with a validation
+          # error; anything else (e.g. exec failure) is a broken image.
+          if docker run --rm clickbom:test > out.log 2>&1; then
+            echo "expected clickbom to fail without configuration"; cat out.log; exit 1
+          fi
+          grep -q "S3_BUCKET is required" out.log || { cat out.log; exit 1; }
+
+      - name: 🧪 Binary withholds a rejected Slack webhook URL
+        run: |
+          set -euo pipefail
+          # The webhook URL is a credential: a rejected value must be named but
+          # never echoed, in the shipped distroless binary as much as in tests.
+          if docker run --rm -e SLACK_WEBHOOK_URL=https://example.com/services/MARKER clickbom:test > out.log 2>&1; then
+            echo "expected clickbom to fail with an invalid SLACK_WEBHOOK_URL"; cat out.log; exit 1
+          fi
+          grep -q "invalid SLACK_WEBHOOK_URL" out.log || { cat out.log; exit 1; }
+          if grep -q "MARKER" out.log; then echo "webhook URL leaked into the log"; cat out.log; exit 1; fi
+
+
+  # Preflight: only run the E2E job when the required secrets are actually
+  # configured on the repo. Without this, the E2E job fails on any fork/contrib
+  # push (or any repo that hasn't set TEST_S3_BUCKET / AWS_* secrets) with a
+  # confusing "S3_BUCKET is required" validation error from clickbom itself.
+  e2e_preflight:
+    name: 🔐 E2E Preflight
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/feature/'))
+    outputs:
+      has_secrets: ${{ steps.check.outputs.has_secrets }}
+    steps:
+      - name: Check for required secrets
+        id: check
+        env:
+          TEST_S3_BUCKET: ${{ secrets.TEST_S3_BUCKET }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          if [[ -n "$TEST_S3_BUCKET" && -n "$AWS_ACCESS_KEY_ID" && -n "$AWS_SECRET_ACCESS_KEY" ]]; then
+            echo "has_secrets=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Skipping E2E: TEST_S3_BUCKET / AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY are not configured on this repo."
+            echo "has_secrets=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # End-to-end tests with real GitHub API
+  test_e2e:
+    name: 🎯 E2E Tests
+    runs-on: ubuntu-latest
+    needs: e2e_preflight
+    if: needs.e2e_preflight.outputs.has_secrets == 'true'
+
+    steps:
+      - name: 🧾 Checkout
+        uses: actions/checkout@v7
+
+      - name: 🔧 Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.1'
+          cache: true
+
+      - name: 🏗️ Build
+        run: go build -v -o clickbom ./cmd/clickbom
+
+      - name: 📦 Install dependencies
+        run: |
+          wget -O /tmp/cyclonedx "https://github.com/CycloneDX/cyclonedx-cli/releases/download/v0.27.2/cyclonedx-linux-x64"
+          sudo mv /tmp/cyclonedx /usr/local/bin/cyclonedx
+          sudo chmod +x /usr/local/bin/cyclonedx
+
+      - name: 🧪 Run E2E test with GitHub
+        run: ./clickbom
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          S3_BUCKET: ${{ secrets.TEST_S3_BUCKET }}
+          S3_KEY: test-e2e-${{ github.sha }}.json
+          SBOM_SOURCE: github
+          SBOM_FORMAT: cyclonedx
+          # Optional: when the repository defines TEST_SLACK_WEBHOOK_URL the run
+          # posts a real message linked to this job; empty means no notification.
+          SLACK_WEBHOOK_URL: ${{ secrets.TEST_SLACK_WEBHOOK_URL }}
+          CLICKBOM_JOB_CHECK_RUN_ID: ${{ job.check_run_id }}
+
+  # Benchmarks
+  benchmark:
+    name: ⚡ Benchmarks
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+
+    steps:
+      - name: 🧾 Checkout
+        uses: actions/checkout@v7
+
+      - name: 🔧 Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.1'
+          cache: true
+
+      - name: ⚡ Run benchmarks
+        run: go test -bench=. -benchmem -run=^$ ./... | tee benchmark.txt
+
+      - name: 📊 Store benchmark result
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          tool: 'go'
+          output-file-path: benchmark.txt
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: true
+
+  # Dependency vulnerability scan
+  test_security:
+    name: 🔒 Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 🧾 Checkout
+        uses: actions/checkout@v7
+
+      - name: 🔧 Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.1'
+          cache: true
+
+      - name: 🔍 Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: 📤 Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: 🔍 Run govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...

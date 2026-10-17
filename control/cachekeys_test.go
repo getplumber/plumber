@@ -59,6 +59,60 @@ func TestTwoExactKeysOfDifferentLengthDoNotMatch(t *testing.T) {
 	}
 }
 
+// TestRestoreKeysPrefixLongerThanTheSavedKeyDoesNotMatch pins the other
+// direction of the restore-keys prefix rule: GitHub requires the saved
+// key to start with the restore key, never the other way around, so a
+// restore-keys prefix carrying MORE parts than the exact saved key
+// cannot be a prefix of it and must not match; the shorter-prefix
+// direction still matches exactly as TestRestoreKeysPrefixMatchesALongerSavedKey
+// pins it.
+func TestRestoreKeysPrefixLongerThanTheSavedKeyDoesNotMatch(t *testing.T) {
+	saved := cacheKeyTemplate(CacheFact{Key: "deps-v1", Uses: "actions/cache@v5"}, JobSituation{})
+	longerRestoreKeys := cacheKeyTemplate(CacheFact{Key: "deps-v1-extra", Uses: "actions/cache@v5", Prefix: true}, JobSituation{})
+	if saved.Matches(longerRestoreKeys) {
+		t.Errorf("a restore-keys prefix longer than the exact saved key must not match: %+v / %+v", saved, longerRestoreKeys)
+	}
+
+	longerSaved := cacheKeyTemplate(CacheFact{Key: "deps-v1-extra", Uses: "actions/cache@v5"}, JobSituation{})
+	shorterRestoreKeys := cacheKeyTemplate(CacheFact{Key: "deps-v1", Uses: "actions/cache@v5", Prefix: true}, JobSituation{})
+	if !longerSaved.Matches(shorterRestoreKeys) {
+		t.Errorf("a restore-keys prefix shorter than the exact saved key must still match: %+v / %+v", longerSaved, shorterRestoreKeys)
+	}
+
+	a := cacheKeyTemplate(CacheFact{Key: "deps-v1", Uses: "actions/cache@v5"}, JobSituation{})
+	b := cacheKeyTemplate(CacheFact{Key: "deps-v1-extra", Uses: "actions/cache@v5"}, JobSituation{})
+	if a.Matches(b) {
+		t.Errorf("two exact keys of different length must still not match: %+v / %+v", a, b)
+	}
+}
+
+// TestRestoreKeysPrefixMatchesAnEqualLengthSavedKey pins the boundary
+// that TestRestoreKeysPrefixMatchesALongerSavedKey leaves untested: a
+// restore-keys prefix with the SAME part count as the saved key must
+// still match on a string prefix at the last part, because GitHub
+// restores whatever saved key starts with the restore-keys text,
+// whatever the two sides' part counts happen to be. Two exact keys of
+// equal length still require exact equality at that same position
+// (never a prefix test), and a restore-keys prefix of equal length that
+// is not itself a prefix of the saved text still does not match.
+func TestRestoreKeysPrefixMatchesAnEqualLengthSavedKey(t *testing.T) {
+	saved := cacheKeyTemplate(CacheFact{Key: "deps-Linux-npm", Uses: "actions/cache@v5"}, JobSituation{})
+	restoreKeys := cacheKeyTemplate(CacheFact{Key: "deps-Linux-n", Uses: "actions/cache@v5", Prefix: true}, JobSituation{})
+	if !saved.Matches(restoreKeys) {
+		t.Errorf("an equal-length restore-keys prefix must match on the string prefix: %+v / %+v", saved, restoreKeys)
+	}
+
+	other := cacheKeyTemplate(CacheFact{Key: "deps-Linux-n", Uses: "actions/cache@v5"}, JobSituation{})
+	if saved.Matches(other) {
+		t.Errorf("two exact equal-length keys must require exact equality, not a prefix: %+v / %+v", saved, other)
+	}
+
+	notAPrefix := cacheKeyTemplate(CacheFact{Key: "deps-Linux-x", Uses: "actions/cache@v5", Prefix: true}, JobSituation{})
+	if notAPrefix.Matches(saved) {
+		t.Errorf("an equal-length restore-keys prefix that is not a string prefix must not match: %+v / %+v", notAPrefix, saved)
+	}
+}
+
 // TestSetupNodeTemplateMatchesTheSameShapeTwice: the setup-node key shape
 // (node-cache-<os>-<arch>-<manager>-<hash>), read with the same resolved
 // os/arch/manager on both sides, matches.

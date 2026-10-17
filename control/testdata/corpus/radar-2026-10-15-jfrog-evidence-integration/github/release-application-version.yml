@@ -1,0 +1,124 @@
+name: Release Application
+
+on:
+  workflow_dispatch:
+
+jobs:
+  promote-application:
+    name: Release Latest Application Version
+    runs-on: ubuntu-latest
+    env:
+      JF_URL: ${{ vars.JF_URL }}
+      JF_USER: ${{ vars.JF_USER }}
+      JF_ACCESS_TOKEN: ${{ secrets.JF_ACCESS_TOKEN }}
+      APP_ID: quotopia-app
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get latest application version
+        id: get_app_ver
+        run: |
+          # Use the API to get the latest version.
+          # We use limit=1 and order_by=created to get the most recent version.
+          API_URL="$JF_URL/apptrust/api/v1/applications/$APP_ID/versions?order_by=created&limit=1"
+          
+          echo "Fetching latest application version from: $API_URL"
+          
+          RESPONSE=$(curl -s -X GET \
+            -H "Authorization: Bearer $JF_ACCESS_TOKEN" \
+            "$API_URL")
+          
+          # Use jq to parse the JSON and extract the version.
+          # The API returns an array 'versions', so we get the first element.
+          LATEST_VER=$(echo "$RESPONSE" | jq -r '.versions[0].version')
+          
+          if [ "$LATEST_VER" == "null" ] || [ -z "$LATEST_VER" ]; then
+            echo "Error: Could not retrieve a valid application version."
+            exit 1
+          fi
+          
+          echo "Found latest application version: $LATEST_VER"
+          echo "app_ver=$LATEST_VER" >> $GITHUB_OUTPUT
+
+      - name: Release application to PROD
+        id: promote_step
+        run: |
+          APP_VER=${{ steps.get_app_ver.outputs.app_ver }}
+          REQUEST_BODY="{}"
+          
+          RELEASE_URL="$JF_URL/apptrust/api/v1/applications/$APP_ID/versions/$APP_VER/release"
+          echo "Releasing application '$APP_ID' version $APP_VER to stage PROD..."
+          
+          STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            -H "Authorization: Bearer $JF_ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$REQUEST_BODY" \
+            "$RELEASE_URL")
+          
+          echo "Release request returned status code: $STATUS_CODE"
+          
+          # The API returns 200, 201, or 202 on success, depending on the promotion process.
+          if [[ "$STATUS_CODE" -ge 200 && "$STATUS_CODE" -le 202 ]]; then
+            echo "Successfully promoted $APP_ID version $APP_VER to PROD."
+          else
+            echo "Failed to promote application. HTTP status code: $STATUS_CODE"
+            # Run again to see output
+            curl -s -X POST -H "Authorization: Bearer $JF_ACCESS_TOKEN" -H "Content-Type: application/json" -d "$REQUEST_BODY" "$RELEASE_URL"
+            exit 1
+          fi
+
+      - name: Update ArgoCD deployment
+        run: |
+          set +e
+          APP_VER=${{ steps.get_app_ver.outputs.app_ver }}
+          URL="$JF_URL/apptrust/api/v1/applications/$APP_ID/versions/$APP_VER/content?include=sources"
+          echo "Requesting: $URL" 
+          STATUS_CODE=$(curl -s -o result.json -w "%{http_code}" -X GET -H "Authorization: Bearer $JF_ACCESS_TOKEN" "$URL")
+
+          if [ "$STATUS_CODE" != "200" ]; then
+            echo "Reuquest failed with code $STATUS_CODE"
+            # Running again without silent to see errors
+            curl -X GET -H "Authorization: Bearer $JF_ACCESS_TOKEN" "$URL"
+            exit 1
+          fi
+
+          function editDeployment() {
+            local BUILD_NAME="$1"
+            local BUILD_VER="$2"
+            local DEPLOYMENT_FILE="argocd/manifests/deployment-$BUILD_NAME.yaml"
+            if [ ! -f "$DEPLOYMENT_FILE" ]; then
+              echo "$DEPLOYMENT_FILE doesn't exist. Skipping."
+              return 0
+            fi
+            echo "Replacing version in file $DEPLOYMENT_FILE to $BUILD_VER"
+            sed -i "s|quotopia-prod-docker/${BUILD_NAME}:[0-9]*|quotopia-prod-docker/${BUILD_NAME}:${BUILD_VER}|g" "$DEPLOYMENT_FILE"
+          }
+
+          echo "Received result:"
+          cat result.json
+          echo
+
+          cat result.json | jq -c '.sources[] | {name: .build.name, number: .build.number}' | while read -r build_info; do
+            name=$(echo "$build_info" | jq -r '.name')
+            number=$(echo "$build_info" | jq -r '.number')
+            echo "Found build with name: $name and number: $number"
+            editDeployment "$name" "$number"
+            [ $? -ne 0 ] && echo "Edit deployment $name $number failed." && exit 1
+          done
+
+          DIFF=$(git diff -- argocd)
+          if [ "$DIFF" == "" ]; then
+            echo "No changes in services versions was detected in this application version."
+          else
+            echo "Changes found. Updating Argo CD files."
+            sed -i "s|EVD_DEMO_APP_NAME=.*|EVD_DEMO_APP_NAME=$APP_ID|" "argocd/manifests/job-post-sync-evidence.yaml" 
+            sed -i "s|EVD_DEMO_APP_VER=.*|EVD_DEMO_APP_VER=$APP_VER|" "argocd/manifests/job-post-sync-evidence.yaml" 
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git config user.name "github-actions[bot]"
+            git add argocd
+            git commit -m "Updating Argo CD manifests with application version $APP_VER"
+            git push
+          fi
+

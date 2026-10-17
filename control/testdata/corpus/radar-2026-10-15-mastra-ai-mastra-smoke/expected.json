@@ -1,0 +1,37 @@
+{
+  "source": "https://github.com/mastra-ai/mastra-smoke",
+  "commit": "26ed16476d5b85e2cbd9ec6da233a29f9da2391e",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": false
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/smoke.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High `dorny/test-reporter@v2` path was judged overstated: `SMOKE_OPENAI_API_KEY` is used only by steps that run before the action, so the action reaches one secret, `SMOKE_SLACK_BOT_TOKEN`, and checks write: High.",
+  "expect": {
+    "paths": [
+      {
+        "entryKind": "mutable_dependency",
+        "tier": "high",
+        "subjectContains": "dorny/test-reporter@v2",
+        "sentenceContains": [
+          "SMOKE_SLACK_BOT_TOKEN"
+        ],
+        "sentenceOmits": [
+          "SMOKE_OPENAI_API_KEY"
+        ],
+        "pending": "STEP_ORDER_REVERSED: `SMOKE_OPENAI_API_KEY` is referenced only by steps that run before `dorny/test-reporter@v2`, yet the runner worker receives every secret the job references when the job starts, so the reach names `SMOKE_OPENAI_API_KEY` next to `SMOKE_SLACK_BOT_TOKEN`; the tier stays High either way."
+      }
+    ]
+  }
+}

@@ -1,0 +1,196 @@
+# Nightly early-warning run against the latest ClickHouse Java client. The client is built from
+# source (default: the main branch) and the connector test suite runs against it unchanged, so that
+# breaking changes in the Java client are detected before an official client release. See issue #140.
+#
+# How to run:
+#   - Automatically every night at 04:00 UTC against clickhouse-java 'main'.
+#   - Manually via the Actions UI ("Run workflow") or the CLI, pinning any ref:
+#       gh workflow run nightly-java-client.yml                                  # main
+#       gh workflow run nightly-java-client.yml -f clickhouse_java_ref=v0.9.5    # a tag
+#       gh workflow run nightly-java-client.yml -f clickhouse_java_ref=a3ccce4   # a commit (short OK)
+#     'clickhouse_java_ref' accepts a branch, tag, or commit SHA; short SHAs are expanded via the
+#     GitHub API (see the build step). The build log prints the exact commit under test.
+#   - From the clickhouse-java repo (future integration point) via a repository_dispatch event of
+#     type 'clickhouse-java-nightly', optionally passing {"clickhouse_java_ref": "<ref>"} in the
+#     client_payload.
+name: "Nightly Java Client (source build)"
+on:
+  schedule:
+    # Nightly at 04:00 UTC, offset from the stable ClickHouse-version matrix run at 15:55 UTC.
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+    inputs:
+      clickhouse_java_ref:
+        description: 'clickhouse-java branch, tag, or commit SHA to build from source'
+        required: false
+        default: 'main'
+  repository_dispatch:
+    types: [clickhouse-java-nightly]
+
+permissions:
+  contents: read
+
+concurrency:
+  # One run at a time; an overlapping manual dispatch queues behind (rather than races) the
+  # nightly. Never cancel an in-flight run — its result is the signal this workflow exists for.
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  test-java-snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      # Client compatibility is the axis under test; pin ClickHouse itself to latest.
+      CLICKHOUSE_VERSION: latest
+      CH_JAVA_REF: ${{ github.event.client_payload.clickhouse_java_ref || github.event.inputs.clickhouse_java_ref || 'main' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          # 8 + 17 mirrors clickhouse-java's own publishing workflows; JAVA_HOME ends up on 17,
+          # which both Maven (client build) and Gradle 9 (connector build) need.
+          java-version: |
+            8
+            17
+          cache: gradle
+
+      - name: Set up Maven toolchain for the clickhouse-java build
+        # Same toolchains.xml the clickhouse-java nightly/release workflows write. Registering
+        # only the JDK 17 entry satisfies the client's maven-toolchains-plugin requirements.
+        run: |
+          mkdir -p "$HOME/.m2"
+          cat > "$HOME/.m2/toolchains.xml" <<EOF
+          <?xml version="1.0" encoding="UTF8"?>
+          <toolchains>
+            <toolchain>
+              <type>jdk</type>
+              <provides>
+                <version>17</version>
+              </provides>
+              <configuration>
+                <jdkHome>$JAVA_HOME</jdkHome>
+              </configuration>
+            </toolchain>
+          </toolchains>
+          EOF
+
+      - name: Build clickhouse-java from '${{ env.CH_JAVA_REF }}'
+        id: build-java
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # init + shallow fetch (rather than 'clone --branch') so CH_JAVA_REF may be a branch, tag,
+          # or an exact commit SHA (GitHub allows fetching a commit by SHA).
+          mkdir -p "$RUNNER_TEMP/clickhouse-java"
+          cd "$RUNNER_TEMP/clickhouse-java"
+          git init -q
+          git remote add origin https://github.com/ClickHouse/clickhouse-java.git
+          if ! git fetch --depth 1 origin "$CH_JAVA_REF"; then
+            # The remote protocol can't fetch an abbreviated SHA; expand it to the full 40-char SHA
+            # via the GitHub API, then fetch that. Require >=7 hex chars so a mistyped branch/tag
+            # doesn't get silently reinterpreted as a commit prefix.
+            if [[ "$CH_JAVA_REF" =~ ^[0-9a-fA-F]{7,40}$ ]]; then
+              echo "Ref '$CH_JAVA_REF' not directly fetchable; expanding as a short SHA via the GitHub API..."
+              FULL_SHA="$(gh api "repos/ClickHouse/clickhouse-java/commits/$CH_JAVA_REF" --jq '.sha')"
+              echo "Expanded to $FULL_SHA"
+              git fetch --depth 1 origin "$FULL_SHA"
+            else
+              echo "Could not fetch clickhouse-java ref '$CH_JAVA_REF'." >&2
+              exit 1
+            fi
+          fi
+          git checkout -q FETCH_HEAD
+          echo "Building clickhouse-java at commit $(git rev-parse HEAD)"
+          # Installs into the local Maven repository, including the shaded ':all' artifacts the
+          # connector depends on (the shade executions are bound to the default package phase).
+          # The 'release' profile is what clickhouse-java's own nightly/release publishing uses;
+          # crucially it compiles for Java 8, matching the bytecode level of the artifacts on
+          # Maven Central. Without it the jars carry the building JDK's bytecode (17 => class
+          # file 61) and the connector's Java 11 toolchain cannot compile against them.
+          mvn -B -q -P release -DskipTests -Dmaven.javadoc.skip=true -Dgpg.skip=true clean install
+          VERSION="$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version)"
+          if [[ "$VERSION" == *'${'* || -z "$VERSION" ]]; then
+            VERSION="$(mvn -q -DforceStdout help:evaluate -Dexpression=revision)"
+          fi
+          # Shape check: subsumes the empty/unresolved-'${revision}' cases and rejects any stray
+          # warning/progress text 'mvn -q' could leak onto stdout, since this value feeds the
+          # -Pclickhouse_client_v2_version flag of later gradlew steps.
+          if [[ ! "$VERSION" =~ ^[0-9A-Za-z][0-9A-Za-z._+-]*$ ]]; then
+            echo "Could not resolve a usable clickhouse-java version (got: '$VERSION')." >&2
+            exit 1
+          fi
+          echo "Built clickhouse-java version: $VERSION"
+          # Guard: the connector compiles with a Java 11 toolchain, so the client jars must not
+          # carry newer bytecode (the release profile targets Java 8 / class file major 52).
+          # Catches a profile/JDK mixup here with a clear message instead of opaque javac
+          # "class file has wrong version" errors in the test step.
+          ALL_JAR="$HOME/.m2/repository/com/clickhouse/client-v2/$VERSION/client-v2-$VERSION-all.jar"
+          if [[ ! -f "$ALL_JAR" ]]; then
+            echo "Expected shaded client jar not found: $ALL_JAR" >&2
+            echo "Did the clickhouse-java module/install layout change?" >&2
+            exit 1
+          fi
+          MAJOR="$(unzip -p "$ALL_JAR" com/clickhouse/data/ClickHouseColumn.class | od -An -j6 -N2 -tu1 | awk '{print $1*256+$2}')"
+          echo "client-v2 all-jar class file major version: $MAJOR"
+          if [[ "$MAJOR" -gt 55 ]]; then
+            echo "Built client bytecode (major $MAJOR) is newer than the connector's Java 11 toolchain (55)." >&2
+            echo "The clickhouse-java build likely ran without the 'release' profile." >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Add mavenLocal repository via init script
+        # An init-script 'allprojects' hook runs before the build script's own 'allprojects'
+        # block, so mavenLocal() ends up FIRST in resolution order and the locally built jars
+        # take precedence over Maven Central.
+        run: |
+          cat > "$RUNNER_TEMP/mavenLocal.init.gradle" <<'EOF'
+          allprojects {
+              repositories {
+                  mavenLocal()
+              }
+          }
+          EOF
+
+      - name: Verify the locally built client resolves
+        # Fail fast if the version override is mis-wired and the tests would silently run
+        # against the pinned release instead of the freshly built client.
+        env:
+          CLIENT_VERSION: ${{ steps.build-java.outputs.version }}
+        run: |
+          set -euo pipefail
+          ./gradlew -q :flink-connector-clickhouse-base:dependencyInsight \
+            --dependency com.clickhouse:client-v2 --configuration testRuntimeClasspath \
+            --init-script "$RUNNER_TEMP/mavenLocal.init.gradle" \
+            -Pclickhouse_client_v2_version="$CLIENT_VERSION" | tee insight.txt
+          # Anchored to the selected-component header line ('coordinate' alone or with a
+          # '(selection reason)' suffix). A requested-but-downgraded edge such as
+          # 'com.clickhouse:client-v2:X-SNAPSHOT -> 0.9.5' must NOT count as success.
+          if ! grep -Eq "^com\.clickhouse:client-v2:$CLIENT_VERSION( \(.*\))?$" insight.txt; then
+            echo "client-v2 $CLIENT_VERSION was not the SELECTED version on testRuntimeClasspath." >&2
+            exit 1
+          fi
+
+      - name: Run tests against the built Java client
+        env:
+          CLIENT_VERSION: ${{ steps.build-java.outputs.version }}
+        run: >-
+          ./gradlew clean
+          :flink-connector-clickhouse-base:test
+          :flink-connector-clickhouse-1.17:test
+          :flink-connector-clickhouse-2.0.0:test
+          --refresh-dependencies
+          --init-script "$RUNNER_TEMP/mavenLocal.init.gradle"
+          -Pclickhouse_client_v2_version="$CLIENT_VERSION"
+
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-java-client-logs
+          path: |
+            **/build/reports/tests/**
+            **/build/test-results/**

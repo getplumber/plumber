@@ -20,12 +20,30 @@ func evalNode(n node, f Facts) Value {
 			return True
 		}
 		return False
+	case nodeRef:
+		return truthOf(f.Resolve(v.ref))
 	default:
-		// A bare string literal, a bare reference used outside a
-		// comparison, or an unparsed leaf carries no boolean meaning
-		// of its own.
+		// A bare string literal or an unparsed leaf carries no boolean
+		// meaning of its own.
 		return Unknown
 	}
+}
+
+// truthOf reads a bare reference in boolean position the way GitHub
+// coerces it: an unresolved reference is Unknown; an empty value or the
+// boolean false is False; anything else (a non-empty string, the
+// boolean true) is True. The facts model boolean contexts (the head
+// repository's fork flag, a pull request's merged flag) as the strings
+// "true" and "false", so the idiomatic fork guard
+// `!github.event.pull_request.head.repo.fork` decides the gate.
+func truthOf(val string, known bool) Value {
+	if !known {
+		return Unknown
+	}
+	if val == "" || strings.EqualFold(val, "false") {
+		return False
+	}
+	return True
 }
 
 // andVal is the standard three-valued AND: a known False on either side
@@ -132,6 +150,18 @@ func evalCall(n nodeCall, f Facts) Value {
 func evalContains(n nodeCall, f Facts) Value {
 	if len(n.args) != 2 {
 		return Unknown
+	}
+	if list, ok := n.args[0].(nodeStrList); ok {
+		itemVal, itemOK := resolveOperand(n.args[1], f)
+		if !itemOK {
+			return Unknown
+		}
+		for _, v := range list.vals {
+			if strings.EqualFold(v, itemVal) {
+				return True
+			}
+		}
+		return False
 	}
 	collVal, collOK := resolveOperand(n.args[0], f)
 	itemVal, itemOK := resolveOperand(n.args[1], f)

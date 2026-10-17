@@ -1,0 +1,124 @@
+name: PR Compliance
+
+on:
+  pull_request_target:
+    branches:
+      - main
+    types:
+      - opened
+      - edited
+      - synchronize
+      - ready_for_review
+
+permissions:
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  check-pr:
+    name: Validate PR description
+    if: >-
+      github.event.pull_request.user.login != 'dependabot[bot]'
+      && github.event.pull_request.user.login != 'renovate[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check PR template
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const body = context.payload.pull_request.body || "";
+            const pr = context.payload.pull_request;
+            const association = pr.author_association || "";
+            const isMaintainer = ["OWNER", "MEMBER", "COLLABORATOR"].includes(association);
+
+            const errors = [];
+            const hasTemplate = body.includes("## What does this PR do?") || body.includes("## Type of change");
+
+            if (!hasTemplate) {
+              errors.push("Use the required PR template from `.github/PULL_REQUEST_TEMPLATE.md`.");
+            } else {
+              const descriptionSection = body.match(/## What does this PR do\?\s*\n([\s\S]*?)(?=\n## )/);
+              const description = (descriptionSection?.[1] || "")
+                .replace(/<!--[\s\S]*?-->/g, "")
+                .trim();
+              if (!description || description === "Closes #") {
+                errors.push("Fill out the `What does this PR do?` section with a real description.");
+              }
+
+              const typeChecks = [
+                /- \[[xX]\] Bug fix/i,
+                /- \[[xX]\] Feature/i,
+                /- \[[xX]\] Refactor/i,
+                /- \[[xX]\] Documentation/i,
+                /- \[[xX]\] Tests/i,
+                /- \[[xX]\] CI \/ tooling/i,
+                /- \[[xX]\] Chore/i,
+              ];
+              if (!typeChecks.some((re) => re.test(body))) {
+                errors.push("Check at least one `Type of change` checkbox.");
+              }
+
+              const isFeature = /- \[[xX]\] Feature/i.test(body);
+              const hasDiscussionLink = /github\.com\/cloudflare\/polystella\/discussions\/\d+|Discussion\s+#\d+/i.test(body);
+              if (isFeature && !isMaintainer && !hasDiscussionLink) {
+                errors.push("Feature PRs from external contributors need a link to an approved GitHub Discussion.");
+              }
+
+              const hasReadContributing = /- \[[xX]\][^\n]*\bI have read\b[^\n]*CONTRIBUTING\.md/i.test(body);
+              if (!hasReadContributing) {
+                errors.push("Check the `I have read CONTRIBUTING.md` checkbox.");
+              }
+            }
+
+            const marker = "<!-- polystella-pr-compliance -->";
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              per_page: 100,
+            });
+            const existing = comments.find((comment) =>
+              comment.user?.login === "github-actions[bot]" && comment.body?.includes(marker)
+            );
+
+            if (errors.length > 0) {
+              const message = [
+                marker,
+                "## PR template validation failed",
+                "",
+                "Please update the PR description:",
+                "",
+                ...errors.map((error) => `- ${error}`),
+                "",
+                "See `CONTRIBUTING.md` for the contribution policy.",
+              ].join("\n");
+
+              if (existing) {
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: existing.id,
+                  body: message,
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: pr.number,
+                  body: message,
+                });
+              }
+
+              core.setFailed(errors.join("\n"));
+            } else if (existing) {
+              await github.rest.issues.deleteComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+              });
+            }

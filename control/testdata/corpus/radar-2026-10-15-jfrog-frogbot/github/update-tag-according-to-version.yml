@@ -1,0 +1,20 @@
+name: "Update Major Version Tag"
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  update-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Update floating major tag
+        run: |
+          RELEASE_TAG="${{ github.ref_name }}"
+          MAJOR_TAG=$(echo "$RELEASE_TAG" | grep -oE '^v[0-9]+')
+          echo "Moving $MAJOR_TAG → $RELEASE_TAG"
+          git tag -f "$MAJOR_TAG"
+          git push origin "$MAJOR_TAG" --force

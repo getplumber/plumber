@@ -665,7 +665,7 @@ func entryLineSubject(p AttackPath) string {
 // runs, as whom the attacker acts. kind is the dependency as the line
 // names it (dependencyKind, or a shorter word).
 func soActor(p AttackPath, kind string) string {
-	// trust.ActorFor's insider actor (a first-party script, a sibling
+	// trust.actorFor's insider actor (a first-party script, a sibling
 	// organisation's redirected action) overrides the dependency's
 	// default compromised/malicious wording: the party who can change
 	// the code is named directly. Its outsider actor (a run-time fetch

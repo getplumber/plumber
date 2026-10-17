@@ -1,0 +1,220 @@
+name: Build Python
+run-name: "Build Python SDK ${{ github.ref_name }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      macos-binaries-release:
+        description: "Optional GitHub Release tag holding laptop-built *macosx*.whl files. Leave empty to skip macOS."
+        required: false
+        type: string
+        default: ""
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-linux:
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64, aarch64]
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Get JFrog OIDC token
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/jfrog-oidc-token.sh"
+
+      - name: Configure cargo for JFrog
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/configure-cargo.sh"
+
+      - name: Configure pip registry
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/configure-pip.sh"
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.9'
+
+      - name: Copy root LICENSE for maturin
+        run: cp LICENSE python/LICENSE
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: stable
+
+      - name: Install cross-compilation tools (aarch64)
+        if: matrix.target == 'aarch64'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          rustup target add aarch64-unknown-linux-gnu
+
+      - name: Install maturin
+        run: pip install maturin==1.8.3
+
+      - name: Build wheels (x86_64)
+        if: matrix.target == 'x86_64'
+        run: maturin build --release --manifest-path python/rust/Cargo.toml --out dist
+
+      - name: Build wheels (aarch64)
+        if: matrix.target == 'aarch64'
+        run: maturin build --release --target aarch64-unknown-linux-gnu --manifest-path python/rust/Cargo.toml --out dist
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: wheels-linux-${{ matrix.target }}
+          path: dist
+          if-no-files-found: error
+
+  build-windows:
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: windows-server-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Get JFrog OIDC token
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/jfrog-oidc-token.sh"
+
+      - name: Configure cargo for JFrog
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/configure-cargo.sh"
+
+      - name: Configure pip registry
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/configure-pip.sh"
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.9'
+
+      - name: Copy root LICENSE for maturin
+        run: cp LICENSE python/LICENSE
+        shell: bash
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: stable
+
+      - name: Install maturin
+        run: pip install maturin==1.8.3
+
+      - name: Build wheels
+        run: maturin build --release --manifest-path python/rust/Cargo.toml --out dist
+        shell: bash
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: wheels-windows
+          path: dist
+          if-no-files-found: error
+
+  sdist:
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Get JFrog OIDC token
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/jfrog-oidc-token.sh"
+
+      - name: Configure cargo for JFrog
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/configure-cargo.sh"
+
+      - name: Configure pip registry
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/configure-pip.sh"
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.9'
+
+      - name: Copy root LICENSE for maturin
+        run: cp LICENSE python/LICENSE
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: stable
+
+      - name: Install maturin
+        run: pip install maturin==1.8.3
+
+      - name: Build source distribution
+        run: maturin sdist --manifest-path python/rust/Cargo.toml --out dist
+
+      - name: Upload sdist
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: wheels-sdist
+          path: dist
+          if-no-files-found: error
+
+  import-macos:
+    if: inputs.macos-binaries-release != ''
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Download macOS wheels from release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ inputs.macos-binaries-release }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh release download "$REF" \
+            --repo "${{ github.repository }}" \
+            --pattern '*macosx*.whl' \
+            --dir dist/
+          version="${REF##*/v}"
+          version="${version#python/v}"
+          arm64="dist/databricks_zerobus_ingest_sdk-${version}-cp39-abi3-macosx_11_0_arm64.whl"
+          x86_64="dist/databricks_zerobus_ingest_sdk-${version}-cp39-abi3-macosx_10_12_x86_64.whl"
+          # Version tag may be a staging tag; accept any two macosx wheels if the
+          # conventional names are absent.
+          if [[ ! -f "$arm64" || ! -f "$x86_64" ]]; then
+            shopt -s nullglob
+            wheels=(dist/*macosx*.whl)
+            if [[ "${#wheels[@]}" -lt 2 ]]; then
+              echo "ERROR: expected two macOS wheels in $REF"
+              ls -lh dist/ || true
+              exit 1
+            fi
+          fi
+          ls -lh dist/*macosx*.whl
+
+      - name: Upload macOS wheels
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: wheels-macos
+          path: dist/*macosx*.whl
+          if-no-files-found: error

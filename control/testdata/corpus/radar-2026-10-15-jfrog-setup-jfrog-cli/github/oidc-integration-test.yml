@@ -1,0 +1,162 @@
+name: OIDC Integration Test
+# This workflow tests the setup-jfrog-cli GitHub Action's OpenID Connect integration across OSes and CLI versions.
+# It ensures backward compatibility with older CLI versions and validates step outputs and connectivity.
+# CLI versions used:
+# - 2.74.1: Does not support `jf eot` command, validates manual fallback logic.
+# - 2.75.0: Introduced native OIDC token exchange.
+# - Latest: Ensures ongoing compatibility with the most recent CLI build.
+on:
+  push:
+    branches:
+      - master
+  # Triggers the workflow on labeled PRs only.
+  pull_request_target:
+    types: [ labeled ]
+# Ensures that only the latest commit is running for each PR at a time.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  generate-platform-oidc-integration:
+    if: contains(github.event.pull_request.labels.*.name, 'safe to test') || github.event_name == 'push'
+    strategy:
+      # Using "include" instead of a matrix of arrays gives us fine-grained control over test combinations.
+      # This is needed because some audience values (e.g., URLs) contain characters not valid in matrix keys or job names.
+      #
+      # Each scenario represents a real-world case:
+      # - "default": No audience is set in the action or the platform integration.
+      # - "test": A custom audience is explicitly set in both the action and the platform integration.
+      # - "github-implicit-default": The platform integration is explicitly configured with GitHub's default audience,
+      #    but the action does not pass any audience.
+      #    This tests CLI behavior in case of mismatches — see https://github.com/jfrog/setup-jfrog-cli/issues/270
+      matrix:
+        include:
+          - audience_id: default
+            audience_value: ''
+          - audience_id: test
+            audience_value: 'audience-value'
+          - audience_id: github-implicit-default
+            audience_value: 'https://github.com/jfrog'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create OpenID Connect integration
+        shell: bash
+        run: |
+          curl -X POST "${{ secrets.JFROG_PLATFORM_URL }}/access/api/v1/oidc" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.JFROG_PLATFORM_RT_TOKEN }}" \
+            -d '{
+              "name": "oidc-integration-${{ matrix.audience_id }}-${{ github.run_id }}",
+              "issuer_url": "https://token.actions.githubusercontent.com",
+              "provider_type": "GitHub",
+              "audience": "${{ matrix.audience_value }}",
+              "enable_permissive_configuration": true,
+              "description": "Temp integration for testing OIDC with audience value: ${{ matrix.audience_value }}"
+            }'
+
+      - name: Create OIDC Identity Mapping
+        shell: bash
+        run: |
+          curl -X POST "${{ secrets.JFROG_PLATFORM_URL }}/access/api/v1/oidc/oidc-integration-${{ matrix.audience_id }}-${{ github.run_id }}/identity_mappings" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.JFROG_PLATFORM_RT_TOKEN }}" \
+            -d '{
+              "name": "oidc-test-mapping",
+              "priority": 1,
+              "claims": {
+                "repository": "${{ github.repository_owner }}/setup-jfrog-cli"
+              },
+              "token_spec": {
+                "scope": "applied-permissions/groups:readers",
+                "expires_in": 30
+              }
+            }'
+
+  oidc-test:
+    needs: generate-platform-oidc-integration
+    strategy:
+      fail-fast: false
+      # Using include allows exact combinations of CLI version and audience ID to ensure coverage of edge cases.
+      # This avoids invalid audience strings in identifiers and ensures fallback logic is tested selectively.
+      matrix:
+        include:
+          - cli-version: '2.74.1'
+            audience_id: default
+            audience_value: ''
+          - cli-version: '2.75.0'
+            audience_id: default
+            audience_value: ''
+          - cli-version: latest
+            audience_id: default
+            audience_value: ''
+          - cli-version: '2.74.1'
+            audience_id: test
+            audience_value: 'audience-value'
+          - cli-version: '2.75.0'
+            audience_id: test
+            audience_value: 'audience-value'
+          - cli-version: latest
+            audience_id: test
+            audience_value: 'audience-value'
+            # GitHub default audience value is resolved implicitly when omitted.
+            # These tests verify that the CLI handles an empty value correctly while GitHub sets the expected audience on its backend.
+          - cli-version: '2.74.1'
+            audience_id: github-implicit-default
+            audience_value: ''
+          - cli-version: '2.75.0'
+            audience_id: github-implicit-default
+            audience_value: ''
+          - cli-version: latest
+            audience_id: github-implicit-default
+            audience_value: ''
+    runs-on: ubuntu-latest
+    env:
+      JFROG_CLI_LOG_LEVEL: DEBUG
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup JFrog CLI
+        id: setup-jfrog-cli
+        uses: ./
+        env:
+          JF_URL: ${{ secrets.JFROG_PLATFORM_URL }}
+        with:
+          version: ${{ matrix.cli-version }}
+          oidc-provider-name: oidc-integration-${{ matrix.audience_id }}-${{ github.run_id }}
+          oidc-audience: ${{ matrix.audience_value }}
+
+      - name: Test JFrog CLI connectivity
+        run: jf rt ping
+
+      - name: Validate user output
+        shell: bash
+        run: test -n "${{ steps.setup-jfrog-cli.outputs.oidc-user }}"
+
+      - name: Validate token output
+        shell: bash
+        run: test -n "${{ steps.setup-jfrog-cli.outputs.oidc-token }}"
+
+  cleanup-oidc-integration:
+    needs: oidc-test
+    if: success() || failure()
+    strategy:
+      matrix:
+        include:
+          - audience_id: default
+          - audience_id: test
+          - audience_id: github-implicit-default
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete OIDC integration
+        shell: bash
+        run: |
+          curl -X DELETE "${{ secrets.JFROG_PLATFORM_URL }}/access/api/v1/oidc/oidc-integration-${{ matrix.audience_id }}-${{ github.run_id }}" \
+            -H "Authorization: Bearer ${{ secrets.JFROG_PLATFORM_RT_TOKEN }}"

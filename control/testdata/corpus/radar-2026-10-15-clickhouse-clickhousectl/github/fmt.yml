@@ -1,0 +1,31 @@
+name: Format
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "**.rs"
+      - ".github/workflows/fmt.yml"
+
+permissions:
+  contents: read
+
+env:
+  DO_NOT_TRACK: "1"
+
+jobs:
+  fmt:
+    name: cargo fmt --check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable @ 2026-10-01
+        with:
+          components: rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --all --check

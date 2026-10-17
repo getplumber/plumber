@@ -13,8 +13,8 @@ func TestWorstStateOrdersUnknownAboveAssumedAboveProven(t *testing.T) {
 		{nil, ClaimProven},
 	}
 	for _, c := range cases {
-		if got := WorstState(c.in...); got != c.want {
-			t.Errorf("WorstState(%v) = %q, want %q", c.in, got, c.want)
+		if got := worstState(c.in...); got != c.want {
+			t.Errorf("worstState(%v) = %q, want %q", c.in, got, c.want)
 		}
 	}
 }

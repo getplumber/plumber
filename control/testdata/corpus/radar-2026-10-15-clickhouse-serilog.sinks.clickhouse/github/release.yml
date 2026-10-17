@@ -1,0 +1,154 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: New release/tag name
+        required: true
+        type: string
+
+run-name: Release ${{ inputs.version }}
+
+jobs:
+  build:
+    name: Build
+    runs-on: windows-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v7
+
+    - name: Build & pack
+      run: dotnet build Serilog.Sinks.ClickHouse/Serilog.Sinks.ClickHouse.csproj --configuration Release /p:Version=${{ inputs.version }}
+
+    - name: Upload unsigned package
+      uses: actions/upload-artifact@v7
+      with:
+        name: package-unsigned-${{ inputs.version }}
+        path: Serilog.Sinks.ClickHouse/bin/Release/Serilog.Sinks.ClickHouse.*nupkg
+
+  sign:
+    name: Sign NuGet Package
+    runs-on: windows-latest
+    needs: [build]
+    steps:
+    - name: Create directories
+      run: |
+        New-Item ${{ github.workspace }}\run -ItemType directory
+        New-Item ${{ github.workspace }}\package -ItemType directory
+
+    - name: Download unsigned package
+      uses: actions/download-artifact@v8
+      with:
+        name: package-unsigned-${{ inputs.version }}
+        path: ${{ github.workspace }}/package
+
+    - name: Create pkcs11properties.cfg file
+      run: |
+        $content = @"
+        name=signingmanager
+        library="C:\\Program Files\\DigiCert\\DigiCert Keylocker Tools\\smpkcs11.dll"
+        slotListIndex=0
+        "@
+
+        Write-Host "Writing pkcs11properties.cfg file"
+        $content | Out-File -FilePath ${{ github.workspace }}\run\pkcs11properties.cfg -Encoding ASCII
+        Get-Content ${{ github.workspace }}\run\pkcs11properties.cfg
+
+    - name: Create signing certificate
+      run: |
+        [System.IO.File]::WriteAllBytes("${{ github.workspace }}\run\Certificate_pkcs12.p12", [System.Convert]::FromBase64String("${{ secrets.SM_CLIENT_CERT_FILE_B64 }}"))
+
+    - name: Download Keylocker tools
+      env:
+        SM_API_KEY: ${{ secrets.SM_API_KEY }}
+      run: >
+        Invoke-WebRequest
+        https://one.digicert.com/signingmanager/api-ui/v1/releases/Keylockertools-windows-x64.msi/download
+        -Headers @{"x-api-key" = $env:SM_API_KEY}
+        -OutFile Keylockertools-windows-x64.msi
+
+    - name: Install Keylocker tools
+      run: |
+        Start-Process msiexec.exe -ArgumentList '/i Keylockertools-windows-x64.msi /passive /quiet /norestart' -Wait
+
+    - name: Check Keylocker tools
+      run: |
+        & "C:\Program Files\DigiCert\DigiCert Keylocker Tools\smctl.exe" --version
+
+    - name: Sync the certificates
+      env:
+        SM_API_KEY: ${{ secrets.SM_API_KEY }}
+        PKCS11_CONFIG: "${{ github.workspace }}\\run\\pkcs11properties.cfg"
+        SM_CLIENT_CERT_FILE: "${{ github.workspace }}\\run\\Certificate_pkcs12.p12"
+        SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+        SM_HOST: ${{ secrets.SM_HOST }}
+        SM_TLS_SKIP_VERIFY: false
+        DIGICERT_KEY_ALIAS: ${{ secrets.DIGICERT_KEY_ALIAS }}
+        SM_LOG_LEVEL: TRACE
+      run: >
+        & "C:\Program Files\DigiCert\DigiCert Keylocker Tools\smctl.exe" windows certsync
+
+    - name: Sign NuGet packages
+      env:
+        SM_API_KEY: ${{ secrets.SM_API_KEY }}
+        PKCS11_CONFIG: "${{ github.workspace }}\\run\\pkcs11properties.cfg"
+        SM_CLIENT_CERT_FILE: "${{ github.workspace }}\\run\\Certificate_pkcs12.p12"
+        SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+        SM_HOST: ${{ secrets.SM_HOST }}
+        SM_TLS_SKIP_VERIFY: false
+        DIGICERT_KEY_ALIAS: ${{ secrets.DIGICERT_KEY_ALIAS }}
+        SM_LOG_LEVEL: TRACE
+      run: |
+        Get-ChildItem -Path "${{ github.workspace }}\package" -Filter "*.nupkg" | ForEach-Object {
+          Write-Host "Signing $($_.FullName)"
+          & "C:\Program Files\DigiCert\DigiCert Keylocker Tools\smctl.exe" sign `
+            --fingerprint ${{ secrets.DIGICERT_FINGERPRINT }} `
+            --input $_.FullName
+        }
+
+    - name: Verify signatures
+      run: |
+        dotnet nuget verify --all "${{ github.workspace }}\package\*.nupkg"
+
+    - name: Upload signed package
+      uses: actions/upload-artifact@v7
+      with:
+        name: package
+        path: ${{ github.workspace }}/package/Serilog.Sinks.ClickHouse.*nupkg
+
+  push_nuget_org:
+    runs-on: windows-latest
+    needs: [sign]
+    name: Upload to NuGet.org
+    steps:
+    - name: Download Artifact
+      uses: actions/download-artifact@v8
+      with:
+        name: package
+
+    - name: Push package
+      shell: cmd
+      run: dotnet nuget push Serilog.Sinks.ClickHouse.*.nupkg --skip-duplicate --api-key ${{ secrets.NUGET_TOKEN }} --source https://api.nuget.org/v3/index.json
+
+  github_release:
+    runs-on: ubuntu-latest
+    needs: [sign]
+    name: Create GitHub release
+    permissions:
+      contents: write
+    steps:
+    - name: Download Artifact
+      uses: actions/download-artifact@v8
+      with:
+        name: package
+    - name: Create Release
+      id: create_release
+      uses: ncipollo/release-action@v1
+      with:
+        artifacts: "*.nupkg,*.snupkg"
+        commit: ${{ github.sha }}
+        tag: ${{ inputs.version }}
+        generateReleaseNotes: true
+        draft: false
+        prerelease: false

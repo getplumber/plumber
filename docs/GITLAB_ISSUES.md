@@ -42,7 +42,11 @@ pinning finding (ISSUE-402 or ISSUE-404) anchors on the same component,
 on every job the include shapes, and lifts that path's ceiling from
 Medium to High; alone, it is an individual finding. It reads Medium when
 the component is pinned by a full commit SHA (the source can no longer
-change what runs), High otherwise.
+change what runs), High otherwise. This ceiling only ever lowers the
+path from the tier its proven reach already gives it: a claim elsewhere
+on the path that could not be settled (a secret Plumber could not list,
+a write token whose source was never declared) stays unproven and never
+raises or caps anything on its own.
 
 A source is **trusted** when any of these hold:
 

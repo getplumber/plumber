@@ -1,0 +1,237 @@
+name: Template builds
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  pull_request:
+  schedule:
+    # Re-resolve compatible dependency updates weekly and make sure they still build.
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  node:
+    name: Node.js and TypeScript
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Build templates
+        run: |
+          set -euo pipefail
+          for dir in node/*/ node-typescript/*/; do
+            [ -f "${dir}package.json" ] || continue
+            echo "::group::${dir%/}"
+            npm ci --prefix "$dir" --ignore-scripts --no-audit --no-fund
+            if [ -f "${dir}tsconfig.json" ]; then
+              npm run --prefix "$dir" build
+            else
+              find "${dir}src" -type f -name '*.js' -exec node --check {} \;
+            fi
+            echo "::endgroup::"
+          done
+
+  bun:
+    name: Bun
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: latest
+      - name: Build templates
+        run: |
+          set -euo pipefail
+          for dir in bun/*/; do
+            [ -f "${dir}package.json" ] || continue
+            echo "::group::${dir%/}"
+            (cd "$dir" && bun install --frozen-lockfile --ignore-scripts && bun -e "await import('./src/main.ts')")
+            echo "::endgroup::"
+          done
+
+  python:
+    name: Python ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: "3.9"
+            version: "3.9"
+            templates: "python"
+          - name: "3.12 MCP"
+            version: "3.12"
+            templates: "mcp"
+          - name: "3.11 ML"
+            version: "3.11"
+            templates: "python-ml"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.version }}
+      - name: Build templates
+        env:
+          TEMPLATE_SET: ${{ matrix.templates }}
+        run: |
+          set -euo pipefail
+          if [ "$TEMPLATE_SET" = mcp ]; then
+            dirs=(python/mcp-server/)
+          elif [ "$TEMPLATE_SET" = python-ml ]; then
+            dirs=(python-ml/*/)
+          else
+            dirs=(python/*/)
+          fi
+          for dir in "${dirs[@]}"; do
+            [ -f "${dir}requirements.txt" ] || continue
+            if [ "$TEMPLATE_SET" = python ] && [ "$dir" = python/mcp-server/ ]; then continue; fi
+            echo "::group::${dir%/}"
+            rm -rf /tmp/template-venv
+            python -m venv /tmp/template-venv
+            /tmp/template-venv/bin/pip install --disable-pip-version-check -r "${dir}requirements.txt"
+            /tmp/template-venv/bin/pip check
+            /tmp/template-venv/bin/python -m compileall -q "${dir}src"
+            echo "::endgroup::"
+          done
+
+  php:
+    name: PHP
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: "8.3"
+          tools: composer
+      - name: Build and load templates
+        run: |
+          set -euo pipefail
+          for dir in php/*/; do
+            [ -f "${dir}composer.json" ] || continue
+            echo "::group::${dir%/}"
+            composer install --working-dir="$dir" --no-interaction --no-progress --optimize-autoloader
+            find "${dir}src" -type f -name '*.php' -exec php -l {} \;
+            php .github/scripts/load-composer-classes.php "$dir"
+            echo "::endgroup::"
+          done
+
+  ruby:
+    name: Ruby
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ruby/setup-ruby@a30dfa457ad68707b8b910ac3a244714b61c0626 # v1.320.0
+        with:
+          ruby-version: "3.1"
+          bundler: latest
+      - name: Build templates
+        run: |
+          set -euo pipefail
+          for dir in ruby/*/; do
+            [ -f "${dir}Gemfile" ] || continue
+            echo "::group::${dir%/}"
+            (cd "$dir" && bundle install && find lib -type f -name '*.rb' -exec ruby -c {} \;)
+            echo "::endgroup::"
+          done
+
+  dart:
+    name: Dart
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dart-lang/setup-dart@65eb853c7ba17dde3be364c3d2858773e7144260 # v1.7.2
+        with:
+          sdk: stable
+      - name: Build templates
+        run: |
+          set -euo pipefail
+          for dir in dart/*/; do
+            [ -f "${dir}pubspec.yaml" ] || continue
+            echo "::group::${dir%/}"
+            (cd "$dir" && dart pub get && dart analyze)
+            echo "::endgroup::"
+          done
+
+  deno:
+    name: Deno
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
+        with:
+          deno-version: v2.x
+      - name: Build templates
+        run: |
+          set -euo pipefail
+          for dir in deno/*/; do
+            echo "::group::${dir%/}"
+            (cd "$dir" && deno check src/main.ts)
+            echo "::endgroup::"
+          done
+
+  go:
+    name: Go
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.9"
+          cache: false
+      - name: Build templates
+        run: for dir in go/*/; do [ ! -f "${dir}go.mod" ] || (cd "$dir" && go build ./...); done
+
+  rust:
+    name: Rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@bd41891a8e7f4b8649f6d684415e1a6155fe4e22 # 1.83.0
+      - name: Build templates
+        run: for dir in rust/*/; do [ ! -f "${dir}Cargo.toml" ] || (cd "$dir" && cargo build --locked); done
+
+  runtime-builds:
+    name: ${{ matrix.template }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - template: cpp/starter
+            image: openruntimes/cpp:v4-17
+            entrypoint: src/main.cc
+          - template: dotnet/starter
+            image: openruntimes/dotnet:v4-6.0
+            entrypoint: src/Index.cs
+          - template: java/starter
+            image: openruntimes/java:v4-17.0
+            entrypoint: src/Main.java
+          - template: kotlin/starter
+            image: openruntimes/kotlin:v4-1.8
+            entrypoint: src/Main.kt
+          - template: kotlin/sync-with-meilisearch
+            image: openruntimes/kotlin:v4-1.8
+            entrypoint: src/Main.kt
+          - template: swift/starter
+            image: openruntimes/swift:v5-6.2
+            entrypoint: Sources/index.swift
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build in Open Runtimes
+        env:
+          IMAGE: ${{ matrix.image }}
+          ENTRYPOINT: ${{ matrix.entrypoint }}
+          TEMPLATE: ${{ matrix.template }}
+        run: |
+          docker run --rm \
+            -e OPEN_RUNTIMES_ENTRYPOINT="$ENTRYPOINT" \
+            -v "$PWD/$TEMPLATE:/mnt/code" \
+            "$IMAGE" sh helpers/build.sh
+          rm -f "$TEMPLATE/code.tar.gz"

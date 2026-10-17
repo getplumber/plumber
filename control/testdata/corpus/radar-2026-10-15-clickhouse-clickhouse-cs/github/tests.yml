@@ -1,0 +1,129 @@
+name: Tests
+
+# Runs the HTTP driver suite. The path filters select the HTTP driver and its test projects, the shared
+# ClickHouse.Driver.Common project, the shared build inputs, the workflows of this suite, and codecov.yml
+# (the Codecov settings for its coverage report). The shared build inputs are the files that MSBuild, the
+# SDK and NuGet read from the repository root (some do not exist yet), the analyzer settings and the
+# strong-name key. tests-tcp.yml and examples.yml list the same shared build inputs; keep the three lists
+# the same.
+#
+# ClickHouse.Driver references ClickHouse.Driver.Tcp (net8.0 and later) to pack the TCP assembly into the
+# NuGet package, so it compiles against the TCP public types. No HTTP code or test uses them, so a TCP-only
+# change does not run this suite. tests-tcp.yml builds ClickHouse.Driver for every target framework instead.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "ClickHouse.Driver/**"
+      - "ClickHouse.Driver.Tests/**"
+      - "ClickHouse.Driver.IntegrationTests/**"
+      - "ClickHouse.Driver.Common/**"
+      - "Directory.Packages.props"
+      - "Directory.Build.*"
+      - "global.json"
+      - "[Nn]u[Gg]et.[Cc]onfig"
+      - ".editorconfig"
+      - "sgKey.snk"
+      - "codecov.yml"
+      - ".github/workflows/tests.yml"
+      - ".github/workflows/reusable.yml"
+      - ".github/workflows/tests-integration.yml"
+      - ".github/workflows/tests-cloud.yml"
+      - ".github/workflows/tests-windows.yml"
+      - ".github/workflows/tests-macos.yml"
+      - "!**/*.md"
+  pull_request:
+    branches: [main]
+    paths:
+      - "ClickHouse.Driver/**"
+      - "ClickHouse.Driver.Tests/**"
+      - "ClickHouse.Driver.IntegrationTests/**"
+      - "ClickHouse.Driver.Common/**"
+      - "Directory.Packages.props"
+      - "Directory.Build.*"
+      - "global.json"
+      - "[Nn]u[Gg]et.[Cc]onfig"
+      - ".editorconfig"
+      - "sgKey.snk"
+      - "codecov.yml"
+      - ".github/workflows/tests.yml"
+      - ".github/workflows/reusable.yml"
+      - ".github/workflows/tests-integration.yml"
+      - ".github/workflows/tests-cloud.yml"
+      - ".github/workflows/tests-windows.yml"
+      - ".github/workflows/tests-macos.yml"
+      - "!**/*.md"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag, or commit SHA to run on"
+        required: false
+        type: string
+
+jobs:
+  coverage:
+    name: Code Coverage
+    uses: ./.github/workflows/reusable.yml
+    secrets: inherit
+    with:
+      coverage: true
+      ref: ${{ inputs.ref }}
+    permissions:
+      statuses: write
+
+  regress-clickhouse:
+    name: ClickHouse regression
+    uses: ./.github/workflows/reusable.yml
+    secrets: inherit
+    with:
+      clickhouse-version: ${{ matrix.version }}
+      ref: ${{ inputs.ref }}
+    strategy:
+      fail-fast: false
+      matrix:
+        version:
+          - "latest"
+          - "26.9"
+          - "26.8"
+          - "26.7"
+          - "26.3"
+
+  regress-dotnet:
+    name: .NET regression
+    uses: ./.github/workflows/reusable.yml
+    secrets: inherit
+    with:
+      framework: ${{ matrix.framework }}
+      ref: ${{ inputs.ref }}
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: ["net10.0", "net9.0", "net6.0"]
+
+  integration:
+    name: Integration
+    uses: ./.github/workflows/tests-integration.yml
+    secrets: inherit
+    with:
+      ref: ${{ inputs.ref }}
+
+  cloud:
+    name: Cloud
+    uses: ./.github/workflows/tests-cloud.yml
+    secrets: inherit
+    with:
+      ref: ${{ inputs.ref }}
+
+  windows:
+    name: Windows
+    uses: ./.github/workflows/tests-windows.yml
+    secrets: inherit
+    with:
+      ref: ${{ inputs.ref }}
+
+  macos:
+    name: macOS
+    uses: ./.github/workflows/tests-macos.yml
+    secrets: inherit
+    with:
+      ref: ${{ inputs.ref }}

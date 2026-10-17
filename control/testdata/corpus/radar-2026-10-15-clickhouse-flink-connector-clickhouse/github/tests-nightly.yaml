@@ -1,0 +1,85 @@
+name: Apache Flink ClickHouse Head Connector Tests CI (Java)
+
+on:
+  schedule:
+    # Run against ClickHouse versions and head 3:55pm every day
+    - cron: "55 15 * * *"
+  workflow_dispatch:
+
+jobs:
+  test-flink-17:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        clickhouse: [ "25.3", "25.8", "25.10", "25.11", "25.12", "latest", "cloud", "head" ]
+        flink: [ "1.17.2", "1.18.1", "1.19.3", "1.20.2"]
+    name: Apache Flink ${{ matrix.flink }} ClickHouse Connector tests with ClickHouse ${{ matrix.clickhouse }}
+    steps:
+      - name: Check for Cloud Credentials
+        id: check-cloud-credentials
+        run: |
+          if [[ "${{ matrix.clickhouse }}" == "cloud" && (-z "${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_HOST_SMT }}" || -z "${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_PASSWORD_SMT }}") ]]; then
+            echo "SKIP_STEP=true" >> $GITHUB_ENV
+          else
+            echo "SKIP_STEP=false" >> $GITHUB_ENV
+          fi
+        shell: bash
+      - uses: actions/checkout@v3
+        if: env.SKIP_STEP != 'true'
+      - name: Set up JDK 17
+        if: env.SKIP_STEP != 'true'
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'adopt'
+          architecture: x64
+      - name: Set up Gradle
+        if: env.SKIP_STEP != 'true'
+        uses: gradle/actions/setup-gradle@v4
+      - name: Execute Gradle 'test' task
+        if: env.SKIP_STEP != 'true'
+        env:
+          CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
+          CLICKHOUSE_CLOUD_HOST: ${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_HOST_SMT }}
+          CLICKHOUSE_CLOUD_PASSWORD: ${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_PASSWORD_SMT }}
+          FLINK_VERSION: ${{ matrix.flink }}
+        run: ./gradlew :flink-connector-clickhouse-1.17:test
+  test-flink-2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        clickhouse: [ "25.3", "25.8", "25.10", "25.11", "25.12", "latest", "cloud", "head" ]
+    name: Apache Flink 2.0.0 ClickHouse Connector tests with ClickHouse ${{ matrix.clickhouse }}
+    steps:
+      - name: Check for Cloud Credentials
+        id: check-cloud-credentials
+        run: |
+          if [[ "${{ matrix.clickhouse }}" == "cloud" && (-z "${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_HOST_SMT }}" || -z "${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_PASSWORD_SMT }}") ]]; then
+            echo "SKIP_STEP=true" >> $GITHUB_ENV
+          else
+            echo "SKIP_STEP=false" >> $GITHUB_ENV
+          fi
+        shell: bash
+      - uses: actions/checkout@v3
+        if: env.SKIP_STEP != 'true'
+      - name: Set up JDK 17
+        if: env.SKIP_STEP != 'true'
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'adopt'
+          architecture: x64
+      - name: Set up Gradle
+        if: env.SKIP_STEP != 'true'
+        uses: gradle/actions/setup-gradle@v4
+      - name: Execute Gradle 'test' task
+        if: env.SKIP_STEP != 'true'
+        env:
+          CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
+          CLICKHOUSE_CLOUD_HOST: ${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_HOST_SMT }}
+          CLICKHOUSE_CLOUD_PASSWORD: ${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_PASSWORD_SMT }}
+        run: ./gradlew :flink-connector-clickhouse-2.0.0:test

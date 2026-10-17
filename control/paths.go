@@ -142,6 +142,14 @@ type AttackPath struct {
 	FindingIDs []string `json:"findingIds"`
 	Loss       float64  `json:"loss"`
 
+	// Claims is every claim this path rests on, each with the state the
+	// facts behind it settle to (proven, assumed or unknown), computed
+	// once at assembly end (claimsFor, control/pathclaims.go), in a fixed
+	// order: the entry, the reach's own secrets, each walked edge, the
+	// token, the environment, the cache writers, the download guard, and
+	// the reach's impacts.
+	Claims []Claim `json:"claims"`
+
 	// cause names the fact on the path that could not be decided when
 	// neither the entry fact nor an impact fact is itself the unresolvable
 	// one, so explain.go's modifierSentences can name the real cause. It is
@@ -182,6 +190,15 @@ type AttackPath struct {
 	// whatever key a restorer reads. Never serialized.
 	cacheName string
 
+	// downloadSource is, for a mutable_dependency anchor whose finding
+	// carries a run-time download fact (control/trust.go's suppressed/
+	// actorFor read the same data: downloadGuard, downloadVerified,
+	// fetchUrl), which of the three the download claim (claimsFor) names
+	// it by: "verified", "guarded" or "unguarded". "" for every anchor
+	// that carries no such fact (the download claim is then omitted).
+	// Never serialized.
+	downloadSource string
+
 	// ownRepo is the analysed repository's "owner/repo", lower case, empty
 	// when unknown: an action of its owner is never read out as a third
 	// party's. Never serialized.
@@ -193,7 +210,7 @@ type AttackPath struct {
 	// serialized.
 	insider bool
 
-	// actor and actorClass are what trust.ActorFor decided about the
+	// actor and actorClass are what trust.actorFor decided about the
 	// path's own anchor (pathAnchor.actor/actorClass, carried through):
 	// who the attacker acts as when that decision overrides the
 	// dependency's default wording, and the gate class that caps the
@@ -205,9 +222,9 @@ type AttackPath struct {
 
 	// unknownRefs is, on a path whose entry gate could not be decided
 	// (Entry.Actor "unknown"), the references of the condition the gate
-	// evaluator could not resolve (ir.Gate.Unknown), for the Note line:
-	// the output task that adds that line prints it; nothing reads it
-	// yet. Never serialized.
+	// evaluator could not resolve (ir.Gate.Unknown), the source of the
+	// entry claim (entryClaim) and of the Note line naming what Plumber
+	// could not read. Never serialized.
 	unknownRefs []string
 
 	// alternatives is every subject the entry stands for when one finding
@@ -257,6 +274,9 @@ func (p AttackPath) MarshalJSON() ([]byte, error) {
 	}
 	if w.Branches == nil {
 		w.Branches = []PathBranch{}
+	}
+	if w.Claims == nil {
+		w.Claims = []Claim{}
 	}
 	return json.Marshal(w)
 }
@@ -469,12 +489,14 @@ var insiderTriggers = map[insiderTrigger]struct{ who, actor string }{
 
 // insiderController names who sets an untrusted expression when only an
 // insider can: the entry job carries no fork pull request fact (no
-// pull_request trigger, or a same-repository guard) and no privileged
-// trigger, and the expression is one an insider sets (insiderExpressions),
-// never an outsider's payload (outsiderExpressions). "" otherwise, the
-// expression then being an outsider's entry.
+// pull_request trigger, or a same-repository guard), no privileged
+// trigger and no gate (a job of a reusable workflow its privileged calls
+// gave one, ir.ClassifyGates, runs under those calls' events), and the
+// expression is one an insider sets (insiderExpressions), never an
+// outsider's payload (outsiderExpressions). "" otherwise, the expression
+// then being an outsider's entry.
 func insiderController(kind EntryKind, subject string, js JobSituation) string {
-	if kind != EntryUntrustedExpression || len(js.ForkPR) > 0 || len(js.PrivilegedTriggers) > 0 {
+	if kind != EntryUntrustedExpression || len(js.ForkPR) > 0 || len(js.PrivilegedTriggers) > 0 || js.Gate != nil {
 		return ""
 	}
 	for _, field := range outsiderExpressions {
@@ -599,7 +621,7 @@ func AssemblePaths(findings []opaengine.Finding, sit *Situation, projectPath str
 				// The first finding in sortedFindings order decides the
 				// entry; every later anchor on the key names the same
 				// subject.
-				jobs := walkedJobs(a.entryJob, a.kind, sit)
+				jobs := walkedJobs(a.entryJob, a.kind, a.fact.Subject, sit)
 				reached := jobs
 				if a.kind == EntryPoisonedCache && len(jobs) > 1 {
 					// A poisoned cache reaches what its restorers hold: the
@@ -607,7 +629,7 @@ func AssemblePaths(findings []opaengine.Finding, sit *Situation, projectPath str
 					// With no restorer the branch is dropped below.
 					reached = jobs[1:]
 				}
-				reach, unresolvable, cause, surviving := reachOver(sit, reached, a.kind, a.fact.Line)
+				reach, unresolvable, cause, surviving := reachOver(sit, reached, a.kind, a.fact.Subject)
 				g = &pathGroup{anchor: a, jobs: jobs, reach: reach, unresolvable: unresolvable, cause: cause, surviving: surviving, hashes: map[string]bool{}, codes: map[ErrorCode]bool{},
 					contributor: contributorEntry(a.kind, sit.Jobs[a.entryJob]), alternatives: map[string]bool{a.fact.Subject: true}}
 				pg.branches[a.entryJob] = g
@@ -674,6 +696,7 @@ func AssemblePaths(findings []opaengine.Finding, sit *Situation, projectPath str
 		p := pg.path(key, exposure, gates, sit)
 		p.ownRepo = own
 		p.situation = sit
+		p.Claims = claimsFor(&p, sit)
 		out = append(out, p)
 	}
 	writers := cacheWriters(append(append([]AttackPath(nil), out...), writerOnly...), sit)
@@ -701,6 +724,7 @@ func AssemblePaths(findings []opaengine.Finding, sit *Situation, projectPath str
 		p.ownRepo = own
 		p.situation = sit
 		p.cacheWriterStates, p.cacheName = pg.cacheEdges()
+		p.Claims = claimsFor(&p, sit)
 		out = append(out, p)
 	}
 	sort.Slice(out, func(i, j int) bool { return worseFirst(out[i], out[j]) })
@@ -980,6 +1004,9 @@ func (g *pathGroup) path(exposure string, gates []opaengine.Finding, sit *Situat
 		}
 	}
 	p.actor, p.actorClass = a.actor, a.actorClass
+	if a.kind == EntryMutableDependency {
+		p.downloadSource = downloadClaimSource(a.data)
+	}
 	// A known-bad dependency (g.knownBad(): a published advisory, an
 	// impostor commit, an obfuscated fetch) or a run-time fetch from an
 	// outside host (CodeActionMutableRemoteExec) joining the same
@@ -1008,7 +1035,7 @@ func (g *pathGroup) path(exposure string, gates []opaengine.Finding, sit *Situat
 	if ceiling, ok := g.advisoryCeiling(); ok && TierRank(ceiling) < TierRank(p.ceiling) {
 		p.ceiling, p.ceilingModifiers = ceiling, []string{"advisory_cap"}
 	}
-	// An insider actor (trust.ActorFor: a first-party script, a sibling
+	// An insider actor (trust.actorFor: a first-party script, a sibling
 	// organisation's redirected action) is closer to home than an
 	// outside dependency: it holds at the Medium ceiling, unless the
 	// group override above already cleared it.
@@ -1062,7 +1089,7 @@ func (g *pathGroup) knownBad() bool {
 }
 
 // overridesInsiderToOutsider reports whether the group's own codes force
-// the outsider wording and strip any insider cap trust.ActorFor read off
+// the outsider wording and strip any insider cap trust.actorFor read off
 // a single anchor: a dependency already known bad (knownBad, which
 // already covers a published advisory and an impostor commit), or a
 // run-time fetch from an outside host (CodeActionMutableRemoteExec)
@@ -1216,7 +1243,7 @@ type pathAnchor struct {
 	// it (paths.go carries no action metadata of its own). Nil for every
 	// other kind.
 	data map[string]any
-	// actor and actorClass are what trust.ActorFor decided about this
+	// actor and actorClass are what trust.actorFor decided about this
 	// anchor: who the attacker acts as when that decision overrides the
 	// dependency's default wording (an insider party), and the gate
 	// class that caps the tier of the path it starts (GateInsider: the
@@ -1259,7 +1286,7 @@ func anchorsFor(f opaengine.Finding, sit *Situation, own string) []pathAnchor {
 				if localReference(fact.Subject, own) {
 					return nil
 				}
-				if suppress, unknownRunner := Suppressed(f); suppress {
+				if suppress, unknownRunner := suppressed(f); suppress {
 					return nil
 				} else if unknownRunner {
 					fact.State = FactUnknown
@@ -1271,7 +1298,7 @@ func anchorsFor(f opaengine.Finding, sit *Situation, own string) []pathAnchor {
 			}
 			a := pathAnchor{kind: kind, fact: fact, entryJob: f.Job, data: f.Data, unknownRefs: unknown}
 			if kind == EntryMutableDependency {
-				a.actor, a.actorClass = ActorFor(a, own)
+				a.actor, a.actorClass = actorFor(a, own)
 			}
 			return []pathAnchor{a}
 		}
@@ -1553,16 +1580,25 @@ func alteredArtifactImpact(entryJob string) ImpactFact {
 // received, so a deeper chain is deliberately left unwalked and unpriced.
 // An entry that holds only in a GitHub fork pull request run (forkRunOnly)
 // reaches no job through a cache alone: such a run saves only in its merge
-// ref's scope, which no other ref's run restores. A poisoned cache entry
+// ref's scope, which no other ref's run restores; nor does a base-context
+// entry (pr_target) into a job whose low-trust runs GitHub keeps
+// read-only, nor an untrusted expression whose context is set only in
+// runs that save nothing for the default branch. A poisoned cache entry
 // walks instead to every job restoring a cache (cacheRestorers).
-func walkedJobs(entryJob string, kind EntryKind, sit *Situation) []string {
+func walkedJobs(entryJob string, kind EntryKind, subject string, sit *Situation) []string {
 	if kind == EntryPoisonedCache {
 		// The writer, then every job restoring a cache it can write.
 		return append([]string{entryJob}, cacheRestorers(entryJob, sit)...)
 	}
 	seen := map[string]bool{entryJob: true}
 	jobs := []string{entryJob}
-	forkOnly := forkRunOnly(sit, entryJob, kind)
+	// A run that saves no cache another ref's run restores reaches no job
+	// through a cache alone: a fork pull request run, a base-context run
+	// GitHub keeps read-only, or the runs an untrusted expression's
+	// context is set in when none of them saves for the default branch
+	// (cacheWriterScope).
+	noSharedSave := forkRunOnly(sit, entryJob, kind) ||
+		((kind == EntryPRTarget || kind == EntryUntrustedExpression) && !savesShared(cacheWriterScope(kind, subject, sit.Jobs[entryJob])))
 	for _, fed := range sit.Jobs[entryJob].Feeds {
 		if seen[fed] {
 			continue
@@ -1570,7 +1606,7 @@ func walkedJobs(entryJob string, kind EntryKind, sit *Situation) []string {
 		if _, ok := sit.Jobs[fed]; !ok {
 			continue
 		}
-		if via := sit.Jobs[entryJob].FeedsVia[fed]; forkOnly && len(via) == 1 && via[0] == FeedCache {
+		if via := sit.Jobs[entryJob].FeedsVia[fed]; noSharedSave && len(via) == 1 && via[0] == FeedCache {
 			continue
 		}
 		seen[fed] = true
@@ -1614,17 +1650,8 @@ func feedsViaOf(walk []string, sit *Situation) map[string][]string {
 // it on the path so a privilege-role finding's "on path" check can
 // read the one set both this function and that check agree on, rather
 // than recomputing it a second time and risking the two drifting apart.
-//
-// entryLine is the anchor's own line (0 when unknown or job-level). Above
-// 0, it bounds the ENTRY job alone: a secret this job references only
-// before that line cannot be leaked by a step walking in there, since
-// that step runs before the reference ever happens; one carried by the
-// workflow's own top-level configuration (line 0 in SecretFirstLine) is
-// read as available from the job's first step regardless, and a secret
-// with no recorded line at all is kept exactly as it was before this
-// check existed. A fed job's privilege is reached through the edge, not
-// through the entry job's own step order, so entryLine never bounds it.
-func reachOver(sit *Situation, jobs []string, kind EntryKind, entryLine int) (r Reach, unresolvable bool, cause unresolvableCause, surviving []string) {
+
+func reachOver(sit *Situation, jobs []string, kind EntryKind, subject string) (r Reach, unresolvable bool, cause unresolvableCause, surviving []string) {
 	secrets := map[string]bool{}
 	scopes := map[string]bool{}
 	for i, name := range jobs {
@@ -1649,9 +1676,6 @@ func reachOver(sit *Situation, jobs []string, kind EntryKind, entryLine int) (r 
 			continue
 		}
 		for _, s := range js.Privilege.Secrets {
-			if i == 0 && entryLine > 0 && secretReferencedBeforeEntry(js.Privilege.SecretFirstLine, s, entryLine) {
-				continue
-			}
 			secrets[s] = true
 		}
 		r.AllSecrets = r.AllSecrets || js.Privilege.AllSecrets
@@ -1723,25 +1747,13 @@ func reachOver(sit *Situation, jobs []string, kind EntryKind, entryLine int) (r 
 	// all (provenPrivileged); cause stays set, so the path still says the
 	// secrets could not be listed.
 	contributor := contributorEntry(kind, sit.Jobs[jobs[0]])
-	r.keeps = keepsSomething(sit.Jobs[jobs[0]])
+	r.keeps = keepsSomething(kind, subject, sit.Jobs[jobs[0]])
 	proven := tierFor(
 		slices.ContainsFunc(r.Impacts, func(imp ImpactFact) bool { return imp.State != FactUnknown }),
 		provenPrivileged(r), contributor,
 	)
 	unresolvable = baseTier(r, contributor) != proven
 	return r, unresolvable, cause, surviving
-}
-
-// secretReferencedBeforeEntry reports whether secretFirstLine records name
-// at a line strictly before entryLine: the secret was already read, and
-// done with, by the time the entry's own step runs, so that step cannot be
-// the one that leaks it. A name the map does not carry at all is never
-// reported as before the entry (the caller keeps it, as it always has);
-// line 0 (the workflow's own top-level configuration) never is either, it
-// reaches every step of the job regardless of order.
-func secretReferencedBeforeEntry(secretFirstLine map[string]int, name string, entryLine int) bool {
-	line, known := secretFirstLine[name]
-	return known && line != 0 && line < entryLine
 }
 
 // reachParts splits a pruned reach r over the walked jobs, in walk order:

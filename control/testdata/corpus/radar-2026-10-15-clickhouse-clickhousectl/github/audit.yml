@@ -1,0 +1,37 @@
+name: Security audit
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Advisories are published independently of code changes.
+    - cron: "0 6 * * 1-5"
+  pull_request:
+    paths:
+      - "**/Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/audit.yml"
+
+permissions:
+  contents: read
+
+env:
+  DO_NOT_TRACK: "1"
+
+jobs:
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable @ 2026-10-01
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --version 0.22.2 --locked
+
+      # Fails on vulnerabilities and on unmaintained, unsound or yanked crates.
+      - name: Audit Cargo.lock
+        run: cargo audit --deny warnings

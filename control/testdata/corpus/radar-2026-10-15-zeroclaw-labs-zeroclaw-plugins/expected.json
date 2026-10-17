@@ -1,0 +1,74 @@
+{
+  "source": "https://github.com/zeroclaw-labs/zeroclaw-plugins",
+  "commit": "5d34e6d9da3d20329430ca195524faffef44a0f0",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "copilot",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/publish.yml": "active",
+    ".github/workflows/validate.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "actionMetadata": {
+    "dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7": {
+      "refKind": "commit",
+      "mutableRemoteExec": {
+        "tier": "exec",
+        "url": "https://sh.rustup.rs",
+        "file": "action.yml",
+        "downloadGuard": "rustup"
+      }
+    },
+    "dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537": {
+      "refKind": "commit",
+      "mutableRemoteExec": {
+        "tier": "exec",
+        "url": "https://sh.rustup.rs",
+        "file": "action.yml",
+        "downloadGuard": "rustup"
+      }
+    },
+    "dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772": {
+      "refKind": "commit",
+      "mutableRemoteExec": {
+        "tier": "exec",
+        "url": "https://sh.rustup.rs",
+        "file": "action.yml",
+        "downloadGuard": "rustup"
+      }
+    },
+    "dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9": {
+      "refKind": "commit",
+      "mutableRemoteExec": {
+        "tier": "exec",
+        "url": "https://sh.rustup.rs",
+        "file": "action.yml",
+        "downloadGuard": "rustup"
+      }
+    }
+  },
+  "note": "The High path through the SHA-pinned `dtolnay/rust-toolchain@e97e2d8` in `validate.yml` was judged overstated: `dtolnay/rust-toolchain` is pinned to a full commit SHA (immutable), and its `curl https://sh.rustup.rs | sh` sits under `if ! command -v rustup`, a guard every hosted image these jobs use satisfies, so the only run-time download is the Rust toolchain from its own distribution: Low at most; the assessment also found the reach understated (a false negative of the graph: `validate.yml` is called by `publish.yml`, whose `contents: write` job uploads the `registry-dry-run` artifact built by `package` through `gh release upload`), which no entry of this repository exercises once the toolchain entry is gone.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "dtolnay/rust-toolchain@e97e2d8cc328",
+        "tier": "low"
+      }
+    ]
+  }
+}

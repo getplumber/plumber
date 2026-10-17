@@ -1,0 +1,69 @@
+name: Update Compiled-in Metadata
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'  # Weekly on Monday at 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      clickhouse_version:
+        description: 'ClickHouse version (e.g. stable, lts, 25.3.1.1). Leave empty for stable.'
+        required: false
+
+jobs:
+  codegen:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install clickhousectl
+        run: curl -fsSL https://clickhouse.com/cli | sh
+
+      - name: Install ClickHouse
+        run: |
+          version="${{ inputs.clickhouse_version || 'stable' }}"
+          ~/.local/bin/clickhousectl local use "$version"
+
+      - name: Run codegen via clickhouse-local
+        run: |
+          ch_bin=$(~/.local/bin/clickhousectl local which | awk '{print $2}' | tr -d '()')
+          echo "Using: $ch_bin"
+          CLICKHOUSE_BIN="$ch_bin" cargo run --bin codegen --features codegen
+
+      - name: Check for changes
+        id: diff
+        run: |
+          ch_version=$(cat generated/version.txt)
+          echo "ch_version=$ch_version" >> "$GITHUB_OUTPUT"
+          if git diff --exit-code generated/; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No changes to generated metadata."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Generated metadata has changed."
+          fi
+
+      - name: Create pull request
+        if: steps.diff.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          commit-message: "Update compiled-in metadata from ClickHouse ${{ steps.diff.outputs.ch_version }}"
+          title: "Update compiled-in metadata from ClickHouse ${{ steps.diff.outputs.ch_version }}"
+          body: |
+            Auto-generated update of compiled-in metadata from ClickHouse `${{ steps.diff.outputs.ch_version }}`.
+
+            Updated files in `generated/`:
+            - functions.json
+            - settings.json
+            - merge_tree_settings.json
+            - data_types.json
+            - table_engines.json
+            - formats.json
+            - codecs.json
+            - keywords.json
+            - version.txt
+          branch: codegen/update-${{ steps.diff.outputs.ch_version }}
+          labels: codegen, automated

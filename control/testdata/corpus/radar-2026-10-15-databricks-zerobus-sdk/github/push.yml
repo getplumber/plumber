@@ -1,0 +1,211 @@
+name: CI
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+  merge_group:
+    types: [checks_requested]
+
+jobs:
+  gate:
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    needs: [changes, rust, java, typescript, python, go, purego, purec, cpp, dotnet]
+    if: always()
+    steps:
+      - run: |
+          for result in \
+            "${{ needs.rust.result }}" \
+            "${{ needs.java.result }}" \
+            "${{ needs.typescript.result }}" \
+            "${{ needs.python.result }}" \
+            "${{ needs.go.result }}" \
+            "${{ needs.purego.result }}" \
+            "${{ needs.purec.result }}" \
+            "${{ needs.cpp.result }}" \
+            "${{ needs.dotnet.result }}"; do
+            if [[ "$result" != "success" && "$result" != "skipped" ]]; then
+              echo "Job failed or was cancelled: $result"
+              exit 1
+            fi
+          done
+
+  changes:
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      java: ${{ steps.filter.outputs.java }}
+      typescript: ${{ steps.filter.outputs.typescript }}
+      python: ${{ steps.filter.outputs.python }}
+      go: ${{ steps.filter.outputs.go }}
+      purego: ${{ steps.filter.outputs.purego }}
+      purec: ${{ steps.filter.outputs.purec }}
+      cpp: ${{ steps.filter.outputs.cpp }}
+      dotnet: ${{ steps.filter.outputs.dotnet }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
+        id: filter
+        with:
+          filters: |
+            rust:
+              - 'rust/**'
+              - '.github/workflows/ci-rust.yml'
+            java:
+              - 'java/**'
+              - 'rust/sdk/zerobus_service.proto'
+              - '.github/workflows/ci-java.yml'
+            typescript:
+              - 'typescript/**'
+              - '.github/workflows/ci-typescript.yml'
+            python:
+              - 'python/**'
+              - '.github/workflows/ci-python.yml'
+            go:
+              - 'go/**'
+              - 'rust/sdk/zerobus_service.proto'
+              - '.github/workflows/ci-go.yml'
+            purego:
+              - 'purego/**'
+              - 'rust/sdk/zerobus_service.proto'
+              - '.github/workflows/ci-purego.yml'
+            purec:
+              - 'purec/**'
+              - 'rust/sdk/zerobus_service.proto'
+              - '.github/workflows/ci-purec.yml'
+            cpp:
+              - 'cpp/**'
+              - '.github/workflows/ci-cpp.yml'
+            dotnet:
+              - 'dotnet/**'
+              - '.github/workflows/ci-dotnet.yml'
+
+  # Blocking jobs — required for merge
+  rust:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/ci-rust.yml
+
+  java:
+    needs: changes
+    if: needs.changes.outputs.java == 'true'
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/ci-java.yml
+
+  typescript:
+    needs: changes
+    if: needs.changes.outputs.typescript == 'true'
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/ci-typescript.yml
+
+  python:
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/ci-python.yml
+
+  go:
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/ci-go.yml
+
+  purego:
+    needs: changes
+    if: needs.changes.outputs.purego == 'true'
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/ci-purego.yml
+
+  purec:
+    needs: changes
+    if: needs.changes.outputs.purec == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci-purec.yml
+
+  cpp:
+    needs: changes
+    if: needs.changes.outputs.cpp == 'true'
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/ci-cpp.yml
+
+  dotnet:
+    needs: changes
+    if: needs.changes.outputs.dotnet == 'true'
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/ci-dotnet.yml
+
+  # Non-blocking cross-SDK jobs — run wrapper tests against the local Rust
+  # source when rust/** changes. Skip wrappers already selected by their own
+  # path filter to avoid running the same workflow twice.
+  cross-sdk-go:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.go != 'true'
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/ci-go.yml
+    with:
+      run_published_artifact_tests: false
+
+  cross-sdk-cpp:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.cpp != 'true'
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/ci-cpp.yml
+
+  cross-sdk-dotnet:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.dotnet != 'true'
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/ci-dotnet.yml
+    with:
+      run_published_artifact_tests: false
+
+  cross-sdk-python:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.python != 'true'
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/ci-python.yml
+
+  cross-sdk-typescript:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.typescript != 'true'
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/ci-typescript.yml
+
+  cross-sdk-java:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.java != 'true'
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/ci-java.yml

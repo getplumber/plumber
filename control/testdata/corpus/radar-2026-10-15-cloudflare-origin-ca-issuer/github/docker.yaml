@@ -1,0 +1,45 @@
+name: Docker
+on:
+  - pull_request
+  - push
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: docker/metadata-action@v6
+        id: docker-meta
+        with:
+          images: cloudflare/origin-ca-issuer
+      - uses: docker/setup-buildx-action@v4
+      - uses: sigstore/cosign-installer@v4.1.1
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+      - uses: docker/login-action@v4
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_TOKEN }}
+      - uses: docker/build-push-action@v7
+        id: docker-push
+        with:
+          file: ./cmd/controller/Dockerfile
+          platforms: "linux/amd64,linux/arm64"
+          sbom: true
+          tags: ${{ steps.docker-meta.outputs.tags }}
+          labels: ${{ steps.docker-meta.outputs.labels }}
+          push: ${{ startsWith(github.ref, 'refs/tags/v') }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILDKIT_CONTEXT_KEEP_GIT_DIR=1
+      - name: Sign Images
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        env:
+          TAGS: ${{ steps.docker-meta.outputs.tags }}
+          DIGEST: ${{ steps.docker-push.outputs.digest }}
+        run: echo "${TAGS}" | xargs -I {} cosign sign --yes --recursive {}@${DIGEST}

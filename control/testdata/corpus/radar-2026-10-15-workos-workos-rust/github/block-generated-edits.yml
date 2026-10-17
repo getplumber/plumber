@@ -1,0 +1,13 @@
+name: Block Generated File Edits
+
+on:
+  pull_request_target:
+    # No "reopened": a maintainer reopening to override the bot should not be
+    # immediately re-closed. A follow-up push (synchronize) re-checks.
+    types: [opened, synchronize]
+
+jobs:
+  block-generated-edits:
+    uses: workos/actions/.github/workflows/block-generated-edits.yml@main
+    secrets:
+      SDK_BOT_PRIVATE_KEY: ${{ secrets.SDK_BOT_PRIVATE_KEY }}

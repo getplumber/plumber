@@ -1,0 +1,103 @@
+name: Build and Push MCP Server Docker Image
+
+# This workflow is triggered when a GitHub release is created.
+# It can also be run manually to re-publish to Docker Hub in case it failed for some reason.
+# You can run this workflow by navigating to https://www.github.com/stainless-api/stainless-api-typescript/actions/workflows/docker-mcp.yml
+on:
+  release:
+    types: [published]
+
+  workflow_dispatch:
+
+env:
+  REGISTRY: docker.io
+  IMAGE_NAME: stainlessapi/stainless-mcp
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      # For OIDC token if using Docker Hub provenance
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: |
+            image=moby/buildkit:latest
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Determine Docker tags
+        id: tags
+        run: |
+          # Get tags from our script
+          TAGS=$(bash ./bin/docker-tags)
+
+          # Convert to format expected by docker/metadata-action
+          DOCKER_TAGS=""
+          while IFS= read -r tag; do
+            if [ -n "$DOCKER_TAGS" ]; then
+              DOCKER_TAGS="${DOCKER_TAGS}\n"
+            fi
+            DOCKER_TAGS="${DOCKER_TAGS}type=raw,value=${tag}"
+          done <<< "$TAGS"
+
+          # Output for docker/metadata-action
+          echo "tags<<EOF" >> $GITHUB_OUTPUT
+          echo -e "$DOCKER_TAGS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          # Save for build summary
+          echo "DOCKER_TAG_LIST<<EOF" >> $GITHUB_ENV
+          echo "$TAGS" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            ${{ steps.tags.outputs.tags }}
+          labels: |
+            org.opencontainers.image.title=Stainless MCP Server
+            org.opencontainers.image.description=Model Context Protocol server for Stainless API
+            org.opencontainers.image.vendor=stainless
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./packages/mcp-server/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
+
+      - name: Generate build summary
+        run: |
+          echo "## Docker Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Tags:**" >> $GITHUB_STEP_SUMMARY
+          echo "$DOCKER_TAG_LIST" | sed 's/^/- `/' | sed 's/$/`/' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Platforms:** linux/amd64" >> $GITHUB_STEP_SUMMARY

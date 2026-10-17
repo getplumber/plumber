@@ -1,0 +1,27 @@
+name: Linting
+
+on:
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Jake
+        uses: AstraBert/setup-jake@v0.1.0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Run formatter
+        shell: bash
+        run: jake format-check
+
+      - name: Run linter
+        shell: bash
+        run: jake lint-check

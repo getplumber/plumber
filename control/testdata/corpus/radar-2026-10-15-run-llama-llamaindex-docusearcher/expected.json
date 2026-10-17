@@ -1,0 +1,32 @@
+{
+  "source": "https://github.com/run-llama/llamaindex-docusearcher",
+  "commit": "168198f37fb88718a767788e3ddb110354db76d8",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": false
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/build.yml": "active",
+    ".github/workflows/lint.yml": "active",
+    ".github/workflows/release.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High unprotected `main` path was judged overstated: the jobs carry no secret and the default token gives a writer nothing beyond their own push, Low.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "unprotected_push",
+        "subjectContains": "main",
+        "tier": "low"
+      }
+    ]
+  }
+}

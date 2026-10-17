@@ -1,0 +1,38 @@
+name: Dependency Analysis
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "airbyte_cdk/**"
+      - "poetry.lock"
+      - "pyproject.toml"
+  pull_request:
+    paths:
+      - "airbyte_cdk/**"
+      - "poetry.lock"
+      - "pyproject.toml"
+
+jobs:
+  dependency-analysis:
+    name: Dependency Analysis with Deptry
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Set up Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: "2.0.1"
+      - name: Install dependencies
+        run: poetry install --all-extras
+
+      # Job-specific step(s):
+      - name: Run Deptry
+        run: |
+          poetry run deptry .

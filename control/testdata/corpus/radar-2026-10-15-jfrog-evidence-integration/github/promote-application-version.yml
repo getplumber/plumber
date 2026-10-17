@@ -1,0 +1,247 @@
+name: Promote Application
+
+on:
+  workflow_dispatch:
+
+jobs:
+  promote-application:
+    name: Promote Latest Application Version
+    runs-on: ubuntu-latest
+    env:
+      JF_URL: ${{ vars.JF_URL }}
+      JF_USER: ${{ vars.JF_USER }}
+      JF_ACCESS_TOKEN: ${{ secrets.JF_ACCESS_TOKEN }}
+      APP_ID: quotopia-app
+      TARGET_STAGE: 'QA'
+      JFROG_CLI_KEY_ALIAS: ${{ vars.JFROG_CLI_KEY_ALIAS }}
+      JFROG_CLI_SIGNING_KEY: ${{ secrets.JFROG_CLI_SIGNING_KEY }}
+      DOCKER_REGISTRY: ${{ vars.JF_HOST }}/quotopia-qa-docker
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v4
+        with:
+          version: 2.78.9
+        env:
+          JF_URL: ${{ vars.JF_URL }}
+          JF_USER: ${{ vars.JF_USER }}
+          JF_ACCESS_TOKEN: ${{ secrets.JF_ACCESS_TOKEN }}
+          
+      - name: Get latest application version
+        id: get_app_ver
+        run: |
+          # Use the API to get the latest version.
+          # We use limit=1 and order_by=created to get the most recent version.
+          API_URL="$JF_URL/apptrust/api/v1/applications/$APP_ID/versions?order_by=created&limit=1"
+          
+          echo "Fetching latest application version from: $API_URL"
+          
+          RESPONSE=$(curl -s -X GET \
+            -H "Authorization: Bearer $JF_ACCESS_TOKEN" \
+            "$API_URL")
+          
+          # Use jq to parse the JSON and extract the version.
+          # The API returns an array 'versions', so we get the first element.
+          LATEST_VER=$(echo "$RESPONSE" | jq -r '.versions[0].version')
+          
+          if [ "$LATEST_VER" == "null" ] || [ -z "$LATEST_VER" ]; then
+            echo "Error: Could not retrieve a valid application version."
+            exit 1
+          fi
+          
+          echo "Found latest application version: $LATEST_VER"
+          echo "app_ver=$LATEST_VER" >> $GITHUB_OUTPUT
+
+      - name: Promote application to ${{ env.TARGET_STAGE }}
+        id: promote_step
+        run: |
+          APP_VER=${{ steps.get_app_ver.outputs.app_ver }}
+          REQUEST_BODY="{\"target_stage\":\"$TARGET_STAGE\"}"
+          
+          PROMOTION_URL="$JF_URL/apptrust/api/v1/applications/$APP_ID/versions/$APP_VER/promote"
+          echo "Promoting application '$APP_ID' version $APP_VER to stage $TARGET_STAGE..."
+          
+          STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            -H "Authorization: Bearer $JF_ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$REQUEST_BODY" \
+            "$PROMOTION_URL")
+          
+          echo "Promotion request returned status code: $STATUS_CODE"
+          
+          # The API returns 200, 201, or 202 on success, depending on the promotion process.
+          if [[ "$STATUS_CODE" -ge 200 && "$STATUS_CODE" -le 202 ]]; then
+            echo "Successfully promoted $APP_ID version $APP_VER to $TARGET_STAGE."
+          else
+            echo "Failed to promote application. HTTP status code: $STATUS_CODE"
+            # Run again to see output
+            curl -s -X POST -H "Authorization: Bearer $JF_ACCESS_TOKEN" -H "Content-Type: application/json" -d "$REQUEST_BODY" "$PROMOTION_URL"
+            exit 1
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: e2e-tests/package-lock.json
+
+      - name: Login to Docker Registry
+        run: |
+          echo "🔐 Logging into JFrog Artifactory Docker registry..."
+          echo "Registry: ${{ env.DOCKER_REGISTRY }}"
+          echo ${{ secrets.JF_ACCESS_TOKEN }} | docker login -u ${{ vars.JF_USER }} --password-stdin ${{ env.DOCKER_REGISTRY }}
+          echo "✅ Successfully logged into Docker registry"
+
+      - name: Get latest Docker images from Artifactory for QA environment
+        id: get-images
+        run: |
+          set +e
+          APP_VER=${{ steps.get_app_ver.outputs.app_ver }}
+          URL="$JF_URL/apptrust/api/v1/applications/$APP_ID/versions/$APP_VER/content?include=sources"
+          echo "Requesting application sources: $URL"                                               
+          STATUS_CODE=$(curl -s -o result.json -w "%{http_code}" -X GET -H "Authorization: Bearer $JF_ACCESS_TOKEN" "$URL")
+                                                                                
+          if [ "$STATUS_CODE" != "200" ]; then                                  
+            echo "Reuquest failed with code $STATUS_CODE"                       
+            # Running again without silent to see errors                        
+            curl -X GET -H "Authorization: Bearer $JF_ACCESS_TOKEN" "$URL"      
+            exit 1                                                              
+          fi                             
+
+          QUOTE_NUM=""
+          UI_NUM=""
+
+          while read -r build_info; do
+            name=$(echo "$build_info" | jq -r '.name')
+            number=$(echo "$build_info" | jq -r '.number')
+            echo "Found build with name: $name and number: $number"
+            [ "$name" == "quoteofday" ] && QUOTE_NUM="$number"
+            [ "$name" == "quotopia-ui" ] && UI_NUM="$number"
+          done < <(cat result.json | jq -c '.sources[] | {name: .build.name, number: .build.number}')
+        
+          if [ "" == "$QUOTE_NUM" -o "" == "$UI_NUM" ]; then
+            echo "quoteofday or quotopoia-ui version (or both) could not be found."
+            echo "QUOTE_NUM=$QUOTE_NUM UI_NUM=$UI_NUM"
+            exit 1
+          fi
+
+          # Set output variables
+          echo "quote_version=$QUOTE_NUM" >> $GITHUB_OUTPUT
+          echo "ui_version=$UI_NUM" >> $GITHUB_OUTPUT
+          
+          echo "📋 Image Summary:"
+          echo "- Quoteofday: ${{ env.DOCKER_REGISTRY }}/quoteofday:$QUOTE_NUM"
+          echo "- Quotopia UI: ${{ env.DOCKER_REGISTRY }}/quotopia-ui:$UI_NUM"
+
+      - name: Pull Docker images
+        run: |
+          echo "📥 Pulling Docker images..."
+          
+          # Pull quoteofday image
+          echo "📦 Pulling quoteofday image..."
+          docker pull ${{ env.DOCKER_REGISTRY }}/quoteofday:${{ steps.get-images.outputs.quote_version }}
+          
+          # Pull quotopia-ui image
+          echo "📦 Pulling quotopia-ui image..."
+          docker pull ${{ env.DOCKER_REGISTRY }}/quotopia-ui:${{ steps.get-images.outputs.ui_version }}
+          
+          echo "✅ All images pulled successfully"
+
+      - name: Start Docker services
+        run: |
+          echo "🚀 Starting Docker services..."
+          
+          # Start quoteofday service
+          echo "🔧 Starting quoteofday service..."
+          docker run -d --name quoteofday-service \
+            -p 8001:8001 \
+            ${{ env.DOCKER_REGISTRY }}/quoteofday:${{ steps.get-images.outputs.quote_version }}
+          
+          # Start quotopia-ui service
+          echo "🔧 Starting quotopia-ui service..."
+          docker run -d --name quotopia-ui-service \
+            -p 8081:80 \
+            --add-host host.docker.internal:host-gateway \
+            ${{ env.DOCKER_REGISTRY }}/quotopia-ui:${{ steps.get-images.outputs.ui_version }}
+          
+          # Wait for services to be ready
+          echo "⏳ Waiting for services to be ready..."
+          sleep 10
+          
+          # Check if services are running
+          if ! docker ps | grep -q quoteofday-service; then
+            echo "❌ Quoteofday service failed to start"
+            docker logs quoteofday-service
+            exit 1
+          fi
+          
+          if ! docker ps | grep -q quotopia-ui-service; then
+            echo "❌ Quotopia UI service failed to start"
+            docker logs quotopia-ui-service
+            exit 1
+          fi
+          
+          echo "✅ All services started successfully"
+
+      - name: Install E2E test dependencies
+        run: |
+          echo "📦 Installing E2E test dependencies..."
+          cd e2e-tests
+          npm ci
+          echo "✅ Dependencies installed"
+
+      - name: Run E2E tests with report generation
+        run: |
+          echo "🧪 Running E2E tests with report generation..."
+          cd e2e-tests
+          
+          # Run tests and generate reports
+          npm run test:report
+          
+          echo "✅ Tests completed and reports generated"
+
+      - name: Verify test results
+        run: |
+          echo "🔍 Verifying test results..."
+          cd e2e-tests
+          
+          # Check if reports were generated
+          if [ ! -f "test-report.md" ]; then
+            echo "❌ Markdown report not found"
+            exit 1
+          fi
+          
+          if [ ! -f "test-report.json" ]; then
+            echo "❌ JSON report not found"
+            exit 1
+          fi
+          
+          # Check test results from JSON
+          TOTAL_TESTS=$(jq -r '.summary.totalTests' test-report.json)
+          PASSING_TESTS=$(jq -r '.summary.passing' test-report.json)
+          FAILING_TESTS=$(jq -r '.summary.failing' test-report.json)
+          
+          echo "📊 Test Results:"
+          echo "- Total Tests: $TOTAL_TESTS"
+          echo "- Passing: $PASSING_TESTS"
+          echo "- Failing: $FAILING_TESTS"
+          
+          if [ "$FAILING_TESTS" -gt 0 ]; then
+            echo "❌ Some tests failed"
+            exit 1
+          fi
+          
+          echo "✅ All tests passed successfully"
+
+      - name: Create evidence from test results
+        run: |
+          echo "📋 Creating evidence from test results..."
+          cd e2e-tests
+          jf evd create --release-bundle quotopia-app --release-bundle-version ${{ steps.get_app_ver.outputs.app_ver }} --project quotopia \
+            --predicate-type https://cypress.io/evidence/e2e/v1 --predicate test-report.json --markdown test-report.md --provider-id cypress 
+                   
+          echo "✅ Evidence created successfully"

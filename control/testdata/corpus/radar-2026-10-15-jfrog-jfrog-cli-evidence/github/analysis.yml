@@ -1,0 +1,60 @@
+name: "Static Analysis"
+on:
+  push:
+    branches:
+      - '**'
+    tags-ignore:
+      - '**'
+  pull_request:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  Go-Lint:
+    name: Lint ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu, windows, macos ]
+    runs-on: ${{ matrix.os }}-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Run Go vet
+        run: go vet -v ./...
+
+  Static-Check:
+    name: Static Check ubuntu-latest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v5
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Run golangci linter
+        uses: jfrog/.github/actions/golangci-lint@main
+
+      - name: Check AI help coverage
+        uses: jfrog/.github/actions/ai-help-coverage@main
+
+  Go-Sec:
+    name: Go-Sec ubuntu-latest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v5
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+        
+      - name: Run Go-Sec scanner
+        uses: jfrog/.github/actions/gosec-scanner@main
+

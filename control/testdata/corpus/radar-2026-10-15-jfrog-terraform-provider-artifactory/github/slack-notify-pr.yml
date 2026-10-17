@@ -1,0 +1,22 @@
+on:
+  pull_request_target:
+    branches:
+      - master
+    types: [opened, reopened, closed]
+name: Slack Pull Request Notification
+jobs:
+  slackNotification:
+    name: Slack Notification PR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Slack Notification PR
+        uses: rtCamp/action-slack-notify@v2.2.1
+        env:
+          SLACK_CHANNEL: partnereng-pullrequest
+          SLACK_COLOR: '#00A86B'
+          SLACK_ICON: https://avatars.slack-edge.com/2019-08-07/719006044432_9596603196105b2eb47b_36.png
+          SLACK_TITLE: "[${{ github.event.pull_request.state}}] ${{ github.event.pull_request.title }} on ${{ github.repository }} :rocket:"
+          SLACK_MESSAGE: 'Merging from ${{ github.head_ref }} to ${{ github.base_ref }} by ${{ github.actor }}. Link: ${{ github.event.pull_request._links.html.href }}'
+          SLACK_USERNAME: PartnerEngineers
+          SLACK_WEBHOOK: ${{ secrets.SLACK_PR_WEBHOOK }}

@@ -1,0 +1,88 @@
+name: Examples
+
+# The shared build inputs are the same as in tests.yml and tests-tcp.yml. Directory.Packages.props also sets
+# the versions of the packages that only the examples use (Polly, the OpenTelemetry console exporter, and
+# some Microsoft.Extensions packages), so a version change runs this workflow.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "examples/**"
+      - "ClickHouse.Driver/**"
+      - "ClickHouse.Driver.Common/**"
+      - "ClickHouse.Driver.Tcp/**"
+      - "Directory.Packages.props"
+      - "Directory.Build.*"
+      - "global.json"
+      - "[Nn]u[Gg]et.[Cc]onfig"
+      - ".editorconfig"
+      - "sgKey.snk"
+      - ".github/workflows/examples.yml"
+      - "!**/*.md"
+  pull_request:
+    branches: [main]
+    paths:
+      - "examples/**"
+      - "ClickHouse.Driver/**"
+      - "ClickHouse.Driver.Common/**"
+      - "ClickHouse.Driver.Tcp/**"
+      - "Directory.Packages.props"
+      - "Directory.Build.*"
+      - "global.json"
+      - "[Nn]u[Gg]et.[Cc]onfig"
+      - ".editorconfig"
+      - "sgKey.snk"
+      - ".github/workflows/examples.yml"
+      - "!**/*.md"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag, or commit SHA to run on"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-run-examples:
+    name: Build & Run Examples
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:latest
+        ports:
+          - 8123:8123
+          # The native protocol listens separately; the Tcp examples need it.
+          - 9000:9000
+        env:
+          CLICKHOUSE_DB: test
+          CLICKHOUSE_SKIP_USER_SETUP: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - uses: actions/cache@v6
+        name: Cache NuGet
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-examples-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Setup .NET Core
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: |
+            10.x
+
+      - name: Build examples
+        run: dotnet build examples/ClickHouse.Driver.Examples.csproj --configuration Release
+
+      - name: Run examples
+        run: dotnet run --project examples/ClickHouse.Driver.Examples.csproj --configuration Release --no-build

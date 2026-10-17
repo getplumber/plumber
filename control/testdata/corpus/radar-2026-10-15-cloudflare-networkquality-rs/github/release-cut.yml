@@ -1,0 +1,86 @@
+name: cut release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Which part of the version to bump"
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  cut:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Compute next version
+        id: ver
+        run: |
+          set -euo pipefail
+          current=$(awk -F'"' '/^version = /{print $2; exit}' Cargo.toml)
+          IFS=. read -r major minor patch <<<"$current"
+          case "${{ inputs.bump }}" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            patch) patch=$((patch + 1)) ;;
+          esac
+          next="${major}.${minor}.${patch}"
+          if git rev-parse -q --verify "refs/tags/v${next}" >/dev/null; then
+            echo "::error::tag v${next} already exists — released already?"
+            exit 1
+          fi
+          echo "current=${current}" >> "$GITHUB_OUTPUT"
+          echo "next=${next}" >> "$GITHUB_OUTPUT"
+
+      - name: Bump manifest and lockfile
+        run: |
+          set -euo pipefail
+          next="${{ steps.ver.outputs.next }}"
+          sed -i -E "0,/^version = \".*\"/s//version = \"${next}\"/" Cargo.toml
+          awk -v v="${next}" '
+            /^name = "cf-mach"$/ { incf = 1 }
+            incf && /^version = / && !done { sub(/"[^"]*"/, "\"" v "\""); done = 1; incf = 0 }
+            { print }
+          ' Cargo.lock > Cargo.lock.new
+          mv Cargo.lock.new Cargo.lock
+          grep -q "^version = \"${next}\"" Cargo.toml
+          grep -A1 '^name = "cf-mach"$' Cargo.lock | grep -q "^version = \"${next}\""
+
+      - name: Push release branch and open PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          current="${{ steps.ver.outputs.current }}"
+          next="${{ steps.ver.outputs.next }}"
+          branch="release/v${next}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -C "${branch}"
+          git commit -am "release: v${next}"
+          git push --force-with-lease origin "${branch}"
+          body=$(cat <<EOF
+          Version bump \`${current}\` → \`${next}\` (${{ inputs.bump }}).
+
+          Approving and merging this PR is the release approval: the merge tags
+          \`v${next}\`, builds \`mach\` for five targets, and publishes the GitHub release.
+          EOF
+          )
+          if pr=$(gh pr list --head "${branch}" --base main --state open --json number --jq '.[0].number // empty') && [ -n "${pr}" ]; then
+            echo "PR #${pr} already open for ${branch}"
+          else
+            gh pr create --base main --head "${branch}" --title "release: v${next}" --body "${body}"
+          fi

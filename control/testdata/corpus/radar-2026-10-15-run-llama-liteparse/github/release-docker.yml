@@ -1,0 +1,147 @@
+name: Release - Docker
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g. 2.1.0)'
+        required: true
+        type: string
+      dry-run:
+        description: 'Dry run (build but do not push)'
+        type: boolean
+        default: false
+
+# Default floor; jobs that publish widen this themselves.
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME_BASE: run-llama/liteparse-base
+  IMAGE_NAME: run-llama/liteparse
+
+jobs:
+  build-and-publish-base:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@59acb6260d9c0ba8f4a2f9d9b48431a222b68e20 #v3.5.0
+        with:
+          cosign-release: "v2.2.4"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f95db51fddba0c2d1ec667646a06c2ce06100226
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Log into registry
+        if: ${{ !inputs.dry-run }}
+        uses: docker/login-action@343f7c4344506bcbf9b4de18042ae17996df046d
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push base image
+        id: build-and-push
+        uses: docker/build-push-action@0565240e2d4ab88bba5387d719585280857ece09
+        with:
+          platforms: linux/amd64,linux/arm64
+          context: .
+          push: ${{ !inputs.dry-run }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BASE }}:v${{ inputs.version }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BASE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Sign the image
+        if: ${{ !inputs.dry-run }}
+        env:
+          DIGEST: ${{ steps.build-and-push.outputs.digest }}
+        run: |
+          cosign sign --yes "${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BASE }}@${DIGEST}"
+
+  build-and-publish-full:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@59acb6260d9c0ba8f4a2f9d9b48431a222b68e20 #v3.5.0
+        with:
+          cosign-release: "v2.2.4"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f95db51fddba0c2d1ec667646a06c2ce06100226
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Log into registry
+        if: ${{ !inputs.dry-run }}
+        uses: docker/login-action@343f7c4344506bcbf9b4de18042ae17996df046d
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push full image
+        id: build-and-push
+        uses: docker/build-push-action@0565240e2d4ab88bba5387d719585280857ece09
+        with:
+          platforms: linux/amd64,linux/arm64
+          context: .
+          file: full.Dockerfile
+          push: ${{ !inputs.dry-run }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:v${{ inputs.version }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Sign the image
+        if: ${{ !inputs.dry-run }}
+        env:
+          DIGEST: ${{ steps.build-and-push.outputs.digest }}
+        run: |
+          cosign sign --yes "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${DIGEST}"
+
+  create-release:
+    needs: [build-and-publish-base, build-and-publish-full]
+    if: ${{ !inputs.dry-run }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create git tag
+        run: |
+          git tag "docker-v${{ inputs.version }}"
+          git push origin "docker-v${{ inputs.version }}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: docker-v${{ inputs.version }}
+          name: "Docker v${{ inputs.version }}"
+          body: |
+            Docker images published to GHCR:
+            - `${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BASE }}:v${{ inputs.version }}`
+            - `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:v${{ inputs.version }}`

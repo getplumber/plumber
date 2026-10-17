@@ -1,0 +1,32 @@
+{
+  "source": "https://github.com/langchain-ai/data-enrichment-js",
+  "commit": "20bb183ff29bdb254cc066ab90bfe23d2a082059",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": false
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/integration-tests.yml": "active",
+    ".github/workflows/unit-tests.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High `codespell-project/actions-codespell@v2` path was judged overstated: a compromised action runs code on the runner and can poison the yarn cache the scheduled integration job restores, Medium.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "codespell-project/actions-codespell@v2",
+        "tier": "medium",
+        "pending": "the spec carries the consumer's secrets across a cache edge into the job that restores the cache, while the assessment argued that a cache hop (which needs a main push run, a cache miss on the lockfile key and a tolerant install) gives \"poison the cache\", Medium, not the consumer's secrets."
+      }
+    ]
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "source": "https://github.com/cloudflare/foundations",
+  "commit": "b02b422971e8a5d0a7a863b04e9cab280f3b1d79",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/bonk.yml": "active",
+    ".github/workflows/ci.yml": "active",
+    ".github/workflows/publish.yml": "active",
+    ".github/workflows/semgrep.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "actionMetadata": {
+    "ask-bonk/ask-bonk/github@main": {
+      "refKind": "branch",
+      "redirectedOwner": "Cloudflare-Studio"
+    }
+  },
+  "note": "The High `ask-bonk/ask-bonk/github@main` path was judged overstated (a sibling organisation's action, insider, Medium at most), and the five High toolchain, cache and installer paths of `ci.yml` were judged overstated: a mutable third-party action in a CI job with no secret and no write token (or only an assumed one) gives code execution on a runner, Medium at most.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "ask-bonk/ask-bonk/github@main",
+        "tier": "medium",
+        "pending": "the redirect of `ask-bonk/ask-bonk` to the sibling organisation `Cloudflare-Studio` is carried only on the unpinned-action finding, so the path keeps the outside-dependency actor and the High ceiling instead of the insider one at Medium."
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "dtolnay/rust-toolchain@master",
+        "tier": "medium"
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "dtolnay/rust-toolchain@stable",
+        "tier": "medium"
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "Swatinem/rust-cache@v2",
+        "tier": "medium"
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "taiki-e/install-action@cargo-nextest",
+        "tier": "medium"
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "taiki-e/install-action@cargo-hack",
+        "tier": "medium"
+      }
+    ]
+  }
+}

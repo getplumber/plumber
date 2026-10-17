@@ -1,0 +1,85 @@
+# Validate Speakeasy Generation (Dry Run) + Zero-Diff Check
+#
+# This workflow validates that Speakeasy generation can complete successfully
+# and that the committed generated code matches what the generation pipeline produces.
+#
+# Jobs:
+# 1. validate: Calls generate-command.yml with dry_run=true. The generation
+#    workflow handles its own path filtering — it skips the Generate SDK job
+#    when only non-generation files changed (e.g., dev dependency bumps).
+# 2. zero-diff: Checks for drift using the validate job's outputs (in-place git status).
+#    If drift is detected, the check fails and posts a comment telling the author to run /generate.
+#
+# This workflow calls the main generation workflow with dry_run=true to ensure
+# both workflows use the same generation logic.
+
+name: Test (Full)
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  validate:
+    name: Validate Generation (Dry Run)
+    uses: ./.github/workflows/generate-command.yml
+    with:
+      dry_run: true
+    secrets: inherit
+
+  zero-diff:
+    name: Zero-Diff Check (Generated Code)
+    needs: [validate]
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Check for generation drift
+        id: drift-check
+        run: |
+          if [ "${{ needs.validate.outputs.has_changes }}" = "true" ]; then
+              echo "has_diff=true" >> $GITHUB_OUTPUT
+              echo "::warning::Generated code drift detected. The committed code does not match what the generation pipeline produces."
+          else
+              echo "has_diff=false" >> $GITHUB_OUTPUT
+              echo "Zero-diff check passed. Committed code matches generation output."
+          fi
+
+      - name: Find existing drift comment
+        if: steps.drift-check.outputs.has_diff == 'true'
+        uses: peter-evans/find-comment@v4
+        id: find-drift-comment
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          body-includes: '<!-- zero-diff-check -->'
+
+      - name: Post drift comment on PR
+        if: steps.drift-check.outputs.has_diff == 'true'
+        uses: peter-evans/create-or-update-comment@v5
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-id: ${{ steps.find-drift-comment.outputs.comment-id || '' }}
+          edit-mode: replace
+          body: |
+            <!-- zero-diff-check -->
+            **Generated Code Drift Detected**
+
+            The committed code does not match what the generation pipeline produces.
+
+            **To fix:** Comment `/generate` on this PR to regenerate.
+
+            ```
+            ${{ needs.validate.outputs.drift_summary }}
+            ```
+
+      - name: Fail if drift detected
+        if: steps.drift-check.outputs.has_diff == 'true'
+        run: |
+          echo "::error::Generated code drift detected. Run /generate on this PR to fix."
+          exit 1

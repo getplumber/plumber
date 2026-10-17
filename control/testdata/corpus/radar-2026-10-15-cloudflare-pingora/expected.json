@@ -1,0 +1,50 @@
+{
+  "source": "https://github.com/cloudflare/pingora",
+  "commit": "4487f7b2ab50f159e4a2cf4f6a6b813f61bb6e19",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "copilot",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/audit.yml": "active",
+    ".github/workflows/build.yml": "active",
+    ".github/workflows/docs.yml": "active",
+    ".github/workflows/mark-stale.yaml": "active",
+    ".github/workflows/semgrep.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High `dtolnay/rust-toolchain` paths and the scheduled `rustsec/audit-check@master` path (checks and issues write) were judged overstated: a mutable third-party action in a CI job with no secret and no write token (or only an assumed one) gives code execution on a runner, Medium at most.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "dtolnay/rust-toolchain@master",
+        "tier": "medium"
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "dtolnay/rust-toolchain@stable",
+        "tier": "medium"
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "rustsec/audit-check@master",
+        "tier": "medium",
+        "pending": "the spec counts any write scope of the token as a write token, while the assessment argued that a token scoped to issues, pull requests or checks only, in a job with no secret, is a Medium at most."
+      }
+    ]
+  }
+}

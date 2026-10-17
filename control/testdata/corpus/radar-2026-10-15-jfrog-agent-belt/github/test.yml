@@ -1,0 +1,179 @@
+name: Build & Test
+
+# PR-side CI. Runs on every pull request with NO secrets - any job that needs
+# credentials lives in ``release.yml`` (tag-triggered, OIDC-only).
+#
+# ``setup-uv`` uses ``version: "latest"`` here intentionally: ``--locked`` is
+# already pinning the dependency graph (the reproducibility unit that matters
+# for testing), and PR-side CI is the right place to surface incompatibility
+# with new uv minor versions early. The release path (``release.yml``) pins uv
+# to a concrete minor for build reproducibility - that's where bit-for-bit
+# stability matters, not here.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Cache pre-commit
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      - name: Install dependencies (locked)
+        run: uv sync --locked
+
+      - name: Lint
+        run: uv run make lint
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install dependencies (locked)
+        run: uv sync --locked --python ${{ matrix.python-version }}
+
+      - name: Test
+        env:
+          PYTHONFAULTHANDLER: "1"
+        run: uv run --python ${{ matrix.python-version }} pytest tests/ -v
+
+  build:
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # ``hatch-vcs`` reads the version from git metadata; without the full
+          # history a checkout in a shallow clone resolves to a placeholder
+          # version that fails the ``__version__`` smoke check below.
+          fetch-depth: 0
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Build wheel and verify it installs + runs from a clean venv (uv + pip)
+        run: make verify-wheel
+
+      - name: Upload built distributions
+        # Persisted for human audit and PR-side debugging only. The
+        # tag-triggered ``release.yml`` workflow rebuilds from the tagged
+        # commit in a clean runner rather than consuming this artifact -
+        # rebuilding on tag is more auditable than reusing bytes from an
+        # unrelated PR push, and the existing ``git_describe --match v*``
+        # + tag/wheel sanity check + Sigstore SLSA attestation cover
+        # provenance. Pattern matches ruff, uv, transformers, pytest.
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ github.sha }}
+          path: dist/
+          retention-days: 7
+          if-no-files-found: error
+
+  plugins:
+    # Install every package under plugins/ alongside core and run their
+    # pytest suites + entry-point discovery probe. Kept as a separate job
+    # so plugin failures cannot block core PRs and so plugin install
+    # latency stays out of the core feedback loop. The two body steps
+    # short-circuit cleanly when ``plugins/`` ships no ``pyproject.toml``
+    # (see the inline ``nullglob`` guards) so the same workflow file
+    # works on repos with or without a bundled plugin tree.
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Install core (uv-managed venv)
+        run: uv sync --locked
+
+      - name: Install + test every plugin
+        run: uv run make check-plugins
+
+      - name: Verify entry-point discovery for every installed plugin exporter
+        run: |
+          # ``shopt -s nullglob`` makes ``plugins/*/`` expand to an empty
+          # array when no plugin directory exists, instead of bash's
+          # default fallback to the literal ``plugins/*/`` token (which
+          # then makes ``grep -q '*'`` exit 2 on the invalid BRE). Same
+          # guard keeps the loop empty-safe on repos that ship without
+          # any bundled plugins.
+          #
+          # NOTE: do NOT add ``shell: bash`` to this step. The default
+          # GitHub Actions shell is ``bash -e {0}`` (no ``pipefail``);
+          # explicit ``shell: bash`` switches it to ``bash -eo pipefail
+          # {0}``, which then propagates ``belt doctor``'s non-zero exit
+          # (e.g. when no agent CLI is installed on the runner) through
+          # the ``| tee`` pipe and kills the step before the grep loop
+          # runs. The grep loop is the actual entry-point gate; whether
+          # ``belt doctor`` itself exits 0 is not part of this step's
+          # contract.
+          shopt -s nullglob
+          plugins=(plugins/*/)
+          if [ ${#plugins[@]} -eq 0 ]; then
+            echo "No plugins under plugins/ - nothing to verify."
+            exit 0
+          fi
+          uv run belt doctor 2>&1 | tee /tmp/doctor.out
+          for plugin in "${plugins[@]}"; do
+            name=$(basename "$plugin")
+            grep -q "$name" /tmp/doctor.out || { echo "FAIL: $name not discovered by belt doctor"; exit 1; }
+          done

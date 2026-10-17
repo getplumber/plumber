@@ -1,0 +1,43 @@
+{
+  "source": "https://github.com/ClickHouse/pg_stat_ch",
+  "commit": "1ed654109325f4c62827c2d9923909f77e920060",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "copilot",
+      "known": true
+    },
+    {
+      "name": "staging - docs",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/ci-tap.yml": "active",
+    ".github/workflows/ci.yml": "active",
+    ".github/workflows/deb.yml": "active",
+    ".github/workflows/pgxn.yml": "active",
+    ".github/workflows/release.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High `hendrikmuhs/ccache-action@v1.2` path was judged overstated: runner-only reach, and `release.yml` restores no ccache, Medium at most.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "hendrikmuhs/ccache-action@v1.2",
+        "tier": "medium"
+      }
+    ]
+  }
+}

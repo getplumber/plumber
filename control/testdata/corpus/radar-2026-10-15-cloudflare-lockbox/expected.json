@@ -1,0 +1,38 @@
+{
+  "source": "https://github.com/cloudflare/lockbox",
+  "commit": "a44c8b4cba21302a2eb24a95303396b3973d1a31",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "trunk",
+  "branches": [
+    {
+      "name": "trunk",
+      "protected": false
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/docker.yaml": "active",
+    ".github/workflows/semgrep.yml": "active",
+    ".github/workflows/tests.yaml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High unprotected `trunk` path was judged overstated: `docker.yaml` runs on every push but its Docker Hub login, signing and push steps carry `if: startsWith(github.ref, 'refs/tags/v')`, so a push to the branch reaches no secret, Low (the tag push is a separate insider entry); the High `geomys/sandboxed-step@v1.2.2` path was judged overstated: a mutable third-party action in a CI job with no secret and no write token (or only an assumed one) gives code execution on a runner, Medium at most. Read against the spec: on a push to `trunk` the Docker Hub login, the signing and `push:` are all tag-gated, the other two workflows hold no secret, and what is left, `id-token: write`, is not one of the escalations an unprotected-branch path is kept for (section 8.2: a secret, a publish or deploy, a release, an environment), so the trunk entry starts no path; once the tag-gated secrets stop counting, an `id-token`-only path would still wait on the token-scope defect of the unprotected branch.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "unprotected_push",
+        "subjectContains": "trunk",
+        "tier": "none",
+        "pending": "secrets referenced only in steps under `if: startsWith(github.ref, 'refs/tags/v')` are still counted for a push to the branch, where those steps never run."
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "geomys/sandboxed-step@v1.2.2",
+        "tier": "medium"
+      }
+    ]
+  }
+}

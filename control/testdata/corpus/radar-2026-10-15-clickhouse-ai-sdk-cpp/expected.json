@@ -1,0 +1,32 @@
+{
+  "source": "https://github.com/ClickHouse/ai-sdk-cpp",
+  "commit": "9d8cd18200a33b64460c9101ed0dd6d4988bea61",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/ci.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "defaultTokenWrite": "false",
+  "defaultTokenSource": "log",
+  "note": "The High `lukka/get-cmake@latest` path was judged overstated: the two secrets are real, the push and publish are not (read-only default, run log), High at most.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "lukka/get-cmake@latest",
+        "tier": "high"
+      }
+    ]
+  }
+}

@@ -1,0 +1,54 @@
+name: Windows Tests
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: false
+        type: string
+
+jobs:
+  windows:
+    name: Windows Tests
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: Vampire/setup-wsl@887f39deb6c0976365e546926fe66f41b77d65ff # v6
+        with:
+          distribution: Ubuntu-24.04
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Setup ClickHouse in WSL
+        shell: wsl-bash -u root {0}
+        run: |
+          curl https://clickhouse.com/ | sh
+          ./clickhouse install --noninteractive
+          clickhouse start
+
+      - uses: actions/cache@v6
+        name: Cache NuGet
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Setup .NET Core
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: |
+            10.x
+
+      # No coverage here: nothing in this job consumes it (codecov is fed by the Linux "Code
+      # Coverage" job), and coverlet's msbuild driver intermittently fails the job after tests pass.
+      - name: Test
+        run: dotnet test ClickHouse.Driver.Tests/ClickHouse.Driver.Tests.csproj
+              --framework net10.0 --configuration Release --verbosity normal --logger GitHubActions
+              /clp:ErrorsOnly
+        env:
+          CLICKHOUSE_CONNECTION: Host=localhost;Port=8123;Username=default
+          CLICKHOUSE_TEST_ENVIRONMENT: local_quick_setup

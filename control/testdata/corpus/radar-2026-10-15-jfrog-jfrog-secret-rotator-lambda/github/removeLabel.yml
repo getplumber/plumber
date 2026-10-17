@@ -1,0 +1,33 @@
+# Strip the ``safe to test`` label as soon as it is applied. Pairs with any
+# integration / live-credential workflow that gates on
+# ``contains(...labels...'safe to test')`` - the next push will then need a
+# fresh maintainer approval, so the label is single-use per review action.
+# Reference impl: jfrog/jfrog-cli ``.github/workflows/removeLabel.yml``.
+name: Remove Label
+
+on:
+  pull_request_target:
+    types: [labeled]
+
+# Cancel superseded runs (e.g., maintainer toggling the label twice quickly)
+# so we never end up with two concurrent strip attempts.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  pull-requests: write
+
+jobs:
+  Remove-Label:
+    if: contains(github.event.pull_request.labels.*.name, 'safe to test')
+    name: Remove 'safe to test'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove 'safe to test'
+        # Pinned to the commit SHA of v1.3.0 (mutable tags are a known supply-chain
+        # risk on ``pull_request_target``, which runs in the base-repo context with
+        # write permissions). Update by re-resolving the desired tag to its commit.
+        uses: actions-ecosystem/action-remove-labels@2ce5d41b4b6aa8503e285553f75ed56e0a40bae0  # v1.3.0
+        with:
+          labels: "safe to test"

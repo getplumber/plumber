@@ -1,0 +1,81 @@
+name: Publish OpenAPI specification
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to update (e.g. llama-agents-server@v0.1.1)"
+        required: true
+        type: string
+  repository_dispatch:
+    types: [publish-openapi]
+
+jobs:
+  publish-openapi:
+    if: github.repository == 'run-llama/llama-agents'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Resolve target tag
+        id: target
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${{ github.event.client_payload.tag }}"
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "TARGET_TAG=${TAG}" >> "$GITHUB_ENV"
+
+      - name: Compute release metadata
+        id: metadata
+        run: >
+          uv run dev compute-tag-metadata
+          --tag "${{ env.TARGET_TAG }}"
+          --output "$GITHUB_OUTPUT"
+
+      - name: Sync dependencies and build OpenAPI spec
+        working-directory: packages/llama-agents-server
+        run: |
+          uv sync
+          uv run hatch run openapi
+
+      - name: Upload OpenAPI to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TARGET_TAG }}
+          files: packages/llama-agents-server/openapi.json
+          fail_on_unmatched_files: true
+          append_body: false
+
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.CI_BOT_APP_ID }}
+          private-key: ${{ secrets.CI_BOT_PRIVATE_KEY }}
+          owner: run-llama
+
+      - name: Trigger SDK update
+        if: >
+          steps.metadata.outputs.change_type != '' &&
+          steps.metadata.outputs.change_type != 'none'
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          repository: run-llama/llama-ui
+          event-type: workflows-sdk-update
+          client-payload: >-
+            {"version": "${{ steps.metadata.outputs.semver }}",
+             "openapi_url": "https://github.com/run-llama/llama-agents/releases/download/${{ env.TARGET_TAG }}/openapi.json",
+             "change_type": "${{ steps.metadata.outputs.change_type }}",
+             "change_description": "${{ steps.metadata.outputs.change_description }}"}

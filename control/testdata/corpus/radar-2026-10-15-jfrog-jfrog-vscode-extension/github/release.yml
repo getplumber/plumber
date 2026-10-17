@@ -1,0 +1,51 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+          persist-credentials: false
+      - name: Config Github
+        run: |
+            git config --global user.name "jfrog-ecosystem"
+            git config --global user.email "eco-system@jfrog.com"
+      - name: Setup NodeJS
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          check-latest: true
+
+      # Install and update version
+      - name: Clean install
+        run: npm ci --ignore-scripts
+      - name: Lint
+        run: npm run lint
+        
+      - name: Update version
+        run: echo ${{ github.event.release.tag_name }} | xargs npm version
+
+      # Publish to marketplaces
+      - name: Publish to VS marketplace
+        run: npx vsce publish -p ${{ secrets.VS_MARKETPLACE_TOKEN }}
+      - name: Publish to the Open VSX Registry
+        run: npx ovsx publish -p ${{ secrets.OPEN_VSX_REGISTRY_TOKEN }}
+
+      # Push to GitHub
+      - name: Push changes
+        uses: ad-m/github-push-action@master
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Upload the .VSIX file to the release
+      - name: Build
+        run: npx vsce package
+      - name: Upload asset
+        run: cd releaseScripts && npm ci --ignore-scripts && node uploadAsset.js
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

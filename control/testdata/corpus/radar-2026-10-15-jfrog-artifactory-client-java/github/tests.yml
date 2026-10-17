@@ -1,0 +1,80 @@
+name: Tests
+on:
+  push:
+    branches:
+      - '**'
+    tags-ignore:
+      - '**'
+  # Triggers the workflow on labeled PRs only.
+  pull_request_target:
+    types: [ labeled ]
+# Ensures that only the latest commit is running for each PR at a time.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  Tests:
+    if: contains(github.event.pull_request.labels.*.name, 'safe to test') || github.event_name == 'push'
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu, windows, macOS ]
+        include:
+          - os: windows
+            gradlewSuffix: .bat
+    runs-on: ${{ matrix.os }}-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.22.x
+          cache: false
+
+      - name: Install local Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+
+      - name: Install Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: "8"
+          distribution: "zulu"
+
+      - name: Wait for Artifactory
+        run: |
+          for i in {1..30}; do
+            if curl -sf http://localhost:8081/artifactory/api/system/ping; then
+              echo "Artifactory is up!"
+              exit 0
+            fi
+            echo "Waiting for Artifactory..."
+            sleep 10
+          done
+          echo "Artifactory did not start in time"
+          exit 1
+
+      - name: Cleanup test repositories
+        run: |
+          echo "Cleaning up any leftover test repositories..."
+          REPOS=$(curl -s -u admin:password "http://localhost:8081/artifactory/api/repositories" | grep -o 'rt-client-java-[a-z0-9-]*' || true)
+          if [ -n "$REPOS" ]; then
+            echo "Found repositories to delete:"
+            echo "$REPOS"
+            for repo in $REPOS; do
+              echo "Deleting repository: $repo"
+              curl -s -u admin:password -X DELETE "http://localhost:8081/artifactory/api/repositories/$repo" || true
+            done
+          else
+            echo "No test repositories found to clean up"
+          fi
+          echo "Cleanup complete"
+
+      - name: Run tests
+        run: ./gradlew${{ matrix.gradlewSuffix }} clean test

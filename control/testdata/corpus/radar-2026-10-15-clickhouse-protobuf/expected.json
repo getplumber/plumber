@@ -1,0 +1,35 @@
+{
+  "source": "https://github.com/ClickHouse/protobuf",
+  "commit": "f9b34787f51a3c69a08e3f025ceed09daa8f8154",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "master",
+  "branches": [
+    {
+      "name": "master",
+      "protected": false
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/codespell.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High unprotected `master` path was judged overstated: the codespell job holds no secret, Low; the High `codespell-project/actions-codespell@master` path reaches the runner only, Medium at most (no run log exists, the token stays unknown).",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "unprotected_push",
+        "subjectContains": "master",
+        "tier": "low"
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "codespell-project/actions-codespell@master",
+        "tier": "medium"
+      }
+    ]
+  }
+}

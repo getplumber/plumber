@@ -1,0 +1,47 @@
+{
+  "source": "https://github.com/ClickHouse/clickhouse-operator",
+  "commit": "133a55846bc37ffab576b46bce616c67b5264aed",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "copilot",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/ci.yaml": "active",
+    ".github/workflows/codeql.yaml": "active",
+    ".github/workflows/dependabot-regenerate.yaml": "active",
+    ".github/workflows/docs-lint.yaml": "active",
+    ".github/workflows/openshift-compat.yaml": "active",
+    ".github/workflows/openshift-compatibility-pr.yaml": "active",
+    ".github/workflows/openshift-runner-rebuild.yaml": "active",
+    ".github/workflows/release-main.yml": "active",
+    ".github/workflows/release.yaml": "active",
+    ".github/workflows/test-chart.yml": "active",
+    ".github/workflows/test_operatorhub_release.yml": "active",
+    ".github/workflows/tmp_release_debug.yaml": "active",
+    ".github/workflows/update-clickhouse-versions.yaml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High setup-go cache path into `release.yaml` was judged overstated: its default-branch writers are pushes and `release-main.yml` by writers, fork pull_request runs write only their own scope, Medium at most. Corrected after reading the workflows: the assessment named only insiders as writers, but a push or dispatch run whose job is entered through an unauthorized mutable action (a High dependency path of the same repository) also writes the default-branch cache the release restores, so the cache path holds at the High ceiling of that writer, not at Medium. No job here declares cache-mode, so GitHub keeps the cache of every low-trust run read-only and grants no job cache write: ISSUE-705 is silent and no cache path exists, so the cache ceiling admits none.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "poisoned_cache",
+        "subjectContains": "",
+        "tier": "none"
+      }
+    ]
+  }
+}

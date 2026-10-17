@@ -1,0 +1,30 @@
+{
+  "source": "https://github.com/zeroclaw-labs/zeroclaw-docs-translations",
+  "commit": "d1315132b68ceca3eda3a475009565f0be0a2898",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": false
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/validate-po.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High unprotected `main` path was judged overstated: `validate-po.yml` runs with `contents: read`, no secret, no cache and no upload, so a writer pushing to main gains nothing a fork pull request does not get, Low.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "unprotected_push",
+        "subjectContains": "main",
+        "tier": "low"
+      }
+    ]
+  }
+}

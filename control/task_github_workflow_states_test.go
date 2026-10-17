@@ -90,3 +90,32 @@ func TestActionsDisabledFalseOnAnEmptyKnownListEvenWithParsedWorkflows(t *testin
 		t.Fatal("an empty known workflows listing must not read as Actions disabled")
 	}
 }
+
+// TestActionsDisabledNeverSilencesAWorkflowAbsentFromTheListing runs the
+// lane end to end: every workflow the listing names is disabled, so the
+// derived flag is set, but a workflow present in the checkout and absent
+// from the listing (one added on a feature branch, which the default
+// branch's listing never names) still runs. Only the listed workflow's
+// jobs are inert.
+func TestActionsDisabledNeverSilencesAWorkflowAbsentFromTheListing(t *testing.T) {
+	orig := fetchGitHubWorkflowStates
+	t.Cleanup(func() { fetchGitHubWorkflowStates = orig })
+	fetchGitHubWorkflowStates = func(host, owner, repo string) (map[string]string, bool, error) {
+		return map[string]string{".github/workflows/nightly.yml": "disabled_manually"}, true, nil
+	}
+	p := &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, ProjectPath: "acme/widget", Jobs: []ir.Job{
+		{Name: "nightly/build", OriginFile: ".github/workflows/nightly.yml", Triggers: []string{"schedule"}, WorkflowHasTriggers: true},
+		{Name: "evil/pwn", OriginFile: ".github/workflows/evil.yml", Triggers: []string{"pull_request_target"}, WorkflowHasTriggers: true},
+	}}
+	enrichGitHubWorkflowStates(logrus.NewEntry(logrus.New()), p, "", "acme", "widget")
+	if !p.ActionsDisabled {
+		t.Fatal("every listed workflow is disabled: the derived flag must be set")
+	}
+	ir.MarkInert(p)
+	if p.Jobs[0].Inert != "actions disabled" {
+		t.Errorf("listed job Inert = %q, want actions disabled", p.Jobs[0].Inert)
+	}
+	if p.Jobs[1].Inert != "" {
+		t.Errorf("unlisted job Inert = %q, want empty: a workflow absent from the listing still runs", p.Jobs[1].Inert)
+	}
+}

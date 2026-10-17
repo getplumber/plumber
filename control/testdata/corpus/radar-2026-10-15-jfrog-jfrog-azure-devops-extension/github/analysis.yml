@@ -1,0 +1,27 @@
+name: Static Analysis
+on:
+  push:
+    branches:
+      - '**'
+    tags-ignore:
+      - '**'
+  pull_request:
+jobs:
+  Lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Install
+        run: npm install --no-fund
+
+      # Assert the extension is created successfully
+      - name: Create vsix file
+        run: npm run create
+
+      - name: Lint
+        run: npm run lint

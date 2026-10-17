@@ -1,0 +1,72 @@
+name: Docker Build Check
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  sdm-docker-build-check:
+    name: SDM Docker Image Build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Build the Python package to create the wheel files needed for the Docker build
+      - name: Build Python Package
+        uses: hynek/build-and-inspect-python-package@v2
+        env:
+          POETRY_DYNAMIC_VERSIONING_BYPASS: "0.0.0dev0"
+
+      # Copy the wheel files to the dist directory
+      - name: Copy wheel files to dist directory
+        run: |
+          mkdir -p dist
+          cp /tmp/baipp/dist/*.whl dist/
+
+      - name: Set up QEMU for multi-platform builds
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image for multiple platforms
+        id: docker-build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: false
+          tags: airbyte/source-declarative-manifest:pr-${{ github.event.pull_request.number }}
+          outputs: type=image,name=target,annotation-index.org.opencontainers.image.description=SDM Docker image for PR ${{ github.event.pull_request.number }}
+
+  manifest-server-docker-build-check:
+    name: Manifest Server Docker Image Build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up QEMU for multi-platform builds
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Manifest Server Docker image for multiple platforms
+        id: manifest-server-build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: airbyte_cdk/manifest_server/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: false
+          tags: airbyte/manifest-server:pr-${{ github.event.pull_request.number }}
+          outputs: type=image,name=target,annotation-index.org.opencontainers.image.description=Manifest Server Docker image for PR ${{ github.event.pull_request.number }}

@@ -1,0 +1,146 @@
+name: CI
+
+on:
+  workflow_dispatch:
+    inputs:
+      windows_only:
+        type: boolean
+        default: false
+      stress_iterations:
+        type: number
+        default: 10
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  HOME: ${{ github.workspace }}/../plugins-base-ci-home
+  USERPROFILE: ${{ github.workspace }}/../plugins-base-ci-home
+  TMPDIR: ${{ github.workspace }}/../plugins-base-ci-home/tmp
+  TEMP: ${{ github.workspace }}/../plugins-base-ci-home/tmp
+  TMP: ${{ github.workspace }}/../plugins-base-ci-home/tmp
+  LANGCHAIN_API_KEY: ""
+  LANGSMITH_API_KEY: ""
+  OPENAI_API_KEY: ""
+  ANTHROPIC_API_KEY: ""
+
+jobs:
+  check:
+    if: ${{ !inputs.windows_only }}
+    name: Lint, Typecheck and Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Out the Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Create an Isolated Home
+        uses: ./.github/actions/isolated-home
+      - name: Install pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - name: Install Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 26.8.2
+          cache: pnpm
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Check the Formatting
+        run: pnpm lint:format
+      - name: Lint
+        run: pnpm lint:oxlint
+      - name: Typecheck
+        run: pnpm lint:types
+      - name: Check the Compiled Output Is Current
+        run: pnpm lint:dist
+      - name: Test
+        run: pnpm test
+
+  test-on-macos:
+    if: ${{ !inputs.windows_only }}
+    name: Test on macOS
+    runs-on: macos-26
+    steps:
+      - name: Check Out the Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Create an Isolated Home
+        uses: ./.github/actions/isolated-home
+      - name: Install pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - name: Install Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 26.8.2
+          cache: pnpm
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Test
+        run: pnpm test
+
+  test-runtime-on-windows:
+    name: Test Runtime on Windows
+    runs-on: windows-latest
+    steps:
+      - name: Check Out the Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Create an Isolated Home
+        uses: ./.github/actions/isolated-home
+      - name: Install pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+      - name: Install Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 26.8.2
+          cache: pnpm
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Test Shared Runtime
+        run: pnpm exec vitest run src/settings src/git src/storage src/metadata src/privacy src/tracing
+      - name: Stress Windows Lock Contention
+        shell: pwsh
+        env:
+          STRESS_ITERATIONS: ${{ inputs.stress_iterations || 10 }}
+        run: |
+          for ($iteration = 0; $iteration -lt [int]$env:STRESS_ITERATIONS; $iteration++) {
+            pnpm exec vitest run src/storage/file-lock.test.ts --reporter=dot
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+  test-sdk-wire-matrix:
+    if: ${{ !inputs.windows_only }}
+    name: Wire Tests (${{ matrix.os }}, LangSmith ${{ matrix.langsmith-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-26, windows-latest]
+        langsmith-version: [latest]
+    steps:
+      - name: Check Out the Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Create an Isolated Home
+        uses: ./.github/actions/isolated-home
+      - name: Install pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+      - name: Install Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 26.8.2
+          cache: pnpm
+      - name: Install Primary Dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install SDK Under Test
+        shell: bash
+        env:
+          LANGSMITH_VERSION: ${{ matrix.langsmith-version }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/sdk-under-test"
+          npm install --prefix "$RUNNER_TEMP/sdk-under-test" --ignore-scripts --no-save --package-lock=false "langsmith@$LANGSMITH_VERSION"
+          node .github/scripts/link-sdk-under-test.mjs
+      - name: Test SDK Wire Behavior
+        run: pnpm exec vitest run src/privacy/run-tree.test.ts src/tracing/upload/upload.test.ts src/tracing/upload/replicas.test.ts --reporter=dot

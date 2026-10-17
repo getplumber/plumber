@@ -1,0 +1,300 @@
+name: Create release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: 'Release type'
+        required: true
+        type: choice
+        options:
+          - test
+          - rc
+          - stable
+          - latest
+        default: 'test'
+      confirm_release_type:
+        description: 'Type the release type to confirm (e.g., "test")'
+        required: true
+        type: string
+      confirm_branch:
+        description: 'For stable/latest: type the branch name to confirm (e.g., "main")'
+        required: false
+        type: string
+
+jobs:
+  create-release-pr:
+    name: Create Release PR
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Validate branch for latest release
+        if: inputs.release_type == 'latest' && github.ref_name != 'main'
+        run: |
+          echo "Cannot release 'latest' from branch '${{ github.ref_name }}'!"
+          echo "The 'latest' release type can only be created from the 'main' branch."
+          echo "Maintenance branches should use 'stable' instead."
+          exit 1
+
+      - name: Checkout Repo
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate release confirmation
+        run: |
+          echo "Validating release confirmation..."
+
+          RELEASE_TYPE="${{ inputs.release_type }}"
+          CONFIRM_TYPE="${{ inputs.confirm_release_type }}"
+          CONFIRM_BRANCH="${{ inputs.confirm_branch }}"
+          CURRENT_BRANCH="${{ github.ref_name }}"
+
+          if [[ "$RELEASE_TYPE" != "$CONFIRM_TYPE" ]]; then
+            echo "❌ Release type confirmation mismatch!"
+            echo "   Selected: '$RELEASE_TYPE'"
+            echo "   Typed: '$CONFIRM_TYPE'"
+            echo ""
+            echo "   Please type the exact release type to confirm your selection."
+            exit 1
+          fi
+
+          echo "✅ Release type confirmed: $RELEASE_TYPE"
+
+          if [[ "$RELEASE_TYPE" == "stable" || "$RELEASE_TYPE" == "latest" ]]; then
+            if [[ -z "$CONFIRM_BRANCH" ]]; then
+              echo "❌ Branch confirmation required for production releases!"
+              echo "   Current branch: '$CURRENT_BRANCH'"
+              echo ""
+              echo "   Please type the branch name in 'confirm_branch' to proceed with a $RELEASE_TYPE release."
+              exit 1
+            fi
+
+            if [[ "$CURRENT_BRANCH" != "$CONFIRM_BRANCH" ]]; then
+              echo "❌ Branch confirmation mismatch!"
+              echo "   Current branch: '$CURRENT_BRANCH'"
+              echo "   Typed: '$CONFIRM_BRANCH'"
+              echo ""
+              echo "   Please type the exact branch name to confirm."
+              exit 1
+            fi
+
+            echo "✅ Branch confirmed: $CURRENT_BRANCH"
+          fi
+
+          echo "Release confirmation passed! Proceeding with $RELEASE_TYPE release on $CURRENT_BRANCH"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24.x'
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Generate GitHub workflow token
+        id: gh-workflow-token
+        # NOTE: Upgrade v3 due to gh node20 deprecation
+        # at time of writing there's only "v3.0.0-beta.2"
+        # see https://github.com/actions/create-github-app-token/releases
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.WORKFLOW_AUTH_PUBLIC_APP_ID }}
+          private-key: ${{ secrets.WORKFLOW_AUTH_PUBLIC_PRIVATE_KEY }}
+
+      - name: Install Dependencies
+        run: yarn install --immutable
+
+      - name: Check pre-release status
+        id: check-prerelease
+        run: |
+          CURRENT_TAG="N/A"
+          IS_PRERELEASE="false"
+
+          if [[ -f .changeset/pre.json ]]; then
+            CURRENT_TAG=$(node -p "require('./.changeset/pre.json').tag")
+            IS_PRERELEASE="true"
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+            echo "current_tag=$CURRENT_TAG" >> $GITHUB_OUTPUT
+          else
+            echo "prerelease=false" >> $GITHUB_OUTPUT
+            CURRENT_TAG="${{inputs.release_type}}"
+          fi
+
+          echo "Current tag is $CURRENT_TAG"
+          echo "Current prerelease status is $IS_PRERELEASE"
+          echo "Current release type is ${{ inputs.release_type }}"
+
+      - name: Prevent promotion without changes
+        if: steps.check-prerelease.outputs.prerelease == 'true' && steps.check-prerelease.outputs.current_tag != inputs.release_type
+        run: |
+          CHANGESET_COUNT=$(find .changeset -name "*.md" ! -name "README.md" | wc -l | tr -d ' ')
+          echo "Debug: changeset_count=$CHANGESET_COUNT"
+
+          if [[ "$CHANGESET_COUNT" -eq 0 ]]; then
+            echo "Cannot promote from '${{ steps.check-prerelease.outputs.current_tag }}' to '${{ inputs.release_type }}' without new changes!"
+            echo "Add a changeset first, e.g. yarn changeset:add, or stick with the current version as they'd be effectively the same."
+            exit 1
+          fi
+
+      - name: Switch release mode
+        if: steps.check-prerelease.outputs.prerelease == 'true' && (inputs.release_type == 'latest' || inputs.release_type == 'stable')
+        run: |
+          echo "Must exit pre-release mode..."
+
+          if ! yarn changeset pre exit; then
+            echo "Failed to exit pre-release mode for some reason..."
+            exit 1
+          else
+            echo "✅ Exited pre-release mode"
+          fi
+
+      - name: Switch prerelease mode
+        if: steps.check-prerelease.outputs.prerelease == 'true' && steps.check-prerelease.outputs.current_tag != inputs.release_type && inputs.release_type != 'latest' && inputs.release_type != 'stable'
+        run: |
+          echo "Switching from ${{ steps.check-prerelease.outputs.current_tag }} to ${{ inputs.release_type }} prerelease mode"
+          if ! yarn changeset pre exit; then
+            echo "Failed to exit current prerelease mode for some reason..."
+            exit 1
+          else
+            echo "✅ Exited ${{ steps.check-prerelease.outputs.current_tag }} prerelease mode"
+          fi
+
+      - name: Enter prerelease mode
+        if: inputs.release_type != 'latest' && inputs.release_type != 'stable' && (steps.check-prerelease.outputs.prerelease != 'true' || steps.check-prerelease.outputs.current_tag != inputs.release_type)
+        run: |
+          echo "Entering ${{ inputs.release_type }} prerelease mode"
+          yarn changeset pre enter ${{ inputs.release_type }}
+
+      - name: Validate latest release eligibility
+        if: (inputs.release_type == 'latest' || inputs.release_type == 'stable') && steps.check-prerelease.outputs.prerelease != 'true'
+        run: |
+          echo "Cannot release 'latest' without a pre-release version first..."
+          echo "You must release through 'test' or 'rc' before creating a stable release."
+          exit 1
+
+      - name: Confirm production release
+        if: inputs.release_type == 'latest'
+        run: |
+          echo "Creating a STABLE production release!"
+          echo "This will publish to npm with the 'latest' tag."
+          echo "Make sure you've reviewed all changes carefully, please!"
+
+      - name: Version package
+        id: version-package
+        run: |
+          echo "Versioning packages..."
+          if ! yarn changeset:version; then
+            echo "Failed to do changeset versioning for some reason..."
+            exit 1
+          else
+            echo "✅ Versioned package successfully!"
+          fi
+
+          # Failsafe: ensure changeset version actually made changes
+          if [[ -z "$(git status --porcelain)" ]]; then
+            echo "No changes were made by changeset version."
+            echo "This usually means there are no changesets to apply for the requested release type."
+            exit 1
+          fi
+
+          VERSION=$(node -p "require('./package.json').version")
+          PKG_NAME=$(node -p "require('./package.json').name")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "package_name=$PKG_NAME" >> $GITHUB_OUTPUT
+
+      - name: Check if version already published
+        run: |
+          PKG_NAME="${{ steps.version-package.outputs.package_name }}"
+          VERSION="${{ steps.version-package.outputs.version }}"
+
+          echo "Checking if $PKG_NAME@$VERSION already exists on NPM..."
+
+          if npm view "$PKG_NAME@$VERSION" version 2>/dev/null; then
+            echo "Version $VERSION of $PKG_NAME is already published on NPM!"
+            echo "This typically means the release was already published, or a previous workflow run completed it. It may also occur if you're trying to promote a pre-release without any actual changes, e.g., promoting 2.0.1-test.0 (test) → 2.0.1-test.0 (rc) without a version bump which would make 2.0.1-rc.1 (rc). If that's the case, make sure to include a new changeset before retrying."
+            exit 1
+          fi
+
+          echo "✅ Version $VERSION is not yet published, safe to proceed."
+
+      - name: Maintenance branch safeguard check
+        run: |
+          TARGET_VERSION="${{ steps.version-package.outputs.version }}"
+          CURRENT_BRANCH="${{ github.ref_name }}"
+
+          BASE_VERSION=$(echo "$TARGET_VERSION" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+')
+          MAINTENANCE_BRANCH="chore/v${BASE_VERSION}"
+
+          echo "Checking maintenance branch safeguard..."
+          echo "Current branch is $CURRENT_BRANCH"
+          echo "Target version is $TARGET_VERSION"
+          echo "Maintenance branch would be $MAINTENANCE_BRANCH"
+
+          if [[ "$CURRENT_BRANCH" == "main" ]]; then
+            if git ls-remote --exit-code --heads origin "$MAINTENANCE_BRANCH" >/dev/null 2>&1; then
+              echo "Maintenance branch '$MAINTENANCE_BRANCH' already exists for version $BASE_VERSION."
+              echo "Please checkout the branch $MAINTENANCE_BRANCH and create the release from there to ensure proper version line maintenance."
+              exit 1
+            fi
+          fi
+
+          echo "✅ Maintenance branch safeguard passed"
+
+      - name: Determine PR details
+        id: pr-details
+        run: |
+          # WARNING: This is coupled with a verify release commit
+          # if you need to modify, apply the changes accordingly
+          COMMIT_TITLE=$(.scripts/bash/generate-release-commit-message "${{ steps.version-package.outputs.version }}" "${{ inputs.release_type }}")
+
+          echo "title=$COMMIT_TITLE" >> $GITHUB_OUTPUT
+          echo "branch=changeset-release/v${{ steps.version-package.outputs.version }}-${{ inputs.release_type }}" >> $GITHUB_OUTPUT
+
+      - name: Create Pull Request
+        id: create-pr
+        uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ steps.gh-workflow-token.outputs.token }}
+          commit-message: ${{ steps.pr-details.outputs.title }}
+          base: ${{ github.ref_name }}
+          branch: ${{ steps.pr-details.outputs.branch }}
+          delete-branch: true
+          title: ${{ steps.pr-details.outputs.title }}
+          body: |
+            ## Why?
+
+            To trigger a release of ${{ steps.version-package.outputs.package_name }} version ${{ steps.version-package.outputs.version }} (${{ inputs.release_type }}).
+
+            ## Release checklist?
+
+            Take this opportunity to ensure that the following checklist is verified to avoid disappointment.
+
+            - [ ] Version bump is correct
+            - [ ] Changelog entries are accurate
+            - [ ] All changesets have been consumed
+            - [ ] Ready to publish
+
+            ## Preview?
+
+            Optionally, provide a demo or a preview url here
+
+            ---
+
+            **Tag:** `v${{ steps.version-package.outputs.version }}` will be included in this PR
+
+      - name: Notify Slack about release PR
+        if: ${{ steps.create-pr.outputs.pull-request-url }}
+        uses: slackapi/slack-github-action@v4.0.0
+        with:
+          method: chat.postMessage
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          # TODO: Maybe create a script version with templates
+          # as notifications at the moment are inline
+          # and hard to confirm output without CI/CD runtime
+          payload: |
+            channel: "${{ secrets.SLACK_CHANNEL_FOR_PR }}"
+            text: "===\n*New Release PR Created*\n\n*Package:* ${{ steps.version-package.outputs.package_name }}\n*Version:* ${{ steps.version-package.outputs.version }}\n*Type:* ${{ inputs.release_type }}\n*Branch:* ${{ github.ref_name }}\n\n<${{ steps.create-pr.outputs.pull-request-url }}|View Pull Request>\n==="

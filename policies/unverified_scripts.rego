@@ -443,8 +443,12 @@ _first_party_host(url, owner) if {
 # so much as one OTHER, non-self-referencing command (or one whose own
 # URL is a shell variable or scheme-less, which fails this the same
 # way: it is not provably a self-reference, so it must still be read
-# as a finding, and as not first-party).
+# as a finding, and as not first-party). A block that also runs a sink
+# no curl/wget fetch accounts for (a netcat fetch, an inline base64
+# payload decoded into a shell) is never suppressed either: otherwise
+# one self-reference line would hide any sink in the same block.
 _self_reference_immutable(line) if {
+	not _non_fetch_sink(line)
 	segments := _fetch_command_units(line)
 	count(segments) > 0
 	own := _fp_owner_repo
@@ -457,6 +461,13 @@ _self_reference_immutable(line) if {
 		}
 	}
 }
+
+# _non_fetch_sink: the block runs something the curl/wget fetch
+# segments do not account for, an inline base64 payload decoded into a
+# shell or a netcat command (the same spellings _network_fetch reads).
+_non_fetch_sink(line) if _inline_payload(_visible_line(line))
+
+_non_fetch_sink(line) if regex.match(`(?i)(?:^|[^\w.-])(nc|ncat|netcat)\b`, line)
 
 # _self_ref_commit_pattern has no owner or other untrusted value
 # interpolated: by the time it runs, the "/<own>/" (or

@@ -1,0 +1,55 @@
+{
+  "source": "https://github.com/cloudflare/pfp-tools",
+  "commit": "9299ddec69806435a12875f5e90810a0c30c0886",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/audit.yml": "active",
+    ".github/workflows/ci.yml": "active",
+    ".github/workflows/mark-stale.yaml": "active",
+    ".github/workflows/publish.yml": "active",
+    ".github/workflows/semgrep.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High `rustsec/audit-check@v2` path (a token scoped to checks and issues on a schedule) and the four High CI paths of `ci.yml` were judged overstated: a mutable third-party action in a CI job with no secret and no write token (or only an assumed one) gives code execution on a runner, Medium at most.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "rustsec/audit-check@v2",
+        "tier": "medium",
+        "pending": "the spec counts any write scope of the token as a write token, while the assessment argued that a token scoped to issues, pull requests or checks only, in a job with no secret, is a Medium at most."
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "dtolnay/rust-toolchain@master",
+        "tier": "medium"
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "fkirc/skip-duplicate-actions@v5",
+        "tier": "medium"
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "dtolnay/rust-toolchain@stable",
+        "tier": "medium"
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "Swatinem/rust-cache@v2",
+        "tier": "medium"
+      }
+    ]
+  }
+}

@@ -1,0 +1,170 @@
+name: Test Install
+
+on:
+  pull_request:
+    paths:
+      - "crates/clickhousectl/src/version_manager/**"
+      - "crates/clickhousectl/src/main.rs"
+      - "crates/clickhousectl/src/cli.rs"
+      - "crates/clickhousectl/src/local/cli.rs"
+      - "crates/clickhousectl/src/local/mod.rs"
+      - "crates/clickhousectl/src/local/output.rs"
+      - "crates/clickhousectl/src/local/server.rs"
+      - "crates/clickhousectl/src/local/discovery.rs"
+      - "crates/clickhousectl/src/local/symlink.rs"
+      - "crates/clickhousectl/src/init.rs"
+      - "crates/clickhousectl/src/paths.rs"
+      - "crates/clickhousectl/src/stdout.rs"
+      - "crates/clickhousectl/src/error.rs"
+      - "crates/clickhousectl/src/http.rs"
+      - "crates/clickhousectl/src/user_agent.rs"
+      - "crates/clickhousectl/tests/local_install_local_first_test.rs"
+      - "crates/clickhousectl/tests/local_version_error_test.rs"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/clickhousectl/Cargo.toml"
+      - "scripts/classify-install-integration.py"
+      - "scripts/tests/test_classify_install_integration.py"
+      - ".github/workflows/test-install.yml"
+      - ".github/workflows/test-cli.yml"
+
+permissions:
+  contents: read
+
+env:
+  DO_NOT_TRACK: "1"
+
+jobs:
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify install workflow path mapping
+        run: python3 scripts/tests/test_classify_install_integration.py
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable @ 2026-10-01
+      - run: cargo test
+
+  url-probing:
+    name: URL Probing (${{ matrix.platform }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - platform: amd64
+            desc: Linux x86_64
+          - platform: aarch64
+            desc: Linux ARM64
+          - platform: macos
+            desc: macOS x86_64
+          - platform: macos-aarch64
+            desc: macOS ARM64
+    steps:
+      - name: Verify builds.clickhouse.com URLs
+        run: |
+          echo "Testing builds.clickhouse.com for ${{ matrix.desc }}..."
+
+          # master should always be available
+          echo -n "  master: "
+          curl -sf -o /dev/null -w "%{http_code}" \
+            "https://builds.clickhouse.com/master/${{ matrix.platform }}/clickhouse"
+          echo ""
+
+          # A known recent version should be available
+          echo -n "  25.12: "
+          curl -sf -o /dev/null -w "%{http_code}" \
+            "https://builds.clickhouse.com/25.12/${{ matrix.platform }}/clickhouse"
+          echo ""
+
+          # A version too old should return 403
+          echo -n "  24.1 (expect 403): "
+          code=$(curl -s -o /dev/null -w "%{http_code}" \
+            "https://builds.clickhouse.com/24.1/${{ matrix.platform }}/clickhouse")
+          echo "$code"
+          if [ "$code" != "403" ]; then
+            echo "Expected 403 for old version, got $code"
+            exit 1
+          fi
+
+      - name: Verify packages.clickhouse.com URLs (Linux only)
+        if: matrix.platform == 'amd64' || matrix.platform == 'aarch64'
+        run: |
+          arch=${{ matrix.platform }}
+          # packages uses arm64 not aarch64
+          if [ "$arch" = "aarch64" ]; then arch="arm64"; fi
+
+          echo "Testing packages.clickhouse.com for ${{ matrix.desc }}..."
+
+          # Check a known stable version exists
+          echo -n "  stable tarball: "
+          curl -sf -o /dev/null -w "%{http_code}" -I \
+            "https://packages.clickhouse.com/tgz/stable/clickhouse-common-static-25.3.2.39-${arch}.tgz"
+          echo ""
+
+          # Check client-only tarball exists
+          echo -n "  client-only tarball: "
+          curl -sf -o /dev/null -w "%{http_code}" -I \
+            "https://packages.clickhouse.com/tgz/stable/clickhouse-client-25.3.2.39-${arch}.tgz"
+          echo ""
+
+  install-test:
+    name: Install Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04, macos-14, macos-15]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable @ 2026-10-01
+
+      - name: Build CLI
+        run: cargo build
+
+      - name: Test install latest
+        run: |
+          ./target/debug/clickhousectl local install latest
+          # Verify a version was installed
+          ./target/debug/clickhousectl local list | grep -E "[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+"
+
+      - name: Test install minor version
+        run: |
+          ./target/debug/clickhousectl local install 25.12
+          ./target/debug/clickhousectl local list | grep "25.12"
+
+      - name: Test local use
+        run: |
+          ./target/debug/clickhousectl local use 25.12
+          ./target/debug/clickhousectl local which | grep "25.12"
+
+      - name: Test already installed (skips download)
+        run: |
+          ./target/debug/clickhousectl local install 25.12 2>&1 | grep "already installed"
+
+      - name: Test force re-install
+        run: |
+          ./target/debug/clickhousectl local install 25.12 --force
+
+      - name: Test invalid version (expect error)
+        run: |
+          if ./target/debug/clickhousectl local install foo 2>&1; then
+            echo "Should have errored for invalid version"
+            exit 1
+          fi
+
+      - name: Test 3-part version rejected (expect error)
+        run: |
+          if ./target/debug/clickhousectl local install 25.12.9 2>&1; then
+            echo "Should have errored for 3-part version"
+            exit 1
+          fi
+
+      - name: Verify installed binary works
+        run: |
+          version_dir=$(ls -d ~/.clickhouse/versions/*/clickhouse | head -1)
+          $version_dir --version

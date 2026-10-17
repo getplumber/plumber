@@ -1,0 +1,46 @@
+{
+  "source": "https://github.com/cloudflare/workers-oauth-provider",
+  "commit": "602610ce1c11fdb412388713f66a4ca2a45c110d",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/release.yml": "active",
+    ".github/workflows/ci.yml": "active",
+    ".github/workflows/pkg-pr-new.yml": "active",
+    ".github/workflows/bonk.yml": "active",
+    ".github/workflows/semgrep.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "actionMetadata": {
+    "ask-bonk/ask-bonk/github@main": {
+      "refKind": "branch",
+      "redirectedOwner": "Cloudflare-Studio"
+    }
+  },
+  "note": "The High `ask-bonk/ask-bonk/github@main` path was judged overstated: the action's repository redirects to Cloudflare's sibling organisation `Cloudflare-Studio`, an insider entry, Medium at most; the High npm cache path into the release was judged overstated: the writers the path names are pull_request runs, whose cache lives under the pull request merge ref and is never restored by the release, so only a writer of the default branch reaches it, Medium at most. No job here declares cache-mode, so GitHub keeps the cache of every low-trust run read-only and grants no job cache write: ISSUE-705 is silent and no cache path exists, so the cache ceiling admits none.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "ask-bonk/ask-bonk/github@main",
+        "tier": "medium",
+        "pending": "the redirect of `ask-bonk/ask-bonk` to the sibling organisation `Cloudflare-Studio` is carried only on the unpinned-action finding, so the path keeps the outside-dependency actor and the High ceiling instead of the insider one at Medium."
+      },
+      {
+        "entryKind": "poisoned_cache",
+        "subjectContains": "",
+        "tier": "none"
+      }
+    ]
+  }
+}

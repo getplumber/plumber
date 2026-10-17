@@ -1,0 +1,43 @@
+{
+  "source": "https://github.com/ClickHouse/wal-rus",
+  "commit": "44fe46e892e349a37da1143dda524b9cae3e412d",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/ci.yml": "active",
+    ".github/workflows/pg-compat.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "defaultTokenWrite": "false",
+  "defaultTokenSource": "log",
+  "note": "The three High paths of `ci.yml` and `pg-compat.yml` were judged overstated: the job holds no secret and the repository default token is read-only (the `GITHUB_TOKEN Permissions` block of a recent run log), so a compromised action only runs code on the runner, Medium at most.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "dtolnay/rust-toolchain@stable",
+        "tier": "medium"
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "taiki-e/install-action@v2",
+        "tier": "medium"
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "Swatinem/rust-cache@v2",
+        "tier": "medium"
+      }
+    ]
+  }
+}

@@ -1,6 +1,10 @@
 package ir
 
-import "sort"
+import (
+	"slices"
+	"sort"
+	"strings"
+)
 
 // PrivilegedTriggers are the events whose run holds the base repository's
 // secrets and token while someone outside the team can start it: the
@@ -53,19 +57,24 @@ var classifiedTriggers = func() []string {
 
 // gateStrength orders the gate classes from the outsider's side: the
 // lower, the easier for an outsider to get in.
+// The two strong classes (same_repo, no_outsider) share one rank: either
+// admits no path.
 var gateStrength = map[GateClass]int{
 	GateOutsider:           0,
 	GateUnknown:            1,
 	GateMaintainerApproved: 2,
 	GateSameRepo:           3,
+	GateNoOutsider:         3,
 }
 
 // ClassifyGates fills Job.Gate on every GitHub job carrying a privileged
 // trigger: ClassifyGate per trigger it carries (classifiedTriggers, the
 // privileged ones and every one an outsider fires), with its types: filter
 // and the job's deployment environment looked up among p.Environments,
-// keeping the weakest result (weakerGate). A no-op on GitLab, whose
-// jobs carry no trigger.
+// keeping the weakest result (weakerGate). A job of a reusable workflow
+// (workflow_call) runs under its callers' events instead, so it also
+// takes the weakest gate among its calls (callGate). A no-op on GitLab,
+// whose jobs carry no trigger.
 func ClassifyGates(p *NormalizedPipeline) {
 	if p == nil || p.Provider != ProviderGitHub {
 		return
@@ -76,31 +85,74 @@ func ClassifyGates(p *NormalizedPipeline) {
 	}
 	for i := range p.Jobs {
 		job := p.Jobs[i]
-		env := jobEnvironment(p, job.Environment)
 		var gate *Gate
-		if !hasAnyTrigger(job, PrivilegedTriggers) {
-			// No privileged run to gate: the job keeps no gate.
-			continue
+		if hasAnyTrigger(job, PrivilegedTriggers) {
+			gate = triggersGate(p, byName, job, job.Triggers)
 		}
-		for _, trigger := range classifiedTriggers {
-			if !hasTrigger(job, trigger) {
-				continue
+		if hasTrigger(job, "workflow_call") {
+			for _, c := range job.Callers {
+				gate = weakerOf(gate, callGate(p, byName, job, c))
 			}
-			// A trigger the condition model does not know (fork, gollum)
-			// lets an outsider in: nothing about who fires it is read.
-			g := Gate{Class: GateOutsider}
-			if _, modeled := canonicalOutsiderTypes[trigger]; modeled {
-				g = ClassifyGate(job, byName, trigger, job.TriggerTypes[trigger], env, p.EnvironmentsKnown)
-			}
-			if gate == nil {
-				gate = &g
-				continue
-			}
-			w := weakerGate(*gate, g)
-			gate = &w
 		}
+		// A job with no privileged run to gate keeps no gate (nil).
 		p.Jobs[i].Gate = gate
 	}
+}
+
+// triggersGate is the weakest gate of job across the classified triggers
+// among triggers, with its types: filter and its deployment environment;
+// nil when none of them is classified.
+func triggersGate(p *NormalizedPipeline, byName map[string]Job, job Job, triggers []string) *Gate {
+	var gate *Gate
+	for _, trigger := range classifiedTriggers {
+		if !slices.Contains(triggers, trigger) {
+			continue
+		}
+		g := triggerGate(p, byName, job, trigger, job.TriggerTypes[trigger])
+		gate = weakerOf(gate, &g)
+	}
+	return gate
+}
+
+// triggerGate is ClassifyGate of job on trigger, an outsider's for a
+// trigger the condition model does not know (fork, gollum): nothing about
+// who fires it is read.
+func triggerGate(p *NormalizedPipeline, byName map[string]Job, job Job, trigger string, types []string) Gate {
+	if _, modeled := canonicalOutsiderTypes[trigger]; !modeled {
+		return Gate{Class: GateOutsider}
+	}
+	return ClassifyGate(job, byName, trigger, types, jobEnvironment(p, job.Environment), p.EnvironmentsKnown, p.DefaultBranch)
+}
+
+// callGate is who can make job, a job of a reusable workflow, run through
+// the call c: per privileged event of the call (c.Triggers, those of the
+// top of the chain), the calling job's own gate (its if:, its types:
+// filter, its environment) and the called job's own gate under that same
+// event, the stronger of the two since the run needs both; then the
+// weakest across the events. A calling job the scan does not have
+// (another repository's, or one not among the jobs) is unknown, never an
+// outsider's by default and never a strong gate. nil when the call
+// carries no privileged event: it gives the job no privileged run.
+func callGate(p *NormalizedPipeline, byName map[string]Job, job Job, c ReusableCaller) *Gate {
+	if !slices.ContainsFunc(c.Triggers, func(t string) bool { return slices.Contains(PrivilegedTriggers, t) }) {
+		return nil
+	}
+	caller, known := byName[c.Job]
+	var gate *Gate
+	for _, trigger := range classifiedTriggers {
+		if !slices.Contains(c.Triggers, trigger) {
+			continue
+		}
+		callerSide := Gate{Class: GateUnknown, Unknown: []string{"caller " + c.Job}}
+		if known {
+			callerSide = triggerGate(p, byName, caller, trigger, caller.TriggerTypes[trigger])
+		}
+		g := strongerGate(callerSide, triggerGate(p, byName, job, trigger, nil))
+		// What runs is the called job's checkout, never the caller's.
+		g.PinnedSha = checkoutPinnedSha(job)
+		gate = weakerOf(gate, &g)
+	}
+	return gate
 }
 
 // weakerGate is the gate of a and b an outsider gets through more easily
@@ -112,6 +164,28 @@ func weakerGate(a, b Gate) Gate {
 	return a
 }
 
+// strongerGate is the gate of a and b an outsider gets through less
+// easily (gateStrength), a on a tie: what holds when a run has to pass
+// both.
+func strongerGate(a, b Gate) Gate {
+	if gateStrength[b.Class] > gateStrength[a.Class] {
+		return b
+	}
+	return a
+}
+
+// weakerOf is weakerGate over optional gates: a nil one has no say.
+func weakerOf(a, b *Gate) *Gate {
+	switch {
+	case b == nil:
+		return a
+	case a == nil:
+		return b
+	}
+	w := weakerGate(*a, *b)
+	return &w
+}
+
 // jobEnvironment is the environment of p named name, with its Name set
 // even when the repository's environments do not list it (an environment
 // the job names but the repository does not define protects nothing).
@@ -120,7 +194,7 @@ func jobEnvironment(p *NormalizedPipeline, name string) Environment {
 		return Environment{}
 	}
 	for _, e := range p.Environments {
-		if e.Name == name {
+		if strings.EqualFold(e.Name, name) {
 			return e
 		}
 	}

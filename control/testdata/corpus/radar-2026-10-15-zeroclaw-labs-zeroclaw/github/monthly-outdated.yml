@@ -1,0 +1,158 @@
+name: Monthly Outdated Dependency Scan
+
+# Runs cargo outdated on the 1st of each month and opens an issue if any
+# direct or transitive dependencies have newer versions available.
+#
+# Intentionally separate from the daily advisory scan — stale deps are a
+# maintenance concern, not a security emergency. Monthly cadence gives
+# maintainers a pulse on drift without alert fatigue.
+
+on:
+  schedule:
+    - cron: "0 9 1 * *"     # 09:00 UTC on the 1st of every month
+  workflow_dispatch:
+
+concurrency:
+  group: monthly-outdated
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  CARGO_TERM_COLOR: never
+
+jobs:
+  outdated:
+    name: Outdated Dependency Scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+        with:
+          toolchain: 1.98.0
+
+      - name: Install cargo-outdated
+        run: cargo install cargo-outdated@0.19.0 --locked
+
+      - name: Run outdated check
+        id: scan
+        continue-on-error: true
+        shell: bash
+        run: |
+          OUTPUT_FILE="${{ runner.temp }}/outdated-output.txt"
+          JSON_FILE="${{ runner.temp }}/outdated-output.json"
+          ERROR_FILE="${{ runner.temp }}/outdated-error.txt"
+
+          # Write header
+          {
+            echo "## Toolchain versions"
+            echo
+            rustc --version
+            cargo --version
+            echo
+            echo "## Crate versions"
+            echo
+          } > "$OUTPUT_FILE"
+
+          # Use a dedicated findings code so cargo-outdated's fatal exit 1
+          # cannot be mistaken for a successful dependency report.
+          set +e
+          cargo outdated --workspace --format json --exit-code 10 > "$JSON_FILE" 2> "$ERROR_FILE"
+          scanner_exit_code=$?
+          set -e
+          cat "$ERROR_FILE" >&2
+
+          if scan_result=$(bash scripts/ci/monthly_outdated_result.sh classify "$scanner_exit_code" "$JSON_FILE"); then
+            if [[ "$scan_result" == "outdated" ]]; then
+              bash scripts/ci/monthly_outdated_result.sh render "$JSON_FILE" >> "$OUTPUT_FILE"
+            fi
+          else
+            scan_result="failure"
+            cat "$ERROR_FILE" >> "$OUTPUT_FILE"
+          fi
+
+          echo "scan_result=$scan_result" >> "$GITHUB_OUTPUT"
+          echo "scanner_exit_code=$scanner_exit_code" >> "$GITHUB_OUTPUT"
+
+          case "$scan_result" in
+            clean) exit 0 ;;
+            outdated) exit 1 ;;
+            failure) exit 2 ;;
+            *) echo "::error::Unexpected scan result: $scan_result"; exit 2 ;;
+          esac
+
+      - name: Preserve complete scan report
+        id: report
+        if: steps.scan.outputs.scan_result == 'outdated' || steps.scan.outputs.scan_result == 'failure'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: monthly-outdated-report
+          path: |
+            ${{ runner.temp }}/outdated-output.txt
+            ${{ runner.temp }}/outdated-output.json
+            ${{ runner.temp }}/outdated-error.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Open issue on outdated dependencies
+        id: outdated_issue
+        if: steps.scan.outputs.scan_result == 'outdated'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ARTIFACT_URL: ${{ steps.report.outputs.artifact-url }}
+        run: |
+          issues_enabled=$(gh api "repos/$GITHUB_REPOSITORY" --jq '.has_issues')
+          if [[ "$issues_enabled" != "true" ]]; then
+            echo "::notice::Repository issues are disabled; skipping issue creation."
+            exit 0
+          fi
+
+          # Avoid duplicate while one is still open — link to the existing one.
+          existing_url=$(gh issue list \
+            --repo "$GITHUB_REPOSITORY" \
+            --label "dependencies" \
+            --state open \
+            --search "Outdated dependencies found in:title" \
+            --json url \
+            --jq '.[0].url // ""')
+
+          if [[ -n "$existing_url" ]]; then
+            echo "issue_url=$existing_url" >> "$GITHUB_OUTPUT"
+            echo "An open outdated-dependency issue already exists: $existing_url"
+            exit 0
+          fi
+
+          OUTPUT_FILE="${{ runner.temp }}/outdated-output.txt"
+          bash scripts/ci/monthly_outdated_result.sh issue-body \
+            "$OUTPUT_FILE" "$RUN_URL" "$ARTIFACT_URL" > "${{ runner.temp }}/issue-body.md"
+
+          issue_url=$(gh issue create \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "ci: Outdated dependencies found — $(date -u +%Y-%m-%d)" \
+            --label "dependencies" \
+            --body-file "${{ runner.temp }}/issue-body.md")
+          echo "issue_url=$issue_url" >> "$GITHUB_OUTPUT"
+
+      - name: Propagate scan failure
+        if: steps.scan.outputs.scan_result != 'clean'
+        env:
+          ISSUE_URL: ${{ steps.outdated_issue.outputs.issue_url }}
+          SCAN_RESULT: ${{ steps.scan.outputs.scan_result }}
+          SCANNER_EXIT_CODE: ${{ steps.scan.outputs.scanner_exit_code }}
+        run: |
+          if [[ "$SCAN_RESULT" == "outdated" ]]; then
+            if [[ -n "$ISSUE_URL" ]]; then
+              echo "::error::Outdated dependencies detected. See $ISSUE_URL for details."
+            else
+              echo "::error::Outdated dependencies detected. Repository issues are disabled or issue creation was skipped; inspect this workflow log for details."
+            fi
+          else
+            echo "::error::cargo outdated failed with exit code $SCANNER_EXIT_CODE. Inspect the scan step log for details."
+          fi
+          exit 1

@@ -1,0 +1,215 @@
+name: pg_dump static build
+
+on:
+  workflow_dispatch:
+    inputs:
+      pg_version:
+        description: "PostgreSQL branch"
+        required: true
+        default: "REL_18_STABLE"
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runs-on: ubuntu-latest
+          - arch: arm64
+            runs-on: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - name: Build static binaries in Alpine
+        run: |
+          mkdir -p dist
+          docker run --rm \
+            -v "$PWD/dist:/dist" \
+            alpine:3.21 sh -c '
+              set -ex
+
+              apk add --no-cache \
+                gcc musl-dev meson ninja pkgconf git \
+                zlib-dev zlib-static \
+                openssl-dev openssl-libs-static \
+                lz4-dev lz4-static \
+                zstd-dev zstd-static \
+                bison flex perl linux-headers
+
+              git clone --depth 1 --branch "${{ inputs.pg_version }}" \
+                https://github.com/postgres/postgres.git /tmp/postgres
+              cd /tmp/postgres
+
+              # Static libpq: use libpq_st instead of libpq_so
+              sed -i "s/link_with: \[libpq_so\]/link_with: [libpq_st]/" \
+                src/interfaces/libpq/meson.build
+              # libpgcommon.a renames encoding funcs to *_private (normally
+              # resolved from libpq.so). Drop the rename for fully static link.
+              sed -i "/-DUSE_PRIVATE_ENCODING_FUNCS/d" \
+                src/common/meson.build
+
+              meson setup build \
+                --default-library=static \
+                --prefer-static \
+                -Dc_link_args=-static \
+                -Dssl=openssl \
+                -Dzlib=enabled \
+                -Dlz4=enabled \
+                -Dzstd=enabled \
+                -Dreadline=disabled \
+                -Dnls=disabled \
+                -Dgssapi=disabled \
+                -Dldap=disabled \
+                -Dlibcurl=disabled \
+                -Dpam=disabled \
+                -Dsystemd=disabled \
+                -Dselinux=disabled \
+                -Duuid=none \
+                -Dlibxml=disabled \
+                -Dlibxslt=disabled \
+                -Dicu=disabled \
+                -Dlibnuma=disabled \
+                -Dliburing=disabled
+
+              ninja -C build \
+                src/bin/pg_dump/pg_dump \
+                src/bin/pg_dump/pg_dumpall \
+                src/bin/pg_dump/pg_restore \
+                src/bin/psql/psql
+
+              cp build/src/bin/pg_dump/pg_dump /dist/
+              cp build/src/bin/pg_dump/pg_dumpall /dist/
+              cp build/src/bin/pg_dump/pg_restore /dist/
+              cp build/src/bin/psql/psql /dist/
+            '
+
+      - name: Verify static linking
+        run: |
+          for bin in dist/pg_dump dist/pg_dumpall dist/pg_restore dist/psql; do
+            file "$bin"
+            file "$bin" | grep -q 'statically linked'
+          done
+
+      - name: Package
+        run: |
+          tar -czf "pg_dump-${{ inputs.pg_version }}-linux-${{ matrix.arch }}.tar.gz" \
+            -C dist pg_dump pg_dumpall pg_restore psql
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: pg_dump-linux-${{ matrix.arch }}
+          path: "*.tar.gz"
+
+  build-darwin:
+    runs-on: macos-14
+    steps:
+      - name: Install build deps
+        run: |
+          brew install meson ninja pkgconf bison flex \
+            openssl@3 lz4 zstd zlib
+
+      - name: Build binaries
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+
+          git clone --depth 1 --branch "${{ inputs.pg_version }}" \
+            https://github.com/postgres/postgres.git /tmp/postgres
+          cd /tmp/postgres
+
+          # Static libpq: use libpq_st instead of libpq_so
+          sed -i "" "s/link_with: \[libpq_so\]/link_with: [libpq_st]/" \
+            src/interfaces/libpq/meson.build
+          # libpgcommon.a renames encoding funcs to *_private (normally
+          # resolved from libpq.dylib). Drop rename so fully resolved against .a
+          sed -i "" "/-DUSE_PRIVATE_ENCODING_FUNCS/d" \
+            src/common/meson.build
+
+          # Brew bison/flex over Apple defaults; pkg-config lookup for keg-only deps
+          export PATH="$(brew --prefix bison)/bin:$(brew --prefix flex)/bin:$PATH"
+          export PKG_CONFIG_PATH="$(brew --prefix openssl@3)/lib/pkgconfig:$(brew --prefix lz4)/lib/pkgconfig:$(brew --prefix zstd)/lib/pkgconfig:$(brew --prefix zlib)/lib/pkgconfig"
+
+          meson setup build \
+            --default-library=static \
+            --prefer-static \
+            -Dssl=openssl \
+            -Dzlib=enabled \
+            -Dlz4=enabled \
+            -Dzstd=enabled \
+            -Dreadline=disabled \
+            -Dnls=disabled \
+            -Dgssapi=disabled \
+            -Dldap=disabled \
+            -Dlibcurl=disabled \
+            -Dpam=disabled \
+            -Dsystemd=disabled \
+            -Dselinux=disabled \
+            -Duuid=none \
+            -Dlibxml=disabled \
+            -Dlibxslt=disabled \
+            -Dicu=disabled \
+            -Dlibnuma=disabled \
+            -Dliburing=disabled
+
+          ninja -C build \
+            src/bin/pg_dump/pg_dump \
+            src/bin/pg_dump/pg_dumpall \
+            src/bin/pg_dump/pg_restore \
+            src/bin/psql/psql
+
+          cp build/src/bin/pg_dump/pg_dump "$GITHUB_WORKSPACE/dist/"
+          cp build/src/bin/pg_dump/pg_dumpall "$GITHUB_WORKSPACE/dist/"
+          cp build/src/bin/pg_dump/pg_restore "$GITHUB_WORKSPACE/dist/"
+          cp build/src/bin/psql/psql "$GITHUB_WORKSPACE/dist/"
+
+      - name: Verify only system dynamic deps
+        run: |
+          for bin in dist/pg_dump dist/pg_dumpall dist/pg_restore dist/psql; do
+            otool -L "$bin"
+            extra=$(otool -L "$bin" | tail -n +2 | awk '{print $1}' \
+              | grep -Ev '^(/usr/lib/|/System/)' || true)
+            if [ -n "$extra" ]; then
+              echo "Non-system dependency in $bin:"
+              echo "$extra"
+              exit 1
+            fi
+          done
+
+      - name: Package
+        run: |
+          tar -czf "pg_dump-${{ inputs.pg_version }}-darwin-arm64.tar.gz" \
+            -C dist pg_dump pg_dumpall pg_restore psql
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: pg_dump-darwin-arm64
+          path: "*.tar.gz"
+
+  release:
+    needs: [build-linux, build-darwin]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: sha256sum *.tar.gz > checksums.txt
+
+      - name: Create release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: "pg_dump/${{ inputs.pg_version }}"
+          name: "pg_dump ${{ inputs.pg_version }} (static)"
+          body: |
+            Static builds of pg_dump, pg_dumpall, pg_restore, psql from PostgreSQL `${{ inputs.pg_version }}`.
+
+            Linux: musl libc (Alpine), fully statically linked.
+            Darwin arm64: links only against macOS system libraries (libSystem, libz).
+            Includes OpenSSL, zlib, lz4, zstd support. Readline disabled (psql works without line editing).
+          files: |
+            *.tar.gz
+            checksums.txt

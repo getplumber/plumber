@@ -1,0 +1,30 @@
+name: Lockfile
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "**/package.json"
+      - "pnpm-lock.yaml"
+  pull_request:
+    paths:
+      - "**/package.json"
+      - "pnpm-lock.yaml"
+
+jobs:
+  check:
+    name: Validate lockfile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Check lockfile is up to date
+        run: pnpm install --frozen-lockfile

@@ -1,0 +1,49 @@
+{
+  "source": "https://github.com/jfrog/terraform-provider-bridge",
+  "commit": "7c652f47a637c53a8eac81b5af12f7eb2d0e9d99",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": false
+    }
+  ],
+  "environments": [
+    {
+      "name": "development",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/acceptance-tests.yml": "active",
+    ".github/workflows/build-gate.yml": "active",
+    ".github/workflows/cla.yml": "active",
+    ".github/workflows/release.yml": "active",
+    ".github/workflows/slack-notify-issues.yml": "active",
+    ".github/workflows/slack-notify-pr.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "A false negative of the Radar: `build-gate.yml` runs on pull_request_target and calls `acceptance-tests.yml` with `secrets: inherit`, whose job checks out the fork head and runs `make acceptance` with every secret and `contents: write`; environment `build-gate` does not exist and `development` has no rule, so anyone who opens a pull request reaches it (a Critical path that must exist), and the setup-go cache it writes is restored by the tag release, the High cache path judged real. No job here declares cache-mode, so GitHub keeps the cache of every low-trust run read-only and grants no job cache write: ISSUE-705 is silent and no cache path exists, so the cache ceiling admits none.",
+  "expect": {
+    "paths": [
+      {
+        "entryKind": "pr_target",
+        "tier": "critical",
+        "subjectContains": "github.event.pull_request.head.sha",
+        "actor": "outsider",
+        "pending": "a reusable workflow called with `secrets: inherit` from a pull_request_target caller is not read in the caller's trigger context, so the callee job that checks out the fork head with every secret starts no pull_request_target path."
+      }
+    ],
+    "ceilings": [
+      {
+        "entryKind": "poisoned_cache",
+        "subjectContains": "",
+        "tier": "none"
+      }
+    ]
+  }
+}

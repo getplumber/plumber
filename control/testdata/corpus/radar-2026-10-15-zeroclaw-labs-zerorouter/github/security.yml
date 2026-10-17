@@ -1,0 +1,144 @@
+name: Security
+
+# Supply-chain and secret checks, kept OUT of ci.yml on purpose.
+#
+# These answer a different question from "does this change work?". They can go
+# red without anybody touching the repository — a new advisory is published, a
+# crate is yanked, a licence changes on an upgrade — which is exactly why the
+# weekly schedule exists: the interesting failures here are the ones that arrive
+# on their own. Keeping them in a separate workflow means such a failure reads
+# as "the world changed" rather than "this pull request is broken", and it keeps
+# a Postgres-backed test job from queueing behind an advisory-database fetch.
+
+on:
+  # No `branches:` filter, matching ci.yml: this repository stacks pull requests
+  # on other open branches often enough that a base filter would silently skip
+  # checks on the stacked one.
+  pull_request: {}
+  push:
+    branches: [main]
+  schedule:
+    # 09:15 UTC Mondays. Deliberately after the daily drift jobs (08:00 and
+    # 08:30) so a failure here is not read as part of that pair, and offset off
+    # the hour because the top of the hour is when GitHub's scheduler is most
+    # congested and jobs get delayed.
+    - cron: '15 9 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: security-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-deny:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Configuration and justifications live in router/deny.toml, next to the
+      # Cargo.lock it reasons about. Every check runs in one invocation so a
+      # licence problem and an advisory are reported together rather than the
+      # first one masking the second.
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          manifest-path: router/Cargo.toml
+          command: check advisories licenses bans sources
+          # The crate has exactly one feature (`testing`) and it adds no
+          # dependencies, so the default `--all-features` would only slow the
+          # resolve down without widening what is audited.
+          arguments: ''
+
+  gitleaks:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # gitleaks scans COMMITS, not the working tree, so it needs real
+          # history. On a pull request the diff range must reach back to the
+          # merge base, and the default depth-1 checkout has no such base.
+          fetch-depth: 0
+
+      # Installed from a pinned release with a checksum rather than through
+      # gitleaks/gitleaks-action, for two reasons. First, that action requires a
+      # paid GITLEAKS_LICENSE for repositories owned by an organization, which
+      # this one is. Second, the same download-verify-run shape is already the
+      # house pattern for actionlint in ci.yml, and it pins what actually
+      # executes — an action pinned by SHA still fetches a release binary whose
+      # contents the SHA does not cover.
+      - name: Install gitleaks
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/gitleaks.tar.gz"
+          curl --fail --location --silent --show-error \
+            --output "${archive}" \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  ${archive}" \
+            | sha256sum --check --status
+          tar --extract --gzip --file "${archive}" --directory "${RUNNER_TEMP}" gitleaks
+          "${RUNNER_TEMP}/gitleaks" version
+
+      # On a pull request only the proposed commits are scanned. Scanning full
+      # history on every PR would re-report anything already in main as though
+      # the PR introduced it, and would make the check fail for reasons the
+      # author cannot fix in their branch.
+      - name: Scan pull request commits
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          # Through the environment, not string-interpolated into the script:
+          # these are event-controlled values, and a workflow that scans for
+          # secrets should not itself be a shell-injection site.
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          "${RUNNER_TEMP}/gitleaks" git \
+            --config .gitleaks.toml \
+            --redact \
+            --log-opts "--no-merges ${BASE_SHA}..${HEAD_SHA}" \
+            .
+
+      # On main and on the weekly run the whole history is scanned. A secret
+      # that reached main is still exposed no matter which commit introduced it,
+      # and rules improve over time — the weekly pass is what re-examines old
+      # commits against a newer ruleset.
+      - name: Scan full history
+        if: github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          "${RUNNER_TEMP}/gitleaks" git \
+            --config .gitleaks.toml \
+            --redact \
+            .
+
+  portal-audit:
+    name: Portal dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Enable corepack
+        run: corepack enable
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: portal/pnpm-lock.yaml
+      - name: Install dependencies
+        working-directory: portal
+        run: pnpm install --frozen-lockfile
+      # The gate itself is a script rather than inline steps so that a developer
+      # can run exactly what CI runs. Which advisories are accepted, and why,
+      # is recorded in the script beside the check.
+      - name: Audit
+        run: ./scripts/portal-audit.sh

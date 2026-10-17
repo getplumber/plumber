@@ -1,0 +1,72 @@
+name: Visual regression tests
+
+on:
+  pull_request:
+    # labeled/unlabeled: for `skip:visual-regression`.
+    types: [opened, synchronize, labeled, unlabeled]
+
+env:
+  HUSKY: 0
+
+# A new push or label change cancels the stale run.
+concurrency:
+  group: visual-regression-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  visual-regression:
+    # Keep this check advisory: a skipped job counts as passing for required checks.
+    if: ${{ github.event.pull_request.state == 'open' && !contains(github.event.pull_request.labels.*.name, 'skip:visual-regression') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history so the resolver can diff against the PR base branch.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24.x'
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      # Decide which specs the diff affects before doing any expensive setup.
+      # See .scripts/js/affected-visual-specs for the resolution rules.
+      - name: Resolve affected specs
+        id: affected
+        run: |
+          base="origin/${{ github.base_ref }}"
+          result="$(node .scripts/js/affected-visual-specs "$base")"
+          echo "result=$result" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        if: steps.affected.outputs.result != 'NONE'
+        run: yarn install --immutable
+
+      - name: Install Playwright browsers
+        if: steps.affected.outputs.result != 'NONE'
+        run: npx playwright install --with-deps chromium
+
+      # NOTE: The tests path is located in playwright.config.ts
+      # e.g. ./tests
+      - name: Run visual regression tests
+        if: steps.affected.outputs.result != 'NONE'
+        run: |
+          if [ "${{ steps.affected.outputs.result }}" = "ALL" ]; then
+            echo "Running the full visual-regression suite."
+            npx playwright test
+          else
+            echo "Running scoped specs: ${{ steps.affected.outputs.result }}"
+            npx playwright test ${{ steps.affected.outputs.result }}
+          fi
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 30

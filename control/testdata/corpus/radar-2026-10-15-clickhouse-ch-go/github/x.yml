@@ -1,0 +1,14 @@
+name: x
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Common Go workflows from go faster
+# See https://github.com/go-faster/x
+jobs:
+  test:
+    uses: go-faster/x/.github/workflows/test.yml@main
+  lint:
+    uses: go-faster/x/.github/workflows/lint.yml@main

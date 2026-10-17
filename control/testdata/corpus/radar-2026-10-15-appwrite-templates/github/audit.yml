@@ -1,0 +1,254 @@
+name: Dependency audit
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  pull_request:
+  schedule:
+    # Weekly Monday 06:00 UTC — catch newly published advisories without a code change
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+env:
+  OSV_SCANNER_VERSION: "v2.3.1"
+
+permissions:
+  contents: read
+
+jobs:
+  npm:
+    name: npm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Audit npm templates
+        run: |
+          failed=0
+          for dir in node/*/ node-typescript/*/; do
+            [ -f "${dir}package-lock.json" ] || continue
+            echo "::group::${dir%/}"
+            npm audit --prefix "$dir" || failed=1
+            echo "::endgroup::"
+          done
+          exit $failed
+
+  bun:
+    name: bun
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: latest
+      - name: Audit bun templates
+        run: |
+          failed=0
+          for dir in bun/*/; do
+            [ -f "${dir}package.json" ] || continue
+            [ -f "${dir}bun.lock" ] || [ -f "${dir}bun.lockb" ] || continue
+            echo "::group::${dir%/}"
+            (cd "$dir" && bun audit) || failed=1
+            echo "::endgroup::"
+          done
+          exit $failed
+
+  php:
+    name: php
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: "8.3"
+          tools: composer
+      - name: Audit PHP templates
+        run: |
+          failed=0
+          for dir in php/*/; do
+            [ -f "${dir}composer.json" ] || continue
+            echo "::group::${dir%/}"
+            (
+              set -euo pipefail
+              cd "$dir"
+              composer update --no-install --no-interaction
+              composer audit --locked --no-interaction
+            ) || failed=1
+            echo "::endgroup::"
+          done
+          exit $failed
+
+  python:
+    name: python
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - name: Install pip-audit
+        run: python -m pip install pip-audit
+      - name: Audit Python templates
+        run: |
+          failed=0
+          for req in python/*/requirements.txt python-ml/*/requirements.txt; do
+            [ -f "$req" ] || continue
+            echo "::group::${req%/requirements.txt}"
+            pip-audit -r "$req" || failed=1
+            echo "::endgroup::"
+          done
+          exit $failed
+
+  ruby:
+    name: ruby
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ruby/setup-ruby@a30dfa457ad68707b8b910ac3a244714b61c0626 # v1.320.0
+        with:
+          ruby-version: "3.1"
+          bundler: latest
+      - name: Install bundler-audit
+        run: gem install bundler-audit
+      - name: Audit Ruby templates
+        run: |
+          failed=0
+          for dir in ruby/*/; do
+            [ -f "${dir}Gemfile" ] || continue
+            echo "::group::${dir%/}"
+            (
+              set -euo pipefail
+              cd "$dir"
+              bundle lock
+              bundle-audit update
+              bundle-audit check --no-update
+            ) || failed=1
+            echo "::endgroup::"
+          done
+          exit $failed
+
+  dart:
+    name: dart
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dart-lang/setup-dart@65eb853c7ba17dde3be364c3d2858773e7144260 # v1.7.2
+        with:
+          sdk: stable
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.9"
+      - name: Install OSV Scanner
+        run: go install github.com/google/osv-scanner/v2/cmd/osv-scanner@${{ env.OSV_SCANNER_VERSION }}
+      - name: Audit Dart templates
+        run: |
+          failed=0
+          for dir in dart/*/; do
+            [ -f "${dir}pubspec.yaml" ] || continue
+            echo "::group::${dir%/}"
+            (
+              set -euo pipefail
+              cd "$dir"
+              dart pub get
+              osv-scanner scan source --lockfile=pubspec.lock
+            ) || failed=1
+            echo "::endgroup::"
+          done
+          exit $failed
+
+  go:
+    name: go
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.9"
+          cache: false
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+      - name: Audit Go templates
+        run: |
+          failed=0
+          for dir in go/*/; do
+            [ -f "${dir}go.mod" ] || continue
+            echo "::group::${dir%/}"
+            (cd "$dir" && govulncheck ./...) || failed=1
+            echo "::endgroup::"
+          done
+          exit $failed
+
+  rust:
+    name: rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@bd41891a8e7f4b8649f6d684415e1a6155fe4e22 # 1.83.0
+      - name: Setup Rust for cargo-audit
+        run: rustup toolchain install 1.85.0 --profile minimal --no-self-update
+      - name: Install cargo-audit
+        run: cargo +1.85.0 install cargo-audit --version 0.22.1 --locked
+      - name: Audit Rust templates
+        run: |
+          failed=0
+          for dir in rust/*/; do
+            [ -f "${dir}Cargo.toml" ] || continue
+            echo "::group::${dir%/}"
+            (cd "$dir" && cargo audit) || failed=1
+            echo "::endgroup::"
+          done
+          exit $failed
+
+  dotnet:
+    name: dotnet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: "8.0.x"
+      - name: Audit .NET templates
+        run: |
+          failed=0
+          for dir in dotnet/*/; do
+            csproj=$(find "$dir" -maxdepth 1 -name '*.csproj' | head -1)
+            [ -n "$csproj" ] || continue
+            echo "::group::${dir%/}"
+            (
+              set -euo pipefail
+              cd "$dir"
+              dotnet restore
+              set +e
+              out=$(dotnet list package --vulnerable --include-transitive 2>&1)
+              code=$?
+              set -e
+              echo "$out"
+              if [ "$code" -ne 0 ]; then
+                exit "$code"
+              fi
+              if echo "$out" | grep -qiE 'has the following vulnerable packages|Severity'; then
+                exit 1
+              fi
+            ) || failed=1
+            echo "::endgroup::"
+          done
+          exit $failed
+
+  # Java/Kotlin templates only ship deps.gradle fragments (no Gradle project).
+  # Convert declared Maven coords to osv-scanner.json and scan with osv-scanner.
+  maven:
+    name: maven
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.9"
+      - name: Install OSV Scanner
+        run: go install github.com/google/osv-scanner/v2/cmd/osv-scanner@${{ env.OSV_SCANNER_VERSION }}
+      - name: Audit Maven coordinates in deps.gradle
+        run: python3 .github/scripts/audit-maven.py

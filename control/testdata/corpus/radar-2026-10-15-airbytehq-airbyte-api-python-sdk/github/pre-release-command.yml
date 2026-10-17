@@ -1,0 +1,155 @@
+# Pre-Release Workflow
+#
+# Builds and publishes a pre-release version of the Python SDK to PyPI.
+# Pre-releases are installable via `pip install airbyte-api==1.0.0rc1` but
+# are NOT the default version, so existing users are unaffected.
+#
+# Triggers:
+# - Manual workflow_dispatch: From the Actions tab
+# - Slash command: `/pre-release version=1.0.0rc1` on a PR comment
+#
+# Inputs:
+#
+#   version (REQUIRED): The pre-release version string.
+#     Must contain a PEP 440 pre-release suffix: rcN, betaN, alphaN, devN.
+#     Examples: 1.0.0rc1, 1.0.0a1, 1.0.0b1, 1.0.0.dev1
+#
+#   ref (optional, default: main): The branch, tag, or commit SHA to build from.
+#     When triggered via slash command on a PR, defaults to the PR's head branch.
+
+name: Pre-Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: >-
+          Pre-release version (e.g. 1.0.0rc1, 1.0.0a1).
+          Must contain a PEP 440 pre-release suffix.
+        required: true
+        type: string
+      ref:
+        description: 'Branch, tag, or commit SHA to build from'
+        required: false
+        default: 'main'
+        type: string
+      pr:
+        description: 'PR number (for slash command triggers)'
+        required: false
+        type: string
+      comment-id:
+        description: 'Comment ID (for slash command triggers)'
+        required: false
+        type: string
+
+concurrency:
+  group: pre-release-${{ inputs.version }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pre_release:
+    name: Build & Publish Pre-Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      # ── Slash command: post starting comment ────────────────────────
+      - name: Authenticate as GitHub App
+        uses: actions/create-github-app-token@v3
+        id: app-token
+        continue-on-error: ${{ github.actor == 'dependabot[bot]' }}
+        with:
+          app-id: ${{ secrets.OCTAVIA_BOT_APP_ID }}
+          private-key: ${{ secrets.OCTAVIA_BOT_PRIVATE_KEY }}
+
+      - name: Warn on GitHub App auth fallback
+        if: steps.app-token.outcome == 'failure'
+        run: |
+          echo "::warning::GitHub App authentication failed (secrets may not be available in this context). Falling back to GITHUB_TOKEN."
+
+      - name: Post starting comment
+        if: ${{ inputs.pr != '' }}
+        id: start-comment
+        uses: peter-evans/create-or-update-comment@v5
+        with:
+          token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          issue-number: ${{ inputs.pr }}
+          comment-id: ${{ inputs.comment-id || '' }}
+          body: |
+            > **Pre-Release Job Info**
+            >
+            > Building pre-release `${{ inputs.version }}` from ref `${{ inputs.ref || 'PR head branch' }}`.
+
+            > Job started... [Check job output.](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+      # ── Resolve ref from PR if not explicitly provided ──────────────
+      - name: Resolve PR head branch
+        if: ${{ inputs.pr != '' && inputs.ref == 'main' }}
+        id: resolve-ref
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+        run: |
+          PR_HEAD=$(gh pr view "${{ inputs.pr }}" --repo "${{ github.repository }}" --json headRefName -q '.headRefName')
+          echo "ref=$PR_HEAD" >> "$GITHUB_OUTPUT"
+
+      # ── Validate version input ──────────────────────────────────────
+      - name: Validate pre-release version
+        run: |
+          VERSION="${{ inputs.version }}"
+
+          # PEP 440 pre-release pattern: X.Y.Z(a|b|rc|dev)N
+          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(a|b|rc|dev|\.dev)[0-9]+$'; then
+            echo "::error::Invalid version or missing pre-release suffix. Expected PEP 440 format: X.Y.Z(a|b|rc|dev)N (e.g. 1.0.0rc1). Got: $VERSION"
+            exit 1
+          fi
+
+          echo "Pre-release version validated: $VERSION"
+
+      # ── Checkout ────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.resolve-ref.outputs.ref || inputs.ref }}
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      # ── Build with version override ───────────────────────────────
+      - name: Build package
+        run: uv build
+        env:
+          UV_DYNAMIC_VERSIONING_BYPASS: ${{ inputs.version }}
+
+      - name: Publish to PyPI
+        run: uv publish
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
+
+      # ── Tag the commit ──────────────────────────────────────────────
+      - name: Create and push tag
+        run: |
+          VERSION="${{ inputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "v${VERSION}" -m "Pre-release v${VERSION}"
+          git push origin "v${VERSION}"
+
+      # ── Slash command: post result comment ──────────────────────────
+      - name: Post result comment
+        if: ${{ always() && inputs.pr != '' }}
+        uses: peter-evans/create-or-update-comment@v5
+        with:
+          token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          issue-number: ${{ inputs.pr }}
+          body: |
+            > **Pre-Release Result:** ${{ job.status == 'success' && 'Published' || 'Failed' }}
+            >
+            > Version: `${{ inputs.version }}`
+            > Ref: `${{ steps.resolve-ref.outputs.ref || inputs.ref }}`
+            > [View run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            ${{ job.status == 'success' && format('> Install: `pip install airbyte-api=={0}`', inputs.version) || '' }}

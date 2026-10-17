@@ -1,0 +1,47 @@
+name: Release
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  id-token: write
+  contents: write
+  pull-requests: write
+
+jobs:
+  release:
+    if: ${{ github.repository_owner == 'cloudflare' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.x
+          cache: "npm"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install modules
+        run: npm ci
+
+      - name: Run build
+        run: npm run lint && npm run build
+
+      - name: Run tests
+        run: npm run test
+
+      - name: Create release PR or publish
+        uses: changesets/action@v1
+        with:
+          version: bash scripts/version.sh
+          publish: npx changeset publish
+          title: "Version Packages"
+          commit: "Version Packages"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true

@@ -1,0 +1,52 @@
+# Clean PR Branch Workflow
+#
+# This workflow deletes all generated files from an existing PR branch.
+# Use this when the upstream API spec has breaking changes that require
+# a fully clean regeneration.
+#
+# How to use:
+# 1. Run the "Generate TF Provider (New PR)" workflow on main - this creates a Speakeasy PR
+# 2. If regeneration fails due to stale files, run this workflow on the PR's branch
+# 3. Re-run the "Generate TF Provider (New PR)" workflow on main with force=true
+#
+# The workflow will:
+# - Delete all generated SDK code (internal/sdk)
+# - Delete all generated provider resources (destination_*.go, source_*.go)
+# - Delete all generated provider types (internal/provider/types/)
+# - Commit and push the deletion to the branch
+
+name: Clean PR Branch
+permissions:
+    contents: write
+"on":
+    workflow_dispatch:
+        inputs:
+            branch:
+                description: Branch name to clean (e.g., speakeasy-sdk-regen-1234567890)
+                type: string
+                required: true
+jobs:
+    clean:
+        name: Delete Generated Files
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                ref: ${{ inputs.branch }}
+
+            - name: Install uv
+              uses: astral-sh/setup-uv@v5
+
+            - name: Delete all generated code
+              run: |
+                echo "=== Cleaning branch: ${{ inputs.branch }} ==="
+                uvx --from=poethepoet poe clean-generated
+                echo "=== Done. All generated code removed. ==="
+
+            - name: Commit and push cleaned state
+              run: |
+                git config user.name "github-actions[bot]"
+                git config user.email "github-actions[bot]@users.noreply.github.com"
+                git add -A
+                git commit -m "chore: Clean generated files for fresh regeneration" || echo "No changes to commit"
+                git push

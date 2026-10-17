@@ -1,0 +1,59 @@
+name: zap-evidence-example
+
+on:
+  workflow_dispatch:  # This allows manual triggering of the workflow
+  push:
+    branches:
+      - CCS-2-Additional_evidence_examples
+  pull_request:
+      branches:
+        - CCS-2-Additional_evidence_examples
+permissions:
+  id-token: write
+  contents: read
+
+
+jobs:
+  zap-evidence-example:
+    runs-on: ubuntu-latest
+    env:
+      DOCKER_REPO: 'test-docker-local'
+      IMAGE_NAME: 'my-very-cool-image'
+      IMAGE_TAG: '40'
+      BUILD_NAME: 'zap-evidence-example'
+    steps:
+
+      - name: Install jfrog cli
+        id:   setup-cli
+        uses: jfrog/setup-jfrog-cli@v4
+        env:
+          JF_URL: ${{ vars.ARTIFACTORY_URL }}
+        with:
+         oidc-provider-name: jfrog-github-oidc
+
+      - uses: actions/checkout@v4
+
+      - name: ZAP Scan
+        run: |
+          docker pull ghcr.io/zaproxy/zaproxy:stable
+          # zap test the mock site https://www.example.com
+          docker run -v /tmp:/zap/wrk/:rw  -t ghcr.io/zaproxy/zaproxy:stable zap-full-scan.py -t https://www.example.com  -J report_json.json || true
+          echo "Zap completed!"
+          ls -ltr /tmp
+          # create summary json
+          cat /tmp/report_json.json | jq -r '.site[].alerts[].riskcode'   | sort | uniq -c | awk '{print "{\"riskcode\":\"" $2 "\", \"count\":" $1 "},"}' | sed '$ s/,$//' | awk 'BEGIN {print "["} {print} END {print "]"}' > report_summary.json
+          # create full report predicate  
+          jq -s '{summary: .[0], details: .[1]}' report_summary.json /tmp/report_json.json  > summary.json
+          echo "-----------Summary of ZAP scan-----------"
+          cat summary.json
+
+      - name: Evidence on docker
+        run: |  
+         jf evd create \
+          --package-name ${{ env.IMAGE_NAME }} \
+          --package-version "${{ env.IMAGE_TAG }}" \
+          --package-repo-name ${{ env.DOCKER_REPO }} \
+          --key "${{ secrets.JIRA_TEST_PKEY }}" \
+          --key-alias ${{ vars.JIRA_TEST_KEY }} \
+          --predicate ./summary.json \
+          --predicate-type https://jfrog.com/evidence/zap-scan/v1

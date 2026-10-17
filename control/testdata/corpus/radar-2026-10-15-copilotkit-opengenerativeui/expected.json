@@ -1,0 +1,52 @@
+{
+  "source": "https://github.com/CopilotKit/OpenGenerativeUI",
+  "commit": "8391a94c1c3939c679e40ddd7bfc08a9ef690e70",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": false
+    }
+  ],
+  "environments": [
+    {
+      "name": "feat/deploy-langsmith-cloud - open-generative-ui-app PR #80",
+      "known": true
+    },
+    {
+      "name": "jerel/cranky-kalam-f06e99 - open-generative-ui-app PR #85",
+      "known": true
+    },
+    {
+      "name": "jerel/sad-johnson - open-generative-ui-app PR #81",
+      "known": true
+    },
+    {
+      "name": "main - open-generative-ui-agent",
+      "known": true
+    },
+    {
+      "name": "main - open-generative-ui-app",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/ci.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High unprotected `main` path was judged overstated: a writer pushing to main runs code on a runner with no secret, Low. The one secret, `SLACK_WEBHOOK_URL`, lives in `notify-slack`, which runs no pushed code and only on `failure() && github.event_name == 'schedule'`.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "unprotected_push",
+        "subjectContains": "main",
+        "tier": "low",
+        "pending": "a job whose `if:` requires `failure() && github.event_name == 'schedule'` is still walked by the push entry, so the webhook secret of a job that never runs on a push is counted."
+      }
+    ]
+  }
+}

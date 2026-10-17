@@ -1,0 +1,94 @@
+name: Update Debugger Assets
+
+on:
+  repository_dispatch:
+    types: [debugger-assets-update]
+  workflow_dispatch:
+    inputs:
+      js_url:
+        description: "JavaScript URL"
+        required: true
+      css_url:
+        description: "CSS URL"
+        required: true
+
+jobs:
+  update-assets:
+    if: github.repository == 'run-llama/llama-agents'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Extract payload data
+        id: payload
+        run: |
+          # Handle both repository_dispatch and workflow_dispatch
+          if [ -n "${{ github.event.inputs.js_url }}" ]; then
+            echo "js_url=${{ github.event.inputs.js_url }}" >> $GITHUB_OUTPUT
+            echo "css_url=${{ github.event.inputs.css_url }}" >> $GITHUB_OUTPUT
+          else
+            echo "js_url=${{ github.event.client_payload.js_url }}" >> $GITHUB_OUTPUT
+            echo "css_url=${{ github.event.client_payload.css_url }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update index.html
+        run: >
+          uv run dev update-index-html
+          --js-url "${{ steps.payload.outputs.js_url }}"
+          --css-url "${{ steps.payload.outputs.css_url }}"
+
+      - name: Create changeset for patch version
+        run: |
+          # Use a deterministic filename so multiple updates accumulate into one changelog entry
+          CHANGESET_FILE=".changeset/update-debugger-assets.md"
+          cat > "$CHANGESET_FILE" << 'EOF'
+          ---
+          "llama-agents-server": patch
+          ---
+
+          Update debugger assets
+
+          - JavaScript: ${{ steps.payload.outputs.js_url }}
+          - CSS: ${{ steps.payload.outputs.css_url }}
+          EOF
+          echo "Created changeset: $CHANGESET_FILE"
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.CI_BOT_APP_ID }}
+          private-key: ${{ secrets.CI_BOT_PRIVATE_KEY }}
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          commit-message: "chore: update debugger assets"
+          branch: update-debugger-assets
+          delete-branch: true
+          title: "Update debugger assets"
+          body: |
+            ## Update Debugger Assets
+
+            This PR updates the workflow debugger assets and creates a changeset for a patch version bump.
+
+            ### Changes
+            - Updated `packages/llama-agents-server/src/llama_agents/server/static/index.html`
+              - JavaScript: ${{ steps.payload.outputs.js_url }}
+              - CSS: ${{ steps.payload.outputs.css_url }}
+
+            ---
+            *This PR was automatically created by the [update-debugger-assets workflow](https://github.com/${{ github.repository }}/actions/workflows/update_debugger_assets.yml)*
+          labels: |
+            dependencies
+            automated

@@ -1,0 +1,147 @@
+name: DBR LTS Install
+
+# Installs the CI-built connector wheel INSIDE real DBR LTS clusters and runs a
+# SELECT 1 smoke test. This reproduces the customer install path that broke in
+# ES-1960554 (thrift 0.23.0's sdist failing to build under the OLD setuptools
+# shipped by DBR LTS) -- something the poetry-install-based unit CI can't see,
+# because it never does a fresh `pip install` of the built artifact on an LTS
+# toolchain. See scripts/dbr_lts_install_check.py + scripts/dbr_lts_smoke_notebook.py.
+#
+# Trigger: pull_request, but the real matrix runs ONLY when dependency-affecting
+# files change (pyproject.toml / poetry.lock / this workflow / the two scripts).
+# Dependency changes are the only surface that can introduce this class of
+# failure, so unrelated PRs skip the (cluster-backed, slow) matrix entirely.
+# This is an informational check, not a required gate.
+#
+# External setup this workflow depends on (all ALREADY present in azure-prod):
+#   - DATABRICKS_HOST / DATABRICKS_TOKEN (PECO service-principal PAT) and
+#     TEST_PECO_WAREHOUSE_HTTP_PATH -- the three secrets referenced below.
+#   - A writable UC Volume at CI_VOLUME (managed volume). The notebook-import
+#     dir is derived from the token's own identity (no hardcoded principal).
+#
+# The supported-LTS matrix tracks the Databricks Runtime support lifecycle:
+# https://learn.microsoft.com/azure/databricks/release-notes/runtime/
+# 10.4 / 11.3 / 12.2 LTS are end-of-support and intentionally excluded. Revisit
+# when an LTS EOLs (13.3 -> Aug 22, 2026) or a new LTS GAs.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: dbr-lts-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI_VOLUME: /Volumes/peco/default/ci_wheels
+
+jobs:
+  # ───────────────────────────────────────────────────────────────
+  # Detect whether dependency-affecting files changed on this PR.
+  # ───────────────────────────────────────────────────────────────
+  detect-changes:
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    outputs:
+      run_tests: ${{ steps.changed.outputs.run_tests }}
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+      - name: Detect dependency changes
+        id: changed
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          CHANGED=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
+          echo "Changed files:"; echo "$CHANGED"
+          if echo "$CHANGED" | grep -qE "^(pyproject\.toml|poetry\.lock|\.github/workflows/dbr-lts-install\.yml|scripts/dbr_lts_install_check\.py|scripts/dbr_lts_smoke_notebook\.py)$"; then
+            echo "run_tests=true" >> "$GITHUB_OUTPUT"
+            echo "Dependency-affecting files changed — will run the LTS matrix"
+          else
+            echo "run_tests=false" >> "$GITHUB_OUTPUT"
+            echo "No dependency changes — skipping the LTS matrix"
+          fi
+
+  # ───────────────────────────────────────────────────────────────
+  # Build the wheel once per matrix leg and install it on the target DBR
+  # LTS runtime with the given extras.
+  #
+  # Matrix = supported LTS × install-target {base, pyarrow, kernel}. The
+  # [kernel] extra is a no-op below Python 3.10; all current LTS are ≥3.10
+  # so every leg is meaningful today. If a future LTS ships Python <3.10,
+  # drop its kernel leg from `include`.
+  # ───────────────────────────────────────────────────────────────
+  lts-install:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.run_tests == 'true'
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    environment: azure-prod
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 13.3 LTS (Python 3.10) — EOL Aug 22, 2026
+          - { spark: "13.3.x-scala2.12", extras: "" }
+          - { spark: "13.3.x-scala2.12", extras: "pyarrow" }
+          - { spark: "13.3.x-scala2.12", extras: "kernel" }
+          # 14.3 LTS (Python 3.10) — broke in ES-1960554
+          - { spark: "14.3.x-scala2.12", extras: "" }
+          - { spark: "14.3.x-scala2.12", extras: "pyarrow" }
+          - { spark: "14.3.x-scala2.12", extras: "kernel" }
+          # 15.4 LTS (Python 3.11) — broke in ES-1960554
+          - { spark: "15.4.x-scala2.12", extras: "" }
+          - { spark: "15.4.x-scala2.12", extras: "pyarrow" }
+          - { spark: "15.4.x-scala2.12", extras: "kernel" }
+          # 16.4 LTS (Python 3.12)
+          - { spark: "16.4.x-scala2.12", extras: "" }
+          - { spark: "16.4.x-scala2.12", extras: "pyarrow" }
+          - { spark: "16.4.x-scala2.12", extras: "kernel" }
+          # 17.3 LTS (Python 3.12)
+          - { spark: "17.3.x-scala2.13", extras: "" }
+          - { spark: "17.3.x-scala2.13", extras: "pyarrow" }
+          - { spark: "17.3.x-scala2.13", extras: "kernel" }
+    env:
+      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+      # Driver -> workspace API (jobs/scim/files) uses OAuth M2M as the PECO
+      # service principal. A plain PAT (DATABRICKS_TOKEN) is warehouse-scoped
+      # and is rejected by the workspace REST API ("Invalid access token").
+      DATABRICKS_CLIENT_ID: ${{ secrets.TEST_PECO_SP_ID }}
+      DATABRICKS_CLIENT_SECRET: ${{ secrets.TEST_PECO_SP_OAUTH_SECRET }}
+      DATABRICKS_HTTP_PATH: ${{ secrets.TEST_PECO_WAREHOUSE_HTTP_PATH }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+      - name: Configure JFrog pip index (OIDC)
+        uses: ./.github/actions/setup-jfrog
+      - name: Install build + driver tooling
+        run: pip install "poetry==2.2.1" "databricks-sdk>=0.20,<1"
+      - name: Build the connector wheel
+        run: poetry build -f wheel
+      - name: Install wheel on ${{ matrix.spark }} (extras=${{ matrix.extras || 'base' }})
+        run: |
+          WHEEL=$(ls dist/databricks_sql_connector-*.whl | head -1)
+          echo "Built wheel: $WHEEL"
+          python scripts/dbr_lts_install_check.py \
+            --wheel "$WHEEL" \
+            --smoke-notebook scripts/dbr_lts_smoke_notebook.py \
+            --spark-version "${{ matrix.spark }}" \
+            --extras "${{ matrix.extras }}" \
+            --volume "${CI_VOLUME}" \
+            --run-id "${GITHUB_RUN_ID}-${{ matrix.spark }}-${{ matrix.extras || 'base' }}" \
+            --http-path "${DATABRICKS_HTTP_PATH}"

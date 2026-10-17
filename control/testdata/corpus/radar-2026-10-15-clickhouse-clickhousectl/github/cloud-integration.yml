@@ -1,0 +1,302 @@
+name: Cloud Integration
+
+on:
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: Integration test scope
+        required: true
+        type: choice
+        options:
+          - all
+          - service
+          - postgres
+          - organization
+          - clickpipes
+  schedule:
+    - cron: "0 3 * * 1-5"
+  pull_request:
+    types: [opened, reopened, synchronize, labeled]
+
+permissions:
+  contents: read
+
+env:
+  DO_NOT_TRACK: "1"
+
+jobs:
+  # The planner is read-only and secret-free, so it runs automatically on
+  # every same-repository PR push. Only the environment-bearing job below is
+  # gated on the run-cloud-integration label.
+  plan:
+    name: Plan Cloud integration tests
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       (github.event.action != 'labeled' ||
+        github.event.label.name == 'run-cloud-integration') &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       github.event.pull_request.user.login != 'dependabot[bot]')
+    runs-on: ubuntu-latest
+    outputs:
+      service: ${{ steps.selection.outputs.service }}
+      postgres: ${{ steps.selection.outputs.postgres }}
+      organization: ${{ steps.selection.outputs.organization }}
+      clickpipes: ${{ steps.selection.outputs.clickpipes }}
+      test_sha: ${{ steps.selection.outputs.test_sha }}
+      requested_scope: ${{ steps.selection.outputs.requested_scope }}
+      selected_suites: ${{ steps.selection.outputs.selected_suites }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Select suites and log plan
+        id: selection
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_REF: ${{ github.ref }}
+          EVENT_SHA: ${{ github.sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha || 'n/a' }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || 'n/a' }}
+          DISPATCH_SCOPE: ${{ inputs.scope || '' }}
+        run: |
+          set -u
+          all_suites="service,postgres,organization,clickpipes"
+          test_sha="$EVENT_SHA"
+
+          case "$EVENT_NAME" in
+            pull_request)
+              test_sha="$PR_HEAD_SHA"
+              requested_scope="affected (PR merge-base diff)"
+              if git diff --quiet "$PR_BASE_SHA...$PR_HEAD_SHA" -- \
+                .github/workflows/cloud-integration.yml \
+                scripts/classify-cloud-integration.py \
+                scripts/tests/test_classify_cloud_integration.py; then
+                if selected="$(python3 scripts/classify-cloud-integration.py "$PR_BASE_SHA" "$PR_HEAD_SHA")"; then
+                  :
+                else
+                  echo "::warning::Classifier command failed; selecting all suites"
+                  selected="$all_suites"
+                fi
+              else
+                guard_status=$?
+                if [[ "$guard_status" -eq 1 ]]; then
+                  echo "::warning::Cloud integration selection logic changed; selecting all suites"
+                else
+                  echo "::warning::Selection guard diff failed; selecting all suites"
+                fi
+                selected="$all_suites"
+              fi
+              ;;
+            workflow_dispatch)
+              requested_scope="$DISPATCH_SCOPE"
+              if [[ "$DISPATCH_SCOPE" == "all" ]]; then
+                selected="$all_suites"
+              else
+                selected="$DISPATCH_SCOPE"
+              fi
+              ;;
+            schedule)
+              requested_scope="all (schedule)"
+              selected="$all_suites"
+              ;;
+            *)
+              echo "::warning::Unexpected event; selecting all suites"
+              requested_scope="all (fallback)"
+              selected="$all_suites"
+              ;;
+          esac
+
+          service=false
+          postgres=false
+          organization=false
+          clickpipes=false
+          [[ ",$selected," == *",service,"* ]] && service=true
+          [[ ",$selected," == *",postgres,"* ]] && postgres=true
+          [[ ",$selected," == *",organization,"* ]] && organization=true
+          [[ ",$selected," == *",clickpipes,"* ]] && clickpipes=true
+
+          canonical=""
+          [[ "$service" == true ]] && canonical="service"
+          [[ "$postgres" == true ]] && canonical="${canonical:+$canonical,}postgres"
+          [[ "$organization" == true ]] && canonical="${canonical:+$canonical,}organization"
+          [[ "$clickpipes" == true ]] && canonical="${canonical:+$canonical,}clickpipes"
+          canonical="${canonical:-none}"
+          if [[ "$selected" != "$canonical" ]]; then
+            echo "::warning::Classifier emitted invalid suite output; selecting all suites"
+            selected="$all_suites"
+            service=true
+            postgres=true
+            organization=true
+            clickpipes=true
+          fi
+
+          checked_out_sha="$(git rev-parse HEAD)"
+          echo "Event: $EVENT_NAME"
+          echo "Event SHA: $EVENT_SHA"
+          echo "PR base SHA: $PR_BASE_SHA"
+          echo "PR head SHA: $PR_HEAD_SHA"
+          echo "Selected SHA: $test_sha"
+          echo "Checked-out SHA: $checked_out_sha"
+          echo "Event ref: $EVENT_REF"
+          echo "Requested scope: $requested_scope"
+          echo "Selected suites: $selected"
+
+          {
+            echo "service=$service"
+            echo "postgres=$postgres"
+            echo "organization=$organization"
+            echo "clickpipes=$clickpipes"
+            echo "test_sha=$test_sha"
+            echo "requested_scope=$requested_scope"
+            echo "selected_suites=$selected"
+          } >> "$GITHUB_OUTPUT"
+
+          if [[ "$checked_out_sha" != "$test_sha" ]]; then
+            echo "::error::Checked-out SHA does not match selected test SHA"
+            exit 1
+          fi
+
+  cloud-integration:
+    name: Cloud integration tests
+    needs: plan
+    # PR runs enter this job only from the exact run-cloud-integration
+    # labeled event: authorization is one-shot and bound to the head SHA the
+    # label was applied to. A planner-only run (opened/synchronize/reopened)
+    # skips this job even when suites are selected.
+    if: >-
+      ${{
+        needs.plan.result == 'success' &&
+        (github.event_name != 'pull_request' ||
+         (github.event.action == 'labeled' &&
+          github.event.label.name == 'run-cloud-integration')) &&
+        (needs.plan.outputs.service == 'true' ||
+         needs.plan.outputs.postgres == 'true' ||
+         needs.plan.outputs.organization == 'true' ||
+         needs.plan.outputs.clickpipes == 'true')
+      }}
+    # Live runs serialize globally against the shared Cloud test resources;
+    # planner-only runs stay out of this queue on purpose.
+    concurrency:
+      group: cloud-integration
+      queue: max
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    environment: cloud-integration
+    env:
+      CLICKHOUSE_CLOUD_API_KEY: ${{ secrets.CLICKHOUSE_CLOUD_API_KEY }}
+      CLICKHOUSE_CLOUD_API_SECRET: ${{ secrets.CLICKHOUSE_CLOUD_API_SECRET }}
+      # Defaults to https://api.clickhouse.cloud (production) when unset. Set
+      # the repo variable to https://api.control-plane.clickhouse-staging.com
+      # to run integration tests against staging.
+      CLICKHOUSE_CLOUD_API_BASE_URL: ${{ vars.CLICKHOUSE_CLOUD_API_BASE_URL }}
+      CLICKHOUSE_CLOUD_TEST_ORG_ID: ${{ secrets.CLICKHOUSE_CLOUD_TEST_ORG_ID }}
+      CLICKHOUSE_CLOUD_TEST_PROVIDER: ${{ secrets.CLICKHOUSE_CLOUD_TEST_PROVIDER }}
+      CLICKHOUSE_CLOUD_TEST_REGION: ${{ secrets.CLICKHOUSE_CLOUD_TEST_REGION }}
+      CLICKHOUSE_CLOUD_TEST_SECONDARY_USER_ID: ${{ secrets.CLICKHOUSE_CLOUD_TEST_SECONDARY_USER_ID }}
+      CLICKHOUSE_CLOUD_TEST_TIMEOUT_CREATE_SECS: ${{ vars.CLICKHOUSE_CLOUD_TEST_TIMEOUT_CREATE_SECS || '1800' }}
+      CLICKHOUSE_CLOUD_TEST_TIMEOUT_DELETE_SECS: ${{ vars.CLICKHOUSE_CLOUD_TEST_TIMEOUT_DELETE_SECS || '900' }}
+      CLICKHOUSE_CLOUD_TEST_TIMEOUT_STEADY_STATE_SECS: ${{ vars.CLICKHOUSE_CLOUD_TEST_TIMEOUT_STEADY_STATE_SECS || '1800' }}
+      CLICKHOUSE_CLOUD_TEST_CLICKPIPE_SERVICE_ID: ${{ vars.CLICKHOUSE_CLOUD_TEST_CLICKPIPE_SERVICE_ID }}
+      RUST_TEST_THREADS: 1
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.test_sha }}
+          persist-credentials: false
+
+      - name: Log revisions
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SHA: ${{ github.sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha || 'n/a' }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || 'n/a' }}
+          EVENT_REF: ${{ github.ref }}
+          SELECTED_SHA: ${{ needs.plan.outputs.test_sha }}
+          REQUESTED_SCOPE: ${{ needs.plan.outputs.requested_scope }}
+          SELECTED_SUITES: ${{ needs.plan.outputs.selected_suites }}
+        run: |
+          echo "Event: $EVENT_NAME"
+          echo "Event SHA: $EVENT_SHA"
+          echo "PR base SHA: $PR_BASE_SHA"
+          echo "PR head SHA: $PR_HEAD_SHA"
+          echo "Selected SHA: $SELECTED_SHA"
+          echo "Checked-out SHA: $(git rev-parse HEAD)"
+          echo "Event ref: $EVENT_REF"
+          echo "Requested scope: $REQUESTED_SCOPE"
+          echo "Selected suites: $SELECTED_SUITES"
+
+      - name: Resolve test run label
+        run: |
+          case "${{ github.event_name }}" in
+            pull_request)
+              echo "CLICKHOUSE_CLOUD_TEST_RUN_LABEL=pr-${{ github.event.pull_request.number }}" >> "$GITHUB_ENV"
+              ;;
+            schedule)
+              echo "CLICKHOUSE_CLOUD_TEST_RUN_LABEL=nightly" >> "$GITHUB_ENV"
+              ;;
+            workflow_dispatch)
+              echo "CLICKHOUSE_CLOUD_TEST_RUN_LABEL=manual-${{ github.run_id }}" >> "$GITHUB_ENV"
+              ;;
+          esac
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable @ 2026-10-01
+
+      - name: Build clickhousectl for CLI-driven live tests
+        if: >-
+          ${{ !cancelled() &&
+              (needs.plan.outputs.service == 'true' ||
+               needs.plan.outputs.clickpipes == 'true') }}
+        run: cargo build -p clickhousectl
+
+      - name: Run cloud integration suite
+        if: >-
+          ${{ !cancelled() &&
+              needs.plan.outputs.service == 'true' }}
+        run: cargo test -p clickhouse-cloud-api --test integration_test -- --ignored --nocapture
+
+      - name: Run Query API key classification CLI integration test
+        if: >-
+          ${{ !cancelled() &&
+              needs.plan.outputs.service == 'true' }}
+        env:
+          CLICKHOUSE_CLOUD_TEST_CLICKHOUSECTL_BIN: ${{ github.workspace }}/target/debug/clickhousectl
+        run: cargo test -p clickhouse-cloud-api --test service_query_key_cli_test -- --ignored --nocapture
+
+      - name: Run cloud Postgres integration suite
+        if: >-
+          ${{ !cancelled() &&
+              needs.plan.outputs.postgres == 'true' }}
+        run: cargo test -p clickhouse-cloud-api --test integration_postgres_test -- --ignored --nocapture
+
+      - name: Run cloud Org integration suite
+        if: >-
+          ${{ !cancelled() &&
+              needs.plan.outputs.organization == 'true' }}
+        run: cargo test -p clickhouse-cloud-api --test integration_org_test -- --ignored --nocapture
+
+      - name: Run ClickPipe Postgres CLI CDC integration test
+        if: >-
+          ${{ !cancelled() &&
+              needs.plan.outputs.clickpipes == 'true' }}
+        env:
+          CLICKHOUSE_CLOUD_TEST_CLICKHOUSECTL_BIN: ${{ github.workspace }}/target/debug/clickhousectl
+        run: cargo test -p clickhouse-cloud-api --test clickpipe_postgres_cli_cdc_test -- --ignored --nocapture
+
+      # ClickPipe create smoke tests run against a long-lived ClickHouse Cloud
+      # service to avoid the multi-minute service-create cost. Provision a
+      # service once and set the CLICKHOUSE_CLOUD_TEST_CLICKPIPE_SERVICE_ID
+      # repository variable to its ID. The step is skipped if that variable
+      # is unset so first-time setup doesn't block PRs.
+      - name: Run ClickPipe create smoke suite
+        if: >-
+          ${{ !cancelled() &&
+              needs.plan.outputs.clickpipes == 'true' &&
+              vars.CLICKHOUSE_CLOUD_TEST_CLICKPIPE_SERVICE_ID != '' }}
+        run: cargo test -p clickhouse-cloud-api --test clickpipe_smoke_test -- --ignored --nocapture

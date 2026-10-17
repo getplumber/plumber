@@ -1,0 +1,33 @@
+name: "Run Tests"
+
+on:
+  push:
+    branches:
+      - '**'
+    tags-ignore:
+      - '**'
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Install dependencies
+        run: make deps
+
+      - name: Run unit tests
+        run: make test-unit

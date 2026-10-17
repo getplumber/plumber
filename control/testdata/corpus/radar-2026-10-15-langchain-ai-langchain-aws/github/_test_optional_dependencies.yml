@@ -1,0 +1,56 @@
+name: test-optional-dependencies
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        required: true
+        type: string
+        description: "From which folder this pipeline executes"
+
+permissions:
+  contents: read
+
+jobs:
+  test-without-optional-deps:
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    runs-on: ubuntu-latest
+    name: "run tests without optional deps"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python + uv
+        uses: "./.github/actions/uv_setup"
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        shell: bash
+        run: uv sync --group test
+
+      - name: Uninstall optional dependencies
+        shell: bash
+        run: VIRTUAL_ENV=.venv uv pip uninstall langchain-anthropic anthropic
+
+      - name: Verify optional dependencies are not installed
+        shell: bash
+        run: |
+          uv run --no-sync python -c "import langchain_anthropic" && exit 1 || echo "✓ langchain_anthropic not installed (expected)"
+
+      - name: Test core imports work
+        shell: bash
+        run: |
+          uv run --no-sync python -c "
+          from langchain_aws import (
+              ChatBedrock,
+              ChatBedrockConverse,
+          )
+          print('✓ All core imports successful')
+          "
+
+      - name: Run core unit tests
+        shell: bash
+        run: |
+          uv run --no-sync pytest tests/unit_tests/test_standard.py -v

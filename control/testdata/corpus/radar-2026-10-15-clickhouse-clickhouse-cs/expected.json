@@ -1,0 +1,64 @@
+{
+  "source": "https://github.com/ClickHouse/clickhouse-cs",
+  "commit": "860fe1a2ecb482c93e7723d03f563446d6f04b30",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "claude-triage",
+      "known": true
+    },
+    {
+      "name": "copilot",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/benchmark-compare.yml": "active",
+    ".github/workflows/benchmark.yml": "active",
+    ".github/workflows/changelog.yml": "active",
+    ".github/workflows/claude-pr-triage.yml": "active",
+    ".github/workflows/codeql.yml": "active",
+    ".github/workflows/codex-review.yml": "active",
+    ".github/workflows/cross-repo-bug-relay.yml": "active",
+    ".github/workflows/docs_drift_check.yml": "active",
+    ".github/workflows/docs_sync.yml": "active",
+    ".github/workflows/docs_verify.yml": "active",
+    ".github/workflows/examples.yml": "active",
+    ".github/workflows/nightly.yml": "active",
+    ".github/workflows/release.yml": "active",
+    ".github/workflows/reusable-tcp.yml": "active",
+    ".github/workflows/reusable.yml": "active",
+    ".github/workflows/stresshouse-benchmark-compare.yml": "active",
+    ".github/workflows/tests-cloud-tcp-label.yml": "active",
+    ".github/workflows/tests-cloud-tcp.yml": "active",
+    ".github/workflows/tests-cloud.yml": "active",
+    ".github/workflows/tests-integration.yml": "active",
+    ".github/workflows/tests-macos.yml": "active",
+    ".github/workflows/tests-tcp.yml": "active",
+    ".github/workflows/tests-windows.yml": "active",
+    ".github/workflows/tests.yml": "active",
+    ".github/workflows/zizmor.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High path through `curl https://clickhouse.com/ | sh` was judged overstated: the organisation's own installer, its five secrets reached only through other jobs, Low.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "https://clickhouse.com/",
+        "tier": "low",
+        "pending": "the spec holds a first-party fetch (the organisation's own installer domain) at the insider ceiling, Medium (section 8.1), while the assessment argued Low: the repository already trusts its own release infrastructure."
+      }
+    ]
+  }
+}

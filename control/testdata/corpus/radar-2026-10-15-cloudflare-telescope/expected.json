@@ -1,0 +1,44 @@
+{
+  "source": "https://github.com/cloudflare/telescope",
+  "commit": "91b2487459a3fac0ce2b624c7deec2a0b8e6843b",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "copilot",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/deploy-waterfall-site.yml": "active",
+    ".github/workflows/deploy.yml": "active",
+    ".github/workflows/release.yml": "active",
+    ".github/workflows/semgrep.yml": "active",
+    ".github/workflows/test.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High npm cache path into the release was judged overstated: the writers the path names are pull_request runs, whose cache lives under the pull request merge ref and is never restored by the release, so only a writer of the default branch reaches it, Medium at most; the High `dorny/paths-filter@v4` path was judged overstated: a mutable third-party action in a CI job with no secret and no write token (or only an assumed one) gives code execution on a runner, Medium at most. Corrected after reading the workflows: a push run whose job is entered through an unauthorized mutable action (a High dependency path of the same repository) also writes the default-branch cache, so the cache path holds at that writer's High ceiling. No job here declares cache-mode, so GitHub keeps the cache of every low-trust run read-only and grants no job cache write: ISSUE-705 is silent and no cache path exists, so the cache ceiling admits none.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "dorny/paths-filter@v4",
+        "tier": "medium"
+      },
+      {
+        "entryKind": "poisoned_cache",
+        "subjectContains": "",
+        "tier": "none"
+      }
+    ]
+  }
+}

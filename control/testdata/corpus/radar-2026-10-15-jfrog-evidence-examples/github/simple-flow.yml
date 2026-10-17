@@ -1,0 +1,42 @@
+name: simple Build and deploy
+
+on:
+  [workflow_dispatch]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  Docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install jfrog cli
+        uses: jfrog/setup-jfrog-cli@v4
+        env:
+          JF_URL: ${{ vars.ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.ARTIFACTORY_ACCESS_TOKEN }}
+          JFROG_CLI_BUILD_NAME: "simple-build"
+          JFROG_CLI_BUILD_NUMBER: ${{ github.run_number }}
+
+      - uses: actions/checkout@v4
+
+      - name: Log in to Artifactory Docker Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ vars.ARTIFACTORY_URL }}
+          username: ${{ secrets.JF_USER }}
+          password: ${{ secrets.ARTIFACTORY_ACCESS_TOKEN }}
+
+      - name: Build Docker image
+        run: |
+          URL=$(echo ${{ vars.ARTIFACTORY_URL }} | sed 's|^https://||')
+          REPO_URL=${URL}'/example-project-docker-dev-virtual'
+          docker build --build-arg REPO_URL=${REPO_URL} -f Dockerfile . \
+          --tag ${REPO_URL}/simple-project-app:${{ github.run_number }} \
+          --output=type=image --platform linux/amd64 --metadata-file=build-metadata --push
+          jf rt build-docker-create example-project-docker-dev --image-file build-metadata --build-name ${JFROG_CLI_BUILD_NAME} --build-number ${JFROG_CLI_BUILD_NUMBER}
+
+      - name: Publish build info
+        run: jfrog rt build-publish 
+

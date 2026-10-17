@@ -1,0 +1,42 @@
+name: "Static Analysis"
+on:
+  push:
+    branches:
+      - '**'
+    tags-ignore:
+      - '**'
+  pull_request:
+jobs:
+  Static-Check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Run Go-Sec scanner
+        uses: jfrog/.github/actions/gosec-scanner@main
+
+  Go-Sec:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Run golangci lint
+        uses: jfrog/.github/actions/golangci-lint@main
+
+  ShellCheck:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+      - name: Run ShellCheck
+        uses: ludeeus/action-shellcheck@master
+        with:
+          ignore_paths: '*test*'

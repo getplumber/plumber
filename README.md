@@ -128,6 +128,7 @@ on:
 
 permissions:
   contents: read
+  actions: read # lets Plumber read workflow states and one run log to prove the token scope
   security-events: write
   id-token: write # required by score-push
 

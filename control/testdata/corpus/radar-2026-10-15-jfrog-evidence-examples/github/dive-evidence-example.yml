@@ -1,0 +1,60 @@
+name: Dive Image Analysis with JFrog Evidence
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  dive-with-evidence:
+    runs-on: ubuntu-latest
+    env:
+      REGISTRY_DOMAIN: ${{ vars.JF_URL }}
+      REPO_NAME: 'docker-dive-repo'
+      IMAGE_NAME: 'docker-dive-image'
+      VERSION: ${{ github.run_number }}
+      BUILD_NAME: 'dive-docker-build'
+      ATTACH_OPTIONAL_CUSTOM_MARKDOWN_TO_EVIDENCE: true
+
+    steps:
+      # Build and publish the packages to JFrog Artifactory
+      - name: Setup jfrog cli
+        uses: jfrog/setup-jfrog-cli@v4
+        env:
+          JF_URL: ${{ vars.ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.ARTIFACTORY_ACCESS_TOKEN }}
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Build and publish Docker Image to Artifactory
+        run: |
+          docker build . --file ./examples/dive/Dockerfile --tag $REGISTRY_DOMAIN/$REPO_NAME/$IMAGE_NAME:$VERSION
+          jf rt docker-push $REGISTRY_DOMAIN/$REPO_NAME/$IMAGE_NAME:$VERSION $REPO_NAME --build-name=$BUILD_NAME --build-number=${{ github.run_number }}
+
+      # Fetch Dive Analysis
+      - name: Run Dive analysis
+        run: |
+          docker run -i --rm -e CI=true \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v $(pwd):/output docker.io/wagoodman/dive \
+            $REGISTRY_DOMAIN/$REPO_NAME/$IMAGE_NAME:$VERSION \
+            --json /output/dive.json
+
+      # This is an optional step to generate a custom markdown report
+      - name: Generate optional custom markdown report
+        if: env.ATTACH_OPTIONAL_CUSTOM_MARKDOWN_TO_EVIDENCE == 'true'
+        run: |
+          python ./examples/dive/dive_json_to_md.py dive.json
+
+      # Attaching the evidence to associated package
+      - name: Attach evidence using jfrog cli
+        run: |
+          jf evd create \
+            --package-name $IMAGE_NAME \
+            --package-version $VERSION \
+            --package-repo-name $REPO_NAME \
+            --key "${{ secrets.PRIVATE_KEY }}" \
+            --key-alias "${{ vars.EVIDENCE_KEY_ALIAS }}" \
+            --predicate ./dive.json \
+            --predicate-type dive/docker-size-scan/v1 \
+            ${{ env.ATTACH_OPTIONAL_CUSTOM_MARKDOWN_TO_EVIDENCE == 'true' && '--markdown "dive-analysis.md"' || '' }}

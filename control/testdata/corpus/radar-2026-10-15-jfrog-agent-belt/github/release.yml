@@ -1,0 +1,259 @@
+name: Release
+
+# Triggered ONLY on annotated/lightweight tags matching ``v*``. Manual,
+# deliberate, never auto-publish-on-merge.
+#
+# Tag conventions:
+#   v0.1.0           -> production PyPI + GitHub Release
+#   v0.1.0-rc1       -> TestPyPI only (rehearsal)
+#   v0.1.0-alpha.1   -> TestPyPI only (rehearsal)
+#
+# The build job runs first with NO secrets, produces the wheel + sdist as a
+# GitHub artifact. Each publish job downloads the artifact - they never see
+# the source.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  classify-tag:
+    name: Classify tag (rehearsal vs. real release)
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.parse.outputs.version }}
+      is_prerelease: ${{ steps.parse.outputs.is_prerelease }}
+    steps:
+      - name: Parse the tag
+        id: parse
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          # PEP 440 pre-release / dev-release markers - any of these ship to
+          # TestPyPI only. We accept both spellings:
+          #   dash-separated:  v0.1.0-rc1, v0.1.0-alpha.1, v0.1.0-beta1, v0.1.0-dev0
+          #   PEP 440 canonical: v0.1.0rc1, v0.1.0a1, v0.1.0b1, v0.1.0.dev0
+          # A naive ``*-*`` check would accept the dash-form only and silently
+          # publish ``v0.1.0rc1`` to production PyPI - real foot-gun.
+          if [[ "$TAG" =~ -|[0-9](rc|a|b|alpha|beta)[0-9]|\.dev[0-9] ]]; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "Pre-release tag - rehearsal flow (TestPyPI only)"
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "Release tag - full publish flow"
+          fi
+
+  build:
+    name: Build wheel + sdist (no secrets)
+    needs: classify-tag
+    runs-on: ubuntu-latest
+    env:
+      # Pin the package version for EVERY build in this job: the sanity-check
+      # build below AND the rebuild that ``make verify-wheel`` performs
+      # (``make build`` = ``clean`` + ``uv build``). If the pin is scoped to a
+      # single step, a later unpinned rebuild can ship instead - ``hatch-vcs``
+      # then derives the version from ``git describe``, which is
+      # non-deterministic across git/hatch-vcs versions when an rc tag and the
+      # strict tag point at the same commit (the rehearse-then-release flow).
+      # The uploaded artifact must always carry the triggering tag's version.
+      #
+      # The global ``SETUPTOOLS_SCM_PRETEND_VERSION`` is used rather than the
+      # per-project ``SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AGENT_BELT`` because
+      # hatch-vcs invokes ``setuptools_scm.get_version()`` without passing
+      # ``dist_name``, so the per-project lookup never fires. The global form is
+      # the canonical CI escape hatch documented by setuptools-scm and used by
+      # ruff, uv, and hatch's own release workflows.
+      #
+      # The wheel-version assertion in the sanity-check step stays as defense in
+      # depth: it validates the build produced the version we asked for.
+      SETUPTOOLS_SCM_PRETEND_VERSION: ${{ needs.classify-tag.outputs.version }}
+    permissions:
+      contents: read
+      # Required for ``actions/attest-build-provenance`` below.
+      id-token: write
+      attestations: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # ``hatch-vcs`` derives the package version from git metadata.
+          fetch-depth: 0
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          # Pinned for release reproducibility - the build that produces the
+          # wheel must not move underneath us between runs. Bump deliberately
+          # in a separate PR after verifying the new uv minor on a rehearsal.
+          version: "0.11"
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Sanity check - tag matches ``hatch-vcs`` resolution
+        # Catches the rare case where a tag was created on a non-main commit
+        # by hand and ``hatch-vcs`` resolves to something else (e.g. a stale
+        # cached version). Hard-fail before we publish anything. The version
+        # pin lives at job scope (see the ``env`` block above) so it also
+        # covers the ``make verify-wheel`` rebuild below.
+        run: |
+          uv sync --locked
+          uv build
+          # Parse wheel filename via ``packaging.utils`` rather than ``ls | sed``:
+          # robust to multiple wheels, locale-dependent ``ls`` ordering, and PEP
+          # 425 build tags. Asserts exactly one wheel landed in ``dist/``.
+          WHEEL_VERSION=$(uv run python -c "
+          from packaging.utils import parse_wheel_filename
+          from pathlib import Path
+          wheels = list(Path('dist').glob('*.whl'))
+          assert len(wheels) == 1, f'expected exactly one wheel, found: {wheels}'
+          print(parse_wheel_filename(wheels[0].name)[1])
+          ")
+          echo "Tag version  : ${{ needs.classify-tag.outputs.version }}"
+          echo "Wheel version: $WHEEL_VERSION"
+          # Allow PEP 440 normalisation (e.g. tag ``v0.1.0-rc1`` -> wheel
+          # ``0.1.0rc1``) but block silent mismatches.
+          if [[ "$WHEEL_VERSION" != "${{ needs.classify-tag.outputs.version }}" \
+             && "$WHEEL_VERSION" != "$(echo '${{ needs.classify-tag.outputs.version }}' | tr -d '-')" ]]; then
+            echo "::error::Wheel version $WHEEL_VERSION does not match tag ${{ needs.classify-tag.outputs.version }}"
+            exit 1
+          fi
+
+      - name: Verify wheel installs and smoke-tests pass
+        run: make verify-wheel
+
+      - name: Generate build provenance attestation
+        # Sigstore-signed SLSA L3 attestation tying the wheel hash to this
+        # workflow run, source SHA, and runner identity. Uploaded to the
+        # GitHub Release alongside the artifact.
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*
+
+      - name: Upload built distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 14
+          if-no-files-found: error
+
+  publish-testpypi:
+    name: Publish to TestPyPI (rehearsal)
+    needs: [classify-tag, build]
+    # Mirrors the repo guard on ``publish-pypi``: a fork that pushes a
+    # pre-release tag should not even attempt to upload (the Trusted Publisher
+    # binding would reject it, but defense-in-depth lives in the workflow too).
+    # Pre-release (rc / alpha / beta / dev) tags from ``jfrog/agent-belt``
+    # publish to TestPyPI for rehearsal before a strict tag goes to PyPI.
+    if: needs.classify-tag.outputs.is_prerelease == 'true' && github.repository == 'jfrog/agent-belt'
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/agent-belt
+    permissions:
+      # OIDC token for Trusted Publisher - no PyPI API token required.
+      id-token: write
+
+    steps:
+      - name: Download built distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to TestPyPI
+        # v1.12+ ships a twine that understands Metadata-Version 2.4, which is
+        # what current ``hatchling`` emits (PEP 639 license metadata). v1.11
+        # rejects the wheel before upload with "Metadata is missing required
+        # fields: Name, Version" - misleading symptom, real cause is the
+        # metadata version. v1.12+ also keeps PEP 740 attestation support.
+        uses: pypa/gh-action-pypi-publish@v1.14.0
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          # TestPyPI rejects identical version overwrites; ``skip-existing``
+          # makes a re-run of the same rc tag idempotent (e.g. after a manual
+          # workflow restart) instead of failing the whole release flow.
+          skip-existing: true
+
+  publish-pypi:
+    name: Publish to PyPI (Trusted Publisher)
+    needs: [classify-tag, build]
+    # Pinned to this repo so a fork running release.yml cannot publish under
+    # our PyPI name. The PyPI Trusted Publisher binding is the second layer.
+    if: needs.classify-tag.outputs.is_prerelease == 'false' && github.repository == 'jfrog/agent-belt'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/agent-belt
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download built distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@v1.14.0
+
+  github-release:
+    name: GitHub Release (notes + provenance)
+    needs: [classify-tag, build, publish-pypi]
+    if: needs.classify-tag.outputs.is_prerelease == 'false' && github.repository == 'jfrog/agent-belt'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download built distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Create GitHub Release with auto-generated notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v${{ needs.classify-tag.outputs.version }}" \
+            --title "v${{ needs.classify-tag.outputs.version }}" \
+            --generate-notes \
+            dist/*
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Release Summary"
+            echo "- **Version:** ${{ needs.classify-tag.outputs.version }}"
+            echo "- **Tag:** v${{ needs.classify-tag.outputs.version }}"
+            echo "- **PyPI:** https://pypi.org/project/agent-belt/${{ needs.classify-tag.outputs.version }}/"
+            echo "- **GitHub Release:** https://github.com/jfrog/agent-belt/releases/tag/v${{ needs.classify-tag.outputs.version }}"
+            echo "- **Provenance:** Sigstore-signed SLSA build provenance attached to the wheel"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  notice-build-only:
+    # Surfaces the situation when ``classify-tag`` + ``build`` succeed but
+    # every publish job is skipped by a repo guard. Without this notice the
+    # run shows as a green success with no surfaced explanation -
+    # operationally confusing. Triggers on any tag (strict or pre-release)
+    # pushed from a repo other than ``jfrog/agent-belt`` (typically a fork).
+    name: Notice (build-only on this repo)
+    needs: [classify-tag, build]
+    if: github.repository != 'jfrog/agent-belt'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Print notice
+        run: |
+          echo "::notice::Tag v${{ needs.classify-tag.outputs.version }} built on ${{ github.repository }}, but this repo has no publish path configured. Strict release tags publish from jfrog/agent-belt to PyPI; pre-release tags (rc, alpha, beta, dev) publish from jfrog/agent-belt to TestPyPI."

@@ -1,0 +1,52 @@
+name: Integration Tests CI (Scala)
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - 'examples/**'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - 'examples/**'
+
+jobs:
+  test-integration-tests-scala:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        clickhouse: [ "25.3", "25.8", "25.10", "25.11", "25.12", "latest" ]
+        flink: [ "1.17.2", "1.18.1", "1.19.3", "1.20.2", "2.0.0", "2.1.0" , "latest"]
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'adopt'
+          architecture: x64
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+      - name: Publish locally flink-connector-clickhouse-1.17
+        run: ./gradlew :flink-connector-clickhouse-1.17:publishToMavenLocal
+      - name: Publish locally flink-connector-clickhouse-2.0.0
+        run: ./gradlew :flink-connector-clickhouse-2.0.0:publishToMavenLocal
+      - name: Set up sbt
+        uses: sbt/setup-sbt@v1
+      - name: Generate Flink Covid App example 2.X (Scala)
+        working-directory: ./examples/sbt/flink-v2/covid
+        run: sbt clean assembly
+      - name: Generate Flink Covid App example 1.17+ (Scala)
+        working-directory: ./examples/sbt/flink-v1.7/covid
+        run: sbt clean assembly
+      - name: Execute Gradle 'integration-test' task
+        env:
+          CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
+          FLINK_VERSION: ${{ matrix.flink }}
+        run: ./gradlew :flink-connector-clickhouse-integration:test -Dexample.lang=scala

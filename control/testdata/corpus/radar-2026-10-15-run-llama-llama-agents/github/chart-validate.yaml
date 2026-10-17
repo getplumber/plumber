@@ -1,0 +1,58 @@
+name: chart-validate
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "charts/llama-agents/**"
+      - ".github/workflows/chart-validate.yaml"
+  workflow_dispatch: {}
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+
+      - name: Install helm-unittest plugin
+        run: make -C operator helm-unittest-install
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+
+      - name: Install Prometheus Operator CRDs (for ServiceMonitor validation)
+        run: make -C operator helm-crds-prom-operator
+
+      - name: Install helm-docs
+        run: |
+          make -C operator helm-docs-install
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Verify README is up to date
+        run: make -C operator helm-docs-check
+
+      - name: Helm lint (default values)
+        run: make -C operator helm-lint
+
+      - name: Helm lint (dev values)
+        run: make -C operator helm-lint-dev
+
+      - name: Server-side dry-run apply (default values)
+        run: make -C operator helm-dry-run
+
+      - name: Server-side dry-run apply (dev values)
+        run: make -C operator helm-dry-run-dev
+
+      - name: Helm unit tests (if present)
+        run: |
+          if [ -d charts/llama-agents/tests ]; then
+            make -C operator helm-unittest
+          else
+            echo "No helm-unittest tests found; skipping."
+          fi

@@ -1,0 +1,52 @@
+name: Build & Test
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# No secrets in the per-PR test workflow: every PR is treated as untrusted.
+# Anything credentialed lives in release.yml (tag-only, OIDC) or a
+# pull_request_target-gated workflow (Frogbot / CLA).
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "latest"
+          enable-cache: true
+          # Match [tool.black]/[tool.ruff] target-version (py311). Without an
+          # explicit pin, uv picks the runner's newest CPython and --locked
+          # fails when requires-python in the lockfile disagrees.
+          python-version: "3.11"
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Set up Node (markdownlint)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install markdownlint-cli
+        run: npm install -g markdownlint-cli
+
+      - name: Cache pre-commit
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      - name: Install dependencies (locked)
+        run: uv sync --locked
+
+      - name: Lint
+        run: uv run make lint

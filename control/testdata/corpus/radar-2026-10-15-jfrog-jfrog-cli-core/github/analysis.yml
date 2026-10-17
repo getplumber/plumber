@@ -1,0 +1,97 @@
+name: "Static Analysis"
+on:
+  push:
+    branches:
+      - "master"
+    tags-ignore:
+      - "**"
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches:
+      - "master"
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  Static-Check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Run golangci linter
+        uses: jfrog/.github/actions/golangci-lint@main
+
+  Go-Sec:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+          fetch-depth: 0
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Run Go-Sec scanner
+        uses: jfrog/.github/actions/gosec-scanner@main
+
+  No-Replace:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+
+      - name: Check for uncommented replace instructions
+        run: |
+          if grep -E '^[[:space:]]*replace[[:space:]]' go.mod; then
+            echo "❌ Found uncommented replace directives in go.mod"
+            echo "All replace directives should be commented out"
+            exit 1
+          else
+            echo "✅ No uncommented replace directives found in go.mod"
+          fi
+
+  Validate-CLI-Compatibility:
+    name: Validate ${{ matrix.repo }} Compatibility
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - repo: jfrog-cli-security
+            branch: dev
+          - repo: jfrog-cli-artifactory
+            branch: main
+
+    steps:
+      - name: Checkout CLI Core Source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+
+      - name: Checkout ${{ matrix.repo }} Source - ${{ matrix.branch }} branch
+        uses: actions/checkout@v7
+        with:
+          repository: jfrog/${{ matrix.repo }}
+          ref: ${{ matrix.branch }}
+          path: ${{ matrix.repo }}
+
+      - name: Replace To Local Core in ${{ matrix.repo }}
+        run: |
+          cd ${{ matrix.repo }}
+          go mod edit -replace github.com/jfrog/jfrog-cli-core/v2=${GITHUB_WORKSPACE}
+          go mod tidy
+
+      - name: Run go vet on ${{ matrix.repo }}
+        run: |
+          cd ${{ matrix.repo }}
+          go vet ./...

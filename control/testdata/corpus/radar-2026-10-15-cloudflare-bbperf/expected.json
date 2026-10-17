@@ -1,0 +1,30 @@
+{
+  "source": "https://github.com/cloudflare/bbperf",
+  "commit": "0d886c54f74733c8c8a3e72d0b78810db3cd36a1",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": false
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/semgrep.yml": "disabled_inactivity"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High unprotected-branch path from `semgrep.yml` was judged overstated: the job declares `contents: read`, holds no secret and its cache is readable only from its own branch scope, so a writer gets code execution on a read-only runner, Low.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "unprotected_push",
+        "subjectContains": "main",
+        "tier": "low"
+      }
+    ]
+  }
+}

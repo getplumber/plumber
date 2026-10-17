@@ -1,0 +1,63 @@
+name: Nix Tests
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  Nix-Tests:
+    name: Nix tests (${{ matrix.os.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: macos
+            version: 14
+          # Windows omitted: Nix does not have first-class Windows support.
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    steps:
+      - name: Skip macOS - JGC-413
+        if: matrix.os.name == 'macos'
+        run: |
+          echo "::warning::JGC-413 - Skip until artifactory bootstrap in osx is fixed"
+          exit 0
+
+      - name: Checkout code
+        if: matrix.os.name != 'macos'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+          # Safe: this workflow only runs after human approval via the build-gate environment.
+          allow-unsafe-pr-checkout: true
+
+      - name: Setup FastCI
+        if: matrix.os.name != 'macos'
+        uses: jfrog-fastci/fastci@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          fastci_otel_token: ${{ secrets.FASTCI_TOKEN }}
+
+      - name: Setup Go with cache
+        if: matrix.os.name != 'macos'
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Install Nix
+        if: matrix.os.name != 'macos'
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Install local Artifactory
+        if: matrix.os.name != 'macos'
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: '1200'
+
+      - name: Run Nix tests
+        if: matrix.os.name != 'macos'
+        run: >-
+          go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.nix
+          ${{ env.JFROG_TESTS_IS_EXTERNAL == 'true' && format('--jfrog.url={0} --jfrog.adminToken={1}', env.JFROG_TESTS_URL, env.JFROG_TESTS_LOCAL_ACCESS_TOKEN) || '' }}

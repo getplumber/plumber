@@ -1,0 +1,238 @@
+name: Test Connectors
+on:
+  workflow_dispatch:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+  # TODO: Consider moving to run these only after the "PyTest (Fast)" workflow is successful.
+  # workflow_run:
+  #   workflows: [PyTest (Fast)]
+  #   types:
+  #     - completed
+
+concurrency:
+  # This is the name of the concurrency group. It is used to prevent concurrent runs of the same workflow.
+  #
+  # - github.head_ref is only defined on PR runs, it makes sure that the concurrency group is unique for pull requests
+  #  ensuring that only one run per pull request is active at a time.
+  #
+  # - github.run_id is defined on all runs, it makes sure that the concurrency group is unique for workflow dispatches.
+  # This allows us to run multiple workflow dispatches in parallel.
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  cdk_changes:
+    name: Get Changes
+    runs-on: ubuntu-24.04
+    permissions:
+      statuses: write
+      pull-requests: read
+    steps:
+      - name: Checkout Airbyte
+        if: github.event_name != 'pull_request'
+        uses: actions/checkout@v4
+      - id: changes
+        uses: dorny/paths-filter@v3.0.2
+        with:
+          filters: |
+            src:
+              - 'airbyte_cdk/**'
+              - 'bin/**'
+              - 'poetry.lock'
+              - 'pyproject.toml'
+            file-based:
+              - 'airbyte_cdk/sources/file_based/**'
+            vector-db-based:
+              - 'airbyte_cdk/destinations/vector_db_based/**'
+            sql:
+              - 'airbyte_cdk/sql/**'
+    outputs:
+      # Source code modified:
+      src: ${{ steps.changes.outputs.src }}
+      # Extras modified:
+      file-based: ${{ steps.changes.outputs.file-based }}
+      vector-db-based: ${{ steps.changes.outputs.vector-db-based }}
+      sql: ${{ steps.changes.outputs.sql }}
+
+  connectors_ci:
+    needs: cdk_changes
+    # We only run the Connectors CI job if there are changes to the connectors on a non-forked PR
+    # Forked PRs are handled by the community_ci.yml workflow
+    # If the condition is not met the job will be skipped (it will not fail)
+    # runs-on: connector-test-large
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360 # 6 hours
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - connector: source-hardcoded-records
+            cdk_extra: n/a
+          - connector: source-shopify
+            cdk_extra: n/a
+          - connector: source-google-drive
+            cdk_extra: file-based
+          - connector: destination-motherduck
+            # For now, we mark as 'n/a' to always test this connector
+            cdk_extra: n/a # change to 'sql' to test less often
+          # source-amplitude failing for unrelated issue "date too far back"
+          # e.g. https://github.com/airbytehq/airbyte-python-cdk/actions/runs/16053716569/job/45302638848?pr=639
+          # - connector: source-amplitude
+          #   cdk_extra: n/a
+          - connector: source-intercom
+            cdk_extra: n/a
+          - connector: source-pokeapi
+            cdk_extra: n/a
+
+          # CDK Tests cannot build the Connector object (constructor args not optional).
+          # - connector: source-zendesk-support
+          #   cdk_extra: n/a
+
+    name: "${{ needs.cdk_changes.outputs[matrix.cdk_extra] == 'false' && 'Skipped Check' || 'Check' }}: ${{matrix.connector}}"
+    if: needs.cdk_changes.outputs['src'] == 'true'
+    permissions:
+      checks: write
+      contents: write # Required for creating commit statuses
+      pull-requests: read
+    steps:
+      - name: Abort if extra not changed (${{matrix.cdk_extra}})
+        id: no_changes
+        if: ${{ needs.cdk_changes.outputs['src'] == 'false' || matrix.cdk_extra != 'n/a' && needs.cdk_changes.outputs[matrix.cdk_extra] == 'false' }}
+        run: |
+          echo "Aborting job."
+          echo "Source code changed: ${{ needs.cdk_changes.outputs['src'] }}"
+          if [ "${{ matrix.cdk_extra }}" != "n/a" ]; then
+            echo "Extra not changed: ${{ matrix.cdk_extra }} = ${{ needs.cdk_changes.outputs[matrix.cdk_extra] }}"
+          fi
+          echo "> Skipped '${{matrix.connector}}' (no relevant changes)" >> $GITHUB_STEP_SUMMARY
+          echo "status=cancelled" >> $GITHUB_OUTPUT
+          exit 0
+        continue-on-error: true
+      # Get the monorepo so we can test the connectors
+      - name: Checkout CDK
+        if: steps.no_changes.outputs.status != 'cancelled'
+        uses: actions/checkout@v4
+        with:
+          path: airbyte-python-cdk
+      - name: Checkout Airbyte Monorepo
+        uses: actions/checkout@v4
+        if: steps.no_changes.outputs.status != 'cancelled'
+        with:
+          repository: airbytehq/airbyte
+          ref: master
+          path: airbyte
+
+      - name: Set up Python
+        if: steps.no_changes.outputs.status != 'cancelled'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up `uv`
+        if: steps.no_changes.outputs.status != 'cancelled'
+        uses: astral-sh/setup-uv@v6.1.0
+
+      - name: Set up `poe`
+        if: steps.no_changes.outputs.status != 'cancelled'
+        run: |
+          uv tool install poethepoet
+
+      - name: Set up Poetry
+        if: steps.no_changes.outputs.status != 'cancelled'
+        uses: snok/install-poetry@v1
+        with:
+          version: "2.0.1"
+
+      - name: Get Connector Language
+        if: steps.no_changes.outputs.status != 'cancelled'
+        working-directory: airbyte/airbyte-integrations/connectors/${{ matrix.connector }}
+        run: |
+          # Get the language of the connector from the metadata file
+          CONNECTOR_LANGUAGE=$(poe -qq get-language)
+          echo "CONNECTOR_LANGUAGE=$CONNECTOR_LANGUAGE" | tee -a $GITHUB_ENV
+
+      - name: Install CDK with Poetry
+        if: steps.no_changes.outputs.status != 'cancelled'
+        run: |
+          cd airbyte-python-cdk
+          poetry install --all-extras
+
+      - name: Fetch Connector Secrets
+        if: steps.no_changes.outputs.status != 'cancelled'
+        timeout-minutes: 90
+        working-directory: airbyte-python-cdk
+        env:
+          GCP_GSM_CREDENTIALS: ${{ secrets.GCP_GSM_CREDENTIALS }}
+          POETRY_DYNAMIC_VERSIONING_BYPASS: "0.0.0"
+        run: |
+          poetry run airbyte-cdk secrets fetch ${{ matrix.connector }}
+
+      - name: Bump to Dev Branch CDK [Python Connectors]
+        if: env.CONNECTOR_LANGUAGE == 'python'
+        working-directory: airbyte/airbyte-integrations/connectors/${{ matrix.connector }}
+        run: |
+          echo "Using CDK ref ${{ github.event.pull_request.head.sha || github.sha }}"
+          poe use-cdk-branch ${{ github.event.pull_request.head.sha || github.sha }}
+          poetry install --all-extras
+
+      - name: Run Unit Tests [Python Connectors]
+        if: env.CONNECTOR_LANGUAGE == 'python'
+        working-directory: airbyte/airbyte-integrations/connectors/${{ matrix.connector }}
+        run: |
+          poe test-unit-tests
+
+      - name: Run FAST Standard Tests [Python Connectors]
+        if: env.CONNECTOR_LANGUAGE == 'python'
+        working-directory: airbyte/airbyte-integrations/connectors/${{ matrix.connector }}
+        env:
+          GCP_GSM_CREDENTIALS: ${{ secrets.GCP_GSM_CREDENTIALS }}
+          POETRY_DYNAMIC_VERSIONING_BYPASS: "0.0.0"
+        run: |
+          poetry run airbyte-cdk connector test
+
+      # Manifest-only connector images are built `FROM` the published `source-declarative-manifest`
+      # base image declared in metadata.yaml, so by default the container tests exercise the
+      # already-released CDK instead of this branch's CDK. Build an SDM image from the current
+      # branch (with a plain `docker build` so it lands in the local image store, where the
+      # connector image build can resolve it as its `FROM` base) and use it via `--connector-base-image`.
+      # Python connectors don't need this: the "Bump to Dev Branch CDK" step pins the connector's
+      # CDK dependency to this branch, which the container image build then installs.
+      - name: Build SDM image from current branch [Manifest-Only Connectors]
+        if: env.CONNECTOR_LANGUAGE == 'manifest-only'
+        working-directory: airbyte-python-cdk
+        env:
+          POETRY_DYNAMIC_VERSIONING_BYPASS: "0.0.0dev0"
+        run: |
+          poetry build -f wheel
+          docker build -t airbyte/source-declarative-manifest:dev .
+
+      # The FAST standard test suite also collects the docker image tests, so pass the
+      # branch-built SDM base image here too. Otherwise those tests build the connector image
+      # `FROM` the published metadata base image (running the released CDK instead of this
+      # branch's), and the later `image test` step can't reuse its layers.
+      - name: Run FAST Standard Tests [Manifest-Only Connectors]
+        if: env.CONNECTOR_LANGUAGE == 'manifest-only'
+        working-directory: airbyte-python-cdk
+        env:
+          GCP_GSM_CREDENTIALS: ${{ secrets.GCP_GSM_CREDENTIALS }}
+          POETRY_DYNAMIC_VERSIONING_BYPASS: "0.0.0"
+        run: |
+          poetry run airbyte-cdk connector test ${{ matrix.connector }} \
+            --pytest-arg=--connector-base-image \
+            --pytest-arg=airbyte/source-declarative-manifest:dev
+
+      - name: Container Build and Test [All Connectors]
+        if: steps.no_changes.outputs.status != 'cancelled'
+        working-directory: airbyte-python-cdk
+        env:
+          GCP_GSM_CREDENTIALS: ${{ secrets.GCP_GSM_CREDENTIALS }}
+          POETRY_DYNAMIC_VERSIONING_BYPASS: "0.0.0"
+        run: |
+          if [ "$CONNECTOR_LANGUAGE" = "manifest-only" ]; then
+            poetry run airbyte-cdk image test ${{ matrix.connector }} \
+              --connector-base-image airbyte/source-declarative-manifest:dev
+          else
+            poetry run airbyte-cdk image test ${{ matrix.connector }}
+          fi

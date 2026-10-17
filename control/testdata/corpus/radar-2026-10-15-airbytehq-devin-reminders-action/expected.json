@@ -1,0 +1,37 @@
+{
+  "source": "https://github.com/airbytehq/devin-reminders-action",
+  "commit": "1a4397f1e54400dfaa088a5f5988ee7248619ef4",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": false
+    }
+  ],
+  "environments": [
+    {
+      "name": "copilot",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/release-drafter.yml": "active",
+    ".github/workflows/test-action.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High unprotected `main` path was judged overstated: a writer pushing to main reaches nothing beyond what their write access already gives (no secret, no publish), Low.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "unprotected_push",
+        "subjectContains": "main",
+        "tier": "low",
+        "pending": "the spec keeps an unprotected-branch path whose job publishes a release, at the push ceiling High (section 8.2), while the assessment argued Low: a writer can already create that release."
+      }
+    ]
+  }
+}

@@ -1,0 +1,35 @@
+name: "Frogbot Scan Pull Request"
+
+on:
+  pull_request_target:
+    types: [opened, synchronize]
+    branches:
+      - "main"
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  scan-pull-request:
+    if: ${{ github.actor != 'dependabot[bot]' }}
+    runs-on: ubuntu-latest
+    environment: frogbot
+    steps:
+      - name: Checkout the repository
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - uses: jfrog/frogbot@v2
+        env:
+          JF_URL: ${{ secrets.FROGBOT_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.FROGBOT_ACCESS_TOKEN }}
+          JF_GIT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          JF_FAIL: "TRUE"
+          JF_MIN_SEVERITY: "High"

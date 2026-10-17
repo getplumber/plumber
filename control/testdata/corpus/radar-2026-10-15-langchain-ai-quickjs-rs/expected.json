@@ -1,0 +1,49 @@
+{
+  "source": "https://github.com/langchain-ai/quickjs-rs",
+  "commit": "278cf32d17b07a9ba2951ebc826256eef703182d",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "pypi",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/benchmarks.yml": "active",
+    ".github/workflows/dependency-security.yml": "active",
+    ".github/workflows/release.yml": "active",
+    ".github/workflows/test.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "actionMetadata": {
+    "dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8": {
+      "refKind": "commit",
+      "mutableRemoteExec": {
+        "tier": "exec",
+        "url": "https://sh.rustup.rs",
+        "file": "action.yml",
+        "downloadGuard": "rustup"
+      }
+    }
+  },
+  "note": "The High path through the SHA-pinned `dtolnay/rust-toolchain@29eef33` was judged overstated in its reach: the release artifact built in `release/build` reaches PyPI and the GitHub release (High at most), but the jobs running the toolchain hold `contents: read`, so no push.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "dtolnay/rust-toolchain@29eef336d9b2",
+        "tier": "high"
+      }
+    ]
+  }
+}

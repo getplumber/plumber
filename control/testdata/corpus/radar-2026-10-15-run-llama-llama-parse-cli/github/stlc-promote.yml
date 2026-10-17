@@ -1,0 +1,142 @@
+name: Promote SDKs
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    if: github.repository == 'run-llama/llamacloud-prod-cli'
+    env:
+      PRODUCTION_REPO: run-llama/llama-parse-cli
+    steps:
+      - name: Generate production-repo token (CI_BOT GitHub App)
+        id: prod-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.CI_BOT_APP_ID }}
+          private-key: ${{ secrets.CI_BOT_PRIVATE_KEY }}
+          owner: run-llama
+          repositories: llama-parse-cli
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Check out staging
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fetch production main
+        env:
+          GH_TOKEN: ${{ steps.prod-token.outputs.token }}
+        run: |
+          git remote add production \
+            "https://x-access-token:${GH_TOKEN}@github.com/${PRODUCTION_REPO}.git"
+          git fetch production main
+
+      - name: Check whether production already has staging's content
+        id: diff
+        run: |
+          # Compare by CONTENT, not commit SHA. After a release, production
+          # carries release-please's version/changelog commits that staging
+          # lacks, so the SHAs always differ — a SHA check would re-open a
+          # spurious release PR (and push staging's now-stale manifest) on
+          # every push. Instead, ask whether merging staging into production
+          # would change production's tree: if not, production already contains
+          # everything on staging (it's equal, or only ahead by release
+          # metadata) and there is nothing to release.
+          MERGED=$(git merge-tree --write-tree production/main origin/main) || MERGED=conflict
+          PRODUCTION_TREE=$(git rev-parse 'production/main^{tree}')
+          if [ "$MERGED" = "$PRODUCTION_TREE" ]; then
+            echo "Production already contains staging's content. Nothing to release."
+            echo "synced=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "synced=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push staging main to the release branch on production
+        if: steps.diff.outputs.synced == 'false'
+        run: |
+          git push production origin/main:refs/heads/stainless/release --force
+
+      - name: Open or update the release PR on production
+        if: steps.diff.outputs.synced == 'false'
+        env:
+          GH_TOKEN: ${{ steps.prod-token.outputs.token }}
+        run: |
+          # Regenerate the body on every promote. The release branch is
+          # force-pushed, so a body written only at gh-pr-create time freezes at
+          # whatever was pending the day the PR opened and never mentions
+          # anything promoted since.
+          git log --reverse --pretty=$'%H\t%s' production/main..origin/main > commits.tsv
+          PROD_REPO="${PRODUCTION_REPO}" python3 - commits.tsv > body.md <<'PY'
+          import os, re, sys
+
+          repo = os.environ["PROD_REPO"]
+          rows = [l.rstrip("\n").split("\t", 1) for l in open(sys.argv[1]) if "\t" in l]
+
+          NAMED = [("feat", "### Features"), ("fix", "### Bug Fixes"),
+                   ("perf", "### Performance"), ("docs", "### Documentation"),
+                   ("refactor", "### Refactors")]
+          CHORE = {"chore", "ci", "build", "test", "style", "release"}
+          NOISE = re.compile(r"^(Build SDK|Merge pull request #\d+|Merge branch )")
+
+          named, chores, unconventional, generated = {}, [], [], []
+          for sha, subject in rows:
+              m = re.match(r"^(\w+)(\([^)]*\))?!?:", subject)
+              kind = m.group(1) if m else ""
+              if kind in dict(NAMED):   named.setdefault(kind, []).append((sha, subject))
+              elif kind in CHORE:       chores.append((sha, subject))
+              elif NOISE.match(subject): generated.append((sha, subject))
+              else:                     unconventional.append((sha, subject))
+
+          def rows_md(items):
+              out = []
+              for sha, subject in items:
+                  # Five-digit refs are run-llama/platform PRs; GitHub would
+                  # otherwise autolink them to this repo's own issue numbers.
+                  subject = re.sub(r"\(#(\d{5,})\)",
+                                   r"([#\1](https://github.com/run-llama/platform/pull/\1))", subject)
+                  out.append(f"- {subject} ([`{sha[:7]}`](https://github.com/{repo}/commit/{sha}))")
+              return out
+
+          L = [f"Promotes `stainless/release` onto `main` — **{len(rows)} commits**. "
+               "Merging this lets release-please cut the next release and write `CHANGELOG.md`.", ""]
+          for kind, title in NAMED:
+              if named.get(kind):
+                  L += [title, *rows_md(named[kind]), ""]
+          if unconventional:
+              L += ["### :warning: Not conventional-commit — release-please will DROP these from `CHANGELOG.md`",
+                    *rows_md(unconventional), ""]
+          for items, title in ((chores, "Chores &amp; CI"), (generated, "Codegen &amp; merge commits")):
+              if items:
+                  L += [f"<details><summary>{title} ({len(items)})</summary>", "",
+                        *rows_md(items), "", "</details>", ""]
+          L.append("<sub>Regenerated by `stlc-promote.yml` on every promote, from "
+                   "`main...stainless/release`.</sub>")
+          print("\n".join(L))
+          PY
+
+          EXISTING_PR=$(gh pr list \
+            --repo "${PRODUCTION_REPO}" \
+            --head stainless/release \
+            --state open \
+            --json number \
+            --jq '.[0].number')
+          if [ -z "${EXISTING_PR}" ]; then
+            gh pr create \
+              --repo "${PRODUCTION_REPO}" \
+              --base main \
+              --head stainless/release \
+              --title "Release SDK updates" \
+              --body-file body.md
+          else
+            gh pr edit "${EXISTING_PR}" \
+              --repo "${PRODUCTION_REPO}" \
+              --body-file body.md
+          fi

@@ -1,0 +1,59 @@
+name: Label Community Issues
+
+# This workflow adds the "community" label to issues opened by anyone outside
+# Airbyte. It is the issue-side counterpart to label-community-prs.yml, which does
+# the same for PRs from forks.
+#
+# The rule:
+#   airbytehq org member        -> no label
+#   bot installed by airbytehq  -> no label
+#   everyone else               -> "community"
+#
+# Both exclusions are exact, and neither needs a maintained list:
+#
+# 1. Org membership. `author_association` is computed by GitHub per event against
+#    live org membership, including private memberships, and arrives in the webhook
+#    payload — no API call, no token scope. MEMBER and OWNER mean the author is
+#    inside the org. This also covers Airbyte's machine *user* accounts
+#    (`airbyteio`, `octavia-squidington-iii`), which are org members and whose
+#    issues report MEMBER.
+#
+# 2. Installed apps. A `type: Bot` account is a GitHub App identity, and a GitHub
+#    App can only act on repositories where it is installed. Installing an app on an
+#    airbytehq repo requires an airbytehq admin. So every Bot-authored issue in this
+#    repo is, by construction, from an app Airbyte installed — there is no way for an
+#    outside app to open one. An allowlist would be both unnecessary and unreliable:
+#    airbytehq has 78 apps installed org-wide, and any hand-maintained subset would
+#    drift.
+#
+# `author_association` is evaluated when the event fires, so the label is a snapshot.
+# Someone who files an issue and later leaves the org keeps the label they had.
+#
+# Note on COLLABORATOR: an outside collaborator is someone granted direct access to
+# this repo without being an org member. They are outside the org, so by the rule
+# above they get the label. This repo currently has zero outside collaborators.
+
+on:
+  issues:
+    types:
+      - opened
+      - reopened
+
+jobs:
+  label-community-issue:
+    name: Add "community" Label to Issue
+    # Skip airbytehq org members, and skip apps installed by airbytehq.
+    if: >
+      github.event.issue.user.type != 'Bot' &&
+      !contains(fromJSON('["MEMBER", "OWNER"]'), github.event.issue.author_association)
+    runs-on: ubuntu-24.04
+    permissions:
+      issues: write
+    steps:
+      - name: Add community label
+        # This action uses GitHub's addLabels API, which is idempotent.
+        # If the label already exists, the API call succeeds without error.
+        uses: actions-ecosystem/action-add-labels@bd52874380e3909a1ac983768df6976535ece7f8 # v1.1.3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          labels: community

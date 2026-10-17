@@ -1,0 +1,59 @@
+name: promote-to-prod
+
+on:
+  workflow_dispatch:
+    inputs:
+      bundle-name:
+        description: "The name of the release bundle"
+        required: true
+      bundle-version:
+        description: "The release bundle version"
+        required: true
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:  
+  policy-check-and-promote-to-prod:
+    runs-on: ubuntu-latest
+    steps:
+    
+      - name: Install jfrog cli
+        id:   setup-cli
+        uses: jfrog/setup-jfrog-cli@v4
+        env:
+          JF_URL: https://${{ vars.ARTIFACTORY_URL }}
+        with:
+         oidc-provider-name: my-oidc-integration
+    
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup OPA
+        uses: open-policy-agent/setup-opa@v2
+        with:
+         version: latest
+         
+      - name: Call GraphQL
+        run: |
+          ./scripts/graphql.sh https://${{ vars.ARTIFACTORY_URL }} ${{ steps.setup-cli.outputs.oidc-token }} release-bundles-v2 ${{ inputs.bundle-name }} ${{ inputs.bundle-version }} ./evidence-graph.json
+          cat ./evidence-graph.json
+      - name: Run policy
+        id: run_policy
+        run: |
+          opa eval --input ./evidence-graph.json --data ./policy/policy.rego "data.policy.output" | jq '.result[0].expressions[0].value'  > policy.json
+          result=$(jq .approved ./policy.json)
+          echo "RESULT=$result" >> $GITHUB_ENV
+      - name: Promote to Production
+        run: |
+          if [ "${{ env.RESULT }}" == "true" ]; then
+            jf evd create --key "${{ secrets.PRIVATE_KEY }}" --key-alias SIGNING-KEY \
+              --release-bundle ${{ inputs.bundle-name }} --release-bundle-version ${{ inputs.bundle-version }} \
+              --predicate ./policy.json --predicate-type https://jfrog.com/evidence/approval/v1
+            jf release-bundle-promote ${{ inputs.bundle-name }} ${{ inputs.bundle-version }} PROD --signing-key RSA-SIGNING  --sync=true
+            echo "🚀 Succesfully promote to \`PROD\` environemnt" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Fail promotion policy check" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi

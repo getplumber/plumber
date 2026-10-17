@@ -1,0 +1,69 @@
+{
+  "source": "https://github.com/databricks/databricks-sql-nodejs",
+  "commit": "3076abcf9c9e6b5ac62e0012595f9667892c42aa",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "azure-prod",
+      "known": true
+    },
+    {
+      "name": "copilot",
+      "known": true
+    },
+    {
+      "name": "npm-publish",
+      "known": true,
+      "branchPolicy": true,
+      "requiredReviewers": true,
+      "reviewers": 5,
+      "preventSelfReview": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/dco-check.yml": "active",
+    ".github/workflows/engineer-bot-followup.yml": "active",
+    ".github/workflows/engineer-bot-learning.yml": "active",
+    ".github/workflows/engineer-bot.yml": "active",
+    ".github/workflows/kernel-e2e.yml": "active",
+    ".github/workflows/kernel-rc-cross-os.yml": "active",
+    ".github/workflows/main.yml": "active",
+    ".github/workflows/reviewer-bot-followup.yml": "active",
+    ".github/workflows/reviewer-bot.yml": "active",
+    ".github/workflows/securityScan.yml": "active",
+    ".github/workflows/skip-checks-reporter.yml": "active",
+    ".github/workflows/trigger-integration-tests.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "actionMetadata": {
+    "actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c": {
+      "refKind": "commit",
+      "mutableRemoteExec": {
+        "tier": "exec",
+        "url": "https://sh.rustup.rs",
+        "file": "action.yml",
+        "downloadGuard": "rustup"
+      }
+    }
+  },
+  "note": "The High path through the SHA-pinned `actions-rust-lang/setup-rust-toolchain` was judged overstated: the SHA-pinned Rust toolchain action only fetches `sh.rustup.rs` under `if ! command -v rustup`, and the next step downloads the toolchain from the same vendor, so the actor is the Rust distribution on a runner without rustup, Medium at most.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "actions-rust-lang/setup-rust-toolchain@1780873c7b57",
+        "tier": "medium"
+      }
+    ]
+  }
+}

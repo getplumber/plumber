@@ -1,0 +1,57 @@
+{
+  "source": "https://github.com/ClickHouse/ch-go",
+  "commit": "600546438865214b4f407cae06a9492c925b8802",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "copilot",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/e2e.yml": "active",
+    ".github/workflows/x.yml": "active",
+    ".github/workflows/cover.yml": "active",
+    ".github/workflows/pr.yml": "active",
+    ".github/workflows/run-tests-cloud.yml": "active",
+    ".github/workflows/docs_drift_check.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "defaultTokenWrite": "false",
+  "defaultTokenSource": "log",
+  "note": "The four High paths (the `go-faster/x` reusable workflows at `@main`, `andstor/file-existence-action@v3`) were judged overstated: no secret is passed and the default token is read-only (run log), Medium at most.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "go-faster/x/.github/workflows/commit.yml@main",
+        "tier": "medium"
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "go-faster/x/.github/workflows/lint.yml@main",
+        "tier": "medium"
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "andstor/file-existence-action@v3",
+        "tier": "medium"
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "go-faster/x/.github/workflows/test.yml@main",
+        "tier": "medium"
+      }
+    ]
+  }
+}

@@ -1,0 +1,64 @@
+name: "Scorecard Evidence Integration example"
+on:
+  workflow_dispatch:
+
+permissions: read-all
+
+jobs:
+  ossf-scorecard-analysis:
+    runs-on: ubuntu-latest
+    env:
+      REGISTRY_DOMAIN: ${{ vars.JF_URL }}
+      REPO_NAME: 'docker-scorecard-repo'
+      IMAGE_NAME: 'docker-scorecard-image'
+      VERSION: ${{ github.run_number }}
+      BUILD_NAME: 'scorecard-docker-build'
+      ATTACH_OPTIONAL_CUSTOM_MARKDOWN_TO_EVIDENCE: true
+      
+    steps:
+      # Build and publish the packages to JFrog Artifactory
+      - name: Setup jfrog cli
+        uses: jfrog/setup-jfrog-cli@v4
+        env:
+          JF_URL: ${{ vars.ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.ARTIFACTORY_ACCESS_TOKEN }}
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            examples/scorecard/**
+          sparse-checkout-cone-mode: false
+      - name: Build and publish Docker Image to Artifactory
+        run: |
+          docker build . --file ./examples/scorecard/Dockerfile --tag $REGISTRY_DOMAIN/$REPO_NAME/$IMAGE_NAME:$VERSION
+          echo "Pushing Docker Image to Artifactory"
+          jf rt docker-push $REGISTRY_DOMAIN/$REPO_NAME/$IMAGE_NAME:$VERSION $REPO_NAME --build-name=$BUILD_NAME --build-number=${{ github.run_number }}
+          echo "Pushing Docker Image to Artifactory completed"
+          echo "publishing build info"
+          jf rt build-publish $BUILD_NAME ${{ github.run_number }}
+
+      # Fetch Scorecard Analysis
+      - name: "Run analysis"
+        uses: ossf/scorecard-action@v2.4.2
+        with:
+          results_file: scorecard-results.sarif
+          results_format: sarif
+          publish_results: false
+
+      # This is an optional step to generate a custom markdown report
+      - name: Generate optional custom markdown report
+        if: env.ATTACH_OPTIONAL_CUSTOM_MARKDOWN_TO_EVIDENCE == 'true'
+        run: |
+          python ./examples/scorecard/scorecard_json_to_markdown_helper.py scorecard-results.sarif scorecard-results.md
+
+      # Attaching the evidence to associated package
+      - name: Attach evidence using jfrog cli
+        run: |
+          jf evd create \
+            --package-name $IMAGE_NAME \
+            --package-version $VERSION \
+            --package-repo-name $REPO_NAME \
+            --key "${{ secrets.PRIVATE_KEY }}" \
+            --key-alias "${{ vars.EVIDENCE_KEY_ALIAS }}" \
+            --predicate ./scorecard-results.sarif \
+            --predicate-type http://openssf.org/scorecard/security-scan/v1 \
+            ${{ env.ATTACH_OPTIONAL_CUSTOM_MARKDOWN_TO_EVIDENCE == 'true' && '--markdown "scorecard-results.md"' || '' }}

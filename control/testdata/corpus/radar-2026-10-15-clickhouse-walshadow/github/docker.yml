@@ -1,0 +1,79 @@
+name: Docker
+
+# Publish docker/Dockerfile to ghcr.io, one amd64+arm64 image per PostgreSQL
+# major. Shadow is a physical clone, so image major must equal source major;
+# supported majors live in docs/limitations.md
+#
+# Tags per major N:
+#   pgN              main head
+#   sha-<short>-pgN  every main push, pin or roll back by commit
+#   <semver>-pgN     v* tags
+# No `latest`: wrong major fails at bootstrap, so no safe default
+#
+# docker/github-builder builds each arch natively on its own runner, joins
+# them into one manifest list, and signs attestations with the job OIDC token.
+# It builds from git context, BuildKit fetches submodules itself
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  # Build only, no push. Paths that change image contents outside CI's view
+  pull_request:
+    paths:
+      - docker/Dockerfile
+      - docker/entrypoint.sh
+      - .dockerignore
+      - .gitmodules
+      - Cargo.toml
+      - Cargo.lock
+      - pgext/**
+      - .github/workflows/docker.yml
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    name: pg${{ matrix.pg-major }}
+    strategy:
+      fail-fast: false
+      matrix:
+        pg-major: [16, 17, 18]
+    uses: docker/github-builder/.github/workflows/build.yml@v1
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    with:
+      output: image
+      push: ${{ github.event_name != 'pull_request' }}
+      file: docker/Dockerfile
+      build-args: |
+        PG_MAJOR=${{ matrix.pg-major }}
+        WALSHADOW_GIT_SHA=${{ github.sha }}
+      platforms: linux/amd64,linux/arm64
+      # gha layer cache, scope gets a per-arch suffix. Cargo cache mounts
+      # inside RUN are not exported, deps rebuild each run
+      cache: true
+      cache-scope: pg${{ matrix.pg-major }}
+      cache-mode: max
+      # Lowercase, github.repository is ClickHouse/walshadow
+      meta-images: ghcr.io/clickhouse/walshadow
+      meta-flavor: latest=false
+      meta-tags: |
+        type=raw,value=pg${{ matrix.pg-major }},enable={{is_default_branch}}
+        type=sha,suffix=-pg${{ matrix.pg-major }}
+        type=semver,pattern={{version}},suffix=-pg${{ matrix.pg-major }}
+      set-meta-labels: true
+      set-meta-annotations: true
+    secrets:
+      registry-auths: |
+        - registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}

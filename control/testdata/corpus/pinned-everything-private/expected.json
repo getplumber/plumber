@@ -6,7 +6,7 @@
   "visibility": "private",
   "defaultBranch": "main",
   "branches": [{"name": "main", "protected": true}],
-  "note": "A private repository's workflows cannot be published in this corpus, so this is a minimal reproduction of the shape: every action pinned by SHA from GitHub's own owners, checkout credentials not persisted, main protected, a tag-triggered release in an environment. The one entry is the pull request title echoed into the step summary of a test job holding a read token: code execution alone, Low (the job saves a cache, so the sentence says what it caches can be poisoned), and the private visibility is recorded (a contributor entry then needs an account with access), Low being the floor. No job declares cache-mode, so ISSUE-705 is silent. Hand count: one Low path 3, no other finding, so 100 - 3 = 97: A.",
+  "note": "A private repository's workflows cannot be published in this corpus, so this is a minimal reproduction of the shape: every action pinned by SHA from GitHub's own owners, checkout credentials not persisted, main protected, a tag-triggered release in an environment. The one entry is the pull request title echoed into the step summary of a test job holding a read token: code execution alone, Low (the job saves a cache, but only in the pull request's own scope, which no other ref's run restores, so the sentence does not say its cache can be poisoned), and the private visibility is recorded (a contributor entry then needs an account with access), Low being the floor. No job declares cache-mode, so ISSUE-705 is silent. Hand count: one Low path 3, no other finding, so 100 - 3 = 97: A.",
   "expect": {
     "maxTier": "low",
     "paths": [

@@ -1,0 +1,31 @@
+{
+  "source": "https://github.com/bitrise-io/BackyardBirds",
+  "commit": "6c6c2e1d48cd8837dd30e7c5ce87144eda4cd7a1",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/mq.yml": "active",
+    ".github/workflows/pr.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High untrusted-expression path (`github.head_ref` in `pr.yml`) was judged overstated: the workflow runs on pull_request `types: [labeled]` only, after a maintainer applies `run`, and a fork pull_request run holds a read-only token and no secret, Low at most.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "untrusted_expression",
+        "subjectContains": "github.head_ref",
+        "tier": "low"
+      }
+    ]
+  }
+}

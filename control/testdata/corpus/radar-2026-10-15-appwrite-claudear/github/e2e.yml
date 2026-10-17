@@ -1,0 +1,151 @@
+name: Production E2E
+
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build E2E binaries
+    if: ${{ vars.CLAUDEAR_PROD_E2E_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-e2e-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-e2e-
+
+      - name: Build release binaries
+        run: cargo build --release --bin claudear -p claudear-e2e --bin claudear-e2e
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-binaries
+          path: |
+            target/release/claudear
+            target/release/claudear-e2e
+          retention-days: 1
+
+  e2e:
+    name: "E2E: ${{ matrix.name }}"
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Run 1: Default stack — covers GitHub SCM, Linear source, Discord ask
+          - name: github-linear-discord
+            scm: github
+            source: linear
+            ask: discord
+            scenarios: "1,2,3"
+
+          # Run 2: Alt stack — covers GitLab SCM, Jira source, Slack ask
+          - name: gitlab-jira-slack
+            scm: gitlab
+            source: jira
+            ask: slack
+            scenarios: "1,2,3"
+
+          # Run 3: Discord as issue source
+          - name: github-discord-source
+            scm: github
+            source: discord
+            ask: discord
+            scenarios: "1"
+
+          # Run 4: Slack as issue source
+          - name: github-slack-source
+            scm: github
+            source: slack
+            ask: slack
+            scenarios: "1"
+
+          # Run 5: Action pipeline (classify → verify → resolve → reply) over Linear.
+          # Reuses the GitHub + Linear secrets; no new credentials needed.
+          - name: github-linear-action
+            scm: github
+            source: linear
+            ask: discord
+            scenarios: "4"
+
+    env:
+      # Claude auth
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      # GitHub
+      CLAUDEAR_E2E_GITHUB_TOKEN: ${{ secrets.CLAUDEAR_E2E_GITHUB_TOKEN }}
+      CLAUDEAR_E2E_GITHUB_REPO: ${{ secrets.CLAUDEAR_E2E_GITHUB_REPO }}
+      CLAUDEAR_E2E_GITHUB_REPO_2: ${{ secrets.CLAUDEAR_E2E_GITHUB_REPO_2 }}
+      CLAUDEAR_E2E_GITHUB_REVIEWER_TOKEN: ${{ secrets.CLAUDEAR_E2E_GITHUB_REVIEWER_TOKEN }}
+      # GitLab
+      CLAUDEAR_E2E_GITLAB_TOKEN: ${{ secrets.CLAUDEAR_E2E_GITLAB_TOKEN }}
+      CLAUDEAR_E2E_GITLAB_REPO: ${{ secrets.CLAUDEAR_E2E_GITLAB_REPO }}
+      CLAUDEAR_E2E_GITLAB_URL: ${{ secrets.CLAUDEAR_E2E_GITLAB_URL }}
+      CLAUDEAR_E2E_GITLAB_REPO_2: ${{ secrets.CLAUDEAR_E2E_GITLAB_REPO_2 }}
+      CLAUDEAR_E2E_GITLAB_REVIEWER_TOKEN: ${{ secrets.CLAUDEAR_E2E_GITLAB_REVIEWER_TOKEN }}
+      # Linear
+      CLAUDEAR_E2E_LINEAR_API_KEY: ${{ secrets.CLAUDEAR_E2E_LINEAR_API_KEY }}
+      CLAUDEAR_E2E_LINEAR_TEAM_ID: ${{ secrets.CLAUDEAR_E2E_LINEAR_TEAM_ID }}
+      # Jira
+      CLAUDEAR_E2E_JIRA_URL: ${{ secrets.CLAUDEAR_E2E_JIRA_URL }}
+      CLAUDEAR_E2E_JIRA_EMAIL: ${{ secrets.CLAUDEAR_E2E_JIRA_EMAIL }}
+      CLAUDEAR_E2E_JIRA_API_TOKEN: ${{ secrets.CLAUDEAR_E2E_JIRA_API_TOKEN }}
+      CLAUDEAR_E2E_JIRA_PROJECT_KEY: ${{ secrets.CLAUDEAR_E2E_JIRA_PROJECT_KEY }}
+      # Discord
+      CLAUDEAR_E2E_DISCORD_BOT_TOKEN: ${{ secrets.CLAUDEAR_E2E_DISCORD_BOT_TOKEN }}
+      CLAUDEAR_E2E_DISCORD_CHANNEL_ID: ${{ secrets.CLAUDEAR_E2E_DISCORD_CHANNEL_ID }}
+      # Slack
+      CLAUDEAR_E2E_SLACK_BOT_TOKEN: ${{ secrets.CLAUDEAR_E2E_SLACK_BOT_TOKEN }}
+      CLAUDEAR_E2E_SLACK_CHANNEL_ID: ${{ secrets.CLAUDEAR_E2E_SLACK_CHANNEL_ID }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install Claude CLI
+        run: |
+          bun install -g @anthropic-ai/claude-code
+          claude --version
+
+      - name: Download binaries
+        uses: actions/download-artifact@v8
+        with:
+          name: e2e-binaries
+          path: bin
+
+      - name: Make binaries executable
+        run: chmod +x bin/claudear bin/claudear-e2e
+
+      - name: Run E2E scenarios
+        env:
+          E2E_SCM: ${{ matrix.scm }}
+          E2E_SOURCE: ${{ matrix.source }}
+          E2E_ASK: ${{ matrix.ask }}
+          E2E_SCENARIOS: ${{ matrix.scenarios }}
+        run: |
+          bin/claudear-e2e \
+            --scm "$E2E_SCM" \
+            --source "$E2E_SOURCE" \
+            --ask-backend "$E2E_ASK" \
+            --scenarios "$E2E_SCENARIOS" \
+            --binary bin/claudear

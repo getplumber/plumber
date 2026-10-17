@@ -1,0 +1,15 @@
+name: warm
+on: workflow_call
+permissions:
+  contents: read
+jobs:
+  warm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: echo "warming the cache for ${{ github.event.pull_request.title }}"
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
+        with:
+          path: ~/.npm
+          key: npm-${{ hashFiles('package-lock.json') }}
+      - run: npm ci

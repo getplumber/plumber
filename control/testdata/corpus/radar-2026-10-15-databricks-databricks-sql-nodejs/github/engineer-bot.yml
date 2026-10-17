@@ -1,0 +1,258 @@
+# Engineer Bot — author.
+#
+# A maintainer labels an ISSUE with `engineer-bot`; the bot addresses it and opens
+# a PR. The author FLOW is chosen from the issue's TYPE (a GitHub org-level Issue
+# Type): `Bug` ⇒ bug-fix (reproduce with a failing test, then fix); any other type
+# / none ⇒ the repo's .bot/config.yaml `flow:` default (also bug-fix). Only bug-fix
+# is selectable because this repo's .bot/prompts/engineer/ prompts are written
+# exclusively for it. Set the Type BEFORE `engineer-bot` — it's read live when the
+# run starts.
+#
+# The engineer BUILDS and TESTS the connector, so it installs deps with `npm ci`
+# (routed through the JFrog mirror by setup-jfrog — the protected runners are
+# egress-blocked from public npm). The bug-fix flow requires a LIVE e2e repro
+# against a warehouse (the general Thrift-backed tests/e2e suite; the kernel
+# native binary is NOT built here — the driver falls back to Thrift). Shared bot
+# setup (mint tokens + Node + install the pinned engine, PAT-free) is the local
+# ./.github/actions/bot-prelude composite.
+#
+# SECURITY: the trigger is a label only maintainers can apply — issue BODIES are
+# untrusted input, so the gate is who-can-label, not the content. The issue body
+# is written to a file and inlined into the agent prompt; it never reaches a shell.
+name: Engineer Bot
+
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: 'Issue number to fix'
+        required: true
+        type: string
+
+permissions:
+  contents: write # push the fix branch
+  pull-requests: write # open the fix PR
+  issues: write # comment back on the tracking issue
+  id-token: write # JFrog OIDC exchange for npm + the engine/SDK/CLI install
+
+jobs:
+  author:
+    # Manual dispatch, OR the `engineer-bot` label was just applied. Applying a
+    # label requires triage+ on the repo, so this is the maintainer-only gate.
+    # The `sender.type != 'Bot'` guard is defense-in-depth: a GitHub App with
+    # `issues: write` could apply the label without a human.
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || (github.event.label.name == 'engineer-bot'
+          && github.event.sender.type != 'Bot')
+    environment: azure-prod # DATABRICKS_HOST / DATABRICKS_TOKEN / warehouse HTTP path live here
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    timeout-minutes: 45
+    concurrency:
+      # One author run per issue; a re-label while a run is in flight queues.
+      group: engineer-bot-issue-${{ github.event.issue.number || inputs.issue_number }}
+      cancel-in-progress: false
+    steps:
+      # Checkout FIRST (remote action) so the local `./` composites resolve.
+      # publish sets its own authenticated push remote for the fix branch, so
+      # persist-credentials:false is fine.
+      - name: Checkout (default branch)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # --- connector deps (mirrors main.yml unit/e2e jobs) ---------------------
+      # setup-jfrog rewrites ~/.npmrc + package-lock resolved URLs to the JFrog
+      # mirror so `npm ci` works on the egress-blocked runner. `npm ci` (NOT
+      # `npm install`) — install would rewrite package-lock.json to lockfileVersion
+      # 3 and fail the repo's lint gate; ci is read-only against the v2 lockfile.
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20'
+
+      - name: Setup JFrog
+        uses: ./.github/actions/setup-jfrog
+
+      - name: Install connector deps (npm ci)
+        # `prepare` lifecycle runs `npm run build` (tsc) automatically here, so the
+        # dist/ + lib/version.ts are built for the agent. Both are gitignored, so
+        # this leaves no tracked-file churn for publish to trip on.
+        run: npm ci
+
+      # Scope the JFrog credential AWAY from the model-driven steps. setup-jfrog
+      # wrote ~/.npmrc with an embedded auth token + exported JFROG_ACCESS_TOKEN to
+      # $GITHUB_ENV; `npm ci` above already consumed them, and the agent's test
+      # commands (npm test / npm run e2e) don't need the registry. Remove them
+      # before the agent runs so a prompt-injected agent can't read the token.
+      # (Addresses the reviewer-bot finding on the odbc onboarding PR.)
+      - name: Scrub JFrog credentials before the agent runs
+        run: |
+          rm -f ~/.npmrc
+          echo "JFROG_ACCESS_TOKEN=" >> "$GITHUB_ENV"
+
+      # --- shared bot setup ----------------------------------------------------
+      - name: Bot prelude (tokens + Node + engine install)
+        id: prelude
+        uses: ./.github/actions/bot-prelude
+        with:
+          app-id: ${{ secrets.ENGINEER_BOT_APP_ID }}
+          private-key: ${{ secrets.ENGINEER_BOT_APP_PRIVATE_KEY }}
+
+      - name: Resolve issue + gather context
+        id: ctx
+        # SECURITY: the issue number is validated as digits-only before use; the
+        # issue body + title are UNTRUSTED. The body goes to a file (never a shell
+        # or env interpolation); the title is exported through $GITHUB_ENV with a
+        # random heredoc delimiter (a title can contain newlines / a chosen
+        # delimiter, which would otherwise inject extra env vars).
+        env:
+          GH_TOKEN: ${{ steps.prelude.outputs.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_ISSUE: ${{ inputs.issue_number }}
+          EVENT_ISSUE: ${{ github.event.issue.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then RAW="$INPUT_ISSUE"; else RAW="$EVENT_ISSUE"; fi
+          [[ "$RAW" =~ ^[0-9]+$ ]] || { echo "::error::Invalid issue number '$RAW'"; exit 1; }
+          # `gh issue view --json` does NOT expose the issue TYPE, so fetch via the
+          # REST API (which carries `.type.name`). Issue Types are an ORG-level
+          # feature; a repo without them returns `.type == null` (⇒ no --flow ⇒ the
+          # engine uses the .bot/config.yaml `flow:` default).
+          gh api "repos/$REPO/issues/$RAW" > "$RUNNER_TEMP/issue.json"
+          # The REST issues endpoint resolves PR numbers too; reject them cleanly:
+          # real issues have `.pull_request == null`.
+          [ "$(jq -r '.pull_request // "null"' "$RUNNER_TEMP/issue.json")" = "null" ] \
+            || { echo "::error::#$RAW is a pull request, not an issue"; exit 1; }
+          jq -r '.body // ""' "$RUNNER_TEMP/issue.json" > "$RUNNER_TEMP/issue_body.txt"
+          TITLE="$(jq -r '.title // ""' "$RUNNER_TEMP/issue.json")"
+          URL="$(jq -r '.html_url // ""' "$RUNNER_TEMP/issue.json")"
+          {
+            echo "ISSUE_NUMBER=$RAW"
+            echo "ISSUE_URL=$URL"
+          } >> "$GITHUB_ENV"
+          echo "issue_number=$RAW" >> "$GITHUB_OUTPUT"
+          # Derive the author flow from the issue's TYPE (read LIVE here). Only
+          # `bug-fix` is mapped: this repo's engineer prompts are written for it.
+          TYPE="$(jq -r '.type.name // ""' "$RUNNER_TEMP/issue.json")"
+          case "$TYPE" in
+            Bug) echo "flow=bug-fix" >> "$GITHUB_OUTPUT" ;;
+          esac
+          DELIM="GHEOF_$(date +%s%N)${RANDOM}"
+          if printf '%s' "$TITLE" | grep -qF "$DELIM"; then
+            echo "::error::title delimiter collision — refusing to write \$GITHUB_ENV"; exit 1
+          fi
+          { echo "ISSUE_TITLE<<$DELIM"; printf '%s\n' "$TITLE"; echo "$DELIM"; } >> "$GITHUB_ENV"
+
+      - name: Write E2E connection config (token survives the agent env scrub)
+        id: e2e_config
+        # The bug-fix flow's REQUIRED e2e repro authenticates via tests/e2e/utils/
+        # config.ts, which reads the PAT from E2E_ACCESS_TOKEN. But the author agent
+        # runs the suite in a subprocess whose env is scrubbed of every
+        # credential-shaped var (engine shared/env_scrub.py strips
+        # *TOKEN*/*SECRET*/…), so E2E_ACCESS_TOKEN never reaches it — config.ts then
+        # sees an undefined token and `process.exit(1)`s, aborting the whole suite.
+        # Workaround (per the engine README): write the token to a file and pass its
+        # PATH in DATABRICKS_TEST_CONFIG_FILE, a var the scrub preserves; config.ts
+        # reads it as a fallback. Written here (an ordinary step, token in scope)
+        # with jq so the secret is never shell-interpolated.
+        env:
+          E2E_ACCESS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+        run: |
+          CONFIG_PATH="$RUNNER_TEMP/e2e-connection.json"
+          jq -n --arg token "$E2E_ACCESS_TOKEN" '{token: $token}' > "$CONFIG_PATH"
+          chmod 600 "$CONFIG_PATH"
+          echo "path=$CONFIG_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Run author
+        id: author
+        # Run from RUNNER_TEMP so the engine-rendered prompt's context file
+        # (issue_body.txt, resolved against cwd) is read from there and the checkout
+        # stays clean — publish's leftover check fails on any untracked path in the
+        # repo. REPO_ROOT points the agent's working tree (and .bot/ lookup) at the
+        # checkout. --flow only when the ctx step derived one.
+        working-directory: ${{ runner.temp }}
+        env:
+          MODEL_ENDPOINT: https://${{ secrets.DATABRICKS_HOST }}/serving-endpoints/databricks-claude-opus-4-8/invocations
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+          # Live-warehouse connection env for the agent's REQUIRED e2e repro (the
+          # 7 E2E_* vars tests/e2e/utils/config.ts validates — a single missing one
+          # process.exit(1)s the suite). host/path/catalog/schema/volume/suffix are
+          # not credential-shaped so they survive the scrub; the TOKEN can't (it's
+          # stripped) — it rides the config file below instead.
+          E2E_HOST: ${{ secrets.DATABRICKS_HOST }}
+          E2E_PATH: ${{ secrets.TEST_PECO_WAREHOUSE_HTTP_PATH }}
+          E2E_CATALOG: peco
+          E2E_SCHEMA: default
+          E2E_VOLUME: e2etests
+          E2E_TABLE_SUFFIX: engbot_${{ github.run_id }}
+          DATABRICKS_TEST_CONFIG_FILE: ${{ steps.e2e_config.outputs.path }}
+          REPO_ROOT: ${{ github.workspace }}
+          RUNNER_TEMP: ${{ runner.temp }}
+          FLOW: ${{ steps.ctx.outputs.flow }}
+        run: |
+          args=(
+            --phase author
+            --system-prompt "$GITHUB_WORKSPACE/.bot/prompts/engineer/system.md"
+            --user-prompt "$GITHUB_WORKSPACE/.bot/prompts/engineer/user.md"
+          )
+          [ -n "$FLOW" ] && args+=(--flow "$FLOW")
+          python -m databricks_bot_engine.engineer_bot.run "${args[@]}"
+
+      - name: Open / update fix PR
+        id: publish
+        if: steps.author.outputs.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ steps.prelude.outputs.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          REPO_ROOT: ${{ github.workspace }}
+          RUNNER_TEMP: ${{ runner.temp }}
+          ENGINEER_BOT_APP_ID: ${{ secrets.ENGINEER_BOT_APP_ID }}
+          TOUCHED_FILES: ${{ steps.author.outputs.touched_files }}
+          TOUCHED_COUNT: ${{ steps.author.outputs.touched_count }}
+          SUMMARY: ${{ steps.author.outputs.summary }}
+          RED_GREEN_TESTS: ${{ steps.author.outputs.red_green_tests }}
+          PLAN: ${{ steps.author.outputs.plan }}
+          OUT_OF_SCOPE: ${{ steps.author.outputs.out_of_scope }}
+          # ISSUE_NUMBER / ISSUE_TITLE / ISSUE_URL come from $GITHUB_ENV.
+        run: |
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          python -m databricks_bot_engine.engineer_bot.publish --repo-dir "$GITHUB_WORKSPACE"
+
+      - name: Comment outcome on issue
+        # Always close the loop on the tracking issue, whatever happened. The
+        # agent SUMMARY / reason is LLM-generated — write it to a file and pass
+        # via --body-file so nothing reaches a shell.
+        if: always() && steps.ctx.outputs.issue_number != ''
+        env:
+          GH_TOKEN: ${{ steps.prelude.outputs.token }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ steps.ctx.outputs.issue_number }}
+          OUTCOME: ${{ steps.author.outputs.outcome }}
+          # `coverage_pr_url` is the engine publish module's PR-URL output key for
+          # ALL flows (bug-fix included) — the name is legacy.
+          PR_URL: ${{ steps.publish.outputs.coverage_pr_url }}
+          REASON: ${{ steps.author.outputs.reason }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          BODY="$RUNNER_TEMP/issue_comment.md"
+          # $OUTCOME is the engine's emitted outcome; it maps the agent's
+          # `no_change_needed` to `no_change`, so `no_change)` is the correct arm.
+          case "$OUTCOME" in
+            success)
+              if [ -n "$PR_URL" ]; then
+                printf '🤖 engineer-bot opened a fix PR: %s\n\nReview before merge.\n' "$PR_URL" > "$BODY"
+              else
+                printf '🤖 engineer-bot produced a fix but could **not** open the PR (push or PR creation failed). See the [workflow run](%s) for details.\n' "$RUN_URL" > "$BODY"
+              fi ;;
+            no_change)
+              { printf '🤖 engineer-bot looked into this but made **no change** — the behaviour appears already correct.\n\n'; printf '> %s\n' "$REASON"; } > "$BODY" ;;
+            *)
+              { printf '🤖 engineer-bot could **not** complete an automated fix. See the [workflow run](%s) for details.\n' "$RUN_URL"; } > "$BODY" ;;
+          esac
+          gh issue comment "$ISSUE" --repo "$REPO" --body-file "$BODY"

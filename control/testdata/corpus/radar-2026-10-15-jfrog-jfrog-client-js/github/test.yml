@@ -1,0 +1,48 @@
+name: Tests
+
+on:
+  push:
+  # Triggers the workflow on labeled PRs only.
+  pull_request_target:
+    types: [labeled]
+
+jobs:
+  test:
+    if: contains(github.event.pull_request.labels.*.name, 'safe to test') || github.event_name == 'push'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macOS-latest]
+    env:
+      NPM_CONFIG_IGNORE_SCRIPTS: true
+
+    steps:
+      # Prerequisites
+      - uses: actions/checkout@v3
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Setup NodeJS
+        uses: actions/setup-node@v3
+        with:
+          node-version: "16"
+
+      # Clean install project
+      - name: Clean install
+        run: npm ci
+
+      # Run lint
+      - name: Lint
+        run: npm run lint
+
+      # Run tests
+      - name: Tests
+        run: npm run pretest && npm t
+        env:
+          CLIENTTESTS_PLATFORM_URL: ${{ secrets.PLATFORM_URL }}
+          CLIENTTESTS_PLATFORM_ACCESS_TOKEN: ${{ secrets.PLATFORM_ADMIN_TOKEN }}
+
+      # Send tests coverage to Codecov
+      - name: Send code coverage
+        uses: codecov/codecov-action@v3
+        if: runner.os == 'Linux'

@@ -1,0 +1,37 @@
+name: Test
+
+on: [ push, pull_request ]
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, windows-latest, macOS-latest ]
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: jfrog-fastci/fastci@main  # Use the FastCI optimization action
+        with:
+          github_token: ${{secrets.GITHUB_TOKEN}}
+          fastci_otel_token: ${{ secrets.FASTCI_TOKEN }}
+
+      # Install required tools
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: "temurin"
+          java-version: "11"
+
+      # Run tests
+      - name: Tests on macOS, Linux
+        run: ./gradlew clean check
+        if: runner.os != 'Windows'
+      - name: Tests on Windows
+        run: ./gradlew.bat clean check
+        if: runner.os == 'Windows'
+
+      # Stop Gradle daemon
+      - name: Stop Gradle
+        run: ./gradlew --stop

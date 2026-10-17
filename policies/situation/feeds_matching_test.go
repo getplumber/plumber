@@ -174,7 +174,7 @@ func TestFeedsViaArtifact(t *testing.T) {
 // TestFeedsViaArtifactOnGitLabStaysTheBareKind pins that the typed
 // artifact_executed/artifact_altered split is GitHub-only: a GitLab
 // produce/consume pair keeps the untyped "artifact" kind, whatever the
-// consumer job does, this task not touching GitLab's own model.
+// consumer job does, GitLab's own model left as it is.
 func TestFeedsViaArtifactOnGitLabStaysTheBareKind(t *testing.T) {
 	gl := evaluate(t, &ir.NormalizedPipeline{
 		Provider: ir.ProviderGitLab,
@@ -263,6 +263,61 @@ func TestFeedsViaArtifactAlteredThroughAChainedCommand(t *testing.T) {
 	want := map[string][]string{"release": {"artifact_altered"}}
 	if got := feedsViaOf(t, jobs, "build"); !reflect.DeepEqual(got, want) {
 		t.Errorf("build.feedsVia = %v, want %v", got, want)
+	}
+}
+
+// TestFeedsViaArtifactExecutedThroughPublishHooksAndRunnerFiles pins the
+// commands that look like shipping but execute: npm publish runs the
+// package's lifecycle scripts, cargo publish builds the crate (build.rs),
+// goreleaser release runs its hooks; and a line appending to
+// $GITHUB_ENV, $GITHUB_PATH or $GITHUB_OUTPUT injects into every later
+// process of the job, quoted or not. twine upload and gh release upload
+// run nothing and stay alter-only.
+func TestFeedsViaArtifactExecutedThroughPublishHooksAndRunnerFiles(t *testing.T) {
+	cases := []struct {
+		script, want string
+	}{
+		{"npm publish dist/", "artifact_executed"},
+		{"cargo publish", "artifact_executed"},
+		{"goreleaser release --clean", "artifact_executed"},
+		{"echo \"PATH_EXTRA=dist/bin\" >> $GITHUB_ENV", "artifact_executed"},
+		{"echo dist/bin >>\"$GITHUB_PATH\"", "artifact_executed"},
+		{"echo \"v=1\" >> ${GITHUB_OUTPUT}", "artifact_executed"},
+		{"echo dist/bin | tee -a \"$GITHUB_PATH\"", "artifact_executed"},
+		{"twine upload dist/*", "artifact_altered"},
+		{"gh release upload v1 dist/*", "artifact_altered"},
+		{"gh release create v1 dist/*", "artifact_altered"},
+		// Every other upload and file command the alter-only list names.
+		{"gem push dist/x.gem", "artifact_altered"},
+		{"aws s3 cp dist/ s3://b/ --recursive", "artifact_altered"},
+		{"aws s3 sync dist s3://b", "artifact_altered"},
+		{"gsutil cp dist gs://b", "artifact_altered"},
+		{"gsutil rsync dist gs://b", "artifact_altered"},
+		{"az storage blob upload --file dist/x --container-name c", "artifact_altered"},
+		{"cp dist out", "artifact_altered"},
+		{"mv dist out", "artifact_altered"},
+		{"ls -la dist", "artifact_altered"},
+		{"shasum dist/*", "artifact_altered"},
+		{"cd dist", "artifact_altered"},
+		{"mkdir -p out", "artifact_altered"},
+		{"pwd", "artifact_altered"},
+		// A command that only starts like one of them still executes.
+		{"mvn deploy", "artifact_executed"},
+		{"cd dist && ./run.sh", "artifact_executed"},
+	}
+	for _, tc := range cases {
+		jobs := []ir.Job{
+			{Name: "build", Artifacts: []ir.ArtifactRef{{Name: "dist", Mode: "produce"}}},
+			{
+				Name:      "release",
+				Artifacts: []ir.ArtifactRef{{Name: "dist", Mode: "consume"}},
+				Scripts:   []string{tc.script},
+			},
+		}
+		want := map[string][]string{"release": {tc.want}}
+		if got := feedsViaOf(t, jobs, "build"); !reflect.DeepEqual(got, want) {
+			t.Errorf("%q: build.feedsVia = %v, want %v", tc.script, got, want)
+		}
 	}
 }
 

@@ -1,0 +1,104 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths: [package.json]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Check for a New Version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      released: ${{ steps.version.outputs.released }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Check Out the Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Compare the Version With Existing Tags
+        id: version
+        run: |
+          set -euo pipefail
+          tag="v$(node -p "require('./package.json').version")"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then
+            echo "released=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "released=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  publish:
+    name: Publish to npm
+    if: needs.version.outputs.released == 'true'
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check Out the Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - name: Install Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 26.8.2
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Check the Committed Build Matches the Source
+        run: pnpm run lint:dist
+      - name: Create an Isolated Home
+        uses: ./.github/actions/isolated-home
+        env:
+          TMPDIR: ${{ github.workspace }}/../plugins-base-release-home/tmp
+      - name: Test
+        run: pnpm test
+        env:
+          HOME: ${{ github.workspace }}/../plugins-base-release-home
+          USERPROFILE: ${{ github.workspace }}/../plugins-base-release-home
+          TMPDIR: ${{ github.workspace }}/../plugins-base-release-home/tmp
+          TEMP: ${{ github.workspace }}/../plugins-base-release-home/tmp
+          TMP: ${{ github.workspace }}/../plugins-base-release-home/tmp
+          LANGCHAIN_API_KEY: ""
+          LANGSMITH_API_KEY: ""
+      - name: Check the Package Contents
+        run: npm pack --dry-run
+      - name: Publish
+        run: npm publish --access public
+
+  github-release:
+    name: Create the GitHub Release
+    needs: [version, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ needs.version.outputs.tag }}
+    steps:
+      - name: Create the Release
+        run: >-
+          gh release create "$RELEASE_TAG"
+          --repo "$GITHUB_REPOSITORY"
+          --target "$GITHUB_SHA"
+          --generate-notes
+          --title "$RELEASE_TAG"

@@ -1,0 +1,204 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Feature combinations, not just --all-features: a cfg that only compiles
+  # when some other feature happens to be on is the classic way a matrix-free
+  # build stays green while a real consumer's does not.
+  test:
+    name: ${{ matrix.os }} / ${{ matrix.features-name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        include:
+          - features-name: no-default
+            features: --no-default-features
+          - features-name: lz4
+            features: --no-default-features --features lz4
+          - features-name: zstd
+            features: --no-default-features --features zstd
+          - features-name: tokio
+            features: --no-default-features --features tokio
+          - features-name: tls
+            features: --no-default-features --features tls,tokio
+          - features-name: all
+            features: --all-features
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.features-name }}
+      - name: Install codec development files
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update && sudo apt-get install -y liblz4-dev libzstd-dev
+          else
+            brew install lz4 zstd
+          fi
+      # Live tests skip themselves without this, so a run without it would be
+      # green and meaningless.
+      - name: Install ClickHouse
+        run: curl https://clickhouse.com/ | sh && sudo ./clickhouse install --noninteractive
+      - run: cargo build ${{ matrix.features }}
+      - run: cargo test ${{ matrix.features }}
+
+  # Every line of src/ must be reached by a test. clickhouse-c enforces the
+  # same bar on its headers, so a branch neither repository can reach is a
+  # branch to rewrite rather than to exempt.
+  coverage:
+    name: Line coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # cargo-llvm-cov uses tools from this component.
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: coverage
+      - run: sudo apt-get update && sudo apt-get install -y liblz4-dev libzstd-dev
+      # Live tests skip themselves without this, which would leave the report
+      # green and meaningless.
+      - name: Install ClickHouse
+        run: curl https://clickhouse.com/ | sh && sudo ./clickhouse install --noninteractive
+      - name: Test with coverage
+        run: >
+          cargo llvm-cov --all-features --all-targets
+          --lcov --output-path lcov.info
+      - run: ci/coverage.sh lcov.info
+      - name: Coverage HTML
+        if: ${{ !cancelled() }}
+        run: cargo llvm-cov report --html --output-dir coverage
+      - name: Upload coverage
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: |
+            coverage
+            lcov.info
+          if-no-files-found: error
+
+  msrv:
+    name: MSRV
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - name: Read rust-version from the manifest
+        id: msrv
+        run: |
+          version=$(grep -m1 '^rust-version' Cargo.toml | cut -d'"' -f2)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y liblz4-dev libzstd-dev
+      # Build only: dev-dependencies are free to need a newer compiler than the
+      # library itself promises.
+      - run: cargo build --all-features
+
+  lint:
+    name: Lint and docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y liblz4-dev libzstd-dev
+      - run: git ls-files -z '*.sh' | xargs -0r shellcheck -x
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-features --all-targets
+      - run: cargo doc --all-features --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  # The C boundary is where a Rust-side mistake stops being a compile error,
+  # so the malformed-input sweep and the live tests run instrumented.
+  sanitizer:
+    name: AddressSanitizer
+    runs-on: ubuntu-latest
+    env:
+      CFLAGS: -fsanitize=address -fno-omit-frame-pointer -g
+      RUSTFLAGS: -D warnings -Zsanitizer=address
+      # ASan aborts where malloc would return null. A corrupt length field is
+      # meant to reach the library's OOM path, not stop the run.
+      ASAN_OPTIONS: detect_leaks=0:allocator_may_return_null=1
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: asan
+      - run: sudo apt-get update && sudo apt-get install -y liblz4-dev libzstd-dev
+      - run: curl https://clickhouse.com/ | sh && sudo ./clickhouse install --noninteractive
+      # No TLS: aws-lc-rs ships its own assembly and is not the boundary under
+      # test. An explicit --target keeps build scripts uninstrumented.
+      - run: >
+          cargo test --features tokio --target x86_64-unknown-linux-gnu
+          --lib --tests -- --test-threads=1
+
+  package:
+    name: Packaged crate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y liblz4-dev libzstd-dev
+      # `cargo package` builds what it packs, so this proves the include list
+      # carries every header and C shim the build needs. Extracting and
+      # building again outside the repository proves nothing leaks in from the
+      # surrounding checkout.
+      - name: UPSTREAM matches the submodule gitlink
+        run: |
+          set -euo pipefail
+          pinned=$(sed -n 's/^revision *= *//p' UPSTREAM)
+          actual=$(git -C clickhouse-c rev-parse HEAD)
+          test "$pinned" = "$actual" \
+            || { echo "UPSTREAM says $pinned, submodule is at $actual"; exit 1; }
+      # Walks the initialized submodule, so this is also what proves the
+      # archive is not missing the headers.
+      - run: cargo package --all-features
+      - name: Build the extracted archive standalone
+        run: |
+          set -euo pipefail
+          crate=$(ls target/package/*.crate)
+          workdir=$(mktemp -d)
+          tar -xzf "$crate" -C "$workdir"
+          cd "$workdir"/*/
+          cargo build --all-features

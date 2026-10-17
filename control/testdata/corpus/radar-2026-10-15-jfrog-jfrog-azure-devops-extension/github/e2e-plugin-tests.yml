@@ -1,0 +1,517 @@
+# End-to-end plugin tests — the automated equivalent of the manual sanity
+# process described in the release guide.
+#
+# FLOW (hybrid manual + automated)
+# --------------------------------
+#   1. build                  : Build .vsix from the PR branch and upload it
+#                               as a workflow artifact. Embeds clear, one-click
+#                               install instructions into the run summary.
+#
+#   2. (MANUAL) install       : You download the .vsix from the run page and
+#                               upload it via the Marketplace UI. Roughly 3
+#                               minutes, only required when you actually want
+#                               to test the PR's code changes against the
+#                               dev org. Re-trigger the workflow afterwards
+#                               (or just let jobs 3/4 run — they always test
+#                               whatever is currently installed).
+#
+#   3. sanity-tests           : Trigger the ADO sanity pipeline
+#                               (.pipelines/ado-sanity-pipeline.yml).
+#                               Covers: ToolsInstaller, GenericArtifacts,
+#                               Maven, PublishBuildInfo, DiscardBuilds.
+#
+#   4. oidc-tests             : Trigger the OIDC test pipeline.
+#                               Covers all task types with OIDC + non-OIDC.
+#
+# WHY THE HYBRID?
+# ---------------
+# Publishing the .vsix to the Marketplace + installing it into the dev org
+# is doable from CI, but Microsoft's Marketplace has several long-standing
+# quirks (eventual consistency on unpublish, permanent tombstoning of
+# (publisher, extension-id) pairs, async validation that races install)
+# that make it unreliable to drive from a tight CI loop. Doing the publish
+# step manually from the UI is reliable, takes ~3 minutes, and only needs
+# to happen when you actually want to test new task code. The ADO test
+# pipelines themselves run automatically against whatever is installed.
+#
+# REQUIRED GITHUB SECRETS
+# -----------------------
+#   ADO_E2E_ORG              ADO organisation name (publisher host + test host)
+#   ADO_E2E_PAT              PAT with scopes:
+#                              • Build: Read + Execute
+#                              • Project and Team: Read
+#                            (Marketplace scopes no longer needed in CI —
+#                             you publish via the UI.)
+#   ADO_SANITY_PROJECT       ADO project containing the sanity pipeline
+#   ADO_SANITY_PIPELINE_ID   Definition ID of .pipelines/ado-sanity-pipeline.yml
+#   ADO_OIDC_PROJECT         ADO project containing the OIDC test pipeline
+#   ADO_OIDC_PIPELINE_ID     Definition ID of the OIDC test pipeline
+#
+# ONE-TIME SETUP (per dev org — done once, not per PR)
+# ----------------------------------------------------
+#   1. Create a Marketplace publisher: https://aka.ms/vsm-create-publisher
+#      Name it exactly "<ADO_E2E_ORG>-private"
+#   2. Import .pipelines/ado-sanity-pipeline.yml into ADO as a pipeline.
+#      Note the definition ID → set as ADO_SANITY_PIPELINE_ID secret.
+#   3. Create the OIDC test pipeline (see docs/oidc-test-setup.md).
+#      Note the definition ID → set as ADO_OIDC_PIPELINE_ID secret.
+
+name: E2E Plugin Tests
+
+on:
+  # Run automatically when a PR receives the "safe to test" label.
+  pull_request_target:
+    types: [labeled]
+  # Run automatically when code lands on v2 — i.e. a PR is merged into v2 or
+  # something is pushed to it directly — so the release branch is validated
+  # post-merge (build + publish + sanity + OIDC against the merged code).
+  push:
+    branches: [v2]
+  # Allow manual triggering from the Actions UI for debugging.
+  workflow_dispatch:
+    inputs:
+      timeout_minutes:
+        description: 'Max minutes to wait for each ADO pipeline (default: 60)'
+        required: false
+        default: '60'
+      skip_oidc:
+        description: 'Skip OIDC tests (true/false)'
+        required: false
+        default: 'false'
+      skip_pipelines:
+        description: 'Only build the .vsix, do not trigger ADO pipelines'
+        required: false
+        default: 'false'
+
+# One E2E run at a time per PR. A new label-trigger on the same PR cancels
+# the previous queued/in-progress run so the latest commit is always tested.
+# Across different PRs, runs are independent and execute in parallel.
+concurrency:
+  group: e2e-plugin-tests-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+# ======================================================================
+# JOB 1 — Build the .vsix from the PR branch and upload as artifact.
+# This also validates that the PR compiles cleanly end-to-end.
+# ======================================================================
+jobs:
+  build:
+    name: '1. Build .vsix'
+    if: |
+      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    outputs:
+      vsix_version: ${{ steps.build_vsix.outputs.vsix_version }}
+      vsix_name: ${{ steps.build_vsix.outputs.vsix_name }}
+
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          # Safe here: this job only runs after a maintainer applies the 'safe to test'
+          # label (see the 'if' above), which is the trust decision this flag requires.
+          allow-unsafe-pr-checkout: true
+
+      - name: Install dependencies and compile
+        # build.js installs all task node_modules and compiles TypeScript.
+        # A failure here is a real PR failure (broken build).
+        run: npm install --no-fund
+
+      - name: Rewrite task GUIDs and names for private build
+        # The public JFrog extension uses the same task GUIDs and names as
+        # our source tree. Installing both in the same ADO org causes two
+        # problems:
+        #   1. Marketplace rejects publishing a .vsix whose task GUIDs are
+        #      already owned by another extension ("already been uploaded by
+        #      extension 'jfrog-azure-devops-extension'").
+        #   2. ADO rejects queuing a pipeline run when two installed
+        #      extensions export tasks with the same name ("task name
+        #      JFrogToolsInstaller is ambiguous").
+        # We fix both by rewriting every task.json:
+        #   • id   → deterministic UUIDv5 (namespace + original GUID)
+        #             stable across CI runs; unique vs the public extension.
+        #   • name → original name + "E2E" suffix
+        #             e.g. JFrogToolsInstaller → JFrogToolsInstallerE2E
+        #             The .pipelines/ado-*.yml files reference the E2E names
+        #             so the test pipelines always target this private build,
+        #             never the public one.
+        run: |
+          set -euo pipefail
+          python3 - <<'PYEOF'
+          import json, uuid, glob
+
+          # Fixed namespace — changing this would change all GUIDs.
+          NS = uuid.UUID('e2e1a2b3-c4d5-6789-abcd-ef0123456789')
+
+          paths = sorted(glob.glob('tasks/*/task.json'))
+          for path in paths:
+              data = json.load(open(path))
+              orig_id   = data.get('id',   '')
+              orig_name = data.get('name', '')
+              if not orig_id:
+                  continue
+              data['id']   = str(uuid.uuid5(NS, orig_id))
+              data['name'] = orig_name + 'E2E'
+              json.dump(data, open(path, 'w'), indent=2)
+              print(f"  {orig_name}  →  {data['name']}  |  {orig_id}  →  {data['id']}  ({path})")
+
+          print(f"Rewrote {len(paths)} task GUIDs and names.")
+          PYEOF
+
+      - name: Resolve next extension version
+        id: version
+        # Marketplace requires each publish of a (publisher, extension-id) to
+        # use a version strictly greater than the currently published one, and
+        # ADO only auto-updates to a higher version.
+        #
+        # Preferred (traceable) version is 0.<PR#>.<run_number>. But this e2e
+        # extension is shared across all runs and already has older publishes
+        # (e.g. 0.647.87), so a low PR/run can be <= what's live and get
+        # rejected. Strategy:
+        #   • candidate = 0.<PR#>.<run_number>
+        #   • query the version currently live on Marketplace
+        #   • if candidate  >  live  → publish candidate (keeps traceability)
+        #   • if candidate <= live   → take live and bump its patch (+1)
+        # When no Marketplace PAT is available we can't query, so we just emit
+        # the candidate (the publish step is skipped in that case anyway).
+        env:
+          MARKETPLACE_PAT: ${{ secrets.ADO_E2E_MARKETPLACE_PAT }}
+          PUBLISHER: "${{ secrets.ADO_E2E_PUBLISHER_ORG || secrets.ADO_E2E_ORG }}-private"
+          EXTENSION_ID: "${{ secrets.ADO_E2E_EXTENSION_ID || 'jfrog-azure-devops-extension-e2etest' }}"
+          PR_NUMBER: ${{ github.event.pull_request.number || 0 }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          export CANDIDATE="0.${PR_NUMBER}.${RUN_NUMBER}"
+          export LIVE="0.0.0"
+          if [ -n "${MARKETPLACE_PAT:-}" ]; then
+            TFX_OUT=$(npx --yes tfx-cli extension show --publisher "$PUBLISHER" --extension-id "$EXTENSION_ID" --token "$MARKETPLACE_PAT" 2>&1 || true)
+            LIVE=$(echo "$TFX_OUT" | python3 -c "import sys,json; raw=sys.stdin.read(); s=raw.find('{'); d=json.loads(raw[s:]) if s>=0 else {}; v=d.get('versions',[]); print(v[0]['version'] if v else '0.0.0')" 2>/dev/null || echo '0.0.0')
+            [ -z "$LIVE" ] && LIVE='0.0.0'
+            export LIVE
+          fi
+          echo "Live version on Marketplace : $LIVE"
+          echo "Candidate (0.PR.run)        : $CANDIDATE"
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import os
+          def parse(v):
+              parts = (str(v).split('.') + ['0', '0', '0'])[:3]
+              return [int(p) if p.isdigit() else 0 for p in parts]
+          cand = os.environ['CANDIDATE']
+          live = os.environ['LIVE']
+          c, l = parse(cand), parse(live)
+          final = cand if c > l else f"{l[0]}.{l[1]}.{l[2] + 1}"
+          print(f"vsix_version={final}")
+          PY
+          echo "Resolved version written to job output."
+
+      - name: Package .vsix
+        id: build_vsix
+        env:
+          # Version resolved above: preferred 0.<PR#>.<run_number>, or a
+          # patch-bump of the live Marketplace version when that would
+          # otherwise be <= what's already published.
+          VSIX_VERSION: ${{ steps.version.outputs.vsix_version }}
+          # Bake the real destination publisher into the .vsix at build time.
+          # Marketplace rejects uploads if the manifest publisher and the
+          # destination publisher don't match exactly, so we cannot use a
+          # generic placeholder here.
+          # ADO_E2E_PUBLISHER_ORG lets you decouple the Marketplace publisher
+          # org from the ADO test-run org (ADO_E2E_ORG). If not set, falls
+          # back to ADO_E2E_ORG (the original behaviour for single-org setups).
+          PUBLISHER: "${{ secrets.ADO_E2E_PUBLISHER_ORG || secrets.ADO_E2E_ORG }}-private"
+          # Bake a distinct extension id into the .vsix so the upload doesn't
+          # collide with Marketplace's permanent record of the public id
+          # "jfrog-azure-devops-extension" (which gets tombstoned forever in
+          # every publisher that has ever hosted it, blocking subsequent
+          # creates with "The extension already exists"). Tasks inside the
+          # .vsix are referenced by their own GUIDs so a different extension
+          # id is transparent to the ADO pipelines that consume them.
+          # Override via the ADO_E2E_EXTENSION_ID secret if this id ever gets
+          # tombstoned in your publisher — pick any unused string, e.g.
+          # "jfrog-azure-devops-extension-e2etest-v2".
+          EXTENSION_ID: "${{ secrets.ADO_E2E_EXTENSION_ID || 'jfrog-azure-devops-extension-e2etest' }}"
+        run: |
+          set -euo pipefail
+          if [ -z "${PUBLISHER:-}" ] || [ "$PUBLISHER" = "-private" ]; then
+            echo "ERROR: ADO_E2E_ORG secret is not set — cannot bake publisher into .vsix." >&2
+            exit 1
+          fi
+          cp vss-extension.json vss-extension-e2e.json
+          # Rewrite publisher + id in the manifest copy so the resulting .vsix
+          # can be uploaded straight to the matching Marketplace publisher.
+          sed -i.bak "s/\"publisher\": *\"[^\"]*\"/\"publisher\": \"$PUBLISHER\"/" vss-extension-e2e.json
+          sed -i.bak "s/\"id\": *\"jfrog-azure-devops-extension\"/\"id\": \"$EXTENSION_ID\"/" vss-extension-e2e.json
+          rm -f vss-extension-e2e.json.bak
+
+          npx tfx extension create \
+            --manifest-globs vss-extension-e2e.json \
+            --publisher "$PUBLISHER" \
+            --override "{\"public\": false, \"version\": \"$VSIX_VERSION\"}"
+
+          vsix_path="$(ls -1 ./*.vsix | head -1)"
+          vsix_name="$(basename "$vsix_path")"
+          echo "vsix_name=$vsix_name"     >> "$GITHUB_OUTPUT"
+          echo "vsix_version=$VSIX_VERSION" >> "$GITHUB_OUTPUT"
+          echo "extension_id=$EXTENSION_ID" >> "$GITHUB_OUTPUT"
+          echo "Built: $vsix_path ($(du -m "$vsix_path" | cut -f1)MB) — publisher=$PUBLISHER id=$EXTENSION_ID"
+
+      - name: Upload .vsix as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jfrog-ext-vsix-${{ github.run_number }}
+          path: '*.vsix'
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Publish to Marketplace, share and install (auto-update the dev org)
+        # Fully automates what used to be the manual UI step: publish the
+        # freshly built .vsix to the private publisher, share it with the dev
+        # org, and ensure it is installed there. Once installed, ADO
+        # auto-updates the org to each new version on subsequent runs, so
+        # jobs 2 & 3 exercise THIS PR's code.
+        #
+        # Gated on ADO_E2E_MARKETPLACE_PAT: if the secret is absent the step
+        # is a no-op and the manual artifact-upload flow (below) still works.
+        # The version scheme (0.<run_number>.<run_attempt>) guarantees a
+        # strictly increasing version, so re-runs never hit the old
+        # "version must increase" failure.
+        env:
+          MARKETPLACE_PAT: ${{ secrets.ADO_E2E_MARKETPLACE_PAT }}
+          ADO_ORG: ${{ secrets.ADO_E2E_ORG }}
+          PUBLISHER: "${{ secrets.ADO_E2E_PUBLISHER_ORG || secrets.ADO_E2E_ORG }}-private"
+          EXTENSION_ID: ${{ steps.build_vsix.outputs.extension_id }}
+          VSIX_VERSION: ${{ steps.build_vsix.outputs.vsix_version }}
+        run: |
+          set -euo pipefail
+          if [ -z "${MARKETPLACE_PAT:-}" ]; then
+            echo "ADO_E2E_MARKETPLACE_PAT not set — skipping auto-publish."
+            echo "The .vsix is available as a workflow artifact for manual upload."
+            exit 0
+          fi
+
+          vsix_path="$(ls -1 ./*.vsix | head -1)"
+          echo "Publishing $vsix_path (version $VSIX_VERSION) to publisher '$PUBLISHER' and sharing with org '$ADO_ORG'..."
+          npx tfx extension publish \
+            --vsix "$vsix_path" \
+            --token "$MARKETPLACE_PAT" \
+            --share-with "$ADO_ORG" \
+            --no-wait-validation
+          echo "Published and shared."
+
+          # Ensure the extension is installed in the org so ADO auto-updates to
+          # each new version. Idempotent: on subsequent runs it's already
+          # installed, so a non-zero exit here is non-fatal.
+          echo "Ensuring extension '$EXTENSION_ID' is installed in '$ADO_ORG'..."
+          if npx tfx extension install \
+            --publisher "$PUBLISHER" \
+            --extension-id "$EXTENSION_ID" \
+            --service-url "https://${ADO_ORG}.visualstudio.com" \
+            --token "$MARKETPLACE_PAT"; then
+            echo "Install/enable confirmed."
+          else
+            echo "Install returned non-zero (likely already installed) — continuing."
+          fi
+
+          echo "Waiting 90s for Marketplace async validation to settle before jobs 2 & 3 run their version check..."
+          sleep 90
+          echo "Done — ADO will auto-update to version $VSIX_VERSION."
+
+      - name: Write install instructions to job summary
+        env:
+          VSIX_VERSION: ${{ steps.build_vsix.outputs.vsix_version }}
+          VSIX_NAME:    ${{ steps.build_vsix.outputs.vsix_name }}
+          EXTENSION_ID: ${{ steps.build_vsix.outputs.extension_id }}
+          ADO_ORG:      ${{ secrets.ADO_E2E_ORG }}
+        run: |
+          {
+            echo "## Install (auto by default — manual steps are a fallback)"
+            echo ""
+            echo "**This PR built:** \`$VSIX_NAME\` (version \`$VSIX_VERSION\`, extension id \`$EXTENSION_ID\`)"
+            echo ""
+            echo "When the \`ADO_E2E_MARKETPLACE_PAT\` secret is set, the *Publish to Marketplace* step already published, shared and installed this build, and ADO auto-updates the dev org — so jobs 2 & 3 test this PR's code automatically. The steps below are only needed if that secret is unset or the auto-publish step was skipped/failed."
+            echo ""
+            echo "1. **Download the .vsix** from the *Artifacts* section at the bottom of this run page (artifact: \`jfrog-ext-vsix-${{ github.run_number }}\`). It downloads as a .zip wrapper — unzip it to get the actual .vsix."
+            echo "2. **Upload to your publisher** at https://marketplace.visualstudio.com/manage/publishers/${ADO_ORG}-private"
+            echo "   - **First time uploading this extension id:** click \`+ New extension\` → \`Azure DevOps\` → drop the .vsix."
+            echo "   - **Subsequent uploads (extension already shows in the publisher row):** click the row's \`···\` menu → \`Update\` → drop the new .vsix. The version is auto-bumped per CI run so updates land cleanly."
+            echo "3. **Share with the dev org:** \`···\` → \`Share/Unshare\` → add \`${ADO_ORG}\`. (Only needed once per extension id.)"
+            echo "4. **Install in the dev org:** open https://${ADO_ORG}.visualstudio.com → Settings → Extensions → the shared extension → \`Get it free\` → install into the test project. (Only needed once per extension id.)"
+            echo "5. **Re-run jobs 2 & 3** from this run page if you want them to test the just-uploaded .vsix; otherwise let them finish against whatever was installed before."
+            echo ""
+            echo "If you still see \`The extension already exists\` on step 2, the id \`$EXTENSION_ID\` has been tombstoned in your publisher. Set the \`ADO_E2E_EXTENSION_ID\` repository secret to any unused string (e.g. \`$EXTENSION_ID-v2\`) and re-run the workflow — the next .vsix will use the new id."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Print install instructions to log
+        env:
+          VSIX_VERSION: ${{ steps.build_vsix.outputs.vsix_version }}
+          EXTENSION_ID: ${{ steps.build_vsix.outputs.extension_id }}
+          ADO_ORG:      ${{ secrets.ADO_E2E_ORG }}
+        run: |
+          cat <<EOF
+          ============================================================
+            BUILD OK — version=$VSIX_VERSION id=$EXTENSION_ID
+          ============================================================
+            To exercise THIS PR's code in jobs 2 & 3, manually:
+              1. Download the 'jfrog-ext-vsix-${{ github.run_number }}'
+                 artifact from this run page; unzip to get the .vsix.
+              2. Upload at:
+                 https://marketplace.visualstudio.com/manage/publishers/${ADO_ORG}-private
+                 (use 'New extension' the first time, '... -> Update'
+                  on the row afterwards.)
+              3. Share with org '${ADO_ORG}' and install in the
+                 test project (only on first upload).
+              4. Re-run jobs 2 & 3 from this run page to pick up the
+                 freshly installed version.
+          ============================================================
+          EOF
+
+  # ======================================================================
+  # JOB 2 — Sanity tests (non-OIDC, mirrors manual release sanity check).
+  # Runs against whatever .vsix is currently installed in the dev org.
+  # Runs in parallel with Job 3 after Job 1 completes.
+  # ======================================================================
+  sanity-tests:
+    name: '2. Sanity Tests (Maven + BuildInfo)'
+    needs: build
+    if: ${{ github.event.inputs.skip_pipelines != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Wait for Marketplace extension to propagate
+        run: |
+          echo "Waiting 420s (7 min) for Marketplace to verify and ADO to auto-update the extension..."
+          sleep 420
+          echo "Done — proceeding to version check."
+
+      - name: Verify extension version on Marketplace
+        env:
+          MARKETPLACE_PAT: ${{ secrets.ADO_E2E_MARKETPLACE_PAT }}
+          PUBLISHER: "${{ secrets.ADO_E2E_PUBLISHER_ORG || secrets.ADO_E2E_ORG }}-private"
+          EXTENSION_ID: "${{ secrets.ADO_E2E_EXTENSION_ID || 'jfrog-azure-devops-extension-e2etest' }}"
+          EXPECTED_VERSION: ${{ needs.build.outputs.vsix_version }}
+        run: |
+          if [ -z "${MARKETPLACE_PAT:-}" ]; then
+            echo "ADO_E2E_MARKETPLACE_PAT not set — cannot query Marketplace."
+            echo "Expected version (built this run): $EXPECTED_VERSION"
+            exit 0
+          fi
+          TFX_OUT=$(npx --yes tfx-cli extension show \
+            --publisher "$PUBLISHER" \
+            --extension-id "$EXTENSION_ID" \
+            --token "$MARKETPLACE_PAT" 2>&1 || true)
+          echo "tfx output:"
+          echo "$TFX_OUT"
+          INSTALLED=$(echo "$TFX_OUT" | python3 -c "import sys,json; raw=sys.stdin.read(); s=raw.find('{'); d=json.loads(raw[s:]) if s>=0 else {}; v=d.get('versions',[]); print(v[0]['version'] if v else 'not-found')" 2>/dev/null || echo 'not-found')
+          [ -z "$INSTALLED" ] && INSTALLED='not-found'
+          echo "============================================================"
+          echo "  Expected version (built this run) : $EXPECTED_VERSION"
+          echo "  Published version on Marketplace  : $INSTALLED"
+          if [ "$INSTALLED" = "$EXPECTED_VERSION" ]; then
+            echo "  MATCH — tests will run against the current PR build."
+          else
+            echo "  MISMATCH — Marketplace has $INSTALLED but expected $EXPECTED_VERSION."
+            echo "  The publish step may have been skipped, or propagation took longer than 7 minutes."
+            echo "  Stopping to avoid running tests against a stale build."
+            echo "============================================================"
+            exit 1
+          fi
+          echo "============================================================"
+
+      - name: Checkout (for trigger script)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+
+      - name: Trigger ADO sanity pipeline and wait for result
+        # The sanity pipeline (.pipelines/ado-sanity-pipeline.yml) tests:
+        #   JFrogToolsInstaller, GenericArtifacts (upload+download),
+        #   JFrogMaven (resolve+deploy), PublishBuildInfo, DiscardBuilds.
+        env:
+          ADO_ORG: ${{ secrets.ADO_E2E_ORG }}
+          ADO_PROJECT: ${{ secrets.ADO_SANITY_PROJECT }}
+          ADO_PIPELINE_ID: ${{ secrets.ADO_SANITY_PIPELINE_ID }}
+          ADO_PAT: ${{ secrets.ADO_E2E_PAT }}
+          GH_PR_NUMBER: ${{ github.event.pull_request.number || 0 }}
+          GH_COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          TIMEOUT_MINUTES: ${{ github.event.inputs.timeout_minutes || '60' }}
+        run: bash buildScripts/trigger-ado-pipeline.sh
+
+  # ======================================================================
+  # JOB 3 — OIDC tests (all task types with OIDC + non-OIDC regression).
+  # Runs against whatever .vsix is currently installed in the dev org.
+  # Runs in parallel with Job 2 after Job 1 completes.
+  # ======================================================================
+  oidc-tests:
+    name: '3. OIDC Tests (all task types)'
+    needs: build
+    if: ${{ github.event.inputs.skip_pipelines != 'true' && github.event.inputs.skip_oidc != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Wait for Marketplace extension to propagate
+        run: |
+          echo "Waiting 420s (7 min) for Marketplace to verify and ADO to auto-update the extension..."
+          sleep 420
+          echo "Done — proceeding to version check."
+
+      - name: Verify extension version on Marketplace
+        env:
+          MARKETPLACE_PAT: ${{ secrets.ADO_E2E_MARKETPLACE_PAT }}
+          PUBLISHER: "${{ secrets.ADO_E2E_PUBLISHER_ORG || secrets.ADO_E2E_ORG }}-private"
+          EXTENSION_ID: "${{ secrets.ADO_E2E_EXTENSION_ID || 'jfrog-azure-devops-extension-e2etest' }}"
+          EXPECTED_VERSION: ${{ needs.build.outputs.vsix_version }}
+        run: |
+          if [ -z "${MARKETPLACE_PAT:-}" ]; then
+            echo "ADO_E2E_MARKETPLACE_PAT not set — cannot query Marketplace."
+            echo "Expected version (built this run): $EXPECTED_VERSION"
+            exit 0
+          fi
+          TFX_OUT=$(npx --yes tfx-cli extension show \
+            --publisher "$PUBLISHER" \
+            --extension-id "$EXTENSION_ID" \
+            --token "$MARKETPLACE_PAT" 2>&1 || true)
+          echo "tfx output:"
+          echo "$TFX_OUT"
+          INSTALLED=$(echo "$TFX_OUT" | python3 -c "import sys,json; raw=sys.stdin.read(); s=raw.find('{'); d=json.loads(raw[s:]) if s>=0 else {}; v=d.get('versions',[]); print(v[0]['version'] if v else 'not-found')" 2>/dev/null || echo 'not-found')
+          [ -z "$INSTALLED" ] && INSTALLED='not-found'
+          echo "============================================================"
+          echo "  Expected version (built this run) : $EXPECTED_VERSION"
+          echo "  Published version on Marketplace  : $INSTALLED"
+          if [ "$INSTALLED" = "$EXPECTED_VERSION" ]; then
+            echo "  MATCH — tests will run against the current PR build."
+          else
+            echo "  MISMATCH — Marketplace has $INSTALLED but expected $EXPECTED_VERSION."
+            echo "  The publish step may have been skipped, or propagation took longer than 7 minutes."
+            echo "  Stopping to avoid running tests against a stale build."
+            echo "============================================================"
+            exit 1
+          fi
+          echo "============================================================"
+
+      - name: Checkout (for trigger script)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+
+      - name: Trigger ADO OIDC test pipeline and wait for result
+        # The OIDC pipeline covers:
+        #   A1-A12: all task types with OIDC service connections
+        #   D1-D5:  non-OIDC regression guard (API token + basic auth)
+        #   I1:     multi-task chain (GenericArtifacts + PublishBuildInfo + Audit)
+        env:
+          ADO_ORG: ${{ secrets.ADO_E2E_ORG }}
+          ADO_PROJECT: ${{ secrets.ADO_OIDC_PROJECT }}
+          ADO_PIPELINE_ID: ${{ secrets.ADO_OIDC_PIPELINE_ID }}
+          ADO_PAT: ${{ secrets.ADO_E2E_PAT }}
+          GH_PR_NUMBER: ${{ github.event.pull_request.number || 0 }}
+          GH_COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          TIMEOUT_MINUTES: ${{ github.event.inputs.timeout_minutes || '60' }}
+        run: bash buildScripts/trigger-ado-pipeline.sh

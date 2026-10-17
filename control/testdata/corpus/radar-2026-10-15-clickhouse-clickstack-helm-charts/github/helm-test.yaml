@@ -1,0 +1,95 @@
+name: Helm Chart Tests
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'charts/**'
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  version-script-smoke:
+    # The release scripts (update-chart-versions.js, extract-release-notes.js)
+    # otherwise only run post-merge in release.yml; exercise them at PR time so
+    # dependency bumps (e.g. js-yaml) can't break chart releases silently.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install Dependencies
+        run: yarn
+
+      - name: Run update-chart-versions script
+        run: |
+          node scripts/update-chart-versions.js
+          # Verify the yaml round-trip produced a valid Chart.yaml with the
+          # version from package.json.
+          node -e '
+            const fs = require("fs");
+            const yaml = require("js-yaml");
+            const { version } = require("./package.json");
+            const chart = yaml.load(fs.readFileSync("charts/clickstack/Chart.yaml", "utf8"));
+            if (chart.version !== version) {
+              console.error(`Chart.yaml version ${chart.version} != package.json version ${version}`);
+              process.exit(1);
+            }
+            console.log(`Chart.yaml round-trip OK (version ${chart.version})`);
+          '
+          git checkout -- charts/*/Chart.yaml
+
+      - name: Run extract-release-notes script
+        run: |
+          node scripts/extract-release-notes.js
+          # Discard the generated release notes file, if any.
+          rm -f charts/clickstack/RELEASE_NOTES.md
+
+  helm-unittest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unzip git curl
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: v3.12.0
+
+      - name: Install helm-unittest plugin
+        run: |
+          helm plugin install https://github.com/helm-unittest/helm-unittest.git --version v1.0.3 ${{ runner.debug && '--debug' || ''}}
+
+      - name: Build chart dependencies
+        run: |
+          helm repo add mongodb https://mongodb.github.io/helm-charts
+          helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts
+          helm dependency build charts/clickstack
+
+      - name: Validate example values render
+        run: |
+          helm template clickstack-example charts/clickstack \
+            -f examples/alb-ingress/values.yaml >/dev/null
+          helm template clickstack-example charts/clickstack \
+            -f examples/api-only/values.yaml >/dev/null
+          helm template clickstack-example charts/clickstack \
+            -f examples/otel-custom-config/values.yaml >/dev/null
+
+      - name: Run helm-unittest
+        run: |
+          helm unittest charts/clickstack

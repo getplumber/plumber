@@ -23,6 +23,11 @@ const (
 	// repository itself (no fork head), never for an outsider's pull
 	// request.
 	GateSameRepo GateClass = "same_repo"
+	// GateNoOutsider means the privileged run never executes the job at
+	// all: its condition names other events (github.event_name, or an
+	// event action the trigger never produces), so it only runs on the
+	// repository's own events, never on one an outsider starts.
+	GateNoOutsider GateClass = "no_outsider"
 	// GateUnknown means the facts available do not determine whether an
 	// outsider can make the job run.
 	GateUnknown GateClass = "unknown"
@@ -31,7 +36,7 @@ const (
 	// organisation's redirected repository: not an outsider, and not
 	// gated behind a maintainer action either, but close enough to home
 	// that a path through it holds at the Medium ceiling rather than
-	// Critical (control/trust.go's ActorFor).
+	// Critical (control/trust.go's actorFor).
 	GateInsider GateClass = "insider"
 )
 
@@ -89,8 +94,11 @@ var (
 // carry the job's deployment environment protection rules, known being
 // whether the provider could actually read them; when known is false
 // the environment contributes nothing to the classification, it is
-// neither evidence of a gate nor of its absence.
-func ClassifyGate(job Job, byName map[string]Job, trigger string, types []string, env Environment, known bool) Gate {
+// neither evidence of a gate nor of its absence. base is the branch a
+// pull request targets in the model, the repository's default branch
+// ("" reads main): what github.ref, github.ref_name and github.base_ref
+// name on a pull_request_target run.
+func ClassifyGate(job Job, byName map[string]Job, trigger string, types []string, env Environment, known bool, base string) Gate {
 	pinned := checkoutPinnedSha(job)
 
 	if known && env.RequiredReviewers {
@@ -101,7 +109,11 @@ func ClassifyGate(job Job, byName map[string]Job, trigger string, types []string
 		}
 	}
 
-	producible := outsiderProducibleTypes(trigger, types)
+	producible, unknownTypes := splitTypes(trigger, types)
+
+	if len(unknownTypes) > 0 {
+		return classifyUnknownTypes(job, byName, trigger, base, producible, unknownTypes, pinned)
+	}
 
 	if len(types) > 0 && len(producible) == 0 {
 		// Every declared type is maintainer-produced (e.g. `types:
@@ -110,7 +122,7 @@ func ClassifyGate(job Job, byName map[string]Job, trigger string, types []string
 		// (it often checks the very label that gates the type filter),
 		// so it is still worth evaluating; only fall back to the bare
 		// type gate when the condition would otherwise read as reachable.
-		class, reason, unknown := evaluateTypes(job, byName, trigger, types)
+		class, reason, unknown := evaluateTypes(job, byName, trigger, base, types)
 		if class == GateOutsider || class == GateUnknown {
 			return Gate{
 				Class:     GateMaintainerApproved,
@@ -121,21 +133,51 @@ func ClassifyGate(job Job, byName map[string]Job, trigger string, types []string
 		return Gate{Class: class, Reason: reason, PinnedSha: pinned, Unknown: unknown}
 	}
 
-	class, reason, unknown := evaluateTypes(job, byName, trigger, producible)
+	class, reason, unknown := evaluateTypes(job, byName, trigger, base, producible)
 	return Gate{Class: class, Reason: reason, PinnedSha: pinned, Unknown: unknown}
+}
+
+// classifyUnknownTypes classifies a job whose `types:` filter names a
+// type neither list knows (unknownTypes, splitTypes): an outsider may be
+// able to produce it, so the condition is evaluated for it as for an
+// outsider's type, and a condition it does not close reads unknown
+// (github.event.action unresolved), never a maintainer's gate. The
+// outsider-producible types of the filter are evaluated as usual, and
+// the weaker of the two results is the gate.
+func classifyUnknownTypes(job Job, byName map[string]Job, trigger, base string, producible, unknownTypes []string, pinned bool) Gate {
+	var known *Gate
+	if len(producible) > 0 {
+		class, reason, unknown := evaluateTypes(job, byName, trigger, base, producible)
+		if class == GateOutsider {
+			return Gate{Class: class, PinnedSha: pinned}
+		}
+		known = &Gate{Class: class, Reason: reason, PinnedSha: pinned, Unknown: unknown}
+	}
+	class, reason, unknown := evaluateTypes(job, byName, trigger, base, unknownTypes)
+	if class == GateOutsider || class == GateUnknown {
+		if known != nil {
+			unknown = appendUnique(append([]string(nil), known.Unknown...), unknown)
+		}
+		return Gate{Class: GateUnknown, PinnedSha: pinned, Unknown: appendUnique(unknown, []string{"github.event.action"})}
+	}
+	g := Gate{Class: class, Reason: reason, PinnedSha: pinned}
+	if known != nil {
+		return weakerGate(*known, g)
+	}
+	return g
 }
 
 // evaluateTypes classifies job against each of testTypes in turn: True
 // for at least one makes it GateOutsider; False for every one classifies
 // the cause of the first False; anything else is GateUnknown with the
 // union of unresolved references.
-func evaluateTypes(job Job, byName map[string]Job, trigger string, testTypes []string) (GateClass, string, []string) {
+func evaluateTypes(job Job, byName map[string]Job, trigger, base string, testTypes []string) (GateClass, string, []string) {
 	allFalse := true
 	var falseType, falseJobName string
 	var unknown []string
 
 	for _, t := range testTypes {
-		facts := newOutsiderFacts(trigger, t, job, byName)
+		facts := newOutsiderFacts(trigger, t, job, byName, base)
 		val, jobName := evalJobCondition(job, byName, facts, map[string]bool{})
 		switch val {
 		case expr.True:
@@ -158,7 +200,7 @@ func evaluateTypes(job Job, byName map[string]Job, trigger string, testTypes []s
 				target = j
 			}
 		}
-		facts := newOutsiderFacts(trigger, falseType, job, byName)
+		facts := newOutsiderFacts(trigger, falseType, job, byName, base)
 		class, reason := causalReason(target.If, facts)
 		return class, reason, nil
 	}
@@ -172,13 +214,22 @@ func evaluateTypes(job Job, byName map[string]Job, trigger string, testTypes []s
 // the whole walk so no job is evaluated twice. It returns the value and,
 // when the value is False, which job's own `If` decided it (job itself
 // or a predecessor).
+//
+// A job whose own `If` calls a status function (always(), failure(),
+// cancelled(), a negated success(): expr.HasStatusCall) runs even when a
+// predecessor was skipped, so no predecessor's False reaches it: its own
+// condition decides, and what a predecessor would add stays unknown.
 func evalJobCondition(job Job, byName map[string]Job, facts outsiderFacts, visited map[string]bool) (expr.Value, string) {
 	if visited[job.Name] {
 		return expr.Unknown, ""
 	}
 	visited[job.Name] = true
 
-	for _, dep := range job.Needs {
+	needs := job.Needs
+	if expr.HasStatusCall(job.If) {
+		needs = nil
+	}
+	for _, dep := range needs {
 		pred, ok := byName[dep]
 		if !ok {
 			continue
@@ -196,39 +247,153 @@ func evalJobCondition(job Job, byName map[string]Job, facts outsiderFacts, visit
 	return val, ""
 }
 
-// causalReason explains why ifText evaluated False for the outsider: it
-// re-evaluates ifText with each fact family hidden in turn, in this
-// order (labels, author, merged, same-repo), and names the first one
-// whose hiding turns the result from False to Unknown. No family
-// explaining it falls back to the bare "condition" reason.
+// gateFamily is one family of facts causalReason hides to find what a
+// False result depends on.
+type gateFamily struct {
+	refs  []string
+	class GateClass
+	name  string
+}
+
+// Fact families, in the order causalReason tries them when no strong
+// gate holds alone: weakest first, so a disjunction that one weak
+// branch opens is named by that branch.
+var (
+	actorFamily    = gateFamily{actorRefs, GateMaintainerApproved, "actor"}
+	labelFamily    = gateFamily{labelRefs, GateMaintainerApproved, "label"}
+	mergedFamily   = gateFamily{mergedRefs, GateMaintainerApproved, "merged"}
+	authorFamily   = gateFamily{authorRefs, GateMaintainerApproved, "author"}
+	sameRepoFamily = gateFamily{sameRepoRefs, GateSameRepo, "same repository"}
+	gateFamilies   = []gateFamily{actorFamily, labelFamily, mergedFamily, authorFamily, sameRepoFamily}
+)
+
+// causalReason explains why ifText evaluated False for the outsider.
+//
+// The event family is read first (eventReason): a condition False because
+// it names other events than the privileged run's proves the run never
+// executes the job (GateNoOutsider), when that holds alone.
+//
+// The two gates that let no outsider in at all (a bot as the pull
+// request's author, the same repository: control/actor.go's
+// noOutsiderGate) are read first, and only when they hold alone: the
+// condition stays False with every other family hidden, and stops being
+// False once that family is hidden too. A bot author check next to an
+// actor check (`author == 'dependabot[bot]' || github.actor ==
+// 'dependabot[bot]'`) does not hold alone: whoever makes the bot the
+// actor opens the job.
+//
+// Otherwise it hides each family in turn, weakest first (actor, label,
+// merged, author, same repository), and names the first whose hiding
+// turns the result from False to Unknown. A strong family reached there
+// failed to hold alone, so it never reads as strong: a bot author reads
+// the bare "author" and the same repository the bare "condition", both a
+// maintainer's gate that keeps the path. No family explaining it falls
+// back to the bare "condition" reason.
 func causalReason(ifText string, facts outsiderFacts) (GateClass, string) {
-	families := []struct {
-		refs  []string
-		class GateClass
-		name  string
-	}{
-		{labelRefs, GateMaintainerApproved, "label"},
-		{authorRefs, GateMaintainerApproved, "author"},
-		{actorRefs, GateMaintainerApproved, "actor"},
-		{mergedRefs, GateMaintainerApproved, "merged"},
-		{sameRepoRefs, GateSameRepo, "same repository"},
+	if reason, ok := eventReason(ifText, facts); ok {
+		return GateNoOutsider, reason
 	}
-	for _, fam := range families {
+	allHidden := facts
+	for _, fam := range gateFamilies {
+		allHidden = allHidden.withHidden(fam.refs)
+	}
+	if expr.Eval(ifText, allHidden) != expr.False {
+		for _, strong := range []gateFamily{authorFamily, sameRepoFamily} {
+			others := facts
+			for _, fam := range gateFamilies {
+				if fam.name != strong.name {
+					others = others.withHidden(fam.refs)
+				}
+			}
+			if expr.Eval(ifText, others) != expr.False {
+				continue
+			}
+			if strong.class == GateSameRepo {
+				// Same-repo has no literal form: "same repository" is
+				// already the full reason.
+				return strong.class, strong.name
+			}
+			if literal, ok := expr.ComparedLiteral(ifText, strong.refs); ok && strings.HasSuffix(literal, "[bot]") {
+				return strong.class, strong.name + " " + literal
+			}
+		}
+	}
+	for _, fam := range gateFamilies {
 		hidden := facts.withHidden(fam.refs)
 		if expr.Eval(ifText, hidden) != expr.Unknown {
 			continue
 		}
-		if fam.class == GateSameRepo {
-			// Same-repo has no literal form: "same repository" is
-			// already the full reason.
+		literal, hasLiteral := expr.ComparedLiteral(ifText, fam.refs)
+		switch {
+		case fam.class == GateSameRepo:
+			return GateMaintainerApproved, "condition"
+		case fam.name == authorFamily.name && hasLiteral && strings.HasSuffix(literal, "[bot]"):
 			return fam.class, fam.name
-		}
-		if literal, ok := expr.ComparedLiteral(ifText, fam.refs); ok {
+		case hasLiteral:
 			return fam.class, fam.name + " " + literal
 		}
 		return fam.class, fam.name
 	}
 	return GateMaintainerApproved, "condition"
+}
+
+// eventNameRef and eventActionRef are the event family: which event and
+// which of its actions the run is. Neither is an outsider's choice: the
+// trigger and its type decide them.
+const (
+	eventNameRef   = "github.event_name"
+	eventActionRef = "github.event.action"
+)
+
+// eventFamilyRefs is the event family of ifText on trigger: the event
+// name, and the event action too when every value the condition compares
+// it to is one the trigger never delivers (triggerActivityTypes), so the
+// comparison names another event's run. An action compared to a value the
+// trigger can deliver (a maintainer's `labeled`) is no proof the
+// privileged run skips the job: actionJoins is false.
+func eventFamilyRefs(ifText, trigger string) (refs []string, actionJoins bool) {
+	refs = []string{eventNameRef}
+	delivered, modeled := triggerActivityTypes[trigger]
+	literals := expr.ComparedLiterals(ifText, []string{eventActionRef})
+	if !modeled || len(literals) == 0 {
+		return refs, false
+	}
+	for _, l := range literals {
+		for _, d := range delivered {
+			if strings.EqualFold(l, d) {
+				return refs, false
+			}
+		}
+	}
+	return append(refs, eventActionRef), true
+}
+
+// eventReason reports whether ifText, False for the outsider, is False
+// because the privileged run is not one the job runs on: hiding the event
+// family opens it, and it stays False with every other family hidden (the
+// event holds alone; an event action the family does not take in is
+// hidden too, since a maintainer's type could open it). The reason is
+// "event <literal>", the event or action the condition names, or the bare
+// "event" when it names none (a fromJSON list).
+func eventReason(ifText string, facts outsiderFacts) (string, bool) {
+	refs, actionJoins := eventFamilyRefs(ifText, facts.trigger)
+	if expr.Eval(ifText, facts.withHidden(refs)) == expr.False {
+		return "", false
+	}
+	others := facts
+	for _, fam := range gateFamilies {
+		others = others.withHidden(fam.refs)
+	}
+	if !actionJoins {
+		others = others.withHidden([]string{eventActionRef})
+	}
+	if expr.Eval(ifText, others) != expr.False {
+		return "", false
+	}
+	if literal, ok := expr.ComparedLiteral(ifText, refs); ok {
+		return "event " + literal, true
+	}
+	return "event", true
 }
 
 // unresolvedRefs lists the references job.If reads that facts cannot

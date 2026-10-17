@@ -1,0 +1,144 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint and format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check formatting and lint rules
+        run: npx biome ci
+
+  typecheck:
+    name: Type check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # `tsconfig.test.json` type checks the test suite against the built
+      # declarations, so the build has to run first.
+      - name: Build
+        run: npm run build
+
+      - name: Type check source and tests
+        run: npm run typecheck
+
+  test:
+    name: Test on Node.js ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Floor of the `engines.node` range, latest of that line, and current.
+        # The floor tracks `astro`'s own `engines.node`, since it is the peer.
+        node: ['22.12.0', '22', '24']
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # `pretest` builds, so this exercises the published output, not `src/`.
+      - name: Run tests
+        run: npm test
+
+  package:
+    name: Package checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      # publint validates the manifest; attw validates that the types resolve
+      # for every consumer module resolution mode.
+      - name: Validate the publishable package
+        run: npm run package:check
+
+  example:
+    name: Build the example on Node.js ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Both ends of the supported range. The floor matters most: it is the
+        # only check that runs a real Astro build on the oldest Node this
+        # package claims to support, and astro reaches `undici@8` through
+        # `unifont`, which declares a higher floor than astro itself does.
+        node: ['22.12.0', '24']
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the package
+        run: npm run build
+
+      # Proves the provider still loads inside a real Astro build, which the
+      # unit tests cannot cover on their own.
+      - name: Build the example site
+        working-directory: examples/basic
+        run: |
+          npm install --no-package-lock
+          npm run build

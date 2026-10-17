@@ -1,0 +1,310 @@
+# Speakeasy SDK Generation Workflow
+#
+# This workflow regenerates the Terraform provider code using Speakeasy.
+# It can create a new PR, update an existing PR branch, or run in dry-run mode for validation.
+#
+# Triggers:
+# - On push to main: Auto-generates after every merge to ensure provider stays up-to-date (auto-merge enabled)
+# - Daily schedule (6 AM UTC): Catches upstream API spec changes (auto-merge enabled)
+# - Manual workflow_dispatch: For on-demand generation
+# - Slash command (/generate): Regenerates and pushes results back to the PR branch
+# - workflow_call: For validation from other workflows (e.g., PR checks)
+#
+# Generation Process:
+# 1. Generate api_terraform.yaml from upstream API spec (using scripts/generate_terraform_spec.py)
+# 2. Upload the generated spec as a GitHub artifact for documentation/debugging
+# 3. Run Speakeasy to generate the Terraform provider code
+# 4. Regenerate Terraform registry docs (`go generate ./...` via poe docs-generate)
+# 5. (If PR context) Commit and push regenerated code back to the PR branch
+# 6. (If no PR context and not dry_run) Create a new PR with the regenerated code
+# 7. (If dry_run) Build and verify the generated code compiles
+#
+# How to use:
+# - From a PR: Comment `/generate` to regenerate and push to the PR branch
+# - From Actions: Go to Actions > Generate > Run workflow (creates a new PR)
+# - Optionally check "Dry run" to validate generation without committing
+#
+# For clean regeneration (when API spec has breaking changes):
+# 1. First run the "Clean PR Branch" workflow on an existing Speakeasy PR branch
+# 2. Then re-run this Generate workflow on main
+#
+# Note: This workflow calls the Speakeasy CLI directly (instead of using their Docker-based
+# reusable workflow) to allow us to control the Go version via setup-go. This is necessary
+# because the generated code requires Go 1.24+, but Speakeasy's Docker image uses Go 1.23.
+
+name: Generate TF Provider
+# Note: Top-level permissions are intentionally omitted to allow workflow_call
+# from pull_request triggers (which have restricted permissions).
+# Job-level permissions are used instead.
+"on":
+    # Auto-generate on merge to main to ensure provider stays up-to-date
+    push:
+        branches:
+            - main
+    # Daily scheduled generation to catch upstream API spec changes
+    schedule:
+        # Run daily at 6 AM UTC (10 PM PT / 1 AM ET)
+        - cron: '0 6 * * *'
+    workflow_dispatch:
+        inputs:
+            dry_run:
+                description: Validate generation without creating a PR
+                type: boolean
+                default: false
+            pr:
+                description: 'PR number (if set, pushes results to the PR branch instead of creating a new PR)'
+                type: string
+                required: false
+            comment-id:
+                description: 'Comment ID (for slash command triggers)'
+                type: string
+                required: false
+    workflow_call:
+        inputs:
+            dry_run:
+                description: Validate generation without creating a PR
+                type: boolean
+                default: false
+concurrency:
+    # Push/schedule runs share a group so newer runs cancel stale ones.
+    # Other triggers (workflow_dispatch, workflow_call) get unique groups to avoid cancelling each other.
+    group: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'generate-new-pr' || format('generate-{0}', github.run_id) }}
+    cancel-in-progress: true
+jobs:
+    generate:
+        name: Generate SDK
+        runs-on: ubuntu-latest-16core
+        timeout-minutes: 60
+        permissions:
+            contents: write
+            pull-requests: write
+        steps:
+            - name: Authenticate as GitHub App
+              if: ${{ !inputs.dry_run && github.event.inputs.pr != '' }}
+              uses: actions/create-github-app-token@v3
+              id: get-app-token
+              with:
+                  app-id: ${{ secrets.OCTAVIA_BOT_APP_ID }}
+                  private-key: ${{ secrets.OCTAVIA_BOT_PRIVATE_KEY }}
+
+            - name: Post or append starting comment
+              if: ${{ !inputs.dry_run && github.event.inputs.pr != '' }}
+              id: start-comment
+              uses: peter-evans/create-or-update-comment@v5
+              with:
+                  token: ${{ steps.get-app-token.outputs.token }}
+                  issue-number: ${{ github.event.inputs.pr }}
+                  comment-id: ${{ github.event.inputs.comment-id || '' }}
+                  body: |
+                      > **Generate SDK Job Info**
+                      >
+                      > Running Speakeasy SDK generation.
+
+                      > Job started... [Check job output.](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+            # When triggered from a PR (/generate slash command), resolve the
+            # PR's head branch so we can push results back to it.
+            - name: Resolve PR head branch
+              if: ${{ !inputs.dry_run && github.event.inputs.pr != '' }}
+              id: pr-branch
+              env:
+                  GH_TOKEN: ${{ steps.get-app-token.outputs.token }}
+                  PR_NUMBER: ${{ github.event.inputs.pr }}
+              run: |
+                  PR_JSON=$(gh api repos/${{ github.repository }}/pulls/${PR_NUMBER})
+                  HEAD_REF=$(echo "$PR_JSON" | jq -r '.head.ref')
+                  IS_FORK=$(echo "$PR_JSON" | jq -r '.head.repo.fork')
+                  if [ "$IS_FORK" = "true" ]; then
+                      echo "::error::Cannot run /generate on fork PRs. Please regenerate locally."
+                      exit 1
+                  fi
+                  echo "head_ref=${HEAD_REF}" >> $GITHUB_OUTPUT
+
+            - name: Checkout repository
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+                  # When pushing to a PR branch, checkout that branch; otherwise use default ref
+                  ref: ${{ steps.pr-branch.outputs.head_ref || '' }}
+                  # Use the app token when we need to push back to a PR branch
+                  token: ${{ steps.get-app-token.outputs.token || github.token }}
+
+            - name: Install uv
+              uses: astral-sh/setup-uv@v5
+
+            - name: Generate Terraform OpenAPI spec
+              run: uvx --from=poethepoet poe generate-spec
+
+            - name: Upload generated spec as artifact
+              uses: actions/upload-artifact@v4
+              with:
+                  name: api_terraform_spec
+                  path: generated/api_terraform.yaml
+                  retention-days: 30
+
+            - name: Set up Go
+              uses: actions/setup-go@v5
+              with:
+                  go-version-file: 'go.mod'
+                  cache: true
+
+            - name: Install Speakeasy CLI
+              # Pin lives in .github/speakeasy/dummy-compose.yml. Extract the
+              # binary so Go from setup-go stays available for downstream steps.
+              run: |
+                  SPEAKEASY_IMAGE=$(yq '.services.speakeasy.image' .github/speakeasy/dummy-compose.yml)
+                  echo "Pinned Speakeasy image: $SPEAKEASY_IMAGE"
+                  docker pull "$SPEAKEASY_IMAGE"
+                  CONTAINER_ID=$(docker create "$SPEAKEASY_IMAGE")
+                  sudo docker cp "$CONTAINER_ID:/usr/local/bin/speakeasy" /usr/local/bin/speakeasy
+                  docker rm "$CONTAINER_ID" >/dev/null
+                  speakeasy --version
+
+            - name: Get next version from release drafter
+              id: get-version
+              uses: aaronsteers/semantic-pr-release-drafter@v2.3.4
+              with:
+                  dry-run: true
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Lint OpenAPI spec (fast-fail for circular references)
+              env:
+                  SPEAKEASY_API_KEY: ${{ secrets.SPEAKEASY_API_KEY }}
+              run: uvx --from=poethepoet poe lint-spec
+
+            - name: Clean generated code
+              run: uvx --from=poethepoet poe clean-generated
+
+            - name: Generate Provider ${{ steps.get-version.outputs.resolved-version }} with Speakeasy
+              env:
+                  SPEAKEASY_API_KEY: ${{ secrets.SPEAKEASY_API_KEY }}
+                  VERSION: ${{ steps.get-version.outputs.resolved-version }}
+              run: |
+                  if [ -z "$VERSION" ]; then
+                      echo "::error::Version resolution returned empty. Cannot proceed without an explicit version."
+                      exit 1
+                  fi
+                  echo "Using version from release drafter: $VERSION"
+                  uvx --from=poethepoet poe generate-code
+
+            - name: Post-generation patching
+              run: uvx --from=poethepoet poe post-generate
+
+            - name: Build generated code
+              run: |
+                  go build ./...
+
+            - name: Upload generated provider code as artifact
+              if: ${{ inputs.dry_run }}
+              uses: actions/upload-artifact@v4
+              with:
+                  name: generated_provider_code
+                  path: |
+                      internal/provider/
+                      internal/sdk/
+                  retention-days: 7
+
+            - name: Regenerate docs
+              run: uvx --from=poethepoet poe docs-generate
+
+            - name: Upload generated docs as artifact
+              if: ${{ inputs.dry_run }}
+              uses: actions/upload-artifact@v4
+              with:
+                  name: generated_docs
+                  path: docs/
+                  retention-days: 7
+
+            - name: Build provider binaries for testing
+              if: ${{ inputs.dry_run }}
+              run: uvx --from=poethepoet poe bin-generate
+
+            - name: Upload provider binaries as artifact
+              if: ${{ inputs.dry_run }}
+              uses: actions/upload-artifact@v4
+              with:
+                  name: provider_binaries
+                  path: dist/
+                  retention-days: 7
+
+            - name: Generation Summary
+              run: |
+                  echo "=== Generation Summary ==="
+                  echo "Source files: $(ls internal/provider/source_*.go 2>/dev/null | wc -l || echo 0)"
+                  echo "Destination files: $(ls internal/provider/destination_*.go 2>/dev/null | wc -l || echo 0)"
+                  echo "SDK models: $(ls internal/sdk/models/shared/ 2>/dev/null | wc -l || echo 0)"
+
+            - name: Check for changes
+              if: ${{ !inputs.dry_run }}
+              id: changes
+              run: |
+                  if [ -n "$(git status --porcelain)" ]; then
+                      echo "has_changes=true" >> $GITHUB_OUTPUT
+                  else
+                      echo "has_changes=false" >> $GITHUB_OUTPUT
+                  fi
+
+            # --- PR branch mode: commit and push to the existing PR branch ---
+            - name: Push regenerated code to PR branch
+              if: ${{ !inputs.dry_run && github.event.inputs.pr != '' && steps.changes.outputs.has_changes == 'true' }}
+              run: |
+                  git config user.name "octavia-bot[bot]"
+                  git config user.email "octavia-bot[bot]@users.noreply.github.com"
+                  git add -A
+                  git commit -m "chore: regenerate SDK with Speakeasy"
+                  git push
+
+            # --- New PR mode: create a PR to main (push/schedule/manual without PR context) ---
+            - name: Authenticate as GitHub App for PR creation
+              if: ${{ !inputs.dry_run && steps.changes.outputs.has_changes == 'true' && github.event.inputs.pr == '' }}
+              uses: actions/create-github-app-token@v3
+              id: get-pr-token
+              with:
+                  app-id: ${{ secrets.OCTAVIA_BOT_APP_ID }}
+                  private-key: ${{ secrets.OCTAVIA_BOT_PRIVATE_KEY }}
+
+            - name: Create Pull Request
+              if: ${{ !inputs.dry_run && steps.changes.outputs.has_changes == 'true' && github.event.inputs.pr == '' }}
+              id: create-pr
+              uses: peter-evans/create-pull-request@v6
+              with:
+                  token: ${{ steps.get-pr-token.outputs.token }}
+                  commit-message: "chore: regenerate SDK with Speakeasy"
+                  title: "chore: regenerate SDK with Speakeasy"
+                  body: |
+                      This PR was automatically generated by the Speakeasy SDK generation workflow.
+                      
+                      Please review the changes and merge if they look correct.
+                  branch: speakeasy-sdk-regen
+                  base: main
+                  delete-branch: true
+
+            - name: Enable auto-merge (new PR only)
+              if: |
+                  (github.event_name == 'push'
+                   || github.event_name == 'schedule'
+                  ) && steps.create-pr.outputs.pull-request-operation == 'created'
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: gh pr merge ${{ steps.create-pr.outputs.pull-request-number }} --auto --squash
+
+            - name: Append success comment
+              if: ${{ success() && !inputs.dry_run && github.event.inputs.pr != '' }}
+              uses: peter-evans/create-or-update-comment@v5
+              with:
+                  token: ${{ steps.get-app-token.outputs.token }}
+                  comment-id: ${{ steps.start-comment.outputs.comment-id }}
+                  reactions: hooray
+                  body: |
+                      > SDK generation completed successfully.
+
+            - name: Append failure comment
+              if: ${{ failure() && !inputs.dry_run && github.event.inputs.pr != '' }}
+              uses: peter-evans/create-or-update-comment@v5
+              with:
+                  token: ${{ steps.get-app-token.outputs.token }}
+                  comment-id: ${{ steps.start-comment.outputs.comment-id }}
+                  reactions: confused
+                  body: |
+                      > SDK generation failed. Check the [job output](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.

@@ -1,0 +1,322 @@
+name: Version Bump and Release
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+permissions:
+  contents: write
+  id-token: write
+  packages: write
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Release PR management + publish planning.
+  #
+  # 1. Runs changesets/action to open/update the "version packages" release PR
+  #    when there are pending changesets. When that PR merges into main/dev,
+  #    the changesets folder is empty on the next push and this step is a
+  #    no-op — then we proceed to plan & publish.
+  # 2. Runs `dev changeset-plan` unconditionally. The plan is a reconcile
+  #    loop: it diffs current workspace versions against what's already on
+  #    PyPI / Docker Hub / the Helm registry and emits actions for the gaps.
+  #    An empty plan is normal and results in all downstream jobs no-opping.
+  # ---------------------------------------------------------------------------
+  plan:
+    name: Plan release
+    runs-on: ubuntu-latest
+    environment: release
+    if: github.repository == 'run-llama/llama-agents' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
+    outputs:
+      has_work: ${{ steps.plan.outputs.has_work }}
+      pypi: ${{ steps.plan.outputs.pypi }}
+      docker_builds: ${{ steps.plan.outputs.docker_builds }}
+      docker_manifests: ${{ steps.plan.outputs.docker_manifests }}
+      helm: ${{ steps.plan.outputs.helm }}
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - name: Setup Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
+        with:
+          app-id: ${{ secrets.CI_BOT_APP_ID }}
+          private-key: ${{ secrets.CI_BOT_PRIVATE_KEY }}
+
+      - name: Install helm-docs
+        run: |
+          make -C operator helm-docs-install
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Create / update Release Pull Request
+        id: changesets
+        uses: changesets/action@6a0a831ff30acef54f2c6aa1cbbc1096b066edaf # v1
+        with:
+          commit: "chore: version packages"
+          title: "chore: version packages"
+          # Only manage the release PR here. Actual publishing is done by
+          # the fan-out jobs below so docker builds run in parallel on
+          # native amd64 / arm64 runners.
+          version: pnpm -w run version
+          setupGitUser: false
+          commitMode: github-api
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+
+      # When there are pending changesets, the step above runs ``pnpm -w
+      # run version`` to build the release PR. With ``commitMode:
+      # github-api`` those edits are committed through the API and left
+      # uncommitted in the local working tree. If we don't reset, the
+      # plan step below scans the mutated tree, emits actions for the
+      # *next* versions, and the downstream publish jobs (which do a
+      # fresh checkout of the branch) then build artifacts for the
+      # previous versions and fail to match the plan. Reset so the plan
+      # reflects what is actually committed on the branch.
+      - name: Reset working tree after changesets action
+        run: git reset --hard HEAD
+
+      - name: Compute publish plan
+        id: plan
+        run: uv run dev changeset-plan --output publish-plan.json
+
+      - name: Upload publish plan
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: publish-plan
+          path: publish-plan.json
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # PyPI: one job per package so the Actions UI shows a checkmark per release.
+  # ---------------------------------------------------------------------------
+  pypi:
+    name: "pypi: ${{ matrix.item.package }}"
+    needs: plan
+    if: needs.plan.outputs.pypi != '[]'
+    runs-on: ubuntu-latest
+    environment: release
+    strategy:
+      fail-fast: false
+      matrix:
+        item: ${{ fromJSON(needs.plan.outputs.pypi) }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: ./.github/actions/setup-publish
+      - run: uv run dev publish-action --plan publish-plan.json --id '${{ matrix.item.id }}'
+
+  # ---------------------------------------------------------------------------
+  # Docker builds: one job per (image, platform) so amd64 / arm64 build on
+  # native runners in parallel — no QEMU emulation. The manifest job below
+  # stitches the per-arch tags into the final multi-arch tags.
+  # ---------------------------------------------------------------------------
+  docker-build:
+    name: "docker: ${{ matrix.item.package }} (${{ matrix.item.platform }})"
+    needs: plan
+    if: needs.plan.outputs.docker_builds != '[]'
+    runs-on: ${{ matrix.item.platform == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    environment: release
+    strategy:
+      fail-fast: false
+      matrix:
+        item: ${{ fromJSON(needs.plan.outputs.docker_builds) }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: ./.github/actions/setup-publish
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      # Expose ACTIONS_RUNTIME_TOKEN / ACTIONS_CACHE_URL for buildx type=gha cache.
+      - uses: crazy-max/ghaction-github-runtime@3cb05d89e1f492524af3d41a1c98c83bc3025124 # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - run: uv run dev publish-action --plan publish-plan.json --id '${{ matrix.item.id }}'
+
+  docker-manifest:
+    name: "docker-manifest: ${{ matrix.item.package }}"
+    needs: [plan, docker-build]
+    if: needs.plan.outputs.docker_manifests != '[]'
+    runs-on: ubuntu-latest
+    environment: release
+    strategy:
+      fail-fast: false
+      matrix:
+        item: ${{ fromJSON(needs.plan.outputs.docker_manifests) }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: ./.github/actions/setup-publish
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - run: uv run dev publish-action --plan publish-plan.json --id '${{ matrix.item.id }}'
+
+  # ---------------------------------------------------------------------------
+  # Helm: one job per chart. Depends on the manifest job because charts
+  # reference the final image tags and must not be published before them.
+  # ---------------------------------------------------------------------------
+  helm:
+    name: "helm: ${{ matrix.item.package }}"
+    needs: [plan, docker-manifest]
+    if: |
+      always() &&
+      needs.plan.result == 'success' &&
+      (needs.docker-manifest.result == 'success' || needs.docker-manifest.result == 'skipped') &&
+      needs.plan.outputs.helm != '[]'
+    runs-on: ubuntu-latest
+    environment: release
+    strategy:
+      fail-fast: false
+      matrix:
+        item: ${{ fromJSON(needs.plan.outputs.helm) }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: ./.github/actions/setup-publish
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
+        with:
+          version: '3.18.1'
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - run: uv run dev publish-action --plan publish-plan.json --id '${{ matrix.item.id }}'
+
+  # ---------------------------------------------------------------------------
+  # Finalize: create git tags for everything we just published and fire
+  # downstream repository dispatches. Runs only if all publish jobs
+  # succeeded (or were legitimately skipped because there was no work).
+  # ---------------------------------------------------------------------------
+  finalize:
+    name: Finalize release
+    needs: [plan, pypi, docker-build, docker-manifest, helm]
+    if: |
+      always() &&
+      needs.plan.result == 'success' &&
+      needs.plan.outputs.has_work == 'true' &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
+        with:
+          app-id: ${{ secrets.CI_BOT_APP_ID }}
+          private-key: ${{ secrets.CI_BOT_PRIVATE_KEY }}
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "22"
+          cache: "pnpm"
+      # Install the workspace so ``pnpm exec changeset tag`` uses the
+      # @changesets/cli version pinned by pnpm-lock.yaml, with every
+      # transitive dep locked — ``npx``/``pnpm dlx`` would ignore the
+      # lockfile and resolve fresh, which we don't want in the release
+      # path.
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: publish-plan
+      # Use changesets/action in publish mode to (1) tag each package
+      # at its current version, (2) push the tags, and (3) create a
+      # GitHub Release per tag with the CHANGELOG entry as the body.
+      # The ``publish`` script is a no-op beyond ``changeset tag`` —
+      # the fan-out jobs above handle the actual PyPI / Docker / Helm
+      # publishing. The action only parses ``New tag: ...`` lines from
+      # the publish script output to decide which packages to release.
+      - name: Create tags and GitHub releases
+        uses: changesets/action@6a0a831ff30acef54f2c6aa1cbbc1096b066edaf # v1
+        with:
+          publish: pnpm exec changeset tag
+          setupGitUser: false
+          commitMode: github-api
+          createGithubReleases: true
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+
+      - name: Extract published llama-agents-server version
+        if: github.ref == 'refs/heads/main'
+        id: server-version
+        run: |
+          VERSION=$(jq -r '.pypi[] | select(.package == "llama-agents-server") | .version' publish-plan.json)
+          if [ -n "$VERSION" ] && [ "$VERSION" != "null" ]; then
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            echo "tag=llama-agents-server@v${VERSION}" >> "$GITHUB_OUTPUT"
+            echo "Found llama-agents-server version: $VERSION"
+          else
+            echo "llama-agents-server was not published in this release"
+          fi
+
+      - name: Trigger OpenAPI publish for llama-agents-server
+        if: github.ref == 'refs/heads/main' && steps.server-version.outputs.version != ''
+        uses: peter-evans/repository-dispatch@ff45666b9427631e3450c54a1bcbee4d9ff4d7c0 # v3
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          event-type: publish-openapi
+          client-payload: '{"tag": "${{ steps.server-version.outputs.tag }}"}'
+
+      # The default app-token above is scoped to this repo only, so it
+      # can't dispatch to the downstream repo. Mint a second token
+      # scoped to DOWNSTREAM_DISPATCH_REPO for the dispatch call.
+      - name: Parse downstream dispatch repo
+        id: dispatch-repo
+        if: github.ref == 'refs/heads/main' && vars.DOWNSTREAM_DISPATCH_REPO != ''
+        env:
+          DISPATCH_REPO: ${{ vars.DOWNSTREAM_DISPATCH_REPO }}
+        run: |
+          echo "owner=${DISPATCH_REPO%%/*}" >> "$GITHUB_OUTPUT"
+          echo "repo=${DISPATCH_REPO##*/}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate downstream dispatch token
+        id: dispatch-token
+        if: github.ref == 'refs/heads/main' && vars.DOWNSTREAM_DISPATCH_REPO != ''
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
+        with:
+          app-id: ${{ secrets.CI_BOT_APP_ID }}
+          private-key: ${{ secrets.CI_BOT_PRIVATE_KEY }}
+          owner: ${{ steps.dispatch-repo.outputs.owner }}
+          repositories: ${{ steps.dispatch-repo.outputs.repo }}
+
+      - name: Trigger downstream version bump
+        if: github.ref == 'refs/heads/main' && vars.DOWNSTREAM_DISPATCH_REPO != ''
+        env:
+          GH_TOKEN: ${{ steps.dispatch-token.outputs.token }}
+          DISPATCH_REPO: ${{ vars.DOWNSTREAM_DISPATCH_REPO }}
+        run: |
+          PACKAGES=$(jq -c '[.pypi[] | {name: .package, version: .version}] + [.docker_manifests[] | {name: .image, version: .version}] + [.helm[] | {name: .package, version: .version}]' publish-plan.json)
+          gh api "repos/$DISPATCH_REPO/dispatches" \
+            --input - <<< "{\"event_type\":\"bump-cloud-llama-deploy\",\"client_payload\":{\"packages\":$PACKAGES}}"

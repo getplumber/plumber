@@ -1,0 +1,693 @@
+name: CLI Integration Tests
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+  pull_request_target:
+    types: [labeled]
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  Remove-Label:
+    if: contains(github.event.pull_request.labels.*.name, 'safe to test')
+    name: Remove label
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove 'safe to test'
+        uses: actions-ecosystem/action-remove-labels@v1
+        with:
+          labels: "safe to test"
+
+  Detect-Deps:
+    name: Detect Dependencies
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    runs-on: ubuntu-latest
+    outputs:
+      deps: ${{ steps.detect.outputs.deps }}
+    steps:
+      - name: Checkout build-info-go
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: false
+
+      - name: Detect dependencies
+        id: detect
+        run: go run .github/tools/detect-deps/main.go
+        env:
+          CURRENT_BRANCH: ${{ github.head_ref || github.ref_name }}
+
+  Artifactory-Tests:
+    name: ${{ matrix.suite }} ${{ matrix.os.name }}
+    needs: Detect-Deps
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [artifactory, artifactoryProject]
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: windows
+            version: 2022
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    env:
+      JFROG_CLI_LOG_LEVEL: DEBUG
+    steps:
+      - name: Checkout build-info-go
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup test environment
+        uses: ./.github/actions/setup-test-env
+        with:
+          deps: ${{ needs.Detect-Deps.outputs.deps }}
+          os_name: ${{ matrix.os.name }}
+
+      - name: Install local Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: '1200'
+
+      - name: Run Artifactory tests
+        if: matrix.suite == 'artifactory'
+        working-directory: jfrog-cli
+        run: go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.artifactory --jfrog.url=http://127.0.0.1:8082 --jfrog.adminToken=${{ env.JFROG_TESTS_LOCAL_ACCESS_TOKEN }}
+
+      - name: Run Artifactory Project tests
+        if: matrix.suite == 'artifactoryProject'
+        working-directory: jfrog-cli
+        run: go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.artifactoryProject --ci.runId=${{ runner.os }}-${{ matrix.suite }}
+
+  Go-Tests:
+    name: Go ${{ matrix.os.name }}
+    needs: Detect-Deps
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: windows
+            version: 2022
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    env:
+      JFROG_CLI_LOG_LEVEL: DEBUG
+    steps:
+      - name: Checkout build-info-go
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup test environment
+        uses: ./.github/actions/setup-test-env
+        with:
+          deps: ${{ needs.Detect-Deps.outputs.deps }}
+          os_name: ${{ matrix.os.name }}
+
+      - name: Run Go tests
+        working-directory: jfrog-cli
+        env:
+          GOWORK: off
+        run: go test -v -timeout 0 --test.go --jfrog.url=${{ secrets.EPLUS_PLATFORM_URL }} --jfrog.adminToken=${{ secrets.EPLUS_ADMIN_TOKEN }} --ci.runId=${{ runner.os }}-go
+
+  NuGet-Tests:
+    name: NuGet ${{ matrix.os.name }}
+    needs: Detect-Deps
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: windows
+            version: 2022
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    env:
+      JFROG_CLI_LOG_LEVEL: DEBUG
+    steps:
+      - name: Checkout build-info-go
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup test environment
+        uses: ./.github/actions/setup-test-env
+        with:
+          deps: ${{ needs.Detect-Deps.outputs.deps }}
+          os_name: ${{ matrix.os.name }}
+
+      - name: Prepare ubuntu
+        if: matrix.os.name == 'ubuntu'
+        run: |
+          # Install Mono
+          sudo apt-get update
+          sudo apt-get install -y apt-transport-https dirmngr gnupg ca-certificates
+          sudo apt-key adv --recv-keys --keyserver hkp://keyserver.ubuntu.com:80 3FA7E0328081BFF6A14DA29AA6A19B38D3D831EF
+          echo "deb https://download.mono-project.com/repo/ubuntu stable-focal main" | sudo tee /etc/apt/sources.list.d/mono-official-stable.list
+          sudo apt-get update
+          sudo apt-get install -y mono-complete
+          # Fixes dotnet installation issues
+          echo "DOTNET_INSTALL_DIR=/usr/share/dotnet" >> $GITHUB_ENV
+          sudo mkdir -p /usr/share/dotnet
+          sudo chmod 777 /usr/share/dotnet
+
+      - name: Install .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "8.x"
+
+      - name: Install NuGet
+        uses: nuget/setup-nuget@v2
+        with:
+          nuget-version: "6.x"
+
+      - name: Install local Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: '1200'
+
+      - name: Run NuGet tests
+        working-directory: jfrog-cli
+        run: go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.nuget
+
+  npm-Tests:
+    name: npm ${{ matrix.os.name }}
+    needs: Detect-Deps
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: windows
+            version: 2022
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    env:
+      JFROG_CLI_LOG_LEVEL: DEBUG
+    steps:
+      - name: Checkout build-info-go
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup test environment
+        uses: ./.github/actions/setup-test-env
+        with:
+          deps: ${{ needs.Detect-Deps.outputs.deps }}
+          os_name: ${{ matrix.os.name }}
+
+      - name: Install npm
+        uses: actions/setup-node@v5
+        with:
+          node-version: "16"
+
+      - name: Install local Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: '1200'
+
+      - name: Run npm tests
+        working-directory: jfrog-cli
+        env:
+          YARN_IGNORE_NODE: 1
+        run: go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.npm
+
+  pnpm-Tests:
+    name: pnpm ${{ matrix.pnpm-version }} ${{ matrix.os.name }}
+    needs: Detect-Deps
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: windows
+            version: 2022
+        pnpm-version: [10]
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    env:
+      JFROG_CLI_LOG_LEVEL: DEBUG
+    steps:
+      - name: Checkout build-info-go
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup test environment
+        uses: ./.github/actions/setup-test-env
+        with:
+          deps: ${{ needs.Detect-Deps.outputs.deps }}
+          os_name: ${{ matrix.os.name }}
+
+      - name: Install Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ matrix.pnpm-version }}
+
+      - name: Install local Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: '1200'
+
+      - name: Run pnpm tests
+        working-directory: jfrog-cli
+        env:
+          YARN_IGNORE_NODE: 1
+        run: go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.pnpm
+
+  Maven-Tests:
+    name: Maven ${{ matrix.os.name }}
+    needs: Detect-Deps
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: windows
+            version: 2022
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    env:
+      JFROG_CLI_LOG_LEVEL: DEBUG
+    steps:
+      - name: Checkout build-info-go
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup test environment
+        uses: ./.github/actions/setup-test-env
+        with:
+          deps: ${{ needs.Detect-Deps.outputs.deps }}
+          os_name: ${{ matrix.os.name }}
+
+      - name: Setup Maven v3.8.8
+        uses: stCarolas/setup-maven@v5
+        with:
+          maven-version: 3.8.8
+
+      - name: Install local Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: '1200'
+
+      - name: Run Maven tests
+        working-directory: jfrog-cli
+        run: go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.maven
+
+  Gradle-Tests:
+    name: Gradle ${{ matrix.gradle-version }} ${{ matrix.os.name }}
+    needs: Detect-Deps
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: windows
+            version: 2022
+        gradle-version: [5.6.4, 8.3]
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    env:
+      JFROG_CLI_LOG_LEVEL: DEBUG
+      GRADLE_OPTS: -Dorg.gradle.daemon=false
+    steps:
+      - name: Checkout build-info-go
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup test environment
+        uses: ./.github/actions/setup-test-env
+        with:
+          deps: ${{ needs.Detect-Deps.outputs.deps }}
+          os_name: ${{ matrix.os.name }}
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: "temurin"
+          java-version: "11"
+
+      - name: Setup Gradle
+        uses: gradle/gradle-build-action@v3
+        with:
+          gradle-version: ${{ matrix.gradle-version }}
+
+      - name: Install local Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: '1200'
+
+      - name: Run Gradle tests
+        working-directory: jfrog-cli
+        run: go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.gradle
+
+  Conan-Tests:
+    name: Conan ${{ matrix.os.name }}
+    needs: Detect-Deps
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: windows
+            version: 2022
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    env:
+      JFROG_CLI_LOG_LEVEL: DEBUG
+    steps:
+      - name: Checkout build-info-go
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup test environment
+        uses: ./.github/actions/setup-test-env
+        with:
+          deps: ${{ needs.Detect-Deps.outputs.deps }}
+          os_name: ${{ matrix.os.name }}
+
+      - name: Install Conan
+        uses: turtlebrowser/get-conan@main
+        with:
+          version: '2.10.2'
+
+      - name: Install local Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: '1200'
+
+      - name: Run Conan tests
+        working-directory: jfrog-cli
+        run: go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.conan
+
+  Helm-Tests:
+    name: Helm ${{ matrix.os.name }}
+    needs: Detect-Deps
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: windows
+            version: 2022
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    env:
+      JFROG_CLI_LOG_LEVEL: DEBUG
+    steps:
+      - name: Checkout build-info-go
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup test environment
+        uses: ./.github/actions/setup-test-env
+        with:
+          deps: ${{ needs.Detect-Deps.outputs.deps }}
+          os_name: ${{ matrix.os.name }}
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'latest'
+
+      - name: Install local Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: '1200'
+
+      - name: Run Helm tests
+        working-directory: jfrog-cli
+        run: go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.helm
+
+  Docker-Tests:
+    name: Docker ubuntu
+    needs: Detect-Deps
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+        disable-containerd-snapshotter: [ true, false ]
+    runs-on: ubuntu-24.04
+    env:
+      JFROG_CLI_LOG_LEVEL: DEBUG
+    steps:
+      - name: Checkout build-info-go
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Configure Docker with legacy snapshotter
+        if: matrix.disable-containerd-snapshotter == true
+        run: |
+          sudo bash -c 'cat <<EOF > /etc/docker/daemon.json
+          {
+          "insecure-registries": ["localhost:8082"],
+          "features": {
+           "containerd-snapshotter": false
+          }
+          }
+          EOF'
+          sudo systemctl restart docker
+
+      - name: Configure Docker with containerd snapshotter
+        if: matrix.disable-containerd-snapshotter == false
+        run: |
+          sudo bash -c 'cat <<EOF > /etc/docker/daemon.json
+          {
+            "insecure-registries": ["localhost:8082"]
+          }
+          EOF'
+          sudo systemctl restart docker
+
+      - name: Setup test environment
+        uses: ./.github/actions/setup-test-env
+        with:
+          deps: ${{ needs.Detect-Deps.outputs.deps }}
+          os_name: ubuntu
+
+      - name: Containerize Artifactory
+        run: |
+          cd jfrog-cli/testdata/docker/artifactory/
+          ./start.sh
+        env:
+          RTLIC: ${{ secrets.RTLIC }}
+
+      - name: Wait for Artifactory (Native)
+        run: |
+          timeout 600s bash -c 'while [[ "$(curl -s -o /dev/null -w ''%{http_code}'' localhost:8082)" != "200" ]]; do sleep 5; done'
+
+      - name: Run Docker tests
+        working-directory: jfrog-cli
+        run: go test -v -timeout 0 --test.docker --jfrog.url=http://localhost:8082/
+
+  Podman-Tests:
+    name: Podman ubuntu
+    needs: Detect-Deps
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    runs-on: ubuntu-24.04
+    env:
+      JFROG_CLI_LOG_LEVEL: DEBUG
+    steps:
+      - name: Checkout build-info-go
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Configure Docker 29 for Legacy Support
+        run: |
+          sudo bash -c 'cat <<EOF > /etc/docker/daemon.json
+          {
+            "insecure-registries": ["localhost:8082"],
+            "features": {
+              "containerd-snapshotter": false
+            }
+          }
+          EOF'
+          sudo systemctl restart docker
+
+      - name: Setup test environment
+        uses: ./.github/actions/setup-test-env
+        with:
+          deps: ${{ needs.Detect-Deps.outputs.deps }}
+          os_name: ubuntu
+
+      - name: Run Podman tests
+        working-directory: jfrog-cli
+        run: go test -v -timeout 0 --test.podman --jfrog.url=${{ secrets.EPLUS_PLATFORM_URL }} --jfrog.adminToken=${{ secrets.EPLUS_ADMIN_TOKEN }} --test.containerRegistry=${{ secrets.CONTAINER_REGISTRY }}
+
+  Python-Tests:
+    name: ${{ matrix.suite }} ${{ matrix.os.name }}
+    needs: Detect-Deps
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [pip, pipenv]
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: windows
+            version: 2022
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    env:
+      JFROG_CLI_LOG_LEVEL: DEBUG
+    steps:
+      - name: Checkout build-info-go
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup test environment
+        uses: ./.github/actions/setup-test-env
+        with:
+          deps: ${{ needs.Detect-Deps.outputs.deps }}
+          os_name: ${{ matrix.os.name }}
+
+      - name: Setup Python3
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11.5"
+
+      - name: Setup Pipenv
+        if: matrix.suite == 'pipenv'
+        run: python -m pip install pipenv==2026.2.2
+
+      - name: Setup Twine
+        if: matrix.suite == 'pip'
+        run: python -m pip install twine
+
+      - name: Install local Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: '1200'
+
+      - name: Run Python tests
+        working-directory: jfrog-cli
+        run: go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.${{ matrix.suite }}
+
+  Lifecycle-Tests:
+    name: Lifecycle ${{ matrix.os.name }}
+    needs: Detect-Deps
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: windows
+            version: 2022
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    env:
+      JFROG_CLI_LOG_LEVEL: DEBUG
+    steps:
+      - name: Checkout build-info-go
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup test environment
+        uses: ./.github/actions/setup-test-env
+        with:
+          deps: ${{ needs.Detect-Deps.outputs.deps }}
+          os_name: ${{ matrix.os.name }}
+
+      - name: Install local Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: '1200'
+
+      - name: Run Lifecycle tests
+        working-directory: jfrog-cli
+        run: go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.lifecycle --jfrog.url=http://127.0.0.1:8082 --jfrog.adminToken=${{ env.JFROG_TESTS_LOCAL_ACCESS_TOKEN }} --ci.runId=${{ runner.os }}-lifecycle
+
+  Distribution-Tests:
+    name: Distribution ${{ matrix.os.name }}
+    needs: Detect-Deps
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: windows
+            version: 2022
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    env:
+      JFROG_CLI_LOG_LEVEL: DEBUG
+    steps:
+      - name: Checkout build-info-go
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup test environment
+        uses: ./.github/actions/setup-test-env
+        with:
+          deps: ${{ needs.Detect-Deps.outputs.deps }}
+          os_name: ${{ matrix.os.name }}
+
+      - name: Run Distribution tests
+        working-directory: jfrog-cli
+        run: go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.distribution --jfrog.url=${{ secrets.EPLUS_PLATFORM_URL }} --jfrog.adminToken=${{ secrets.EPLUS_ADMIN_TOKEN }} --jfrog.user=${{ secrets.PLATFORM_USER }} --ci.runId=${{ runner.os }}-distribution

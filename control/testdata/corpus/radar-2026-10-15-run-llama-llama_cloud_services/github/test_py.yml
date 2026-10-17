@@ -1,0 +1,42 @@
+name: Test - Python
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "py/**"
+  pull_request:
+    paths:
+      - "py/**"
+
+env:
+  UV_VERSION: "0.7.20"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      # You can use PyPy versions in python-version.
+      # For example, pypy-2.7 and pypy-3.8
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: ${{ env.UV_VERSION }}
+
+      - name: Set up Python
+        run: uv python install ${{ matrix.python-version }} && uv python pin ${{ matrix.python-version }}
+
+      - name: Run Tests
+        working-directory: py
+        run: uv run pytest unit_tests/ -v
+
+      - name: Remove virtual environment
+        working-directory: py
+        run: rm -rf .venv/

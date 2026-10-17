@@ -1,0 +1,37 @@
+{
+  "source": "https://github.com/workos/skills",
+  "commit": "f1095c8dab9ca509e660275de177001c85cb3a66",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": false
+    }
+  ],
+  "environments": [
+    {
+      "name": "npm",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/lint-pr-title.yml": "active",
+    ".github/workflows/release-please.yml": "active",
+    ".github/workflows/release.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High pnpm cache path into `release/publish` was judged false: the only job that writes that key is `release/publish` itself, on main or dispatch, so the only writer is the insider already entering through the unprotected branch; there is no pull_request job at all, Medium at most. No job here declares cache-mode, so GitHub keeps the cache of every low-trust run read-only and grants no job cache write: ISSUE-705 is silent and no cache path exists, so the cache ceiling admits none.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "poisoned_cache",
+        "subjectContains": "",
+        "tier": "none"
+      }
+    ]
+  }
+}

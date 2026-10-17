@@ -1,0 +1,257 @@
+name: Release publisher (npm)
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - '**'
+
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+jobs:
+  publish-to-npm:
+    name: Publish to NPM
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      pull-requests: read
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # TODO: Make reusable action as used with create-release
+      - name: Verify release PR merge
+        id: verify-merge
+        run: |
+          COMMIT_SHA="${{ github.sha }}"
+
+          echo "Checking if commit $COMMIT_SHA is from a release PR merge..."
+
+          COMMIT_MSG=$(git log -1 --format=%s "$COMMIT_SHA")
+
+          # WARNING: This is coupled with generate release commit
+          # if you need to modify, apply the changes accordingly
+          # Script outputs "VERSION RELEASE_TYPE" on success (e.g., "1.2.3 latest")
+          if OUTPUT=$(.scripts/bash/verify-release-commit "$COMMIT_MSG"); then
+            VERSION=$(echo "$OUTPUT" | awk '{print $1}')
+            RELEASE_TYPE=$(echo "$OUTPUT" | awk '{print $2}')
+            echo "✅ Detected release PR merge for version $VERSION ($RELEASE_TYPE)"
+            echo "is_release=true" >> $GITHUB_OUTPUT
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            echo "tag=v$VERSION" >> $GITHUB_OUTPUT
+            echo "release_type=$RELEASE_TYPE" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️ This is not a release PR merge. Skipping release."
+            echo "is_release=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+      - name: Maintenance branch safeguard check
+        if: steps.verify-merge.outputs.is_release == 'true'
+        run: |
+          VERSION="${{ steps.verify-merge.outputs.version }}"
+          CURRENT_BRANCH="${{ github.ref_name }}"
+
+          BASE_VERSION=$(echo "$VERSION" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+')
+          MAINTENANCE_BRANCH="chore/v${BASE_VERSION}"
+
+          echo "Checking maintenance branch safeguard..."
+          echo "Current branch is $CURRENT_BRANCH"
+          echo "Maintenance branch is $MAINTENANCE_BRANCH"
+
+          if [[ "$CURRENT_BRANCH" == "main" ]]; then
+            if git ls-remote --exit-code --heads origin "$MAINTENANCE_BRANCH" >/dev/null 2>&1; then
+              echo "WARNING: Maintenance branch '$MAINTENANCE_BRANCH' already exists. Are you trying to update an existing pre-release version?"
+              echo "Please checkout the branch $MAINTENANCE_BRANCH and create the release from there to ensure proper version line maintenance, please!"
+              exit 1
+            fi
+          fi
+
+          echo "✅ Maintenance branch safeguard passed"
+
+      - name: Skip if not release
+        if: steps.verify-merge.outputs.is_release == 'false'
+        run: |
+          echo "Not a release PR merge. Stopping here."
+          exit 0
+
+      - name: Create and push tag
+        if: steps.verify-merge.outputs.is_release == 'true'
+        run: |
+          TAG="${{ steps.verify-merge.outputs.tag }}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Check if tag already exists
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "⚠️ Tag $TAG already exists. Skipping tag creation."
+            exit 0
+          fi
+
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "$TAG"
+
+          echo "✅ Created and pushed tag $TAG"
+
+      - name: Setup Node.js
+        if: steps.verify-merge.outputs.is_release == 'true'
+        uses: actions/setup-node@v7
+        with:
+          # Node 24.x bundles npm >= 11.5.1, which supports OIDC trusted publishing.
+          # registry-url is required for OIDC.
+          node-version: '24.x'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Enable Corepack
+        if: steps.verify-merge.outputs.is_release == 'true'
+        run: corepack enable
+
+      - name: Install Dependencies
+        if: steps.verify-merge.outputs.is_release == 'true'
+        run: yarn install --immutable
+
+      - name: Build package
+        if: steps.verify-merge.outputs.is_release == 'true'
+        run: yarn build
+
+      - name: Get package info
+        if: steps.verify-merge.outputs.is_release == 'true'
+        id: package-info
+        run: |
+          VERSION="${{ steps.verify-merge.outputs.version }}"
+          RELEASE_TYPE="${{ steps.verify-merge.outputs.release_type }}"
+          PKG_NAME=$(node -p "require('./package.json').name")
+
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "package_name=$PKG_NAME" >> $GITHUB_OUTPUT
+          echo "tag=$RELEASE_TYPE" >> $GITHUB_OUTPUT
+
+          if [[ "$RELEASE_TYPE" == "rc" || "$RELEASE_TYPE" == "test" ]]; then
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+          else
+            echo "prerelease=false" >> $GITHUB_OUTPUT
+          fi
+
+          echo "Package: $PKG_NAME@$VERSION"
+          echo "npm tag: $RELEASE_TYPE"
+
+      - name: Publish to npm over OpenID Connect (OIDC)
+        if: steps.verify-merge.outputs.is_release == 'true'
+        run: |
+          # WARNING: It's preferred NPM for publishing
+          npm publish \
+            --access public \
+            --provenance \
+            --tag ${{ steps.package-info.outputs.tag }}
+
+      - name: Extract changelog
+        if: steps.verify-merge.outputs.is_release == 'true'
+        id: changelog
+        run: |
+          VERSION="${{ steps.verify-merge.outputs.version }}"
+          CHANGELOG_PATH="CHANGELOG.md"
+          CHANGELOG_OUTPUT_TEMP_PATH="/tmp/changelog.txt"
+          FALLBACK_MSG="See [CHANGELOG.md](./CHANGELOG.md) for details."
+
+          CHANGELOG=""
+          if [[ -f "$CHANGELOG_PATH" ]]; then
+            CHANGELOG=$(.scripts/bash/extract-changelog "$VERSION" "$CHANGELOG_PATH")
+          fi
+
+          if [[ -n "$CHANGELOG" ]]; then
+            echo "$CHANGELOG" > "$CHANGELOG_OUTPUT_TEMP_PATH"
+          else
+            echo "No changelog available for version $VERSION." > "$CHANGELOG_OUTPUT_TEMP_PATH"
+            echo "" >> "$CHANGELOG_OUTPUT_TEMP_PATH"
+            echo "$FALLBACK_MSG" >> "$CHANGELOG_OUTPUT_TEMP_PATH"
+          fi
+
+      - name: Create GitHub Release
+        if: steps.verify-merge.outputs.is_release == 'true'
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: v${{ steps.verify-merge.outputs.version }}
+          name: v${{ steps.verify-merge.outputs.version }}
+          body_path: /tmp/changelog.txt
+          draft: false
+          prerelease: ${{ steps.package-info.outputs.prerelease }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create or update maintenance branch
+        if: steps.verify-merge.outputs.is_release == 'true'
+        run: |
+          VERSION="${{ steps.verify-merge.outputs.version }}"
+          COMMIT_SHA="${{ github.sha }}"
+          CURRENT_BRANCH="${{ github.ref_name }}"
+
+          BASE_VERSION=$(echo "$VERSION" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+')
+          MAINTENANCE_BRANCH="chore/v${BASE_VERSION}"
+
+          echo "🔧 Creating or updating maintenance branch..."
+          echo "Version is $VERSION"
+          echo "Base version is $BASE_VERSION"
+          echo "Maintenance branch is $MAINTENANCE_BRANCH"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if git ls-remote --exit-code --heads origin "$MAINTENANCE_BRANCH" >/dev/null 2>&1; then
+            echo "Maintenance branch '$MAINTENANCE_BRANCH' already exists"
+            echo "Updating branch with new release commit..."
+
+            if [[ "$CURRENT_BRANCH" == "$MAINTENANCE_BRANCH" ]]; then
+              echo "✅ Already on maintenance branch, merging release commit..."
+
+              if git merge "$COMMIT_SHA" -m "chore: merge release v$VERSION into $MAINTENANCE_BRANCH"; then
+                echo "✅ Successfully merged release v$VERSION"
+                git push origin "$MAINTENANCE_BRANCH"
+                echo "✅ Updated maintenance branch '$MAINTENANCE_BRANCH'"
+              else
+                echo "Merge failed, conflicts detected..."
+                echo "Please manually resolve the conflicts and push to $MAINTENANCE_BRANCH and try again..."
+                exit 1
+              fi
+            else
+              git fetch origin "$MAINTENANCE_BRANCH:$MAINTENANCE_BRANCH"
+              git checkout "$MAINTENANCE_BRANCH"
+
+              echo "Attempting to merge $COMMIT_SHA into $MAINTENANCE_BRANCH..."
+
+              if git merge "$COMMIT_SHA" -m "chore: merge release v$VERSION into $MAINTENANCE_BRANCH"; then
+                echo "✅ Successfully merged release v$VERSION"
+                git push origin "$MAINTENANCE_BRANCH"
+                echo "✅ Updated maintenance branch '$MAINTENANCE_BRANCH'"
+              else
+                echo "Merge failed, conflicts detected..."
+                echo "Please manually resolve the conflicts and push to $MAINTENANCE_BRANCH and try again..."
+                exit 1
+              fi
+            fi
+          else
+            echo "Maintenance branch '$MAINTENANCE_BRANCH' does not exist"
+            echo "Creating new maintenance branch from commit $COMMIT_SHA..."
+
+            git checkout -b "$MAINTENANCE_BRANCH" "$COMMIT_SHA"
+
+            git push origin "$MAINTENANCE_BRANCH"
+            echo "✅ Created maintenance branch '$MAINTENANCE_BRANCH'"
+          fi
+
+      - name: Notify Slack about new release
+        if: steps.verify-merge.outputs.is_release == 'true'
+        uses: slackapi/slack-github-action@v4.0.0
+        with:
+          method: chat.postMessage
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          # TODO: Maybe create a script version with templates
+          # as notifications at the moment are inline
+          # and hard to confirm output without CI/CD runtime
+          payload: |
+            channel: "${{ secrets.SLACK_CHANNEL_FOR_GENERAL }}"
+            text: "===\n*Click UI ${{ steps.verify-merge.outputs.version }} has launched!*\n\n<https://www.npmjs.com/package/@clickhouse/click-ui/v/${{ steps.verify-merge.outputs.version }}|View on npm>\n<https://github.com/ClickHouse/click-ui/blob/${{ steps.verify-merge.outputs.tag }}/CHANGELOG.md|View Changelog>\n\n_Release type: ${{ steps.package-info.outputs.tag }}_\n==="

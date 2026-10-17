@@ -1,0 +1,32 @@
+name: Release Drafter
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Compute the next version without creating or publishing a release
+        type: boolean
+        default: false
+
+concurrency:
+  group: release-drafter
+  cancel-in-progress: false
+
+jobs:
+  draft_release:
+    name: Create Release
+    permissions:
+      contents: write
+      pull-requests: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create or publish release
+        uses: aaronsteers/semantic-pr-release-drafter@v2.4.4
+        with:
+          publish: true
+          dry-run: ${{ inputs.dry-run || false }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

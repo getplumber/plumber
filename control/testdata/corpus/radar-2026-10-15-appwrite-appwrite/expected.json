@@ -1,0 +1,118 @@
+{
+  "source": "https://github.com/appwrite/appwrite",
+  "commit": "6f623c53a10fccc44ebc8b3d6de36e982673e181",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "appwrite (loving-ambition / production)",
+      "known": true
+    },
+    {
+      "name": "console-production",
+      "known": true,
+      "branchPolicy": true
+    },
+    {
+      "name": "console-staging",
+      "known": true
+    },
+    {
+      "name": "copilot",
+      "known": true
+    },
+    {
+      "name": "Test Paper / production",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/codeql-analysis.yml": "active",
+    ".github/workflows/tests.yml": "active",
+    ".github/workflows/linter.yml": "active",
+    ".github/workflows/release.yml": "active",
+    ".github/workflows/publish.yml": "active",
+    ".github/workflows/cleanup-cache.yml": "active",
+    ".github/workflows/stale.yml": "active",
+    ".github/workflows/check-dependencies.yml": "active",
+    ".github/workflows/pr-scan.yml": "active",
+    ".github/workflows/nightly.yml": "active",
+    ".github/workflows/sdk-preview.yml": "active",
+    ".github/workflows/add-to-project.yml": "active",
+    ".github/workflows/auto-label-issue.yml": "active",
+    ".github/workflows/ai-moderator.yml": "active",
+    ".github/workflows/issue-triage.lock.yml": "active",
+    ".github/workflows/ci.yml": "active",
+    ".github/workflows/copilot-setup-steps.yml": "active",
+    ".github/workflows/specs.yml": "active",
+    ".github/workflows/security-scan.yml": "active",
+    ".github/workflows/mirror-redirect.yml": "active",
+    ".github/workflows/split-dev.yml": "active",
+    ".github/workflows/split.yml": "active",
+    ".github/workflows/console.yml": "active",
+    ".github/workflows/console-production.yml": "active",
+    ".github/workflows/console-snippets-qa-android.yml": "active",
+    ".github/workflows/console-snippets-qa-ios.yml": "active",
+    ".github/workflows/console-snippets-qa-server.yml": "active",
+    ".github/workflows/console-snippets-qa-web.yml": "active",
+    ".github/workflows/console-staging.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "actionMetadata": {
+    "dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8": {
+      "refKind": "commit",
+      "mutableRemoteExec": {
+        "tier": "exec",
+        "url": "https://sh.rustup.rs",
+        "file": "action.yml",
+        "downloadGuard": "rustup"
+      }
+    },
+    "dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249": {
+      "refKind": "commit",
+      "mutableRemoteExec": {
+        "tier": "exec",
+        "url": "https://sh.rustup.rs",
+        "file": "action.yml",
+        "downloadGuard": "rustup"
+      }
+    },
+    "dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772": {
+      "refKind": "commit",
+      "mutableRemoteExec": {
+        "tier": "exec",
+        "url": "https://sh.rustup.rs",
+        "file": "action.yml",
+        "downloadGuard": "rustup"
+      }
+    },
+    "dtolnay/rust-toolchain@bd41891a8e7f4b8649f6d684415e1a6155fe4e22": {
+      "refKind": "commit",
+      "mutableRemoteExec": {
+        "tier": "exec",
+        "url": "https://sh.rustup.rs",
+        "file": "action.yml",
+        "downloadGuard": "rustup"
+      }
+    }
+  },
+  "note": "The High path through the SHA-pinned `dtolnay/rust-toolchain@686976e` was judged overstated: the pin is immutable and the only mutable party is the guarded `sh.rustup.rs` download on a self-hosted runner whose image cannot be read, in a dispatch-only job with one secret, Medium at most.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "dtolnay/rust-toolchain@686976e191b8",
+        "tier": "medium"
+      }
+    ]
+  }
+}

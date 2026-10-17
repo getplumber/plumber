@@ -1,0 +1,135 @@
+name: AI Translate Service CI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'translate/**'
+      - '.github/workflows/ai-translate-ci.yml'
+  workflow_dispatch:
+
+env:
+  DOCKER_REGISTRY: ${{ vars.DOCKER_REGISTRY }}
+
+jobs:
+  test:
+    name: Test Python Service
+    runs-on: ubuntu-latest
+    env:
+      JFROG_CLI_KEY_ALIAS: ${{ vars.JFROG_CLI_KEY_ALIAS }}
+      JFROG_CLI_SIGNING_KEY: ${{ secrets.JFROG_CLI_SIGNING_KEY }}
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+        
+    - name: Cache pip packages
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-test-${{ hashFiles('translate/requirements-optimized.txt') }}-${{ hashFiles('translate/requirements-dev.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-test-${{ hashFiles('translate/requirements-optimized.txt') }}
+          ${{ runner.os }}-pip-test
+
+    - name: Install dependencies and run tests
+      run: |
+        cd translate
+        # Install only production dependencies for testing
+        pip install --no-cache-dir -r requirements-optimized.txt
+        # Install minimal test dependencies
+        pip install --no-cache-dir pytest pytest-asyncio
+        python -m pytest tests/ -v --tb=short
+        
+    - name: Cleanup pip cache
+      run: |
+        pip cache purge
+
+  build:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    env:
+      JFROG_CLI_KEY_ALIAS: ${{ vars.JFROG_CLI_KEY_ALIAS }}
+      JFROG_CLI_SIGNING_KEY: ${{ secrets.JFROG_CLI_SIGNING_KEY }}
+    needs: test
+    outputs: 
+      build_name: ${{ steps.publish_build.outputs.build_name }}
+      build_number: ${{ steps.publish_build.outputs.build_number }}
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup JFrog CLI
+      uses: jfrog/setup-jfrog-cli@v4
+      with:
+        version: latest
+      env:
+        JF_URL: ${{ vars.JF_URL }}
+        JF_USER: ${{ vars.JF_USER }}
+        JF_ACCESS_TOKEN: ${{ secrets.JF_ACCESS_TOKEN }}
+      
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: Login to Docker Registry
+      run: |
+        echo "🔐 Logging into JFrog Artifactory Docker registry..."
+        echo "Registry: ${{ env.DOCKER_REGISTRY }}"
+        echo ${{ secrets.JF_ACCESS_TOKEN }} | docker login -u ${{ vars.JF_USER }} --password-stdin ${{ env.DOCKER_REGISTRY }}
+        echo "✅ Successfully logged into Docker registry"
+      
+    - name: Build and Push Docker image
+      run: |
+        cd translate
+        # Build single platform AMD64 image
+        jf docker buildx build --platform linux/amd64 \
+          --cache-from type=registry,ref=${{ env.DOCKER_REGISTRY }}/ai-translate:cache \
+          --cache-to type=registry,ref=${{ env.DOCKER_REGISTRY }}/ai-translate:cache,mode=max \
+          --tag ${{ env.DOCKER_REGISTRY }}/ai-translate:${{ github.run_number }} \
+          --metadata-file=build-metadata --output=type=image --push .
+        jf rt build-docker-create quotopia-dev-docker  \
+          --image-file build-metadata --build-name ai-translate --build-number ${{ github.run_number }}
+
+    - name: Verify Docker image
+      run: |
+        echo "🔍 Verifying Docker image..."
+        docker pull ${{ env.DOCKER_REGISTRY }}/ai-translate:${{ github.run_number }}
+        docker images ${{ env.DOCKER_REGISTRY }}/ai-translate:${{ github.run_number }}
+
+    - name: Run Grype scan
+      id: grype
+      uses: anchore/scan-action@v6
+      with:
+        image: ${{ env.DOCKER_REGISTRY }}/ai-translate:${{ github.run_number }}
+        fail-build: false
+        output-format: cyclonedx-json
+        output-file: grype-output.json
+        severity-cutoff: "critical"
+        cache-db: true
+
+    - name: Create evidence from Grype scan result
+      run: |
+        jf evd create --subject-repo-path quotopia-dev-docker/ai-translate/${{ github.run_number }}/list.manifest.json \
+          --predicate grype-output.json --provider-id anchore --predicate-type https://anchore.com/evidence/grype/v1
+
+    - name: Publish buildinfo
+      id: publish_build
+      run: |
+        jf rt build-add-git ai-translate ${{ github.run_number }}
+        jf rt build-publish ai-translate ${{ github.run_number }} 
+        echo "build_name=ai-translate" >> $GITHUB_OUTPUT
+        echo "build_number=${{ github.run_number }}" >> $GITHUB_OUTPUT
+
+  create_jira_evidence:
+    needs: build
+    uses: ./.github/workflows/create-jira-evidence.yml
+    secrets: inherit
+    with: 
+      build_name: ${{ needs.build.outputs.build_name }}
+      build_number: ${{ needs.build.outputs.build_number }}

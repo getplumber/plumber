@@ -1,0 +1,10 @@
+name: pr
+
+on:
+  pull_request:
+
+# Common Go workflows from go faster
+# See https://github.com/go-faster/x
+jobs:
+  commit:
+    uses: go-faster/x/.github/workflows/commit.yml@main

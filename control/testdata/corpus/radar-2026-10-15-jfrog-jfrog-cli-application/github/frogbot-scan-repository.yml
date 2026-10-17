@@ -1,0 +1,36 @@
+name: "Frogbot Scan Repository"
+on:
+  workflow_dispatch:
+  schedule:
+    # The repository will be scanned once a day at 00:00 GMT.
+    - cron: "0 0 * * *"
+permissions:
+  contents: write
+  pull-requests: write
+  security-events: write
+jobs:
+  scan-repository:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # The repository scanning will be triggered periodically on the following branches.
+        branch: [ "main" ]
+    steps:
+      - uses: jfrog/frogbot@v2
+        env:
+          JFROG_CLI_LOG_LEVEL: "DEBUG"
+          # [Mandatory]
+          # JFrog platform URL (This functionality requires version 3.29.0 or above of Xray)
+          JF_URL: ${{ secrets.FROGBOT_URL }}
+
+          # [Mandatory if JF_USER and JF_PASSWORD are not provided]
+          # JFrog access token with 'read' permissions on Xray service
+          JF_ACCESS_TOKEN: ${{ secrets.FROGBOT_ACCESS_TOKEN }}
+
+          # [Mandatory]
+          # The GitHub token is automatically generated for the job
+          JF_GIT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+          # [Mandatory]
+          # The name of the branch on which Frogbot will perform the scan
+          JF_GIT_BASE_BRANCH: ${{ matrix.branch }}

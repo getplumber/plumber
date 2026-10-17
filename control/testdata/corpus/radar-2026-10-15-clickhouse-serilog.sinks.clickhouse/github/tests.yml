@@ -1,0 +1,81 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**/*.md"
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: .NET ${{ matrix.framework }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: ["net6.0", "net8.0", "net9.0", "net10.0"]
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v7
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v6
+      with:
+        dotnet-version: |
+          6.0.x
+          8.0.x
+          9.0.x
+          10.0.x
+
+    - name: Restore
+      run: dotnet restore
+
+    - name: Build
+      run: dotnet build --no-restore --configuration Release --framework ${{ matrix.framework }}
+
+    - name: Test
+      run: dotnet test --no-build --configuration Release --framework ${{ matrix.framework }} --filter "Category!=Cluster"
+
+  cluster-test:
+    name: Cluster tests (.NET net8.0)
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v7
+
+    - name: Start ClickHouse cluster
+      uses: isbang/compose-action@v2.2.0
+      with:
+        compose-file: docker-compose.cluster.yml
+        down-flags: --volumes
+
+    - name: Wait for cluster to be healthy
+      run: |
+        for i in $(seq 1 30); do
+          if docker compose -f docker-compose.cluster.yml exec -T clickhouse1 clickhouse-client --query "SELECT path FROM system.zookeeper WHERE path = '/' LIMIT 1" 2>/dev/null &&
+             docker compose -f docker-compose.cluster.yml exec -T clickhouse2 clickhouse-client --query "SELECT path FROM system.zookeeper WHERE path = '/' LIMIT 1" 2>/dev/null; then
+            echo "Cluster and Keeper are ready"
+            exit 0
+          fi
+          echo "Waiting for cluster + Keeper... ($i/30)"
+          sleep 2
+        done
+        echo "Cluster did not become ready in time"
+        docker compose -f docker-compose.cluster.yml logs
+        exit 1
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v6
+      with:
+        dotnet-version: 8.0.x
+
+    - name: Restore
+      run: dotnet restore
+
+    - name: Build
+      run: dotnet build --no-restore --configuration Release --framework net8.0
+
+    - name: Run cluster tests
+      run: dotnet test --no-build --configuration Release --framework net8.0 --filter "Category=Cluster"

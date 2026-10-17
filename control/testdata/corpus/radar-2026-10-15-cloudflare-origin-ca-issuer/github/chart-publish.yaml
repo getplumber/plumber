@@ -1,0 +1,36 @@
+name: Publish Charts
+on:
+  push:
+    branches:
+      - trunk
+    paths:
+      - deploy/charts/origin-ca-issuer/Chart.yaml
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  chart-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: azure/setup-helm@v5
+      - uses: sigstore/cosign-installer@v4.1.1
+      - name: helm package
+        run: helm package deploy/charts/origin-ca-issuer
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: helm publish
+        run: |
+          helm push origin-ca-issuer-*.tgz oci://ghcr.io/cloudflare/origin-ca-issuer-charts |& tee helm-push-output.log
+          digest=$(awk -F "[, ]+" '/Digest/{print $NF}' < helm-push-output.log)
+          cosign sign --yes "ghcr.io/cloudflare/origin-ca-issuer-charts/origin-ca-issuer@${digest}"

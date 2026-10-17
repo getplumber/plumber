@@ -1,0 +1,160 @@
+name: Build JNI
+run-name: "Build JNI ${{ github.ref_name }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      macos-binaries-release:
+        description: "Optional GitHub Release tag holding laptop-built libzerobus_jni-osx-*.dylib files. Leave empty to skip macOS."
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  import-macos:
+    if: inputs.macos-binaries-release != ''
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Download macOS dylibs from release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ inputs.macos-binaries-release }}
+        run: |
+          set -euo pipefail
+          for arch in x86_64 aarch64; do
+            mkdir -p "jni-osx-$arch"
+            gh release download "$REF" \
+              --repo "${{ github.repository }}" \
+              --pattern "libzerobus_jni-osx-$arch.dylib" \
+              --dir "jni-osx-$arch"
+            test -f "jni-osx-$arch/libzerobus_jni-osx-$arch.dylib"
+            mv "jni-osx-$arch/libzerobus_jni-osx-$arch.dylib" \
+               "jni-osx-$arch/libzerobus_jni.dylib"
+          done
+
+      - name: Upload osx-x86_64
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: jni-osx-x86_64
+          path: jni-osx-x86_64/libzerobus_jni.dylib
+          if-no-files-found: error
+
+      - name: Upload osx-aarch64
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: jni-osx-aarch64
+          path: jni-osx-aarch64/libzerobus_jni.dylib
+          if-no-files-found: error
+
+  build-jni:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux-ubuntu-latest
+            runner: { group: databricks-protected-runner-group, labels: linux-ubuntu-latest }
+            target: x86_64-unknown-linux-gnu
+            build_target: x86_64-unknown-linux-gnu.2.26
+            artifact: libzerobus_jni.so
+            native_dir: linux-x86_64
+            cross: false
+            zigbuild: true
+          - os: linux-ubuntu-latest
+            runner: { group: databricks-protected-runner-group, labels: linux-ubuntu-latest }
+            target: aarch64-unknown-linux-gnu
+            build_target: aarch64-unknown-linux-gnu.2.26
+            artifact: libzerobus_jni.so
+            native_dir: linux-aarch64
+            cross: false
+            zigbuild: true
+          - os: linux-ubuntu-latest
+            runner: { group: databricks-protected-runner-group, labels: linux-ubuntu-latest }
+            target: x86_64-unknown-linux-musl
+            artifact: libzerobus_jni.so
+            native_dir: linux-musl-x86_64
+            cross: false
+            zigbuild: true
+          - os: linux-ubuntu-latest
+            runner: { group: databricks-protected-runner-group, labels: linux-ubuntu-latest }
+            target: aarch64-unknown-linux-musl
+            artifact: libzerobus_jni.so
+            native_dir: linux-musl-aarch64
+            cross: false
+            zigbuild: true
+          - os: windows-server-latest
+            runner: { group: databricks-protected-runner-group, labels: windows-server-latest }
+            target: x86_64-pc-windows-msvc
+            artifact: zerobus_jni.dll
+            native_dir: windows-x86_64
+            cross: false
+
+    name: Build JNI - ${{ matrix.native_dir }}
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      id-token: write
+
+    defaults:
+      run:
+        working-directory: rust
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Get JFrog OIDC token
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/jfrog-oidc-token.sh"
+
+      - name: Configure cargo for JFrog
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/configure-cargo.sh"
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install cross-compilation toolchain (Linux ARM64)
+        if: matrix.cross
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc-aarch64-linux-gnu
+          mkdir -p .cargo
+          echo '[target.aarch64-unknown-linux-gnu]' > .cargo/config.toml
+          echo 'linker = "aarch64-linux-gnu-gcc"' >> .cargo/config.toml
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Zig (zigbuild targets)
+        if: matrix.zigbuild
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.13.0
+
+      - name: Install cargo-zigbuild (zigbuild targets)
+        if: matrix.zigbuild
+        run: cargo install cargo-zigbuild --locked --version 0.23.0
+
+      - name: Build JNI library
+        if: '!matrix.zigbuild'
+        run: cargo build --release -p zerobus-jni --target ${{ matrix.target }}
+
+      - name: Build JNI library (zigbuild)
+        if: matrix.zigbuild
+        env:
+          RUSTFLAGS: -C target-feature=-crt-static
+        run: cargo zigbuild --release -p zerobus-jni --target ${{ matrix.build_target || matrix.target }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: jni-${{ matrix.native_dir }}
+          path: rust/target/${{ matrix.target }}/release/${{ matrix.artifact }}
+          if-no-files-found: error

@@ -1,0 +1,39 @@
+name: Integration Tests
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: false
+        type: string
+
+jobs:
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - uses: actions/cache@v6
+        name: Cache NuGet
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Setup .NET Core
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: |
+            10.x
+
+      - name: Test
+        run: dotnet test ClickHouse.Driver.IntegrationTests/ClickHouse.Driver.IntegrationTests.csproj --framework net10.0 --configuration Release --verbosity normal --logger GitHubActions  /clp:ErrorsOnly /p:CollectCoverage=true /p:CoverletOutputFormat=cobertura /p:SkipAutoProps=true
+        env:
+          CLICKHOUSE_VERSION: latest

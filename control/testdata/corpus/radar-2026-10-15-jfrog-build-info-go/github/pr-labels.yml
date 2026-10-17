@@ -1,0 +1,12 @@
+name: "PR Label Check"
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+jobs:
+  check-labels:
+    name: Check PR Labels
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check if PR has allowed labels
+        uses: jfrog/.github/actions/pr-labels@main

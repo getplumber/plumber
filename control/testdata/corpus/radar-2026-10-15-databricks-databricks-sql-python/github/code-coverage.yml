@@ -1,0 +1,149 @@
+name: E2E Tests and Code Coverage
+
+permissions:
+  contents: read
+  id-token: write
+
+on:
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+
+# `pull_request` gives the PR author fast feedback as they iterate.
+# `merge_group` runs the same suite against the queue's transient
+# branch (current main + the queued PR diff, freshly merged) and is
+# the run that actually protects main — by the time `push:main` fires,
+# the merge has already happened and the coverage check has no power
+# to block. Hence we deliberately don't subscribe to `push:main`.
+#
+# Concurrency groups:
+#   - pull_request: per-ref + cancel-in-progress. A force-push or fast
+#     follow-up commit on a PR cancels the previous run instead of
+#     racing it against shared warehouse state (Delta tables, UC Volume
+#     files, telemetry endpoints, etc.).
+#   - merge_group: serialised globally with a fixed group name. The
+#     warehouse can't tolerate two parallel queue entries hammering
+#     telemetry / retry paths simultaneously — we have observed flaky
+#     retry-test failures (extra `/telemetry-ext` retries inflating
+#     mock.call_count) under that load. Running queue entries one at a
+#     time costs queue throughput (one entry at a time, ~17 min each)
+#     but keeps signal trustworthy. cancel-in-progress is off so each
+#     entry gets a complete run.
+#   - workflow_dispatch: shares the merge_group group; manual triggers
+#     are rare enough that serialising them with the queue is fine.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('e2e-pr-{0}', github.ref) || 'e2e-mq-serial' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test-with-coverage:
+    # This job runs the e2e suite against a live warehouse, so it needs the
+    # azure-prod secrets. FORK PRs never receive those secrets (Secret source:
+    # None), so on a fork the job can only fail. Skip it on fork PRs — the real
+    # coverage gate runs on the merge_group's transient branch (base context,
+    # secrets present), which is what actually protects main. Same-repo PRs and
+    # merge_group are unaffected.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    environment: azure-prod
+    env:
+      DATABRICKS_SERVER_HOSTNAME: ${{ secrets.DATABRICKS_HOST }}
+      DATABRICKS_HTTP_PATH: ${{ secrets.TEST_PECO_WAREHOUSE_HTTP_PATH }}
+      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+      DATABRICKS_CATALOG: peco
+      DATABRICKS_USER: ${{ secrets.TEST_PECO_SP_ID }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libkrb5-dev
+      - name: Setup Poetry
+        uses: ./.github/actions/setup-poetry
+        with:
+          python-version: "3.10"
+          install-args: "--all-extras"
+      - name: Run all tests with coverage
+        continue-on-error: false
+        # This job installs --all-extras, so the REAL databricks-sql-kernel
+        # wheel is present. The unit suite fakes databricks_sql_kernel in
+        # sys.modules, which would shadow the real wheel in this shared
+        # session — so the kernel-backed suites that need the real wheel
+        # are excluded here and covered by the dedicated kernel-e2e.yml
+        # (isolated session, real wheel, live warehouse):
+        #   - --ignore the kernel e2e files (they assert the real wheel and
+        #     now FAIL LOUDLY rather than silently skip if shadowed), and
+        #   - -m "not realkernel" deselects the no-network real-wheel
+        #     routing test for the same reason.
+        run: |
+          poetry run pytest tests/unit tests/e2e \
+            --ignore=tests/e2e/test_kernel_backend.py \
+            --ignore=tests/e2e/test_kernel_tls.py \
+            -m "not realkernel" \
+            -n 4 \
+            --dist=loadgroup \
+            --cov=src \
+            --cov-report=xml \
+            --cov-report=term \
+            -v
+      - name: Check for coverage override
+        id: override
+        env:
+          # PR_BODY is empty on `merge_group` (no pull_request payload).
+          # That's intentional — coverage overrides are an author-time
+          # escape hatch, not a queue-time bypass, so the queue run
+          # always enforces the threshold regardless of the PR's
+          # SKIP_COVERAGE_CHECK marker.
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          OVERRIDE_COMMENT=$(echo "$PR_BODY" | grep -E "SKIP_COVERAGE_CHECK\s*=" || echo "")
+          if [ -n "$OVERRIDE_COMMENT" ]; then
+            echo "override=true" >> $GITHUB_OUTPUT
+            REASON=$(echo "$OVERRIDE_COMMENT" | sed -E 's/.*SKIP_COVERAGE_CHECK\s*=\s*(.+)/\1/')
+            echo "reason=$REASON" >> $GITHUB_OUTPUT
+            echo "Coverage override found in PR description: $REASON"
+          else
+            echo "override=false" >> $GITHUB_OUTPUT
+            echo "No coverage override found"
+          fi
+      - name: Check coverage percentage
+        if: steps.override.outputs.override == 'false'
+        run: |
+          COVERAGE_FILE="coverage.xml"
+          if [ ! -f "$COVERAGE_FILE" ]; then
+            echo "ERROR: Coverage file not found at $COVERAGE_FILE"
+            exit 1
+          fi
+          if ! command -v xmllint &> /dev/null; then
+            sudo apt-get update && sudo apt-get install -y libxml2-utils
+          fi
+          COVERED=$(xmllint --xpath "string(//coverage/@lines-covered)" "$COVERAGE_FILE")
+          TOTAL=$(xmllint --xpath "string(//coverage/@lines-valid)" "$COVERAGE_FILE")
+          PERCENTAGE=$(python3 -c "covered=${COVERED}; total=${TOTAL}; print(round((covered/total)*100, 2))")
+          echo "Branch Coverage: $PERCENTAGE%"
+          echo "Required Coverage: 85%"
+          python3 -c "import sys; sys.exit(0 if float('$PERCENTAGE') >= 85 else 1)"
+          if [ $? -eq 1 ]; then
+            echo "ERROR: Coverage is $PERCENTAGE%, which is less than the required 85%"
+            exit 1
+          else
+            echo "SUCCESS: Coverage is $PERCENTAGE%, which meets the required 85%"
+          fi
+      - name: Coverage enforcement summary
+        env:
+          OVERRIDE: ${{ steps.override.outputs.override }}
+          REASON: ${{ steps.override.outputs.reason }}
+        run: |
+          if [ "$OVERRIDE" == "true" ]; then
+            echo "Coverage checks bypassed: $REASON"
+            echo "Please ensure this override is justified and temporary"
+          else
+            echo "Coverage checks enforced - minimum 85% required"
+          fi

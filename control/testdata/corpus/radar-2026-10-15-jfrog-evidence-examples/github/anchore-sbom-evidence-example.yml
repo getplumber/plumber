@@ -1,0 +1,59 @@
+name: "Anchore SBOM evidence integration example"
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  package-docker-image-with-anchore-evidence:
+    runs-on: ubuntu-latest
+    env:
+      REGISTRY_DOMAIN: ${{ vars.JF_URL }}
+      REPO_NAME: 'docker-anchore-repo'
+      IMAGE_NAME: 'docker-anchore-sbom-image'
+      VERSION: ${{ github.run_number }}
+      BUILD_NAME: 'anchore-docker-build'
+      ATTACH_OPTIONAL_CUSTOM_MARKDOWN_TO_EVIDENCE: true
+
+    steps:
+      # Build and publish the packages to JFrog Artifactory
+      - name: Setup jfrog cli
+        uses: jfrog/setup-jfrog-cli@v4
+        env:
+          JF_URL: ${{ vars.ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.ARTIFACTORY_ACCESS_TOKEN }}
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Build and publish Docker Image to Artifactory
+        run: |
+          docker build . --file ./examples/anchore/Dockerfile --tag $REGISTRY_DOMAIN/$REPO_NAME/$IMAGE_NAME:$VERSION
+          jf rt docker-push $REGISTRY_DOMAIN/$REPO_NAME/$IMAGE_NAME:$VERSION $REPO_NAME
+
+      - uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY_DOMAIN }}/${{ env.REPO_NAME }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}
+          output-file: anchore-sbom.json
+
+
+      # This is an optional step to generate a custom markdown report
+      - name: Generate optional custom markdown report
+        if: env.ATTACH_OPTIONAL_CUSTOM_MARKDOWN_TO_EVIDENCE == 'true'
+        run: |
+          python3 ./examples/anchore/markdown_generators/sbom_to_md.py anchore-sbom.json anchore-sbom.md
+
+      # Attaching the evidence to associated package
+      - name: Attach evidence using jfrog cli
+        run: |
+          jf evd create \
+              --package-name $IMAGE_NAME \
+              --package-version $VERSION \
+              --package-repo-name $REPO_NAME \
+              --key "${{ secrets.PRIVATE_KEY }}" \
+              --key-alias "${{ vars.EVIDENCE_KEY_ALIAS }}" \
+              --predicate ./anchore-sbom.json \
+              --predicate-type http://anchore.com/syft/sbom/v1 \
+              --provider-id "anchore" \
+              ${{ env.ATTACH_OPTIONAL_CUSTOM_MARKDOWN_TO_EVIDENCE == 'true' && '--markdown "anchore-sbom.md"' || '' }}
+

@@ -1,0 +1,53 @@
+name: Chocolatey Tests
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  Choco-Tests:
+    name: Chocolatey tests (windows)
+    # Chocolatey is a Windows-only package manager, so unlike the other package
+    # manager suites this one does not run on a matrix.
+    runs-on: windows-2022
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+          # Safe: this workflow only runs after human approval via the build-gate environment.
+          allow-unsafe-pr-checkout: true
+
+      - name: Setup FastCI
+        uses: jfrog-fastci/fastci@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          fastci_otel_token: ${{ secrets.FASTCI_TOKEN }}
+
+      # Chocolatey is pre-installed on GitHub-hosted Windows runners (2.7.4 on windows-2022).
+      # 'jf setup choco' needs 2.0+ for the 'apikey add' verb - on 1.x, a bare 'choco apikey'
+      # only lists keys - so fail here with a clear message rather than letting every setup
+      # test fail later on an argument-parsing error.
+      - name: Verify Chocolatey
+        shell: pwsh
+        run: |
+          $version = (choco --version).Trim()
+          Write-Host "Chocolatey version: $version"
+          if ([int]($version -split '\.')[0] -lt 2) {
+            Write-Error "'jf setup choco' requires Chocolatey 2.0+ for the 'apikey add' verb; found $version"
+            exit 1
+          }
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Install local Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: ${{ env.RT_CONNECTION_TIMEOUT_SECONDS || '1200' }}
+
+      - name: Run Chocolatey tests
+        run: >-
+          go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.choco
+          ${{ env.JFROG_TESTS_IS_EXTERNAL == 'true' && format('--jfrog.url={0} --jfrog.adminToken={1}', env.JFROG_TESTS_URL, env.JFROG_TESTS_LOCAL_ACCESS_TOKEN) || '' }}

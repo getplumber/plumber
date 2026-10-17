@@ -1,0 +1,42 @@
+{
+  "source": "https://github.com/cloudflare/chanfana",
+  "commit": "de30d3e6927ba99dd8062b9e1b90bd55d73e2cea",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "github-pages",
+      "known": true,
+      "branchPolicy": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/changeset-check.yml": "active",
+    ".github/workflows/create-pullrequest-prerelease.yml": "active",
+    ".github/workflows/publish-next.yml": "active",
+    ".github/workflows/publish.yml": "active",
+    ".github/workflows/semgrep.yml": "active",
+    ".github/workflows/test.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High `davelosert/vitest-coverage-report-action@v2` path was judged overstated: its token is scoped to pull requests and the job holds no secret, Medium at most.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "davelosert/vitest-coverage-report-action@v2",
+        "tier": "medium",
+        "pending": "the spec counts any write scope of the token as a write token, while the assessment argued that a token scoped to issues, pull requests or checks only, in a job with no secret, is a Medium at most."
+      }
+    ]
+  }
+}

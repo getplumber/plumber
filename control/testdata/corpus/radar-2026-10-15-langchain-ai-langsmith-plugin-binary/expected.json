@@ -1,0 +1,44 @@
+{
+  "source": "https://github.com/langchain-ai/langsmith-plugin-binary",
+  "commit": "dc9c4cc06138fb85ff5b3bf9d3a1e98957d74f9d",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": false
+    }
+  ],
+  "environments": [
+    {
+      "name": "macos-signing",
+      "known": true,
+      "requiredReviewers": true,
+      "reviewers": 1,
+      "branchPolicy": true
+    },
+    {
+      "name": "npm",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/build-binary.yml": "active",
+    ".github/workflows/ci.yml": "active",
+    ".github/workflows/release.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High unprotected `main` path was judged overstated in its reach only: a writer can ship a malicious npm release through OIDC and poison the pnpm cache (High), but the five secrets it names are not reached.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "unprotected_push",
+        "subjectContains": "main",
+        "tier": "high"
+      }
+    ]
+  }
+}

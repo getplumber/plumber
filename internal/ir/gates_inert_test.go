@@ -36,7 +36,7 @@ func TestMarkInertRunnerLabelRetired(t *testing.T) {
 	}
 }
 
-// TestMarkInertRunnerLabelListMixedIsNotInert pins the brief's
+// TestMarkInertRunnerLabelListMixedIsNotInert pins the
 // conservative reading: a list mixing a retired label with a live one
 // does not mark the job inert (only every label retired, or a single
 // retired label, does).
@@ -209,5 +209,45 @@ func TestMarkInertIsANoOpOnGitLab(t *testing.T) {
 	MarkInert(p)
 	if p.Jobs[0].Inert != "" {
 		t.Fatalf("Inert = %q, want empty on GitLab", p.Jobs[0].Inert)
+	}
+}
+
+// TestMarkInertActionsDisabledSparesAWorkflowAbsentFromTheListing pins
+// that the repository-wide ActionsDisabled flag only covers the
+// workflows the listing actually reported. The listing only names the
+// default branch's registered workflows: a workflow present in the
+// analysed checkout but absent from it (a workflow added on a feature
+// branch) still runs, so its jobs must never be marked inert by the
+// flag, even when every listed workflow is disabled.
+func TestMarkInertActionsDisabledSparesAWorkflowAbsentFromTheListing(t *testing.T) {
+	p := healthyGitHubPipeline()
+	p.Jobs = append(p.Jobs, Job{
+		Name: "evil/pwn", OriginFile: "/home/runner/work/repo/repo/.github/workflows/evil.yml",
+		Triggers: []string{"pull_request_target"}, WorkflowHasTriggers: true, RunsOn: []string{"ubuntu-22.04"},
+	})
+	p.WorkflowStates = map[string]string{".github/workflows/ci.yml": "disabled_manually"}
+	p.WorkflowStatesKnown = true
+	p.ActionsDisabled = true
+	MarkInert(p)
+	if want := "actions disabled"; p.Jobs[0].Inert != want {
+		t.Fatalf("listed job Inert = %q, want %q", p.Jobs[0].Inert, want)
+	}
+	if p.Jobs[1].Inert != "" {
+		t.Fatalf("unlisted job Inert = %q, want empty (absent from the listing, it still runs)", p.Jobs[1].Inert)
+	}
+}
+
+// TestMarkInertNegatedRepositoryLiteralNamesTheExclusion pins the reason
+// for `github.repository != '<scanned repo>'` (the common "run
+// everywhere except the template repository" shape): False for the
+// scanned repository, so inert here, but the job runs everywhere except
+// that literal, never "only in" it.
+func TestMarkInertNegatedRepositoryLiteralNamesTheExclusion(t *testing.T) {
+	p := healthyGitHubPipeline()
+	p.ProjectPath = "me/repo"
+	p.Jobs[0].If = "github.repository != 'me/repo'"
+	MarkInert(p)
+	if want := "runs everywhere except me/repo"; p.Jobs[0].Inert != want {
+		t.Fatalf("Inert = %q, want %q", p.Jobs[0].Inert, want)
 	}
 }

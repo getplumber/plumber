@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  ci:
+    name: Format, Lint, Build, and Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Check formatting
+        run: pnpm format
+
+      - name: Run Build
+        run: pnpm build
+
+      - name: Run Lint
+        run: pnpm lint
+
+      - name: Type Check
+        run: pnpm type-check
+
+      - name: Run Unit Tests
+        run: pnpm test
+        working-directory: packages/chat-ui

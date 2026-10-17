@@ -1,0 +1,274 @@
+# Engineer Bot — author.
+#
+# A maintainer labels an ISSUE with `engineer-bot`; the bot addresses it and opens
+# a PR. The author FLOW is chosen from the issue's TYPE (a GitHub org-level Issue
+# Type): `Bug` ⇒ bug-fix (reproduce with a failing test, then fix); any other type
+# / none ⇒ the repo's .bot/config.yaml `flow:` default (also bug-fix). Only bug-fix
+# is selectable because this repo's .bot/prompts/engineer/ prompts are written
+# exclusively for it. Set the Type BEFORE `engineer-bot` — it's read live when the
+# run starts.
+#
+# The engineer BUILDS and TESTS the driver (pure-Go, CGO_ENABLED=0 — the default
+# backend; NOT the opt-in SEA/kernel path, which needs Rust + a private-repo token
+# this job doesn't provision). It runs on the protected runner group with
+# setup-jfrog (Go modules fetch through the JFrog GOPROXY). The bug-fix flow
+# requires a LIVE e2e repro against a warehouse (the credential-gated Thrift-path
+# tests in driver_e2e_test.go). Shared bot setup (mint tokens + Node + install the
+# pinned engine, PAT-free) is the local ./.github/actions/bot-prelude composite.
+#
+# SECURITY: the trigger is a label only maintainers can apply — issue BODIES are
+# untrusted input, so the gate is who-can-label, not the content. The issue body
+# is written to a file and inlined into the agent prompt; it never reaches a shell.
+name: Engineer Bot
+
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: 'Issue number to fix'
+        required: true
+        type: string
+
+permissions:
+  contents: write        # push the fix branch
+  pull-requests: write   # open the fix PR
+  issues: write          # comment back on the tracking issue
+  id-token: write        # JFrog OIDC exchange for Go modules + the engine install
+
+jobs:
+  author:
+    # Manual dispatch, OR the `engineer-bot` label was just applied. Applying a
+    # label requires triage+ on the repo, so this is the maintainer-only gate.
+    # The `sender.type != 'Bot'` guard is defense-in-depth: a GitHub App with
+    # `issues: write` could apply the label without a human.
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || (github.event.label.name == 'engineer-bot'
+          && github.event.sender.type != 'Bot')
+    environment: azure-prod   # DATABRICKS_HOST / DATABRICKS_TOKEN / warehouse secrets live here
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    timeout-minutes: 45
+    concurrency:
+      # One author run per issue; a re-label while a run is in flight queues.
+      group: engineer-bot-issue-${{ github.event.issue.number || inputs.issue_number }}
+      cancel-in-progress: false
+    steps:
+      # Checkout FIRST (remote action) so the local `./` composites resolve.
+      # publish sets its own authenticated push remote for the fix branch, so
+      # persist-credentials:false is fine.
+      - name: Checkout (default branch)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # --- Go toolchain + module fetch (mirrors go.yml build-and-test) ---------
+      # setup-jfrog sets GOPROXY to the JFrog mirror + writes ~/.netrc so `go
+      # build`/`go test` can fetch modules on the egress-blocked runner.
+      - name: Setup JFrog
+        uses: ./.github/actions/setup-jfrog
+
+      - name: Set up Go Toolchain
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6.5.0
+        with:
+          go-version: '1.25.x'
+          cache: false
+
+      - name: Build driver + warm caches (pure-Go; while JFrog creds are present)
+        # CGO_ENABLED=0 pure-Go build — the same invariant go.yml's build-and-test
+        # job holds. This step runs while setup-jfrog's GOPROXY/~/.netrc creds are
+        # live, and deliberately downloads EVERYTHING the agent will need so the
+        # module cache is complete BEFORE we scrub the creds below:
+        #   - `go build ./...`         → main deps
+        #   - `make tools`             → builds bin/gotestsum + bin/golangci-lint
+        #                                (the agent's `make test` / `make lint` need
+        #                                these; they go install / go build via proxy)
+        #   - `go test -run '^$' ./...`→ compiles every test binary, pulling
+        #                                test-only deps, without running anything
+        # After this, a GOPROXY=off agent run works entirely from the warm cache
+        # (verified: an offline `go test` compiles + runs green).
+        env:
+          CGO_ENABLED: 0
+        run: |
+          go build ./...
+          make tools
+          go test -run '^$' ./... >/dev/null
+
+      # Scope the JFrog credential AWAY from the model-driven steps. The build +
+      # cache-warm above consumed the creds; the agent's `go build` / `go test` /
+      # `make test` / `make lint` now run from the fully-populated module cache with
+      # GOPROXY=off. setup-jfrog left JFROG_ACCESS_TOKEN + GOPROXY (tokened netrc)
+      # in the env and a tokened ~/.netrc on disk — remove both before the agent
+      # runs (its bash allowlist includes `go build`/`go test`/`git status`). Pin
+      # GOPROXY=off + GOFLAGS=-mod=readonly so a cache miss fails loudly instead of
+      # silently reaching the network OR editing go.mod/go.sum. (Addresses the
+      # reviewer-bot finding on the odbc onboarding PR.)
+      - name: Scrub JFrog credentials before the agent runs
+        run: |
+          rm -f ~/.netrc
+          {
+            echo "JFROG_ACCESS_TOKEN="
+            echo "GOPROXY=off"
+            echo "GOFLAGS=-mod=readonly"
+          } >> "$GITHUB_ENV"
+
+      # --- shared bot setup ----------------------------------------------------
+      - name: Bot prelude (tokens + Node + engine install)
+        id: prelude
+        uses: ./.github/actions/bot-prelude
+        with:
+          app-id: ${{ secrets.ENGINEER_BOT_APP_ID }}
+          private-key: ${{ secrets.ENGINEER_BOT_APP_PRIVATE_KEY }}
+
+      - name: Resolve issue + gather context
+        id: ctx
+        # SECURITY: the issue number is validated as digits-only before use; the
+        # issue body + title are UNTRUSTED. The body goes to a file (never a shell
+        # or env interpolation); the title is exported through $GITHUB_ENV with a
+        # random heredoc delimiter (a title can contain newlines / a chosen
+        # delimiter, which would otherwise inject extra env vars).
+        env:
+          GH_TOKEN: ${{ steps.prelude.outputs.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_ISSUE: ${{ inputs.issue_number }}
+          EVENT_ISSUE: ${{ github.event.issue.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then RAW="$INPUT_ISSUE"; else RAW="$EVENT_ISSUE"; fi
+          [[ "$RAW" =~ ^[0-9]+$ ]] || { echo "::error::Invalid issue number '$RAW'"; exit 1; }
+          # `gh issue view --json` does NOT expose the issue TYPE, so fetch via the
+          # REST API (which carries `.type.name`). Issue Types are an ORG-level
+          # feature; a repo without them returns `.type == null` (⇒ no --flow ⇒ the
+          # engine uses the .bot/config.yaml `flow:` default).
+          gh api "repos/$REPO/issues/$RAW" > "$RUNNER_TEMP/issue.json"
+          # The REST issues endpoint resolves PR numbers too; reject them cleanly:
+          # real issues have `.pull_request == null`.
+          [ "$(jq -r '.pull_request // "null"' "$RUNNER_TEMP/issue.json")" = "null" ] \
+            || { echo "::error::#$RAW is a pull request, not an issue"; exit 1; }
+          jq -r '.body // ""' "$RUNNER_TEMP/issue.json" > "$RUNNER_TEMP/issue_body.txt"
+          TITLE="$(jq -r '.title // ""' "$RUNNER_TEMP/issue.json")"
+          URL="$(jq -r '.html_url // ""' "$RUNNER_TEMP/issue.json")"
+          {
+            echo "ISSUE_NUMBER=$RAW"
+            echo "ISSUE_URL=$URL"
+          } >> "$GITHUB_ENV"
+          echo "issue_number=$RAW" >> "$GITHUB_OUTPUT"
+          # Derive the author flow from the issue's TYPE (read LIVE here). Only
+          # `bug-fix` is mapped: this repo's engineer prompts are written for it.
+          TYPE="$(jq -r '.type.name // ""' "$RUNNER_TEMP/issue.json")"
+          case "$TYPE" in
+            Bug) echo "flow=bug-fix" >> "$GITHUB_OUTPUT" ;;
+          esac
+          DELIM="GHEOF_$(date +%s%N)${RANDOM}"
+          if printf '%s' "$TITLE" | grep -qF "$DELIM"; then
+            echo "::error::title delimiter collision — refusing to write \$GITHUB_ENV"; exit 1
+          fi
+          { echo "ISSUE_TITLE<<$DELIM"; printf '%s\n' "$TITLE"; echo "$DELIM"; } >> "$GITHUB_ENV"
+
+      - name: Write E2E connection config (token survives the agent env scrub)
+        id: e2e_config
+        # The bug-fix flow's REQUIRED e2e repro authenticates via pecoTestingCreds
+        # (pecotesting_creds_test.go), which reads the PAT from
+        # DATABRICKS_PECOTESTING_TOKEN. But the author agent runs `go test` in a
+        # subprocess whose env is scrubbed of every credential-shaped var (engine
+        # shared/env_scrub.py strips *TOKEN*/*SECRET*/…), so that token never
+        # reaches the test — pecoTestingCreds then sees an empty token and
+        # `t.Skip`s, so the repro silently never runs. Workaround (per the engine
+        # README): write the token to a file and pass its PATH in
+        # DATABRICKS_TEST_CONFIG_FILE, a var the scrub preserves; pecoTestingCreds
+        # reads it as a fallback. Written here (an ordinary step, token in scope)
+        # with jq so the secret is never shell-interpolated.
+        env:
+          DATABRICKS_PECOTESTING_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+        run: |
+          CONFIG_PATH="$RUNNER_TEMP/e2e-connection.json"
+          jq -n --arg token "$DATABRICKS_PECOTESTING_TOKEN" '{token: $token}' > "$CONFIG_PATH"
+          chmod 600 "$CONFIG_PATH"
+          echo "path=$CONFIG_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Run author
+        id: author
+        # Run from RUNNER_TEMP so the engine-rendered prompt's context file
+        # (issue_body.txt, resolved against cwd) is read from there and the checkout
+        # stays clean — publish's leftover check fails on any untracked path in the
+        # repo. REPO_ROOT points the agent's working tree (and .bot/ lookup) at the
+        # checkout. --flow only when the ctx step derived one.
+        working-directory: ${{ runner.temp }}
+        env:
+          MODEL_ENDPOINT: https://${{ secrets.DATABRICKS_HOST }}/serving-endpoints/databricks-claude-opus-4-8/invocations
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+          # Live-warehouse connection env for the agent's REQUIRED e2e repro
+          # (pecoTestingCreds reads these). hostname/http-path are not
+          # credential-shaped so they survive the scrub; the TOKEN can't (it's
+          # stripped) — it rides the config file below instead.
+          DATABRICKS_PECOTESTING_SERVER_HOSTNAME: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_PECOTESTING_HTTP_PATH2: ${{ secrets.TEST_PECO_WAREHOUSE_HTTP_PATH }}
+          DATABRICKS_TEST_CONFIG_FILE: ${{ steps.e2e_config.outputs.path }}
+          REPO_ROOT: ${{ github.workspace }}
+          RUNNER_TEMP: ${{ runner.temp }}
+          FLOW: ${{ steps.ctx.outputs.flow }}
+        run: |
+          args=(
+            --phase author
+            --system-prompt "$GITHUB_WORKSPACE/.bot/prompts/engineer/system.md"
+            --user-prompt "$GITHUB_WORKSPACE/.bot/prompts/engineer/user.md"
+          )
+          [ -n "$FLOW" ] && args+=(--flow "$FLOW")
+          python -m databricks_bot_engine.engineer_bot.run "${args[@]}"
+
+      - name: Open / update fix PR
+        id: publish
+        if: steps.author.outputs.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ steps.prelude.outputs.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          REPO_ROOT: ${{ github.workspace }}
+          RUNNER_TEMP: ${{ runner.temp }}
+          ENGINEER_BOT_APP_ID: ${{ secrets.ENGINEER_BOT_APP_ID }}
+          TOUCHED_FILES: ${{ steps.author.outputs.touched_files }}
+          TOUCHED_COUNT: ${{ steps.author.outputs.touched_count }}
+          SUMMARY: ${{ steps.author.outputs.summary }}
+          RED_GREEN_TESTS: ${{ steps.author.outputs.red_green_tests }}
+          PLAN: ${{ steps.author.outputs.plan }}
+          OUT_OF_SCOPE: ${{ steps.author.outputs.out_of_scope }}
+          # ISSUE_NUMBER / ISSUE_TITLE / ISSUE_URL come from $GITHUB_ENV.
+        run: |
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          python -m databricks_bot_engine.engineer_bot.publish --repo-dir "$GITHUB_WORKSPACE"
+
+      - name: Comment outcome on issue
+        # Always close the loop on the tracking issue, whatever happened. The
+        # agent SUMMARY / reason is LLM-generated — write it to a file and pass
+        # via --body-file so nothing reaches a shell.
+        if: always() && steps.ctx.outputs.issue_number != ''
+        env:
+          GH_TOKEN: ${{ steps.prelude.outputs.token }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ steps.ctx.outputs.issue_number }}
+          OUTCOME: ${{ steps.author.outputs.outcome }}
+          # `coverage_pr_url` is the engine publish module's PR-URL output key for
+          # ALL flows (bug-fix included) — the name is legacy.
+          PR_URL: ${{ steps.publish.outputs.coverage_pr_url }}
+          REASON: ${{ steps.author.outputs.reason }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          BODY="$RUNNER_TEMP/issue_comment.md"
+          # $OUTCOME is the engine's emitted outcome; it maps the agent's
+          # `no_change_needed` to `no_change`, so `no_change)` is the correct arm.
+          case "$OUTCOME" in
+            success)
+              if [ -n "$PR_URL" ]; then
+                printf '🤖 engineer-bot opened a fix PR: %s\n\nReview before merge.\n' "$PR_URL" > "$BODY"
+              else
+                printf '🤖 engineer-bot produced a fix but could **not** open the PR (push or PR creation failed). See the [workflow run](%s) for details.\n' "$RUN_URL" > "$BODY"
+              fi ;;
+            no_change)
+              { printf '🤖 engineer-bot looked into this but made **no change** — the behaviour appears already correct.\n\n'; printf '> %s\n' "$REASON"; } > "$BODY" ;;
+            *)
+              { printf '🤖 engineer-bot could **not** complete an automated fix. See the [workflow run](%s) for details.\n' "$RUN_URL"; } > "$BODY" ;;
+          esac
+          gh issue comment "$ISSUE" --repo "$REPO" --body-file "$BODY"

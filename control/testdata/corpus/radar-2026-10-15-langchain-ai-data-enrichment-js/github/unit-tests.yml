@@ -1,0 +1,59 @@
+# This workflow will run unit tests for the current project
+
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch: # Allows triggering the workflow manually in GitHub UI
+
+permissions:
+  contents: read
+
+# If another push to the same PR or branch happens while this workflow is still running,
+# cancel the earlier run in favor of the next run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    name: Unit Tests
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        node-version: [22.x, 24.x]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "yarn"
+      - name: Install dependencies
+        run: yarn install --immutable
+      - name: Build project
+        run: yarn build
+
+      - name: Lint project
+        run: yarn lint:all
+
+      - name: Check README spelling
+        uses: codespell-project/actions-codespell@v2
+        with:
+          ignore_words_file: .codespellignore
+          path: README.md
+
+      - name: Check code spelling
+        uses: codespell-project/actions-codespell@v2
+        with:
+          ignore_words_file: .codespellignore
+          path: src/
+
+      - name: Run tests
+        env:
+          ANTHROPIC_API_KEY: afakekey
+          TAVILY_API_KEY: anotherfakekey
+        run: yarn test

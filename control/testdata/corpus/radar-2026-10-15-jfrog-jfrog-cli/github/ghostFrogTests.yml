@@ -1,0 +1,111 @@
+name: Ghost Frog Tests
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  Ghost-Frog-Tests:
+    name: Ghost Frog tests (${{ matrix.os.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: windows
+            version: 2022
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+          # Safe: this workflow only runs after human approval via the build-gate environment.
+          allow-unsafe-pr-checkout: true
+
+      - name: Setup FastCI
+        uses: jfrog-fastci/fastci@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          fastci_otel_token: ${{ secrets.FASTCI_TOKEN }}
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      # Build jf/jfrog from source and upload to remote Artifactory.
+      # setup-jfrog-cli resolves the download path using the explicit version:
+      #   {repo}/v2/{version}/jfrog-cli-{arch}/{filename}
+      # We capture the version from the built binary and use it in both the
+      # upload path and the setup step so the paths agree.
+      - name: Build and publish JFrog CLI to Artifactory (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          OS=$(go env GOOS)
+          ARCH=$(go env GOARCH)
+          if [ "$OS" = "darwin" ]; then
+            [ "$ARCH" = "arm64" ] && CLI_ARCH="mac-arm64" || CLI_ARCH="mac-386"
+          elif [ "$ARCH" = "arm64" ]; then
+            CLI_ARCH="linux-arm64"
+          elif [ "$ARCH" = "amd64" ]; then
+            CLI_ARCH="linux-amd64"
+          else
+            CLI_ARCH="linux-386"
+          fi
+
+          REPO="ghost-frog-cli"
+
+          go build -o jf .
+          cp jf jfrog
+
+          JF_VERSION=$(./jf --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+          echo "JF_CLI_VERSION=${JF_VERSION}" >> "$GITHUB_ENV"
+
+          UPLOAD_PATH="${REPO}/v2/${JF_VERSION}/jfrog-cli-${CLI_ARCH}"
+
+          ./jf c add ghost-rt --url=${{ secrets.PLATFORM_URL }} --access-token=${{ secrets.PLATFORM_ADMIN_TOKEN }} --interactive=false
+          ./jf rt repo-create "${REPO}" --repo-type=local --package-type=generic --server-id=ghost-rt 2>/dev/null || true
+          ./jf rt upload jf "${UPLOAD_PATH}/jf" --server-id=ghost-rt --flat
+          ./jf rt upload jfrog "${UPLOAD_PATH}/jfrog" --server-id=ghost-rt --flat
+          rm -f jf jfrog
+
+      - name: Build and publish JFrog CLI to Artifactory (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $REPO = "ghost-frog-cli"
+
+          go build -o jf.exe .
+          Copy-Item jf.exe jfrog.exe
+
+          $jfVersion = (.\jf.exe --version 2>&1 | Select-String -Pattern '\d+\.\d+\.\d+').Matches[0].Value
+          echo "JF_CLI_VERSION=$jfVersion" >> $env:GITHUB_ENV
+
+          $UPLOAD_PATH = "$REPO/v2/$jfVersion/jfrog-cli-windows-amd64"
+
+          .\jf.exe c add ghost-rt --url=${{ secrets.PLATFORM_URL }} --access-token=${{ secrets.PLATFORM_ADMIN_TOKEN }} --interactive=false
+          .\jf.exe rt repo-create "$REPO" --repo-type=local --package-type=generic --server-id=ghost-rt 2>$null
+          .\jf.exe rt upload jf.exe "$UPLOAD_PATH/jf.exe" --server-id=ghost-rt --flat
+          .\jf.exe rt upload jfrog.exe "$UPLOAD_PATH/jfrog.exe" --server-id=ghost-rt --flat
+          Remove-Item jf.exe, jfrog.exe -ErrorAction SilentlyContinue
+
+      - name: Setup JFrog CLI with package alias
+        uses: jfrog/setup-jfrog-cli@package-alias
+        with:
+          download-repository: ghost-frog-cli
+          version: ${{ env.JF_CLI_VERSION }}
+          enable-package-alias: true
+          package-alias-tools: npm,mvn,pip
+        env:
+          JF_URL: ${{ secrets.PLATFORM_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.PLATFORM_ADMIN_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      - name: Run Ghost Frog tests
+        run: go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.ghostFrog
+        env:
+          JFROG_CLI_LOG_LEVEL: DEBUG
+          JFROG_CLI_GHOST_FROG: "true"

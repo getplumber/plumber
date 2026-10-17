@@ -1,0 +1,51 @@
+name: Test
+
+on: [ push, pull_request ]
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, windows-latest, macOS-latest ]
+        testCommand: [ "test", "pythonTests" ]
+        include:
+          - os: windows-latest
+            gradlewSuffix: .bat
+          - testCommand: "pythonTests"
+            testName: Python
+    name: ${{ matrix.testName }} Tests on ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: jfrog-fastci/fastci@main  # Use the FastCI optimization action
+        with:
+          github_token: ${{secrets.GITHUB_TOKEN}}
+          fastci_otel_token: ${{ secrets.FASTCI_TOKEN }}
+
+      # Install required tools
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      - name: Setup Gradle
+        uses: gradle/gradle-build-action@v2
+        with:
+          gradle-version: 7.6
+      - name: Setup NodeJS
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+          check-latest: true
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11.5'
+      # Install JFrog CLI for ConnectionDetailsFromCliTest
+      - name: Install JFrog CLI
+        run: curl -fL https://install-cli.jfrog.io | sh
+
+      # Run tests
+      - name: ${{ matrix.testName }} Tests on ${{ matrix.os }}
+        run: ./gradlew${{ matrix.gradlewSuffix }} clean ${{ matrix.testCommand }}

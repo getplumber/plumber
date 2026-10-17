@@ -874,3 +874,58 @@ func TestFinalScreenColoursTheWorstCaseAndBestFixLabels(t *testing.T) {
 		t.Errorf("colour off:\n%q", out.String())
 	}
 }
+
+// A path with two unknown claims gets a Note naming what Plumber could
+// not read, by their own subjects, deduplicated, in claim order; a path
+// whose claims are all proven gets no such Note at all.
+func TestPathBlockNotesWhatCouldNotBeRead(t *testing.T) {
+	p := control.AttackPath{
+		Entry: control.EntryFact{Subject: "o/a@v1"},
+		Claims: []control.Claim{
+			{Kind: "entry", Subject: "o/a@v1", State: control.ClaimProven},
+			{Kind: "secret", Subject: "API_KEY", State: control.ClaimUnknown},
+			{Kind: "token", Subject: "contents", State: control.ClaimUnknown, Source: "unknown"},
+		},
+	}
+	var out bytes.Buffer
+	renderPathBlock(&out, 1, control.NewPathBlock(p, nil), termCaps{Color: colorOff}, reportBlock)
+	want := "       Note   Plumber could not read: API_KEY, contents\n"
+	if got := out.String(); !strings.Contains(got, want) {
+		t.Errorf("block lacks %q:\n%s", want, got)
+	}
+
+	proven := control.AttackPath{
+		Entry:  control.EntryFact{Subject: "o/a@v1"},
+		Claims: []control.Claim{{Kind: "entry", Subject: "o/a@v1", State: control.ClaimProven}},
+	}
+	out.Reset()
+	renderPathBlock(&out, 1, control.NewPathBlock(proven, nil), termCaps{Color: colorOff}, reportBlock)
+	if got := out.String(); strings.Contains(got, "Note") {
+		t.Errorf("every claim proven: no Note wanted, got:\n%s", got)
+	}
+}
+
+// The claims Note folds onto the path's existing Note (the cap note, under
+// --score-point) after a period, rather than opening a second Note line.
+func TestPathBlockClaimsNoteFoldsOntoAnExistingNote(t *testing.T) {
+	p := control.AttackPath{
+		Entry: control.EntryFact{Subject: "o/a@v1"}, Modifiers: []string{"dependency_cap"},
+		Claims: []control.Claim{
+			{Kind: "entry", Subject: "o/a@v1", State: control.ClaimProven},
+			{Kind: "secret", Subject: "API_KEY", State: control.ClaimUnknown},
+		},
+	}
+	b := control.NewPathBlock(p, nil)
+	opts := reportBlock
+	opts.ScorePoint = true
+	var out bytes.Buffer
+	renderPathBlock(&out, 1, b, termCaps{Color: colorOff}, opts)
+	got := out.String()
+	if !strings.Contains(got, "Plumber could not read: API_KEY") {
+		t.Errorf("block lacks the claims sentence:\n%s", got)
+	}
+	count := strings.Count(got, "\n       Note")
+	if count != 1 {
+		t.Errorf("want exactly one Note line, got %d:\n%s", count, got)
+	}
+}

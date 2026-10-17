@@ -1,0 +1,47 @@
+name: 'Frogbot Scan and Fix'
+on:
+  schedule:
+    # The repository will be scanned once a day at 00:00 GMT.
+    - cron: '0 0 * * *'
+permissions:
+  contents: write
+  pull-requests: write
+  security-events: write
+jobs:
+  create-fix-pull-requests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # The repository scanning will be triggered periodically on the following branches.
+        branch: ['main']
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          ref: ${{ matrix.branch }}
+
+      - name: Start FastCI Optimization
+        uses: jfrog-fastci/fastci@main
+        with:
+          github_token: ${{secrets.GITHUB_TOKEN}}
+          fastci_otel_token: ${{ secrets.FASTCI_TOKEN }}
+
+      # Install prerequisites
+      - name: Setup NodeJS
+        uses: actions/setup-node@v3
+        with:
+          node-version: '16.x'
+
+      - uses: jfrog/frogbot@v2
+        env:
+          JFROG_CLI_LOG_LEVEL: 'DEBUG'
+          # [Mandatory]
+          # JFrog platform URL
+          JF_URL: ${{ secrets.FROGBOT_URL }}
+
+          # [Mandatory if JF_USER and JF_PASSWORD are not provided]
+          # JFrog access token with 'read' permissions on Xray service
+          JF_ACCESS_TOKEN: ${{ secrets.FROGBOT_ACCESS_TOKEN }}
+
+          # [Mandatory]
+          # The GitHub token automatically generated for the job
+          JF_GIT_TOKEN: ${{ secrets.GITHUB_TOKEN }}

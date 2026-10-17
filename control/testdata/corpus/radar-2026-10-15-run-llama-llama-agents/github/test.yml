@@ -1,0 +1,219 @@
+name: Unit Testing
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+env:
+  # Which Python from the matrix will be used to run the coverage check
+  COV_PYTHON_VERSION: 3.14
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
+        package:
+          [
+            llama-index-workflows,
+            llama-index-utils-workflow,
+            llama-agents-integration-tests,
+            llama-agents-dev,
+            llama-agents-client,
+            llama-agents-server,
+            llama-agents-dbos,
+            llama-agents-core,
+            llama-agents-agentcore,
+            llama-agents-appserver,
+            llama-agents-control-plane,
+            llamactl,
+          ]
+        exclude:
+          # Dev CLI only needs to run on 3.14 and 3.15
+          - package: llama-agents-dev
+            python-version: "3.10"
+          - package: llama-agents-dev
+            python-version: "3.11"
+          - package: llama-agents-dev
+            python-version: "3.12"
+          - package: llama-agents-dev
+            python-version: "3.13"
+        include:
+          - package: llama-index-workflows
+            package_dir: packages/llama-index-workflows
+          - package: llama-index-utils-workflow
+            package_dir: packages/llama-index-utils-workflow
+          - package: llama-agents-integration-tests
+            package_dir: packages/llama-agents-integration-tests
+          - package: llama-agents-dev
+            package_dir: .
+          - package: llama-agents-client
+            package_dir: packages/llama-agents-client
+          - package: llama-agents-server
+            package_dir: packages/llama-agents-server
+          - package: llama-agents-dbos
+            package_dir: packages/llama-agents-dbos
+          - package: llama-agents-core
+            package_dir: packages/llama-agents-core
+          - package: llama-agents-agentcore
+            package_dir: packages/llama-agents-agentcore
+          - package: llama-agents-appserver
+            package_dir: packages/llama-agents-appserver
+          - package: llama-agents-control-plane
+            package_dir: packages/llama-agents-control-plane
+          - package: llamactl
+            package_dir: packages/llamactl
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv and set the python version
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+
+      - name: Run tests
+        if: matrix.python-version != env.COV_PYTHON_VERSION
+        run: |
+          uv sync --python ${{ matrix.python-version }} --all-extras --directory ${{ matrix.package_dir }}
+          uv run --python ${{ matrix.python-version }} --all-extras --directory ${{ matrix.package_dir }} -- pytest
+
+      - name: Run tests with coverage
+        if: matrix.python-version == env.COV_PYTHON_VERSION
+        run: uv run --all-extras --directory ${{ matrix.package_dir }} -- pytest --cov=src --cov-report=xml
+
+      - name: Report Coveralls
+        if: matrix.python-version == env.COV_PYTHON_VERSION
+        continue-on-error: true
+        uses: coverallsapp/github-action@v2
+        with:
+          file: ${{ matrix.package_dir }}/coverage.xml
+          base-path: ${{ matrix.package_dir }}/src
+          flag-name: ${{ matrix.package }}
+          parallel: true
+        env:
+          COVERALLS_REPO_TOKEN: ${{ secrets.COVERALLS_REPO_TOKEN }}
+
+  test-docker:
+    name: "test docker (3.14 - all packages)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv and set the python version
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.14"
+          enable-cache: true
+
+      # Docker Hub limits anonymous pulls per runner IP, so a busy day of CI
+      # fails on "No such image" before any test runs. Keep the two images
+      # the docker tests need in the Actions cache and load them from there.
+      - name: Restore docker images
+        id: docker-images
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/docker-images
+          key: docker-images-${{ hashFiles('.github/docker-images.txt') }}
+
+      - name: Pull docker images
+        if: steps.docker-images.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/.cache/docker-images
+          xargs -a .github/docker-images.txt -n1 docker pull
+          docker save $(cat .github/docker-images.txt) -o ~/.cache/docker-images/images.tar
+
+      - name: Load docker images
+        if: steps.docker-images.outputs.cache-hit == 'true'
+        run: docker load -i ~/.cache/docker-images/images.tar
+
+      - name: Run Docker tests with coverage (append)
+        # Use longer timeout for Docker tests since container startup can take 30-60s in CI
+        run: uv run --all-extras --all-packages dev --timeout=120 -m docker --cov --cov-append --cov-report=xml
+
+      - name: Report Coveralls
+        continue-on-error: true
+        uses: coverallsapp/github-action@v2
+        with:
+          file: packages/llama-agents-integration-tests/coverage.xml
+          flag-name: llama-agents-integration-tests
+          parallel: true
+        env:
+          COVERALLS_REPO_TOKEN: ${{ secrets.COVERALLS_REPO_TOKEN }}
+
+  test-appserver-package:
+    name: "test appserver package (${{ matrix.resolution }})"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        resolution: [highest, lowest-direct]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv and set the python version
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.14"
+          enable-cache: true
+
+      - name: Build internal package wheels
+        run: |
+          uv build --wheel --package llama-index-workflows --out-dir dist
+          uv build --wheel --package llama-agents-client --out-dir dist
+          uv build --wheel --package llama-agents-core --out-dir dist
+          uv build --wheel --package llama-agents-server --out-dir dist
+          uv build --wheel --package llama-agents-appserver --out-dir dist
+
+      - name: Resolve package dependencies
+        run: >-
+          uv pip compile
+          packages/llama-agents-appserver/pyproject.toml
+          --no-sources
+          --resolution ${{ matrix.resolution }}
+          --no-emit-package llama-index-workflows
+          --no-emit-package llama-agents-client
+          --no-emit-package llama-agents-core
+          --no-emit-package llama-agents-server
+          --output-file "${RUNNER_TEMP}/appserver-requirements.txt"
+
+      - name: Install internal package wheels
+        run: |
+          uv venv "${RUNNER_TEMP}/appserver-venv"
+          uv pip install \
+            --python "${RUNNER_TEMP}/appserver-venv/bin/python" \
+            --requirements "${RUNNER_TEMP}/appserver-requirements.txt" \
+            dist/*.whl
+
+      - name: Smoke test installed appserver
+        run: |
+          mkdir -p "${RUNNER_TEMP}/appserver-smoke"
+          printf 'name: compatibility-test\nworkflows: {}\n' > "${RUNNER_TEMP}/appserver-smoke/llama_deploy.yaml"
+          LLAMA_DEPLOY_APISERVER_APP_ROOT="${RUNNER_TEMP}/appserver-smoke" \
+            "${RUNNER_TEMP}/appserver-venv/bin/python" \
+            .github/scripts/test_appserver_package.py
+
+  coveralls-finish:
+    needs: [test, test-docker, test-appserver-package]
+    runs-on: ubuntu-latest
+    if: github.repository == 'run-llama/llama-agents'
+    steps:
+      - name: Finalize Coveralls parallel jobs
+        continue-on-error: true
+        uses: coverallsapp/github-action@v2
+        with:
+          parallel-finished: true
+        env:
+          COVERALLS_REPO_TOKEN: ${{ secrets.COVERALLS_REPO_TOKEN }}

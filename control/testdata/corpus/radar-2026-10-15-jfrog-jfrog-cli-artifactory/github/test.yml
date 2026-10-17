@@ -1,0 +1,82 @@
+name: Tests
+on:
+  push:
+    branches:
+      - '**'
+    tags-ignore:
+      - '**'
+  pull_request:
+# Ensures that only the latest commit is running for each PR at a time.
+# Ignores this rule for push events.
+concurrency:
+  group: ${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+jobs:
+  unit-test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu, windows, macos ]
+        pnpm-version: [ 10 ]
+    env:
+      GOPROXY: https://proxy.golang.org,direct
+      GRADLE_OPTS: -Dorg.gradle.daemon=false
+      JFROG_CLI_LOG_LEVEL: "DEBUG"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python3
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install pipenv & poetry
+        run: python -m pip install pipenv poetry
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'latest'
+
+      - name: Install NuGet 6.x
+        uses: nuget/setup-nuget@v2
+        with:
+          nuget-version: 6.x
+
+      - name: Install dotnet 8.x
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.x'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ matrix.pnpm-version }}
+
+      # Install Mono on Ubuntu to run nuget.exe (due to this issue on Ubuntu 24 that hasn't been fixed yet - https://github.com/NuGet/setup-nuget/issues/168)
+      - name: Install Mono on Ubuntu
+        if: matrix.os == 'ubuntu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y apt-transport-https dirmngr gnupg ca-certificates
+          sudo apt-key adv --recv-keys --keyserver hkp://keyserver.ubuntu.com:80 3FA7E0328081BFF6A14DA29AA6A19B38D3D831EF
+          echo "deb https://download.mono-project.com/repo/ubuntu stable-focal main" | sudo tee /etc/apt/sources.list.d/mono-official-stable.list
+          sudo apt-get update
+          sudo apt-get install -y mono-complete
+
+      # Install Mono on macOS to run nuget.exe (due to this issue on macOS that hasn't been fixed yet - https://github.com/NuGet/setup-nuget/issues/168)
+      - name: Install Mono on macOS
+        if: matrix.os == 'macOS'
+        run: |
+          brew install mono
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Tests
+        run:
+          go test -v -race -cover ./...

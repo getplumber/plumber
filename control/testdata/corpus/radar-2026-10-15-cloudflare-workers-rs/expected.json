@@ -1,0 +1,55 @@
+{
+  "source": "https://github.com/cloudflare/workers-rs",
+  "commit": "b171cb4bdd6fa943bb81f429df0a6b0df37e14b3",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/codspeed.yml": "active",
+    ".github/workflows/create-release-pr.yml": "active",
+    ".github/workflows/create-release.yml": "active",
+    ".github/workflows/pullrequest.yml": "active",
+    ".github/workflows/semgrep.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High untrusted-expression path in `create-release.yml` was judged false: the job runs only when a `releases/*` pull request from `cloudflare/workers-rs` itself is merged, so an outsider never controls `head.ref`, Low at most; the four High toolchain paths in `pullrequest.yml` were judged overstated: a mutable third-party action in a CI job with no secret and no write token (or only an assumed one) gives code execution on a runner, Medium at most.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "untrusted_expression",
+        "subjectContains": "github.event.pull_request.head.ref",
+        "tier": "low",
+        "pending": "a same-repository check written against the repository's literal name (`head.repo.full_name == 'cloudflare/workers-rs'`) is not read as one, while `== github.repository` is, so the merged-release job keeps an outsider entry."
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "dtolnay/rust-toolchain@1.91.0",
+        "tier": "medium"
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "dtolnay/rust-toolchain@nightly",
+        "tier": "medium"
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "dtolnay/rust-toolchain@1.87.0",
+        "tier": "medium"
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "guybedford/chomp-action@v1",
+        "tier": "medium"
+      }
+    ]
+  }
+}

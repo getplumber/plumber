@@ -1,0 +1,84 @@
+name: Cloud Tests (TCP)
+
+# Runs the ClickHouse.Driver.Tcp integration suite against a real ClickHouse Cloud service over the secure
+# native port. Separate from tests-cloud.yml so the TCP workflow can call it without also running the HTTP
+# cloud job.
+#
+# tests-cloud-tcp-label.yml also calls it, for the tests:run-cloud label on a pull request.
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: false
+        type: string
+    # Named one by one instead of taking `secrets: inherit` from the caller, so this job gets the
+    # three Cloud credentials it uses and nothing else.
+    secrets:
+      CLICKHOUSE_CLOUD_HOST:
+        required: true
+      CLICKHOUSE_CLOUD_USER:
+        required: true
+      CLICKHOUSE_CLOUD_PASSWORD:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  cloud-tcp:
+    name: Cloud Tests (TCP) - AWS
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30 # the whole integration suite, every round trip over the public internet
+    # One run at a time: every run shares one Cloud service, and concurrent runs made its Keeper lose the
+    # connection during DDL. GitHub keeps one waiting run per group, so a newer run replaces an older waiting one.
+    concurrency:
+      group: cloud-tcp
+      cancel-in-progress: false
+    # Without the label, a fork PR must never reach the Cloud credentials. The pull_request trigger withholds
+    # secrets from forks anyway; this makes the intent explicit and skips the job instead of failing it in a
+    # confusing way. workflow_dispatch is listed on its own: on a dispatch there is no pull_request context.
+    if: >-
+      (github.event_name == 'pull_request_target' && github.event.label.name == 'tests:run-cloud')
+      || (github.event_name != 'pull_request_target'
+          && (github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+              || github.event.pull_request.head.repo.full_name == github.repository))
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          # No step here talks to git again, so the job token does not need to stay in .git/config
+          # where the test process could read it.
+          persist-credentials: false
+
+      # Not on a label: a pull_request_target run shares the base branch's cache, and pull request code could
+      # write to it.
+      - uses: actions/cache@v6
+        name: Cache NuGet
+        if: github.event_name != 'pull_request_target'
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Setup .NET Core
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: |
+            10.x
+
+      - name: Test
+        run: dotnet test ClickHouse.Driver.Tcp.Tests/ClickHouse.Driver.Tcp.Tests.csproj
+              --framework net10.0 --configuration Release --verbosity normal --logger GitHubActions
+              /clp:ErrorsOnly --filter "Category=Cloud"
+        env:
+          # The connection string the whole suite already runs on, pointed at Cloud, so every test reaches the
+          # service through the same options a container run uses. Port is omitted on purpose: with UseTls the
+          # client resolves the secure native port itself, so this also covers that derivation. The password is
+          # double-quoted because a connection string treats ';' and '=' as structure, and an unquoted secret
+          # holding either would parse into the wrong keys instead of failing.
+          CLICKHOUSE_TCP_CONNECTION: Host=${{ secrets.CLICKHOUSE_CLOUD_HOST }};UseTls=true;Username=${{ secrets.CLICKHOUSE_CLOUD_USER }};Password="${{ secrets.CLICKHOUSE_CLOUD_PASSWORD }}"
+          # Makes the fixture refuse a connection string that forgot UseTls, rather than quietly running the
+          # suite in the clear against a public endpoint.
+          CLICKHOUSE_TEST_ENVIRONMENT: cloud

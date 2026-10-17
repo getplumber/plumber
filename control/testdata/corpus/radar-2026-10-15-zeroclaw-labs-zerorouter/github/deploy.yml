@@ -1,0 +1,434 @@
+name: Deploy Router
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy-router-main
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+  # Publishing the build-provenance attestation for the deployed image digest.
+  attestations: write
+
+env:
+  AWS_STS_REGION: us-east-1
+  AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+  ECS_CONTAINER_NAME: router
+  DEPLOY_SHA: ${{ github.sha }}
+  DEPLOY_REF: ${{ github.ref_name }}
+
+jobs:
+  deploy:
+    name: Build and deploy ARM64 router
+    # No-op cleanly on forks and before the AWS cutover: the job only runs in
+    # the zeroclaw-labs org and only once the deploy role variable is set.
+    if: github.repository_owner == 'zeroclaw-labs' && vars.AWS_DEPLOY_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+
+      - name: Reject stale deploy revisions
+        shell: bash
+        run: |
+          set -euo pipefail
+          git check-ref-format --branch "${DEPLOY_REF}" >/dev/null
+          git fetch --no-tags --depth=1 origin \
+            "+refs/heads/${DEPLOY_REF}:refs/remotes/origin/${DEPLOY_REF}"
+          current_ref_sha="$(git rev-parse "refs/remotes/origin/${DEPLOY_REF}")"
+          if [[ "${DEPLOY_SHA}" != "${current_ref_sha}" ]]; then
+            echo "::error::Refusing to deploy stale SHA ${DEPLOY_SHA}; ${DEPLOY_REF} is ${current_ref_sha}"
+            exit 1
+          fi
+
+      - name: Validate deployment role
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "${AWS_DEPLOY_ROLE_ARN}" =~ ^arn:[a-z0-9-]+:iam::[0-9]{12}:role/.+$ ]]; then
+            echo "::error::AWS_DEPLOY_ROLE_ARN is missing or invalid"
+            exit 1
+          fi
+
+      - name: Configure temporary AWS credentials
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        with:
+          aws-region: ${{ env.AWS_STS_REGION }}
+          role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: zerorouter-${{ github.run_id }}
+          mask-aws-account-id: true
+
+      - name: Resolve Terraform-owned deployment coordinates
+        shell: bash
+        run: |
+          set -euo pipefail
+          role_name="${AWS_DEPLOY_ROLE_ARN##*/}"
+          policy_names="$(aws iam list-role-policies \
+            --role-name "${role_name}" \
+            --query 'PolicyNames' \
+            --output json)"
+          match_count=0
+          ecr_arn=''
+          ecs_service_arn=''
+
+          while IFS= read -r policy_name; do
+            policy_document="$(aws iam get-role-policy \
+              --role-name "${role_name}" \
+              --policy-name "${policy_name}" \
+              --query 'PolicyDocument' \
+              --output json)"
+            candidate_ecr_arns="$(jq -r \
+              '[.Statement[] | select(.Sid == "PushRouterImages") | .Resource] | flatten | .[]' \
+              <<<"${policy_document}")"
+            candidate_service_arns="$(jq -r \
+              '[.Statement[] | select(.Sid == "UpdateRouterService") | .Resource] | flatten | .[]' \
+              <<<"${policy_document}")"
+
+            if [[ "$(wc -l <<<"${candidate_ecr_arns}" | tr -d ' ')" == '1' &&
+                  "$(wc -l <<<"${candidate_service_arns}" | tr -d ' ')" == '1' &&
+                  -n "${candidate_ecr_arns}" && -n "${candidate_service_arns}" ]]; then
+              match_count=$((match_count + 1))
+              ecr_arn="${candidate_ecr_arns}"
+              ecs_service_arn="${candidate_service_arns}"
+            fi
+          done < <(jq -r '.[]' <<<"${policy_names}")
+
+          if [[ "${match_count}" != '1' ]]; then
+            echo "::error::Expected exactly one inline deployment policy; found ${match_count}"
+            exit 1
+          fi
+
+          ecr_region="$(cut -d: -f4 <<<"${ecr_arn}")"
+          ecr_account="$(cut -d: -f5 <<<"${ecr_arn}")"
+          ecr_resource="$(cut -d: -f6- <<<"${ecr_arn}")"
+          ecs_region="$(cut -d: -f4 <<<"${ecs_service_arn}")"
+          ecs_account="$(cut -d: -f5 <<<"${ecs_service_arn}")"
+          ecs_resource="$(cut -d: -f6- <<<"${ecs_service_arn}")"
+
+          if [[ "${ecr_resource}" != repository/* ||
+                "${ecs_resource}" != service/*/* ||
+                "${ecr_region}" != "${ecs_region}" ||
+                "${ecr_account}" != "${ecs_account}" ]]; then
+            echo "::error::Deployment policy contains inconsistent resource coordinates"
+            exit 1
+          fi
+
+          ecr_repository="${ecr_resource#repository/}"
+          ecs_path="${ecs_resource#service/}"
+          ecs_cluster="${ecs_path%%/*}"
+          ecs_service="${ecs_path#*/}"
+
+          if [[ -z "${ecr_region}" || -z "${ecr_repository}" ||
+                -z "${ecs_cluster}" || -z "${ecs_service}" ||
+                "${ecs_service}" == */* ]]; then
+            echo "::error::Could not derive deployment coordinates"
+            exit 1
+          fi
+
+          {
+            echo "AWS_REGION=${ecr_region}"
+            echo "ECR_REPOSITORY=${ecr_repository}"
+            echo "ECS_CLUSTER=${ecs_cluster}"
+            echo "ECS_SERVICE=${ecs_service}"
+          } >>"${GITHUB_ENV}"
+
+      - name: Resolve immutable image URI
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          account_id="$(aws sts get-caller-identity --query Account --output text)"
+          registry="${account_id}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          image_uri="${registry}/${ECR_REPOSITORY}:${DEPLOY_SHA}"
+
+          set +e
+          describe_output="$(aws ecr describe-images \
+            --repository-name "${ECR_REPOSITORY}" \
+            --image-ids "imageTag=${DEPLOY_SHA}" 2>&1)"
+          describe_status=$?
+          set -e
+
+          if [[ ${describe_status} -eq 0 ]]; then
+            exists=true
+          elif grep -q "ImageNotFoundException" <<<"${describe_output}"; then
+            exists=false
+          else
+            printf '%s\n' "${describe_output}" >&2
+            exit "${describe_status}"
+          fi
+
+          {
+            echo "registry=${registry}"
+            echo "image_uri=${image_uri}"
+            echo "exists=${exists}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Log in to ECR
+        if: steps.image.outputs.exists != 'true'
+        shell: bash
+        env:
+          REGISTRY: ${{ steps.image.outputs.registry }}
+        run: |
+          set -euo pipefail
+          aws ecr get-login-password --region "${AWS_REGION}" \
+            | docker login --username AWS --password-stdin "${REGISTRY}"
+
+      - name: Set up QEMU
+        if: steps.image.outputs.exists != 'true'
+        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
+
+      - name: Set up Docker Buildx
+        if: steps.image.outputs.exists != 'true'
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Build and push ARM64 image
+        id: build
+        if: steps.image.outputs.exists != 'true'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          # The Dockerfile lives at the repo root so its context reaches both
+          # router/ and portal/ (moved from router/Dockerfile).
+          context: .
+          file: ./Dockerfile
+          platforms: linux/arm64
+          push: true
+          tags: ${{ steps.image.outputs.image_uri }}
+          build-args: |
+            SOURCE_COMMIT=${{ github.sha }}
+          cache-from: type=gha,scope=zerorouter-router-arm64
+          cache-to: type=gha,scope=zerorouter-router-arm64,mode=max
+
+      # Bind the image digest to this commit and workflow with a Sigstore
+      # signature in GitHub's public attestation store. This is what makes
+      # /transparency's self-report checkable by anyone: the digest the
+      # running task cites resolves to a signed statement that THIS public
+      # workflow built it from THIS public commit. Attested only on the run
+      # that actually built the image — a re-run that found the tag already
+      # in ECR is not this image's builder and has nothing truthful to sign.
+      - name: Attest build provenance
+        if: steps.image.outputs.exists != 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ steps.image.outputs.registry }}/${{ env.ECR_REPOSITORY }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+
+      # The digest is what the attestation names and what the task definition
+      # is pinned to below, so it is resolved unconditionally: from ECR, which
+      # answers identically for a fresh push and for a tag that already
+      # existed. A tag is a movable pointer; everything downstream of here
+      # deploys the immutable digest.
+      - name: Resolve the pushed image digest
+        id: digest
+        shell: bash
+        run: |
+          set -euo pipefail
+          digest="$(aws ecr describe-images \
+            --repository-name "${ECR_REPOSITORY}" \
+            --image-ids "imageTag=${DEPLOY_SHA}" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)"
+          if [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::ECR returned no usable digest for ${DEPLOY_SHA}: ${digest}"
+            exit 1
+          fi
+          echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
+
+      - name: Verify ECS service
+        id: service
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          describe_output="$(aws ecs describe-services \
+            --cluster "${ECS_CLUSTER}" \
+            --services "${ECS_SERVICE}" \
+            --output json 2>&1)"
+          describe_status=$?
+          set -e
+
+          if [[ ${describe_status} -eq 0 ]]; then
+            service_status="$(jq -r '.services[0].status // empty' <<<"${describe_output}")"
+            if [[ "${service_status}" == "ACTIVE" ]]; then
+              exists=true
+            else
+              printf '%s\n' "${describe_output}" >&2
+              echo "::error::The ECS cluster exists but ${ECS_SERVICE} is not ACTIVE"
+              exit 1
+            fi
+          elif grep -q "ClusterNotFoundException" <<<"${describe_output}"; then
+            printf '%s\n' "${describe_output}" >&2
+            echo "::error::Terraform-owned ECS cluster is missing"
+            exit 1
+          else
+            printf '%s\n' "${describe_output}" >&2
+            exit "${describe_status}"
+          fi
+
+          echo "exists=${exists}" >> "${GITHUB_OUTPUT}"
+
+      - name: Register task definition revision
+        if: steps.service.outputs.exists == 'true'
+        id: task-definition
+        shell: bash
+        env:
+          IMAGE_URI: ${{ steps.image.outputs.image_uri }}
+          IMAGE_DIGEST: ${{ steps.digest.outputs.digest }}
+        run: |
+          set -euo pipefail
+          current_task_definition="$(aws ecs describe-services \
+            --cluster "${ECS_CLUSTER}" \
+            --services "${ECS_SERVICE}" \
+            --query 'services[0].taskDefinition' \
+            --output text)"
+
+          if [[ -z "${current_task_definition}" || "${current_task_definition}" == "None" ]]; then
+            echo "::error::ECS service has no active task definition"
+            exit 1
+          fi
+
+          aws ecs describe-task-definition \
+            --task-definition "${current_task_definition}" \
+            --query taskDefinition \
+            --output json > task-definition.service.json
+
+          task_definition_family="$(jq -r '.family' task-definition.service.json)"
+          if [[ -z "${task_definition_family}" || "${task_definition_family}" == "null" ]]; then
+            echo "::error::Could not resolve the ECS task-definition family"
+            exit 1
+          fi
+
+          # Use the family's latest ACTIVE revision so a Terraform-authored
+          # environment/role/secret change is included even though the service
+          # deliberately ignores task_definition drift after bootstrap.
+          aws ecs describe-task-definition \
+            --task-definition "${task_definition_family}" \
+            --query taskDefinition \
+            --output json > task-definition.current.json
+
+          matching_containers="$(jq \
+            --arg container "${ECS_CONTAINER_NAME}" \
+            '[.containerDefinitions[] | select(.name == $container)] | length' \
+            task-definition.current.json)"
+          if [[ "${matching_containers}" != "1" ]]; then
+            echo "::error::Expected exactly one ${ECS_CONTAINER_NAME} container; found ${matching_containers}"
+            exit 1
+          fi
+
+          # tag@digest, not the bare tag: the tag is kept for human legibility
+          # in the console, but the DIGEST is what deploys. This closes the
+          # gap between what was attested and what runs — a re-pushed tag can
+          # no longer change the deployed image — and the ECS container
+          # metadata echoes the digest-pinned reference back, which is what
+          # lets /transparency complete its provenance chain (the metadata's
+          # ImageDigest field alone has proven unreliable on Fargate).
+          jq \
+            --arg container "${ECS_CONTAINER_NAME}" \
+            --arg image "${IMAGE_URI}@${IMAGE_DIGEST}" \
+            '(.containerDefinitions[] | select(.name == $container).image) = $image
+             | del(
+                 .compatibilities,
+                 .registeredAt,
+                 .registeredBy,
+                 .requiresAttributes,
+                 .revision,
+                 .status,
+                 .taskDefinitionArn
+               )' \
+            task-definition.current.json > task-definition.next.json
+
+          new_task_definition="$(aws ecs register-task-definition \
+            --cli-input-json file://task-definition.next.json \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)"
+          echo "arn=${new_task_definition}" >> "${GITHUB_OUTPUT}"
+
+      - name: Deploy task definition
+        if: steps.service.outputs.exists == 'true'
+        shell: bash
+        env:
+          TASK_DEFINITION_ARN: ${{ steps.task-definition.outputs.arn }}
+        run: |
+          set -euo pipefail
+          aws ecs update-service \
+            --cluster "${ECS_CLUSTER}" \
+            --service "${ECS_SERVICE}" \
+            --task-definition "${TASK_DEFINITION_ARN}" \
+            --force-new-deployment \
+            --no-cli-pager > /dev/null
+
+          aws ecs wait services-stable \
+            --cluster "${ECS_CLUSTER}" \
+            --services "${ECS_SERVICE}"
+
+          # `wait services-stable` can return a beat before the PRIMARY
+          # deployment's rolloutState flips to COMPLETED: its own stability
+          # test is satisfied by runningCount == desiredCount with a single
+          # deployment, which is briefly true first. Asserting once right
+          # here therefore failed a deployment that was three seconds from
+          # done, and reported a healthy rollout as a broken one. Re-check on
+          # an interval instead, and only give up once the window closes.
+          deadline=$(( SECONDS + 300 ))
+          while :; do
+            service_json="$(aws ecs describe-services \
+              --cluster "${ECS_CLUSTER}" \
+              --services "${ECS_SERVICE}" \
+              --output json)"
+            service_task_definition="$(jq -r '.services[0].taskDefinition // empty' <<<"${service_json}")"
+            primary_count="$(jq '[.services[0].deployments[] | select(.status == "PRIMARY")] | length' <<<"${service_json}")"
+            primary_task_definition="$(jq -r '.services[0].deployments[] | select(.status == "PRIMARY") | .taskDefinition' <<<"${service_json}")"
+            primary_rollout_state="$(jq -r '.services[0].deployments[] | select(.status == "PRIMARY") | .rolloutState // empty' <<<"${service_json}")"
+            desired_count="$(jq -r '.services[0].desiredCount // -1' <<<"${service_json}")"
+            running_count="$(jq -r '.services[0].runningCount // -1' <<<"${service_json}")"
+            pending_count="$(jq -r '.services[0].pendingCount // -1' <<<"${service_json}")"
+
+            if [[ "${service_task_definition}" == "${TASK_DEFINITION_ARN}" &&
+                  "${primary_count}" == "1" &&
+                  "${primary_task_definition}" == "${TASK_DEFINITION_ARN}" &&
+                  "${primary_rollout_state}" == "COMPLETED" &&
+                  "${running_count}" == "${desired_count}" &&
+                  "${pending_count}" == "0" ]]; then
+              break
+            fi
+
+            # A rollout ECS has already given up on will never converge, so
+            # fail immediately rather than burning the whole window.
+            if [[ "${primary_rollout_state}" == "FAILED" ]]; then
+              jq '{service: .services[0] | {status, taskDefinition, desiredCount, runningCount, pendingCount, deployments, events: (.events[0:10])}, failures}' \
+                <<<"${service_json}" >&2
+              echo "::error::ECS reported the requested task definition's rollout as FAILED"
+              exit 1
+            fi
+
+            if (( SECONDS >= deadline )); then
+              jq '{service: .services[0] | {status, taskDefinition, desiredCount, runningCount, pendingCount, deployments, events: (.events[0:10])}, failures}' \
+                <<<"${service_json}" >&2
+              echo "::error::ECS stabilized without completing the requested task definition"
+              exit 1
+            fi
+
+            echo "waiting for rollout to complete (state=${primary_rollout_state:-unknown}, running=${running_count}/${desired_count}, pending=${pending_count})"
+            sleep 10
+          done
+
+      - name: Write deployment summary
+        if: steps.service.outputs.exists == 'true'
+        shell: bash
+        env:
+          IMAGE_URI: ${{ steps.image.outputs.image_uri }}
+          TASK_DEFINITION_ARN: ${{ steps.task-definition.outputs.arn }}
+        run: |
+          {
+            echo "### Router deployment"
+            echo
+            echo "- Image: \`${IMAGE_URI}\`"
+            echo "- Task definition: \`${TASK_DEFINITION_ARN}\`"
+            echo "- Cluster/service: \`${ECS_CLUSTER}/${ECS_SERVICE}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"

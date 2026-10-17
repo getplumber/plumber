@@ -1,0 +1,31 @@
+{
+  "source": "https://github.com/ClickHouse/clickhouse-mixin",
+  "commit": "46e0587a3565acb9186e2ca31870aa4488a783f0",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/convert-dashboard.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High untrusted-expression path (`github.head_ref` in `git push`) was judged overstated: a fork pull_request run gets a read-only token and its `head_ref` checkout fails before the injection, so an outsider runs shell with a read-only token at most, Medium.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "untrusted_expression",
+        "subjectContains": "github.head_ref || github.ref_name",
+        "tier": "medium",
+        "pending": "an untrusted expression whose outsider-controlled part (`github.head_ref`) exists only under the pull_request trigger is credited with the `contents: write` token of the push trigger, although a fork pull_request run is read-only."
+      }
+    ]
+  }
+}

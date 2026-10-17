@@ -1,0 +1,254 @@
+# Add this to .github/workflows/docker-security.yml
+name: 🐳 Docker Security Scan
+on:
+  push:
+  schedule:
+    # Run weekly on Sundays at 2 AM UTC
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
+
+jobs:
+  docker_security_scan:
+    name: 🔍 Container Security Scan
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+
+    steps:
+      - name: 🧾 Checkout
+        uses: actions/checkout@v7
+
+      - name: 🔨 Build Docker Image
+        run: |
+          docker build -t clickbom:latest .
+          docker tag clickbom:latest clickbom:${{ github.sha }}
+
+      - name: 🛡️ Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: clickbom:latest
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+
+      - name: 📤 Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: 🔍 Run Trivy for JSON output
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'clickbom:latest'
+          format: 'json'
+          output: 'trivy-results.json'
+          severity: 'CRITICAL,HIGH,MEDIUM,LOW'
+
+      - name: 📊 Generate Security Report
+        run: |
+          echo "# 🐳 Container Security Report" > security-report.md
+          echo "Generated on: $(date)" >> security-report.md
+          echo "" >> security-report.md
+
+          # Trivy Results Summary
+          echo "## 🛡️ Trivy Scan Results" >> security-report.md
+          if [ -f "trivy-results.json" ]; then
+            CRITICAL=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' trivy-results.json 2>/dev/null || echo "0")
+            HIGH=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH")] | length' trivy-results.json 2>/dev/null || echo "0")
+            MEDIUM=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "MEDIUM")] | length' trivy-results.json 2>/dev/null || echo "0")
+            LOW=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "LOW")] | length' trivy-results.json 2>/dev/null || echo "0")
+
+            echo "- 🔴 Critical: $CRITICAL" >> security-report.md
+            echo "- 🟠 High: $HIGH" >> security-report.md
+            echo "- 🟡 Medium: $MEDIUM" >> security-report.md
+            echo "- 🟢 Low: $LOW" >> security-report.md
+          else
+            echo "- No Trivy results found" >> security-report.md
+          fi
+
+          echo "" >> security-report.md
+          echo "## 📋 Recommendations" >> security-report.md
+          echo "1. Review critical and high severity vulnerabilities" >> security-report.md
+          echo "2. Update base image and dependencies regularly" >> security-report.md
+          echo "3. Consider using distroless or minimal base images" >> security-report.md
+          echo "4. Run security scans in CI/CD pipeline" >> security-report.md
+
+      - name: 📎 Upload Security Artifacts
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: security-scan-results
+          path: |
+            trivy-results.json
+            trivy-results.sarif
+            security-report.md
+          retention-days: 30
+
+      - name: 🚨 Check for Critical Vulnerabilities
+        run: |
+          if [ -f "trivy-results.json" ]; then
+            CRITICAL=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' trivy-results.json 2>/dev/null || echo "0")
+            echo "Critical vulnerabilities found: $CRITICAL"
+
+            if [ "$CRITICAL" -gt 0 ]; then
+              echo "::error::Found $CRITICAL critical vulnerabilities in the container image"
+              echo "::error::Please review and fix critical vulnerabilities before deploying"
+              # Uncomment the next line if you want to fail the build on critical vulnerabilities
+              # exit 1
+            fi
+          fi
+
+  dockerfile_security_scan:
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+
+    name: 🐋 Dockerfile Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 🧾 Checkout
+        uses: actions/checkout@v7
+
+      - name: 🔍 Run Hadolint (Dockerfile Linter)
+        uses: hadolint/hadolint-action@v3.5.0
+        with:
+          dockerfile: Dockerfile
+          format: sarif
+          output-file: hadolint-results.sarif
+          no-color: true
+          failure-threshold: error
+        continue-on-error: true
+
+      - name: 📤 Upload Hadolint scan results
+        uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: hadolint-results.sarif
+          category: hadolint
+
+      - name: 🔍 Run Checkov (Infrastructure as Code Security)
+        uses: bridgecrewio/checkov-action@master
+        if: always()
+        with:
+          directory: .
+          framework: dockerfile
+          output_format: sarif
+          output_file_path: checkov-results.sarif
+          soft_fail: true
+        continue-on-error: true
+
+      - name: 📤 Upload Checkov scan results
+        uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: checkov-results.sarif
+          category: checkov
+
+      - name: 📎 Upload Dockerfile Security Artifacts
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: dockerfile-security-results
+          path: |
+            hadolint-results.sarif
+            checkov-results.sarif
+          retention-days: 30
+
+  container_sbom:
+    name: 📋 Generate Container SBOM
+    runs-on: ubuntu-latest
+    needs: docker_security_scan
+
+    steps:
+      - name: 🧾 Checkout
+        uses: actions/checkout@v7
+
+      - name: 🔨 Build Docker Image
+        run: |
+          docker build -t clickbom:latest .
+
+      - name: 📋 Generate SBOM with Syft
+        uses: anchore/sbom-action@v0
+        with:
+          image: clickbom:latest
+          format: spdx-json
+          output-file: container-sbom.spdx.json
+
+      - name: 📋 Generate SBOM with Docker Scout
+        run: |
+          # Install Docker Scout CLI
+          curl -sSfL https://raw.githubusercontent.com/docker/scout-cli/main/install.sh | sh -s --
+
+          # Generate SBOM
+          docker scout sbom clickbom:latest --format spdx --output container-sbom-scout.spdx.json || echo "Docker Scout SBOM generation failed"
+
+      - name: 📎 Upload Container SBOM
+        uses: actions/upload-artifact@v7
+        with:
+          name: container-sbom
+          path: |
+            container-sbom.spdx.json
+            container-sbom-scout.spdx.json
+          retention-days: 30
+
+  security_summary:
+    name: 📊 Security Summary
+    runs-on: ubuntu-latest
+    needs: [docker_security_scan, dockerfile_security_scan, container_sbom]
+    if: always()
+
+    steps:
+      - name: 📥 Download Security Artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: security-scan-results
+          path: security-results/
+
+      - name: 📥 Download Container SBOM
+        uses: actions/download-artifact@v8
+        with:
+          name: container-sbom
+          path: sbom-results/
+
+      - name: 📊 Create Security Summary
+        run: |
+          echo "# 🔒 ClickBOM Container Security Summary" >> $GITHUB_STEP_SUMMARY
+          echo "**Scan Date:** $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ -f "security-results/trivy-results.json" ]; then
+            echo "## 🛡️ Vulnerability Scan Results" >> $GITHUB_STEP_SUMMARY
+            CRITICAL=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' security-results/trivy-results.json 2>/dev/null || echo "0")
+            HIGH=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH")] | length' security-results/trivy-results.json 2>/dev/null || echo "0")
+            MEDIUM=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "MEDIUM")] | length' security-results/trivy-results.json 2>/dev/null || echo "0")
+            LOW=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "LOW")] | length' security-results/trivy-results.json 2>/dev/null || echo "0")
+
+            echo "| Severity | Count |" >> $GITHUB_STEP_SUMMARY
+            echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| 🔴 Critical | $CRITICAL |" >> $GITHUB_STEP_SUMMARY
+            echo "| 🟠 High | $HIGH |" >> $GITHUB_STEP_SUMMARY
+            echo "| 🟡 Medium | $MEDIUM |" >> $GITHUB_STEP_SUMMARY
+            echo "| 🟢 Low | $LOW |" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+
+            if [ "$CRITICAL" -gt 0 ] || [ "$HIGH" -gt 0 ]; then
+              echo "⚠️ **Action Required:** Critical or High severity vulnerabilities found!" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "✅ **Good News:** No critical or high severity vulnerabilities found!" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 📋 Artifacts Generated" >> $GITHUB_STEP_SUMMARY
+          echo "- Container vulnerability scan results (SARIF format)" >> $GITHUB_STEP_SUMMARY
+          echo "- Dockerfile security scan results" >> $GITHUB_STEP_SUMMARY
+          echo "- Container SBOM (Software Bill of Materials)" >> $GITHUB_STEP_SUMMARY
+          echo "- Security summary report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "📥 Download artifacts from the workflow run to view detailed results." >> $GITHUB_STEP_SUMMARY

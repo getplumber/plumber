@@ -1,0 +1,73 @@
+name: Create Airbox Release
+run-name: Create Airbox Release ${{ inputs.tag_name }} by @${{ github.actor }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag name (e.g., airbox-v0.1.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version: '1.24'
+
+    - name: Get version from tag
+      id: version
+      run: |
+        TAG_NAME="${{ inputs.tag_name }}"
+        VERSION=${TAG_NAME#airbox-}
+        echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+        echo "FULL_TAG=$TAG_NAME" >> $GITHUB_OUTPUT
+        if [[ "$VERSION" =~ (beta|rc|alpha) ]]; then
+          echo "PRERELEASE=true" >> $GITHUB_OUTPUT
+        else
+          echo "PRERELEASE=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Build binaries
+      run: |
+        GOOS=linux GOARCH=amd64 go build -o ./dist/airbox-linux-amd64 ./cmd/airbox
+        GOOS=linux GOARCH=arm64 go build -o ./dist/airbox-linux-arm64 ./cmd/airbox
+        GOOS=darwin GOARCH=amd64 go build -o ./dist/airbox-darwin-amd64 ./cmd/airbox
+        GOOS=darwin GOARCH=arm64 go build -o ./dist/airbox-darwin-arm64 ./cmd/airbox
+        GOOS=windows GOARCH=amd64 go build -o ./dist/airbox-windows-amd64.exe ./cmd/airbox
+
+        cd ./dist
+        tar -czf airbox-linux-amd64.tar.gz airbox-linux-amd64
+        tar -czf airbox-linux-arm64.tar.gz airbox-linux-arm64
+        tar -czf airbox-darwin-amd64.tar.gz airbox-darwin-amd64
+        tar -czf airbox-darwin-arm64.tar.gz airbox-darwin-arm64
+        zip airbox-windows-amd64.zip airbox-windows-amd64.exe
+
+    - name: Create Tag
+      run: |
+        git config user.name github-actions
+        git config user.email github-actions@github.com
+        git tag ${{ inputs.tag_name }}
+        git push origin ${{ inputs.tag_name }}
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ inputs.tag_name }}
+        name: Airbox ${{ steps.version.outputs.VERSION }}
+        body: Airbox ${{ steps.version.outputs.VERSION }}
+        files: |
+          dist/*.tar.gz
+          dist/*.zip
+        draft: false
+        prerelease: ${{ steps.version.outputs.PRERELEASE }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

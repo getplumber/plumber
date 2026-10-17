@@ -1,0 +1,120 @@
+name: "Static Analysis"
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "master"
+  pull_request:
+    types: [opened, synchronize]
+    branches:
+      - "master"
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  Go-Lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+
+      - name: Setup FastCI
+        uses: jfrog-fastci/fastci@v1
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+        with:
+          go-version-file: go.mod
+
+      - name: Run Go vet
+        run: go vet -v ./...
+
+  Static-Check:
+    name: Static Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+
+      - name: Setup FastCI
+        uses: jfrog-fastci/fastci@v1
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+        with:
+          go-version-file: go.mod
+
+      - name: Run golangci linter
+        uses: jfrog/.github/actions/golangci-lint@main
+
+      - name: Check AI help coverage
+        uses: jfrog/.github/actions/ai-help-coverage@main
+        with:
+          # Commands still missing AI-oriented help. Remove from this list once a
+          # GetAIDescription() is added and wired through ResolveDescription.
+          skip-commands: |
+            nix
+
+  Go-Sec:
+    name: Go-Sec
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+
+      - name: Setup FastCI
+        uses: jfrog-fastci/fastci@v1
+
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+        with:
+          go-version-file: go.mod
+
+      - name: Run Go-Sec scanner
+        uses: jfrog/.github/actions/gosec-scanner@main
+
+  ShellCheck:
+    name: Shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+
+      - name: Setup FastCI
+        uses: jfrog-fastci/fastci@v1
+
+      - name: Run ShellCheck
+        uses: ludeeus/action-shellcheck@master
+        with:
+          ignore_paths: "*test*"
+
+  No-Replace:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+
+      - name: Setup FastCI
+        uses: jfrog-fastci/fastci@v1
+
+      - name: Check for uncommented replace instructions on JFrog dependencies
+        run: |
+          if grep -E '^[[:space:]]*replace[[:space:]]+github\.com/jfrog' go.mod; then
+            echo "❌ Found uncommented replace directives for JFrog dependencies in go.mod"
+            echo "All replace directives for JFrog dependencies should be commented out"
+            exit 1
+          else
+            echo "✅ No uncommented replace directives for JFrog dependencies found in go.mod"
+          fi

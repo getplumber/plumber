@@ -1,0 +1,148 @@
+name: Integration Tests CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  changed_files:
+    runs-on: ubuntu-latest
+    outputs:
+      python_changed: ${{ steps.check-changes.outputs.python_changed }}
+      js_changed: ${{ steps.check-changes.outputs.js_changed }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # Required for diff with main branch
+
+      - name: Check for file changes
+        id: check-changes
+        run: |
+          if git diff --name-only origin/main HEAD | grep -E "^python/(.*\.py|pyproject\.toml|uv\.lock)$"; then
+            echo "python_changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "python_changed=false" >> $GITHUB_OUTPUT
+          fi
+
+          if git diff --name-only origin/main HEAD | grep -E "^js/(.*\.(js|ts|jsx|tsx)|package\.json|yarn\.lock)$"; then
+            echo "js_changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "js_changed=false" >> $GITHUB_OUTPUT
+          fi
+
+  python_integration_test:
+    name: Python Integration Test (${{ matrix.python-version }})
+    needs: changed_files
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.13"]
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.6.2"
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          uv venv
+          source .venv/bin/activate
+          uv sync
+          uv sync --group dev
+        shell: bash
+        working-directory: python
+
+      - name: Check Python formatting
+        run: uv run ruff format --check .
+        shell: bash
+        working-directory: python
+
+      - name: Run integration tests
+        if: >
+          github.actor != 'dependabot[bot]' && (
+            (github.event_name == 'push') ||
+            (github.event_name == 'pull_request' && (
+              contains(github.event.pull_request.labels.*.name, 'release') ||
+              needs.changed_files.outputs.python_changed == 'true'
+            )) ||
+            (github.event_name == 'workflow_dispatch')
+          )
+        env:
+          LANGSMITH_TRACING: "true"
+          LANGSMITH_ENDPOINT: ${{ secrets.LANGSMITH_ENDPOINT }}
+          LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          LANGSMITH_GATEWAY: ${{ secrets.LANGSMITH_GATEWAY }}
+        run: uv run pytest tests
+        shell: bash
+        working-directory: python
+
+  js_integration_test:
+    name: JS Integration Test
+    needs: changed_files
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: js
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.x
+          cache: "yarn"
+          cache-dependency-path: "js/yarn.lock"
+
+      - name: Install Yarn dependencies
+        run: yarn install
+        shell: bash
+        working-directory: js
+
+      - name: Check JS formatting
+        run: yarn format:check
+        shell: bash
+        working-directory: js
+
+      - name: Run JS integration tests
+        if: >
+          github.actor != 'dependabot[bot]' && (
+            (github.event_name == 'push') ||
+            (github.event_name == 'pull_request' && (
+              contains(github.event.pull_request.labels.*.name, 'release') ||
+              needs.changed_files.outputs.js_changed == 'true'
+            )) ||
+            (github.event_name == 'workflow_dispatch')
+          )
+        env:
+          LANGSMITH_TRACING: "true"
+          LANGSMITH_ENDPOINT: ${{ secrets.LANGSMITH_ENDPOINT }}
+          LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          LANGSMITH_GATEWAY: ${{ secrets.LANGSMITH_GATEWAY }}
+        run: yarn test
+        shell: bash
+        working-directory: js

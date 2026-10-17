@@ -1,0 +1,181 @@
+name: CI
+
+on:
+  push:
+    branches: main
+  pull_request:
+    branches: main
+  schedule:
+    - cron: "0 0 * * *" # Run daily at midnight UTC
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Smoke / ${{ matrix.os }} / Node ${{ matrix.node }} / Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [22, 24]
+        python: [3.12, 3.13]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Setup Python
+        uses: actions/setup-python@7f4fc3e22c37d6ff65e88745f38bd3157c663f7c # v4
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
+        with:
+          enable-cache: true
+
+      - name: Configure uv to use matrix Python version
+        run: echo "UV_PYTHON=python${{ matrix.python }}" >> $GITHUB_ENV
+
+      - name: Install dependencies (monorepo)
+        run: pnpm install
+
+      - name: Build all apps
+        run: pnpm build
+
+      - name: Create empty .env file
+        run: touch .env
+
+      - name: Test frontend startup (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          # Start the Next.js frontend in background
+          pnpm --filter app start &
+          FRONTEND_PID=$!
+
+          # Wait for frontend to start (max 30 seconds)
+          timeout=30
+          elapsed=0
+          started=false
+
+          while [ $elapsed -lt $timeout ] && [ "$started" = false ]; do
+            if curl -s http://localhost:3000 > /dev/null 2>&1; then
+              started=true
+              echo "✅ Frontend started successfully"
+            else
+              sleep 1
+              elapsed=$((elapsed + 1))
+            fi
+          done
+
+          # Clean up background process
+          kill $FRONTEND_PID 2>/dev/null || true
+
+          if [ "$started" = false ]; then
+            echo "❌ Frontend failed to start within 30 seconds"
+            exit 1
+          fi
+        shell: bash
+
+      - name: Test frontend startup (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          # Start the Next.js frontend in background
+          pnpm --filter app start &
+
+          # Wait for frontend to start (max 30 seconds)
+          $timeout = 30
+          $elapsed = 0
+          $started = $false
+
+          while ($elapsed -lt $timeout -and -not $started) {
+            try {
+              $response = Invoke-WebRequest -Uri "http://localhost:3000" -TimeoutSec 1 -ErrorAction SilentlyContinue
+              if ($response.StatusCode -eq 200) {
+                $started = $true
+                Write-Host "✅ Frontend started successfully"
+              }
+            } catch {
+              Start-Sleep -Seconds 1
+              $elapsed++
+            }
+          }
+
+          if (-not $started) {
+            Write-Host "❌ Frontend failed to start within 30 seconds"
+            exit 1
+          }
+        shell: pwsh
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - name: Setup Python
+        uses: actions/setup-python@7f4fc3e22c37d6ff65e88745f38bd3157c663f7c # v4
+        with:
+          python-version: 3.12
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Run linting
+        run: pnpm lint
+
+  notify-slack:
+    name: Notify Slack on Failure
+    runs-on: ubuntu-latest
+    needs: [smoke, lint]
+    if: |
+      failure() &&
+      github.event_name == 'schedule'
+    steps:
+      - name: Notify Slack
+        uses: slackapi/slack-github-action@b0fa283ad8fea605de13dc3f449259339835fc52 # v2.1.0
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": ":warning: *Smoke test failed for `with-langgraph-python` :warning:.*",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": ":warning: *Smoke test failed for <https://github.com/copilotkit/with-langgraph-python|with-langgraph-python> :warning:*\n\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run details>"
+                  }
+                }
+              ]
+            }

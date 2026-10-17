@@ -4042,6 +4042,59 @@ func TestPlatformScoreContext_MergedPathPushesEveryAnchorThenTheGates(t *testing
 	}
 }
 
+// A path's claims travel in the push body, each with its kind, subject,
+// state and source; a path that computed none pushes no claims key.
+func TestPlatformScoreContext_PathClaimsTravelInThePushBody(t *testing.T) {
+	p := control.AttackPath{
+		ID: "p1", Jobs: []string{"job"}, AnchorHash: "a1", AnchorHashes: []string{"a1"},
+		Claims: []control.Claim{
+			{Kind: "entry", Subject: "o/a@v1", State: control.ClaimProven},
+			{Kind: "token", Subject: "contents", State: control.ClaimUnknown, Source: "unknown"},
+		},
+	}
+	ctx := platformScoreContextFrom(&control.PlumberScoreResult{ProfileID: control.PlumberScoreProfileIDV4, Paths: []control.AttackPath{p}})
+	if ctx == nil || len(ctx.Paths) != 1 {
+		t.Fatalf("want one pushed path, got %+v", ctx)
+	}
+	want := []platformClaimPush{
+		{Kind: "entry", Subject: "o/a@v1", State: "proven"},
+		{Kind: "token", Subject: "contents", State: "unknown", Source: "unknown"},
+	}
+	if got := ctx.Paths[0].Claims; !reflect.DeepEqual(got, want) {
+		t.Errorf("claims = %+v, want %+v", got, want)
+	}
+	raw, err := json.Marshal(ctx.Paths[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatal(err)
+	}
+	claims, ok := wire["claims"].([]any)
+	if !ok || len(claims) != 2 {
+		t.Fatalf("wire claims = %v", wire["claims"])
+	}
+	first, ok := claims[0].(map[string]any)
+	if !ok || first["kind"] != "entry" || first["subject"] != "o/a@v1" || first["state"] != "proven" {
+		t.Errorf("wire claim 0 = %v", first)
+	}
+
+	noClaims := control.AttackPath{ID: "p2", Jobs: []string{"job"}, AnchorHash: "a2", AnchorHashes: []string{"a2"}}
+	ctx2 := platformScoreContextFrom(&control.PlumberScoreResult{ProfileID: control.PlumberScoreProfileIDV4, Paths: []control.AttackPath{noClaims}})
+	raw2, err := json.Marshal(ctx2.Paths[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire2 map[string]any
+	if err := json.Unmarshal(raw2, &wire2); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := wire2["claims"]; ok {
+		t.Errorf("a path with no claims must push no claims key: %v", wire2)
+	}
+}
+
 // The push's situation is the situation facts as text, computed by the
 // same chain as a real run.
 func TestPlatformPushSituationIsTheSituationFacts(t *testing.T) {

@@ -1,0 +1,170 @@
+name: On-Demand Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "PR Number"
+        type: string
+        required: true
+      comment-id:
+        description: "Comment ID (Optional)"
+        type: string
+        required: false
+
+jobs:
+  start-workflow:
+    name: Append 'Starting' Comment
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Get PR JSON
+        id: pr-info
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PR_JSON=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.inputs.pr }}")
+          echo "$PR_JSON" > pr-info.json
+          echo "sha=$(jq -r .head.sha < pr-info.json)" >> "$GITHUB_OUTPUT"
+          echo "run-url=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+      - name: Upload PR details as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-info
+          path: pr-info.json
+      - name: Append comment with job run link
+        id: first-comment-action
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ github.event.inputs.comment-id }}
+          issue-number: ${{ github.event.inputs.pr }}
+          body: |
+
+            > PR test job started... [Check job output.][1]
+
+            [1]: ${{ steps.pr-info.outputs.run-url }}
+
+  # This is copied from the `python_pytest.yml` file.
+  # Only the first two steps of the job are different, and they check out the PR's branch.
+  pytest-on-demand:
+    name: On-Demand PR Pytest (All, Python ${{ matrix.python-version }}, ${{ matrix.os }})
+    needs: [start-workflow]
+    strategy:
+      matrix:
+        python-version: [
+          "3.10",
+          "3.11",
+          "3.12",
+          "3.13",
+          "3.14",
+        ]
+        os: [
+            Ubuntu,
+            # Windows,  # For now, we don't include Windows in the test matrix.
+          ]
+      fail-fast: false
+    runs-on: "${{ matrix.os }}-latest"
+    env:
+      # Enforce UTF-8 encoding so Windows runners don't fail inside the connector code.
+      # TODO: See if we can fully enforce this within PyAirbyte itself.
+      PYTHONIOENCODING: utf-8
+    steps:
+      # Custom steps to fetch the PR and checkout the code:
+
+      - name: Download PR info
+        # This puts the `pr-info.json` file in the current directory.
+        # We need this to get the PR's SHA at the time of the workflow run.
+        uses: actions/download-artifact@v4
+        with:
+          name: pr-info
+
+      - name: Checkout PR
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Checkout PR (${{ github.event.inputs.pr }})
+        uses: dawidd6/action-checkout-pr@v1
+        with:
+          pr: ${{ github.event.inputs.pr }}
+
+      # Same as the `python_pytest.yml` file:
+
+      - name: Set up Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: "2.0.1"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "poetry"
+      - name: Install dependencies
+        run: poetry install --all-extras
+
+      - name: Run Pytest
+        timeout-minutes: 60
+        env:
+          GCP_GSM_CREDENTIALS: ${{ secrets.GCP_GSM_CREDENTIALS }}
+        run: >
+          poetry run pytest
+          --verbose
+          -m "not super_slow and not flaky"
+
+      - name: Run Pytest (Flaky Only)
+        continue-on-error: true
+        timeout-minutes: 60
+        env:
+          GCP_GSM_CREDENTIALS: ${{ secrets.GCP_GSM_CREDENTIALS }}
+        run: >
+          poetry run pytest
+          --verbose
+          -m "flaky and not super_slow"
+
+      - name: Publish Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always() && !cancelled() && matrix.python-version == '3.11'
+        continue-on-error: true
+        with:
+          check_name: "PyTest Results (On-Demand)"
+          large_files: true
+          files: |
+            build/test-results/**/*.xml
+      - name: Post CI Success to GitHub
+        run: |
+          curl --request POST \
+          --url "https://api.github.com/repos/${{ github.repository }}/statuses/$(jq -r .head.sha < pr-info.json)" \
+          --header 'authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' \
+          --header 'content-type: application/json' \
+          --data '{
+            "state": "success",
+            "context": "Pytest (All, Python ${{ matrix.python-version }}, ${{ matrix.os }})",
+            "target_url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+            }' \
+  log-success-comment:
+    name: Append 'Success' Comment
+    needs: [pytest-on-demand]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Append success comment
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.inputs.pr }}
+          comment-id: ${{ github.event.inputs.comment-id }}
+          reactions: hooray
+          body: |
+            > ✅ Tests passed.
+
+  log-failure-comment:
+    name: Append 'Failure' Comment
+    # This job will only run if the workflow fails
+    needs: [pytest-on-demand, start-workflow]
+    if: always() && needs.pytest-on-demand.result == 'failure'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Append failure comment
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.inputs.pr }}
+          comment-id: ${{ github.event.inputs.comment-id }}
+          reactions: confused
+          body: |
+            > ❌ Tests failed.

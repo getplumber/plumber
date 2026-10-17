@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+env:
+  RUSTFLAGS: -Dwarnings
+  RUST_BACKTRACE: 1
+  CARGO_INCREMENTAL: 0 # makes cache smaller
+  CARGO_PROFILE_DEV_DEBUG: 0
+
+jobs:
+  clippy:
+    name: Clippy and format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Check format
+        run: cargo fmt -- --check
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          key: index-${{ hashFiles('Cargo.toml') }}
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+      - name: Fetch dependencies
+        run: cargo fetch
+      - name: Cache target directory
+        uses: actions/cache@v4
+        with:
+          key: clippy-${{ hashFiles('Cargo.lock') }}
+          path: target
+      - name: Run clippy
+        run: cargo clippy --all --all-targets --target-dir=target
+      - name: Run clippy on integration tests
+        run: cargo clippy --all --all-targets --features=_integration_test --target-dir=target
+      - name: Run clippy on C API
+        run: cargo clippy --all-targets --manifest-path=c-api/Cargo.toml --target-dir=target
+      - name: Run clippy on JS API
+        run: cargo clippy --all-targets --manifest-path=js-api/Cargo.toml --target-dir=target
+      - name: Check docs
+        run: cargo doc --no-deps --all --target-dir=target
+      - name: Check semver
+        uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          package: lol_html
+          feature-group: default-features
+          verbose: true
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          key: index-${{ hashFiles('Cargo.toml') }}
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+      - name: Fetch dependencies
+        run: cargo fetch
+      - name: Cache target directory
+        uses: actions/cache@v4
+        with:
+          key: target-${{ hashFiles('Cargo.lock') }}
+          path: target
+      - name: Run Rust tests
+        run: scripts/test.sh
+      - uses: actions/setup-node@v4
+      - name: wasm-pack install
+        run: npm i -g wasm-pack
+      - name: Run JS tests
+        run: make -C js-api test

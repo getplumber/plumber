@@ -1,0 +1,345 @@
+name: CI - Python Bindings
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "packages/python/**"
+      - ".github/workflows/ci-python.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "packages/python/**"
+      - ".github/workflows/ci-python.yml"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+
+          - os: macos-26-intel
+            target: x86_64-apple-darwin
+
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            musl: true
+
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+
+    runs-on: ${{ matrix.os }}
+    name: Build ${{ matrix.target }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux' && !matrix.musl
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libtesseract-dev libleptonica-dev
+
+      - name: Install system dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install tesseract leptonica
+
+      - name: Force Ninja generator (Windows)
+        if: runner.os == 'Windows'
+        run: echo "CMAKE_GENERATOR=Ninja" >> $GITHUB_ENV
+        shell: bash
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cache/pdfium-rs
+            ~/Library/Caches/pdfium-rs
+            target
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-python-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build wheels (glibc)
+        if: ${{ !matrix.musl }}
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --find-interpreter
+          manylinux: 2_28
+          working-directory: packages/python
+          before-script-linux: |
+            if command -v yum &> /dev/null; then
+              yum install -y tesseract-devel leptonica-devel openssl-devel pkgconfig perl-IPC-Cmd || true
+            elif command -v apt-get &> /dev/null; then
+              apt-get update && apt-get install -y libtesseract-dev libleptonica-dev libssl-dev pkg-config || true
+            elif command -v apk &> /dev/null; then
+              apk add tesseract-ocr-dev leptonica-dev openssl-dev pkgconf || true
+            fi
+
+      - name: Build wheels (musl container)
+        if: ${{ matrix.musl }}
+        # Same pattern as the node musl build: run inside a vanilla
+        # python:3-alpine with clang+libc++ from apk. Bypasses maturin-action's
+        # musllinux_1_2 cross image, which causes FORTIFY_SOURCE issues with
+        # tesseract's C++ build and broken host-openssl for build-deps.
+        run: |
+          chmod +x scripts/build-musl-py.sh
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE":/work \
+            -v "$HOME/.cargo/registry":/root/.cargo/registry \
+            -v "$HOME/.cargo/git":/root/.cargo/git \
+            -v "$HOME/.cache/pdfium-rs":/root/.cache/pdfium-rs \
+            -w /work \
+            python:3.12-alpine \
+            /work/scripts/build-musl-py.sh
+          # The container runs as root; fix perms so subsequent steps can
+          # read/upload the produced wheel.
+          sudo chmod -R a+rw packages/python/dist/ || true
+
+      - name: Copy pdfium dylib into wheel (Unix)
+        if: runner.os != 'Windows' && !matrix.musl
+        working-directory: packages/python
+        run: |
+          # Fix permissions from Docker/maturin build
+          sudo chmod -R a+rw dist/ || true
+          # Find pdfium in target/ (mounted from Docker) or cache
+          PDFIUM_LIB=$(find ../../target -name "libpdfium.so" -type f 2>/dev/null | head -1 || true)
+          if [ -z "$PDFIUM_LIB" ]; then
+            PDFIUM_LIB=$(find ~/.cache/pdfium-rs -name "libpdfium.so" -type f 2>/dev/null | head -1 || true)
+          fi
+          if [ -n "$PDFIUM_LIB" ]; then
+            export PDFIUM_LIB_PATH="$(dirname "$PDFIUM_LIB")"
+          fi
+          bash scripts/copy-pdfium.sh
+          for whl in dist/*.whl; do
+            python -c "
+          import zipfile, os, sys
+          whl = sys.argv[1]
+          if sys.platform == 'darwin':
+              dylib = 'libpdfium.dylib'
+          else:
+              dylib = 'libpdfium.so'
+          dylib_path = os.path.join('liteparse', dylib)
+          if not os.path.exists(dylib_path):
+              print(f'Warning: {dylib_path} not found, skipping')
+              sys.exit(0)
+          with zipfile.ZipFile(whl, 'a') as z:
+              z.write(dylib_path, f'liteparse/{dylib}')
+          print(f'Added {dylib} to {whl}')
+          " "$whl"
+          done
+
+      - name: Copy pdfium dylib into wheel (Windows)
+        if: runner.os == 'Windows'
+        working-directory: packages/python
+        shell: pwsh
+        run: |
+          $cacheBase = "$env:LOCALAPPDATA\pdfium-rs"
+          if (-not (Test-Path $cacheBase)) {
+            $cacheBase = "$env:USERPROFILE\.cache\pdfium-rs"
+          }
+          $dll = Get-ChildItem -Path $cacheBase -Recurse -Filter "pdfium.dll" | Select-Object -First 1
+          if (-not $dll) {
+            $dll = Get-ChildItem -Path "..\..\target" -Recurse -Filter "pdfium.dll" | Select-Object -First 1
+          }
+          if ($dll) {
+            Copy-Item $dll.FullName -Destination "liteparse\pdfium.dll"
+            Write-Host "Copied $($dll.FullName) -> liteparse\pdfium.dll"
+            foreach ($whl in Get-ChildItem dist\*.whl) {
+              python -c @"
+          import zipfile, sys, os
+          whl = sys.argv[1]
+          dll = os.path.join('liteparse', 'pdfium.dll')
+          if os.path.exists(dll):
+              with zipfile.ZipFile(whl, 'a') as z:
+                  z.write(dll, 'liteparse/pdfium.dll')
+              print(f'Added pdfium.dll to {whl}')
+          "@ $whl.FullName
+            }
+          } else {
+            Write-Error "Could not find pdfium.dll"
+            exit 1
+          }
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.target }}
+          path: packages/python/dist/*.whl
+          if-no-files-found: error
+
+  sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+          working-directory: packages/python
+
+      - name: Upload sdist
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: packages/python/dist/*.tar.gz
+          if-no-files-found: error
+
+  test:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: macos-26-intel
+            target: x86_64-apple-darwin
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            use-container: true
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    name: Test ${{ matrix.target }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download wheels
+        uses: actions/download-artifact@v4
+        with:
+          name: wheels-${{ matrix.target }}
+          path: dist
+
+      - name: Install wheel
+        if: ${{ !matrix.use-container }}
+        run: pip install --no-index --find-links dist liteparse
+
+      - name: Smoke test
+        if: ${{ !matrix.use-container }}
+        run: |
+          python -c "
+          from liteparse import LiteParse, ParseResult, ParsedPage, TextItem, ScreenshotResult
+          parser = LiteParse(ocr_enabled=False, quiet=True)
+          print('LiteParse loaded successfully')
+          print(repr(parser))
+          "
+
+      - name: Parse test
+        if: ${{ !matrix.use-container }}
+        run: |
+          python -c "
+          from liteparse import LiteParse
+          parser = LiteParse(ocr_enabled=False, quiet=True, max_pages=2)
+          result = parser.parse('demo/docs/apple-10k-2024.pdf')
+          assert result.num_pages == 2, f'Expected 2 pages, got {result.num_pages}'
+          assert len(result.text) > 0, 'Expected non-empty text'
+          page = result.get_page(1)
+          assert page is not None, 'Expected page 1'
+          assert len(page.text_items) > 0, 'Expected text items'
+          print(f'Parsed {result.num_pages} pages, {len(result.text)} chars')
+          print('Parse test passed')
+          "
+
+      - name: Bytes parse test
+        if: ${{ !matrix.use-container }}
+        run: |
+          python -c "
+          from liteparse import LiteParse
+          parser = LiteParse(ocr_enabled=False, quiet=True, max_pages=1)
+          with open('demo/docs/apple-10k-2024.pdf', 'rb') as f:
+              data = f.read()
+          result = parser.parse(data)
+          assert result.num_pages == 1
+          assert len(result.text) > 0
+          print('Bytes parse test passed')
+          "
+
+      - name: Screenshot test
+        if: ${{ !matrix.use-container }}
+        run: |
+          python -c "
+          from liteparse import LiteParse
+          parser = LiteParse(ocr_enabled=False, quiet=True)
+          screenshots = parser.screenshot('demo/docs/apple-10k-2024.pdf', page_numbers=[1])
+          assert len(screenshots) == 1
+          assert screenshots[0].page_num == 1
+          assert len(screenshots[0].image_bytes) > 0
+          print(f'Screenshot: {screenshots[0].width}x{screenshots[0].height}, {len(screenshots[0].image_bytes)} bytes')
+          print('Screenshot test passed')
+          "
+
+      - name: CLI test
+        if: ${{ !matrix.use-container }}
+        run: |
+          lit --version
+          lit parse demo/docs/apple-10k-2024.pdf --no-ocr --max-pages 1 -q | head -5
+          echo "CLI test passed"
+
+      - name: Test in musl container
+        if: ${{ matrix.use-container }}
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE":/work \
+            -w /work \
+            python:3.12-alpine \
+            sh -c '
+              pip install --no-index --find-links dist liteparse
+              python -c "
+          from liteparse import LiteParse, ParseResult, ParsedPage, TextItem, ScreenshotResult
+          parser = LiteParse(ocr_enabled=False, quiet=True)
+          print(repr(parser))
+          print(\"LiteParse loaded successfully\")
+          "
+              python -c "
+          from liteparse import LiteParse
+          parser = LiteParse(ocr_enabled=False, quiet=True, max_pages=2)
+          result = parser.parse(\"demo/docs/apple-10k-2024.pdf\")
+          assert result.num_pages == 2, f\"Expected 2 pages, got {result.num_pages}\"
+          assert len(result.text) > 0, \"Expected non-empty text\"
+          print(f\"Parsed {result.num_pages} pages, {len(result.text)} chars\")
+          print(\"Parse test passed\")
+          "
+              lit --version
+              lit parse demo/docs/apple-10k-2024.pdf --no-ocr --max-pages 1 -q | head -5
+              echo "CLI test passed"
+            '

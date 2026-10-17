@@ -1,0 +1,93 @@
+name: Design token guard
+
+# Design tokens change only through the Figma -> Tokens Studio export
+# (README, "Generating design tokens"). This check fails when
+#   - the generated token files do not match `tokens/themes`: a hand edit, or a
+#     missing `yarn generate:tokens` after a token, generator or dependency change;
+#   - the token source (`tokens/`) or the generator change on a PR that does not
+#     carry the `tokens-update` label. Dependency bumps that only require a
+#     regeneration need no label.
+#
+# It always runs and exits early when nothing relevant changed, so it can be a
+# required check without stalling unrelated PRs (a `paths:` filter would leave
+# the check "expected" forever). `pull_request`, not `pull_request_target`: the
+# job runs code from the PR head, so it must not hold a write token. The label
+# check runs before any PR code executes.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+env:
+  HUSKY: 0
+
+concurrency:
+  group: tokens-guard-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  tokens-guard:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history so the diff against the PR base branch works.
+          fetch-depth: 0
+
+      # Everything the generator's output depends on decides whether we regenerate
+      # (`any`); only the token source and the generator require the label (`tokens`).
+      - name: Detect relevant changes
+        id: changed
+        run: |
+          base="origin/${{ github.base_ref }}"
+          all="$(git diff --name-only "$base...HEAD" -- \
+            tokens src/theme/tokens 'src/theme/styles/tokens-*.css' \
+            src/theme/theme.config.json .scripts/js/generate-tokens.js \
+            .prettierrc .scripts/bash/format package.json yarn.lock)"
+          tokens="$(printf '%s\n' "$all" | grep -E '^(tokens/|\.scripts/js/generate-tokens\.js$)' || true)"
+          printf 'Relevant files:\n%s\n' "${all:-<none>}"
+          echo "any=$([ -n "$all" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "tokens=$([ -n "$tokens" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      # Runs before `yarn install`, so nothing from the PR can influence it. Labels
+      # are read from the API, not from the event payload: a re-run replays the
+      # payload as it was, so a label removed since would still count.
+      - name: Token changes need the tokens-update label
+        if: steps.changed.outputs.tokens == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          labels="$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" --jq '.labels[].name')"
+          if ! printf '%s\n' "$labels" | grep -qx 'tokens-update'; then
+            echo "::error::Design tokens changed without the 'tokens-update' label. Tokens change only through the Figma export; if this is one, a token owner (.github/CODEOWNERS) adds the label. Otherwise revert the token files and use an existing token."
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v7
+        if: steps.changed.outputs.any == 'true'
+        with:
+          node-version: '24.x'
+
+      - name: Install dependencies
+        if: steps.changed.outputs.any == 'true'
+        run: |
+          corepack enable
+          yarn install --immutable
+
+      # `git status` rather than `git diff`: it also catches a generated file that
+      # the PR deleted and the generator recreated (untracked), or one the
+      # generator no longer produces.
+      - name: Generated files must match tokens/themes
+        if: steps.changed.outputs.any == 'true'
+        run: |
+          yarn generate:tokens
+          changes="$(git status --porcelain -- src/theme/tokens 'src/theme/styles/tokens-*.css')"
+          if [ -n "$changes" ]; then
+            printf 'Files that differ from the generator output:\n%s\n\n' "$changes"
+            git --no-pager diff -- src/theme/tokens 'src/theme/styles/tokens-*.css' | head -80
+            echo "::error::Generated token files do not match tokens/themes. Run 'yarn generate:tokens' and commit the result. Never edit the generated files by hand."
+            exit 1
+          fi

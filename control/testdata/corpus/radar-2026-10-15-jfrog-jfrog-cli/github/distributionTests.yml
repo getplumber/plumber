@@ -1,0 +1,34 @@
+name: Distribution Tests
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  Distribution-Tests:
+    name: Distribution tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu, windows, macos]
+    runs-on: ${{ matrix.os }}-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+          # Safe: this workflow only runs after human approval via the build-gate environment.
+          allow-unsafe-pr-checkout: true
+          
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+        with:
+          go-version-file: go.mod
+
+      - name: Setup FastCI
+        uses: jfrog-fastci/fastci@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          fastci_otel_token: ${{ secrets.FASTCI_TOKEN }}
+
+      - name: Run Distribution tests
+        run: go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.distribution --jfrog.url=${{ secrets.PLATFORM_URL }} --jfrog.adminToken=${{ secrets.PLATFORM_ADMIN_TOKEN }} --jfrog.user=${{ secrets.PLATFORM_USER }} --ci.runId=${{ runner.os }}-distribution

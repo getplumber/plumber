@@ -56,6 +56,15 @@ facts(group) := {
 	"callers": sort([c | some c in {caller_fact(job, c) | some job in group; some c in object.get(job, "callers", [])}]),
 	"cacheScopes": sort({sc | some job in group; some sc in save_scopes(job)}),
 	"restoresCache": count({job | some job in group; restores_cache(job)}) > 0,
+	"saveScopesByEvent": {t: sort({sc |
+		some job in group
+		t in gated_triggers(job)
+		saves_under(job, t)
+		some sc in trigger_cache_scopes(job, t)
+	}) |
+		some j in group
+		some t in gated_triggers(j)
+	},
 	"uploads": any_upload(group),
 	"gate": merged_gate(group),
 }
@@ -72,7 +81,9 @@ any_upload(group) if {
 
 # _gate_ranks orders the gate classes ir.ClassifyGates stores on a job
 # (job.gate) from the outsider's side: the lower, the easier to get in.
-_gate_ranks := {"outsider": 0, "unknown": 1, "maintainer_approved": 2, "same_repo": 3}
+# The two strong classes, same_repo and no_outsider (the privileged run
+# never executes the job), share one rank, as in ir's gateStrength.
+_gate_ranks := {"outsider": 0, "unknown": 1, "maintainer_approved": 2, "same_repo": 3, "no_outsider": 3}
 
 # merged_gate: the weakest gate among the jobs sharing the name (an
 # outsider let in by one of them is let in), the first in input order on
@@ -334,7 +345,7 @@ _entry_events := {
 # entry_cache_scope: the scopes the run that executes an entry of this
 # kind saves its cache under. A kind proven by one event (_entry_events)
 # saves under that event's scope (trigger_cache_scopes: a fork pull
-# request or a review event in the pull request's merge ref, a
+# request or a pull_request_review event in its merge ref, a
 # base-context event in the default branch's), and only when GitHub lets
 # that event save (saves_under: a low-trust event on the default branch
 # reads only, unless the job's cache-mode grants write). Every other entry
@@ -940,7 +951,6 @@ privilege(job) := {
 	"tokenWriteSource": token_write_source(job),
 	"tokenWriteState": token_write_state(job),
 	"persistedCredentials": persisted_credentials(job),
-	"secretFirstLine": secret_first_line(job),
 	"environment": {
 		"name": object.get(job, "environment", ""),
 		"protected": environment_protected(job),
@@ -968,7 +978,6 @@ merged_privilege(group) := {
 	"tokenWriteSource": merged_token_write_source(group),
 	"tokenWriteState": merged_token_write_state(group),
 	"persistedCredentials": merged_persisted_credentials(group),
-	"secretFirstLine": merged_secret_first_line(group),
 	"environment": privilege(environment_job(group)).environment,
 }
 
@@ -1053,56 +1062,6 @@ secrets(job) := sort({name |
 }) if {
 	input.pipeline.provider == "gitlab"
 } else := []
-
-# secret_first_line: the job's own Job.SecretFirstLine, passed through
-# unchanged (the collector already excludes GITHUB_TOKEN in any case and
-# already resolves a workflow-level env: reference to line 0). GitHub
-# only; empty for every other provider, so a GitLab job's merge has
-# nothing to combine.
-secret_first_line(job) := object.get(job, "secretFirstLine", {}) if {
-	input.pipeline.provider == "github"
-} else := {}
-
-# merged_secret_first_line: a line recorded against one workflow file is
-# not comparable to a line recorded against another, so a group spanning
-# more than one file can never trust any of its lines: the single-job
-# case (no merge at all) passes its map through; a multi-job group whose
-# every job was collected from the same file, and whose jobs never
-# disagree on a name they both record, merges the union of their maps
-# (same_origin_file, secret_first_lines_agree); every other group (a
-# different file, or a real disagreement) carries no line for the name
-# the step-order check reads a kept reach, never a line that could drop
-# one wrongly.
-merged_secret_first_line(group) := secret_first_line(group[0]) if {
-	count(group) == 1
-} else := {name: line |
-	some job in group
-	some name, line in secret_first_line(job)
-} if {
-	same_origin_file(group)
-	secret_first_lines_agree(group)
-} else := {}
-
-# same_origin_file: every job of the group was collected from the same
-# workflow file (Job.OriginFile), so their textual line numbers are
-# positions in the same source and can be compared at all.
-same_origin_file(group) if {
-	count({object.get(job, "originFile", "") | some job in group}) == 1
-}
-
-# secret_first_lines_agree: no job of the group records a name at a line
-# some other job of the group also records, but at a different one. A
-# name only part of the group records is not a disagreement (nothing to
-# compare it against), and agrees trivially.
-secret_first_lines_agree(group) if {
-	every job in group {
-		every name, line in secret_first_line(job) {
-			every other in group {
-				object.get(secret_first_line(other), name, line) == line
-			}
-		}
-	}
-}
 
 # ------------------------------------------------------- reusable workflows
 
@@ -1536,7 +1495,7 @@ environment_required_reviewers(job) if {
 	env := object.get(job, "environment", "")
 	env != ""
 	some e in object.get(input.pipeline, "environments", [])
-	e.name == env
+	lower(e.name) == lower(env)
 	e.requiredReviewers == true
 } else := false
 
@@ -1548,7 +1507,7 @@ environment_rules(job) := rules if {
 	env := object.get(job, "environment", "")
 	env != ""
 	some e in object.get(input.pipeline, "environments", [])
-	e.name == env
+	lower(e.name) == lower(env)
 	rules := [name |
 		some name in ["required_reviewers", "wait_timer", "branch_policy"]
 		environment_has_rule(e, name)
@@ -2077,7 +2036,7 @@ regex_quote(s) := regex.replace(s, `([.\\+*?()|\[\]{}^$])`, `\$1`)
 # The artifact edge: on GitLab, needs: downloads the needed job's
 # artifacts (see the output edge above), and so does an explicit
 # dependencies:/artifacts: pair, read as the one untyped "artifact" kind,
-# this task never touching GitLab's own model. On GitHub the edge splits
+# GitLab's own model left as it is. On GitHub the edge splits
 # by what the consumer does with the download: artifact_executed when it
 # runs something from it (a script or a with: value naming the download,
 # or, the download's own path not being tracked, any script segment that
@@ -2236,12 +2195,13 @@ artifact_segment_executes(seg) if {
 # artifact_segment_executes is checked ahead of every one of these (see
 # artifact_alter_only_command): a substitution in an exported value still
 # executes, whatever the leading keyword reads as.
+#
+# npm publish, cargo publish and goreleaser release are not in this list:
+# they run the package's lifecycle scripts, the crate's build.rs or the
+# release's hooks, so they execute what they ship.
 artifact_alter_command_patterns := [
 	`^gh\s+release\s+(create|upload)\b`,
-	`^goreleaser\s+release\b`,
 	`^twine\s+upload\b`,
-	`^npm\s+publish\b`,
-	`^cargo\s+publish\b`,
 	`^gem\s+push\b`,
 	`^aws\s+s3\s+(cp|sync)\b`,
 	`^gsutil\s+(cp|rsync)\b`,
@@ -2278,6 +2238,17 @@ artifact_has_non_alter_segment(other) if {
 	some l in split(line, "\n")
 	some seg in artifact_command_segments(_command_text(l))
 	not artifact_alter_only_command(seg)
+}
+
+# A line writing to the runner's own files ($GITHUB_ENV, $GITHUB_PATH,
+# $GITHUB_OUTPUT: `>> $GITHUB_ENV`, `>>"$GITHUB_PATH"`) injects what it
+# writes into every later process of the job, so it executes whatever
+# verb opens it. Read on the raw line: _command_text drops the quoted
+# variable a redirect usually names.
+artifact_has_non_alter_segment(other) if {
+	some line in object.get(other, "scripts", [])
+	some l in split(line, "\n")
+	regex.match(`>\s*["']?\$\{?GITHUB_(ENV|PATH|OUTPUT)\b`, l)
 }
 
 artifact_has_non_alter_segment(other) if {

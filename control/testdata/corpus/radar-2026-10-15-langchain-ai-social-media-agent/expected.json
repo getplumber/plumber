@@ -1,0 +1,37 @@
+{
+  "source": "https://github.com/langchain-ai/social-media-agent",
+  "commit": "a2d2229f92fc2653285d29a27bb7ff75a9caf07b",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "copilot",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/ci.yml": "active",
+    ".github/workflows/integration-tests.yml": "active",
+    ".github/workflows/unit-tests.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High `codespell-project/actions-codespell@v2` path was judged overstated: the spelling jobs hold no secret, no write token and no cache, Low.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "codespell-project/actions-codespell@v2",
+        "tier": "low"
+      }
+    ]
+  }
+}

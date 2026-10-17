@@ -1,0 +1,88 @@
+name: macOS
+
+on:
+  schedule:
+    - cron: '0 0 * * 1'
+  push:
+    branches: [ '*' ]
+  pull_request:
+    branches: [ master ]
+  release:
+    types:
+      - published
+      - prereleased
+
+env:
+  BUILD_TYPE: Release
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        build: [nossl, ssl]
+        include:
+        - build: nossl
+
+        - build: ssl
+          SSL_CMAKE_OPTION: >-
+            -D WITH_OPENSSL=ON
+            -D OPENSSL_ROOT_DIR=/usr/local/opt/openssl/
+          SSL_INSTALL: openssl
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 100
+          fetch-tags: true
+
+      - name: Install dependencies
+        run: brew install cmake ${{matrix.SSL_INSTALL}}
+
+      - name: Print OpenSSL paths
+        run: openssl version -d
+
+      - name: Configure CMake
+        run: |
+          cmake \
+            -D CMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} \
+            -D CH_MAP_BOOL_TO_UINT8=OFF \
+            -D BUILD_TESTS=ON \
+            ${{matrix.SSL_CMAKE_OPTION}} \
+            -S ${{github.workspace}} \
+            -B ${{github.workspace}}/build
+
+      - name: Build
+        run: |
+          cmake \
+            --build ${{github.workspace}}/build \
+            --config ${{env.BUILD_TYPE}} \
+            --target all
+
+      - name: Install and start ClickHouse
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl https://builds.clickhouse.com/25.12/macos-aarch64/clickhouse -o clickhouse
+          chmod +x ./clickhouse
+          sudo mkdir -p /var/lib/clickhouse /var/log/clickhouse-server
+          sudo chown -R "$USER" /var/lib/clickhouse /var/log/clickhouse-server
+          nohup ./clickhouse server --config-file="$GITHUB_WORKSPACE/ci/docker-compose/config.xml" > clickhouse.log 2>&1 &
+          for i in {1..60}; do
+            if curl -fsS http://localhost:8123/ > /dev/null; then
+              echo "ClickHouse is ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "ClickHouse failed to start"
+          tail -200 clickhouse.log || true
+          exit 1
+
+      - name: Test
+        working-directory: ${{github.workspace}}/build/ut
+        run: ./clickhouse-cpp-ut ${GTEST_FILTER}

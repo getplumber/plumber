@@ -1,0 +1,30 @@
+{
+  "source": "https://github.com/CopilotKit/experimental-agui-middleware-placeholder",
+  "commit": "72de53ef889859148e1f85a8e44e0a4f690cbb5e",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": false
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/ci.yml": "disabled_inactivity"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High unprotected `main` path was judged overstated: the CI workflow is disabled and, re-enabled, would give a writer code execution with no secret, Low at most.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "unprotected_push",
+        "subjectContains": "main",
+        "tier": "low"
+      }
+    ]
+  }
+}

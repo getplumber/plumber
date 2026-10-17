@@ -1,0 +1,30 @@
+{
+  "source": "https://github.com/ClickHouse/clickhouse_exporter",
+  "commit": "55d508b0e42d26e1188571a1a807a14ffb6d7b76",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "master",
+  "branches": [
+    {
+      "name": "master",
+      "protected": false
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/build.yaml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High unprotected `master` path was judged overstated: the job references no secret (no run exists to read the token), Low.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "unprotected_push",
+        "subjectContains": "master",
+        "tier": "low"
+      }
+    ]
+  }
+}

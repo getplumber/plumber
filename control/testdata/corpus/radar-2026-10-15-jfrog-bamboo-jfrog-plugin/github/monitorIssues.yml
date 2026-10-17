@@ -1,0 +1,35 @@
+name: Monitor Issues
+on:
+  workflow_dispatch:
+    inputs:
+      operations-per-run:
+        description: 'Number of operations per run'
+        required: false
+        default: '30'
+  schedule:
+    - cron: "0 0 * * *"  # Runs once a day at midnight
+jobs:
+  monitor-issues:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/stale@v9
+        with:
+          # Ignore issues with these labels
+          exempt-issue-labels: 'feature request,question'
+          # Days of inactivity before marking an issue as stale
+          days-before-issue-stale: 180
+          # Days of inactivity before closing an issue
+          days-before-issue-close: 7
+          # Name of the stale label
+          stale-issue-label: "stale"
+          stale-issue-message: "This issue has been marked as stale due to 6 months of inactivity. As part of our effort to address every issue properly, please feel free to remove the stale label or keep this issue active by leaving a comment. Otherwise, it will be closed in 7 days"
+          close-issue-message: "This issue was closed due to 7 days of inactivity after being marked as stale. Feel free to reopen it if it remains relevant."
+          # Ignore pull requests
+          days-before-pr-close: false
+          days-before-pr-stale: false
+          ascending: true
+          # Get from input or resolve to default
+          operations-per-run: ${{ github.event.inputs.operations-per-run || '30' }}
+          repo-token: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,94 @@
+name: Auto Build Publish Test And Job Summary
+# This test ensures that the auto build and publish process works correctly and that the job summary is generated.
+# These two are interconnected, as the summary must be generated.
+# This test only verifies its existence, not its content,
+# which is covered in the unit tests.
+on:
+  push:
+    branches:
+      - master
+  # Triggers the workflow on labeled PRs only.
+  pull_request_target:
+    types: [ labeled ]
+# Ensures that only the latest commit is running for each PR at a time.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  Auto-Build-Publish-Test:
+    name: Auto-Build-Publish-Test (${{ matrix.os }}) - (CLI ${{ matrix.cli-version }})
+    if: contains(github.event.pull_request.labels.*.name, 'safe to test') || github.event_name == 'push'
+    strategy:
+      fail-fast: false
+      matrix:
+        # macOS omitted: local Artifactory bootstrap on GitHub-hosted macOS is broken
+        # (JGC-413; same skip as jfrog-cli). Per-step skips still provision a runner.
+        os: [ ubuntu, windows ]
+        cli-version: [ "latest", "2.66.0" ]
+    runs-on: ${{ matrix.os }}-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      # This repo is a Node action and has no go.mod. install-go-with-cache@main
+      # reads go.mod when go-version is unset (#28), which fails Setup Go immediately.
+      # local-rt-setup (used by install-local-artifactory) requires Go 1.24+.
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+        with:
+          go-version: "1.24"
+
+      - name: Install local Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+
+      - name: Post Step to Test the Auto Build-Publish post step
+        uses: gacts/run-and-post-run@v1
+        with:
+          post: |
+            jf c add --artifactory-url http://localhost:8081/artifactory --user admin --password password; \
+            count=$(jf rt search "artifactory-build-info/${GITHUB_WORKFLOW}/${GITHUB_RUN_NUMBER}-*" --count 2>stderr.log); \
+            exit_code=$?; \
+            cat stderr.log; \
+            if [ $exit_code -ne 0 ]; then \
+              echo "Command failed with exit code $exit_code."; \
+              exit 1; \
+            fi; \
+            if [ "$count" -eq 0 ]; then \
+              echo "No build info found."; \
+              exit 1; \
+            fi
+
+      - name: Setup JFrog CLI
+        id: setup-jfrog-cli
+        uses: ./
+        with:
+          version: ${{ matrix.cli-version }}
+        env:
+          JF_URL: http://localhost:8081/
+          JF_USER: admin
+          JF_PASSWORD: password
+
+      - name: Create NPM Remote Repository JSON
+        uses: jsdaniell/create-json@v1.2.3
+        with:
+          name: "npm-remote-template.json"
+          json: '{
+            "key": "npm-remote",
+            "rclass": "remote",
+            "packageType": "npm",
+            "url": "https://registry.npmjs.org"
+          }'
+
+      - name: Configure Artifactory NPM Remote Repository
+        run: jf rt repo-create npm-remote-template.json
+        shell: bash
+
+      - name: Add npm modules to local build-info
+        run: |
+          jf npm-config --repo-resolve npm-remote
+          jf npm install

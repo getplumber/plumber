@@ -141,6 +141,7 @@ func (l *reusableLinker) callersOf(file string, depth int) []ir.ReusableCaller {
 			SecretsInherit: cj.SecretsInherit,
 			Secrets:        cj.ReusableSecrets,
 			With:           cj.ReusableWith,
+			If:             cj.If,
 		}
 		var ups []ir.ReusableCaller
 		if slices.Contains(cj.Triggers, "workflow_call") {

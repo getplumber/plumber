@@ -1,0 +1,60 @@
+name: "Static Analysis"
+on:
+  push:
+    tags-ignore:
+      - '**'
+  pull_request:
+jobs:
+  Static-Check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      # Generate mocks
+      - name: Generate mocks
+        run: go generate ./...
+
+      - name: Run golangci linter
+        uses: jfrog/.github/actions/golangci-lint@main
+
+  Go-Sec:
+    runs-on: ubuntu-latest
+    env:
+      GOFLAGS: -buildvcs=false
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+        # Generate mocks
+      - name: Generate mocks
+        run: go generate ./...
+        
+      - name: Run Go-Sec scanner
+        uses: jfrog/.github/actions/gosec-scanner@main
+
+  ShellCheck:
+    name: Shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Run ShellCheck
+        uses: ludeeus/action-shellcheck@master
+        with:
+          ignore_paths:
+            .husky
+            *test*

@@ -1,0 +1,19 @@
+name: Cleanup Cache
+
+on:
+  pull_request:
+    types:
+      - closed
+
+permissions:
+  actions: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Cleanup
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF: refs/pull/${{ github.event.pull_request.number }}/merge
+        run: gh cache delete --all --ref "$REF" --succeed-on-no-caches --repo "$GITHUB_REPOSITORY"

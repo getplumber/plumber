@@ -1,0 +1,19 @@
+name: Validate Pull Request Target Branch
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+jobs:
+  validate-target-branch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Target Branch
+        run: |
+          if [ "${{ github.base_ref }}" != "main" ] && [ "${{ github.base_ref }}" != "v2_main" ]; then
+            echo "Pull requests must target the 'main' (V3) or 'v2_main' (V2) branch."
+            exit 1
+          fi

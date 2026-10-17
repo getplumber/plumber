@@ -1,0 +1,39 @@
+{
+  "source": "https://github.com/cloudflare/networkquality-rs",
+  "commit": "5488339d00ffa11cfa0ede3631bfc47617298022",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "copilot",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/release-cut.yml": "active",
+    ".github/workflows/release.yml": "active",
+    ".github/workflows/semgrep.yml": "active",
+    ".github/workflows/tag-release.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High untrusted-expression path in `tag-release.yml` was judged overstated: the job runs only for a merged `release/*` pull request from the repository itself, so the actor is an insider whose pull request is merged, Medium at most.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "untrusted_expression",
+        "subjectContains": "github.event.pull_request.head.ref",
+        "tier": "medium",
+        "pending": "the spec holds a maintainer-approved entry (a merged pull request) at High when no head commit is pinned (section 5.3), while the assessment argued Medium for a same-repository release branch."
+      }
+    ]
+  }
+}

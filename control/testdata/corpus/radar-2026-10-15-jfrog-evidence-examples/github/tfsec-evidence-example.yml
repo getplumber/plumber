@@ -1,0 +1,63 @@
+name: "tfsec evidence Integration example"
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  package-terraform-with-tfsec-evidence:
+    runs-on: ubuntu-latest
+    env:
+      ATTACH_OPTIONAL_CUSTOM_MARKDOWN_TO_EVIDENCE: true
+    steps:
+      # Build and publish the packages to JFrog Artifactory
+      - name: Setup jfrog cli
+        uses: jfrog/setup-jfrog-cli@v4
+        env:
+          JF_URL: ${{ vars.ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.ARTIFACTORY_ACCESS_TOKEN }}
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            examples/aquasecurity/tfsec/**
+          sparse-checkout-cone-mode: false
+      - name: Publish to JFrog Artifactory
+        run: |
+          jf tfc --repo-deploy tf-local \
+            --server-id-deploy setup-jfrog-cli-server
+          jf tf p --namespace example \
+            --provider aws \
+            --tag v0.0.${{ github.run_number }} \
+            --build-name my-tf-build \
+            --build-number ${{ github.run_number }}
+          jf rt bp my-tf-build ${{ github.run_number }}
+
+      # Run tfsec to scan Terraform code for security issues
+      - name: Run tfsec
+        uses: aquasecurity/tfsec-action@v1.0.0
+        with:
+          additional_args: --format json --out tfsec.json
+          soft_fail: true
+
+       # This is an optional step to generate a custom markdown report
+      - name: Generate optional custom markdown report
+        if: env.ATTACH_OPTIONAL_CUSTOM_MARKDOWN_TO_EVIDENCE == 'true'
+        run: |
+          pwd
+          ls -al
+          python ./examples/aquasecurity/tfsec/tfsec_json_to_markdown_helper.py tfsec.json
+
+      # Attaching the evidence to associated package
+      - name: Attach evidence using jfrog cli
+        run: |
+          jf evd create \
+            --build-name my-tf-build \
+            --build-number ${{ github.run_number }} \
+            --key "${{ secrets.PRIVATE_KEY }}" \
+            --key-alias "${{ vars.EVIDENCE_KEY_ALIAS }}" \
+            --predicate ./tfsec.json \
+            --predicate-type http://aquasec.com/tfsec/security-scan \
+            ${{ env.ATTACH_OPTIONAL_CUSTOM_MARKDOWN_TO_EVIDENCE == 'true' && '--markdown "tfsec.md"' || '' }}

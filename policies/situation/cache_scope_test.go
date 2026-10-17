@@ -202,3 +202,28 @@ func TestRestoresCacheFollowsCacheMode(t *testing.T) {
 		}
 	}
 }
+
+// TestSaveScopesSplitByEvent pins saveScopesByEvent: per event the job
+// runs on, the scopes a run of that event saves under, empty for a
+// low-trust event GitHub keeps read-only, so an entry holding only in
+// some events' runs saves only where they do. A job with no trigger
+// carries none.
+func TestSaveScopesSplitByEvent(t *testing.T) {
+	p := &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, DefaultBranch: "main", Jobs: []ir.Job{
+		{Name: "mixed", Triggers: []string{"push", "pull_request", "pull_request_target"}, PushBranches: []string{"main"}},
+		{Name: "unknown"},
+	}}
+	var r struct {
+		Jobs map[string]struct {
+			SaveScopesByEvent map[string][]string `json:"saveScopesByEvent"`
+		} `json:"jobs"`
+	}
+	evaluateInto(t, p, nil, &r)
+	want := map[string][]string{"push": {"default"}, "pull_request": {"pull_request"}, "pull_request_target": {}}
+	if got := r.Jobs["mixed"].SaveScopesByEvent; !reflect.DeepEqual(got, want) {
+		t.Errorf("mixed: saveScopesByEvent = %v, want %v", got, want)
+	}
+	if got := r.Jobs["unknown"].SaveScopesByEvent; len(got) != 0 {
+		t.Errorf("unknown: want no event, got %v", got)
+	}
+}

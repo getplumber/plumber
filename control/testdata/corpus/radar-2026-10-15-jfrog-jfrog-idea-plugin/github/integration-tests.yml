@@ -1,0 +1,56 @@
+name: "Integration Tests"
+
+on:
+  push:
+  # Triggers the workflow on labeled PRs only.
+  pull_request_target:
+    types: [ labeled ]
+  schedule:
+    - cron: '0 6 * * *' # Runs every day at 6:00 AM GMT
+
+# Ensures that only the latest commit is running for each PR at a time.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    if: github.event_name == 'schedule' || github.event_name == 'push' || (github.event_name == 'pull_request_target' && contains(github.event.pull_request.labels.*.name, 'safe to test'))
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, windows-latest, macOS-latest ]
+        include:
+          - os: windows-latest
+            gradlew_suffix: .bat
+    steps:
+      - name: Remove 'safe to test' label
+        uses: actions-ecosystem/action-remove-labels@v1
+        with:
+          labels: "safe to test"
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          allow-unsafe-pr-checkout: true
+          submodules: true
+
+      - uses: jfrog-fastci/fastci@main  # Use the FastCI optimization action
+        with:
+          github_token: ${{secrets.GITHUB_TOKEN}}
+          fastci_otel_token: ${{ secrets.FASTCI_TOKEN }}
+
+      # Install required tools
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      # Run integration tests
+      - name: Integration Tests
+        env:
+          JFROG_IDE_PLATFORM_URL: ${{ secrets.PLATFORM_URL }}
+          JFROG_IDE_ACCESS_TOKEN: ${{ secrets.PLATFORM_ADMIN_TOKEN }}
+        run: ./gradlew${{ matrix.gradlew_suffix }} clean integrationTests

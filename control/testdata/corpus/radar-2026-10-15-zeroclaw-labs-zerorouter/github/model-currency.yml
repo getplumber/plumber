@@ -1,0 +1,123 @@
+name: Model currency
+
+# `tiers.toml` is hand-maintained, and the way a lane gets added today is that
+# someone notices — by hand — that a provider shipped a new model, bumped a
+# version (glm-5.2 -> glm-5.3), or lit an existing model up on a second cloud we
+# already dispatch to (grok on Bedrock). This job automates the NOTICING half.
+#
+# It never automates the ADDING half, and that split is deliberate: adding a
+# lane needs a transcribed price, a retention basis, and judgement no diff can
+# make. So `admin discover` REPORTS candidates and this workflow turns them into
+# a single GitHub issue for a human to act on. It writes nothing to `tiers.toml`
+# and it is NOT a merge gate — discovery is informational, so the run stays
+# green even when it finds something, or the finding would land in a failed run
+# nobody opens instead of an issue someone reads.
+#
+# Separate from `catalog-drift` on purpose. That job reconciles the prices of
+# lanes we ALREADY carry and reddens when one drifts; this one looks for lanes
+# we DON'T carry yet and never reddens. Coupling them would let a discovery
+# firehose drown the billing alarm.
+
+on:
+  schedule:
+    # 13:00 UTC Monday — a weekly cadence, well clear of the daily drift jobs
+    # (08:00 / 08:30) so a currency report is never read as a drift failure.
+    - cron: '0 13 * * 1'
+  workflow_dispatch:
+
+# Least privilege: the job reads the checkout and writes exactly one issue.
+# No secrets beyond the default token, which `issues: write` scopes to this
+# repository's issues alone.
+permissions:
+  contents: read
+  issues: write
+
+# One currency issue at a time. A manual dispatch racing the Monday schedule
+# must not have both runs create-or-edit the issue at once.
+concurrency:
+  group: model-currency
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    name: Discover models tiers.toml does not carry
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Cache cargo
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            router/target
+          key: model-currency-${{ runner.os }}-${{ hashFiles('router/Cargo.lock') }}
+
+      - name: Build the admin binary
+        working-directory: router
+        run: cargo build --locked --bin zerorouter
+
+      # Open or update ONE rolling issue. `admin discover` is dispatched before
+      # the pool is opened, so — like the drift jobs — this step needs no
+      # Postgres and fetches models.dev live, exactly what the scheduled run is
+      # for.
+      #
+      # Idempotent by design: an open issue whose title begins "Model currency"
+      # is retitled with today's date and its body replaced, so the report rolls
+      # forward in place rather than a fresh issue landing every Monday. If the
+      # last one was closed, a new one is opened. Empty findings open nothing.
+      - name: Discover and file candidates
+        working-directory: router
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # --new-since-days 90 is the default, stated here so the window this
+          # weekly issue is scoped to is visible in the workflow. It bounds ONLY
+          # the "new models" section — cross-cloud twins and version bumps are
+          # actionable at any age and are never aged out — so the issue lists
+          # recent arrivals rather than every model back to gpt-3.5-turbo.
+          ./target/debug/zerorouter admin discover \
+            --tiers config/tiers.toml --new-since-days 90 --json > candidates.json
+          count=$(jq 'length' candidates.json)
+          echo "discovered ${count} candidate(s)"
+          if [ "${count}" -eq 0 ]; then
+            echo "Nothing the catalog does not already carry; no issue."
+            exit 0
+          fi
+
+          date_utc=$(date -u +%Y-%m-%d)
+          title="Model currency — ${date_utc}"
+
+          {
+            echo "_${count} candidate(s) from models.dev on ${date_utc}. Each is a lead, not a"
+            echo "decision — adding a lane needs a transcribed price and a retention basis a human"
+            echo "must supply. This issue is regenerated in place each week._"
+            echo
+            jq -r '
+              def section(cat; heading):
+                ([.[] | select(.category == cat)]) as $rows
+                | if ($rows | length) > 0 then
+                    "## \(heading) (\($rows | length))\n"
+                    + ($rows | map("- **\(.provider)** `\(.model)` — \(.note)") | join("\n"))
+                    + "\n"
+                  else "" end;
+              # Strongest first, matching the CLI report order.
+              section("cross-cloud"; "Cross-cloud twins"),
+              section("version-bump"; "Version bumps"),
+              section("new"; "New models")
+            ' candidates.json
+          } > body.md
+
+          existing=$(gh issue list --state open --search "Model currency in:title" \
+            --json number,title \
+            --jq 'map(select(.title | startswith("Model currency"))) | .[0].number // empty')
+
+          if [ -n "${existing}" ]; then
+            gh issue edit "${existing}" --title "${title}" --body-file body.md
+            echo "updated issue #${existing}"
+          else
+            gh issue create --title "${title}" --body-file body.md
+          fi

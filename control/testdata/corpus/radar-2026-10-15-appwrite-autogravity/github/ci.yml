@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    name: Go checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up tools
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+
+      - name: Test, vet, and build
+        run: mise run ci
+
+      - name: Install ONNX Runtime for integration tests
+        run: |
+          curl -fL --retry 3 -o "$RUNNER_TEMP/onnxruntime.tgz" \
+            https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-linux-x64-1.23.2.tgz
+          echo "1fa4dcaef22f6f7d5cd81b28c2800414350c10116f5fdd46a2160082551c5f9b  $RUNNER_TEMP/onnxruntime.tgz" | sha256sum -c
+          tar -xzf "$RUNNER_TEMP/onnxruntime.tgz" -C "$RUNNER_TEMP"
+          echo "ONNXRUNTIME_LIB=$RUNNER_TEMP/onnxruntime-linux-x64-1.23.2/lib/libonnxruntime.so.1.23.2" >> "$GITHUB_ENV"
+
+      - name: Test real image inference
+        run: mise run test-integration
+
+      - name: Test FP32 precision override
+        run: make test-integration-fp32
+
+  docker:
+    name: Docker build (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+
+      - name: Download FocalNet human model
+        env:
+          GH_TOKEN: ${{ secrets.FOCALNET_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          if make model-focalnet; then
+            echo "Bundling published FocalNet human-ranking weights"
+          else
+            echo "FocalNet release is not readable from this workflow token; building without focalnet-human.onnx"
+            echo "Default MODEL_BACKEND=u2net still works. MODEL_BACKEND=focalnet requires the published weights."
+            rm -f models/optional/focalnet-human.onnx
+          fi
+
+      - name: Build image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          outputs: type=cacheonly
+          cache-from: type=gha,scope=docker-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=docker-${{ matrix.arch }}

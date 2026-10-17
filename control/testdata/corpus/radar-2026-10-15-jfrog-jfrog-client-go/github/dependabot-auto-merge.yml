@@ -1,0 +1,59 @@
+name: Dependabot auto-merge
+on:
+  pull_request_target:
+    branches:
+      - master
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  dependabot:
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.user.login == 'dependabot[bot]' && github.repository == 'jfrog/jfrog-client-go'
+    steps:
+      - name: Checkout PR code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Add 'ignore for release' label
+        run: |
+          gh pr edit ${{ github.event.pull_request.number }} --add-label "ignore for release"
+        env:
+          GH_TOKEN: ${{ secrets.CLI_ACTION_TOKEN }}
+
+      - name: Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@v2.4.0
+        with:
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
+
+      - name: Run make update-all for go dependencies
+        if: steps.metadata.outputs.dependency-group == 'go'
+        run: make update-all
+
+      - name: Check for changes and commit
+        if: steps.metadata.outputs.dependency-group == 'go'
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            git config --local user.email "action@github.com"
+            git config --local user.name "github-actions[bot]"
+            git add .
+            git commit -m "Update JFrog dependencies via make update-all"
+            git push
+          fi
+
+      - name: Approve PR
+        run: gh pr review --approve "$PR_URL"
+        env:
+          PR_URL: ${{github.event.pull_request.html_url}}
+          GH_TOKEN: ${{secrets.CLI_ACTION_TOKEN}}
+
+      - name: Enable auto-merge for Dependabot PRs
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{github.event.pull_request.html_url}}
+          GH_TOKEN: ${{secrets.GITHUB_TOKEN}}

@@ -1,0 +1,58 @@
+{
+  "source": "https://github.com/ClickHouse/ClickBench",
+  "commit": "9e55dacbe4af6ab3bdaef8d542048e9828036507",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": false
+    }
+  ],
+  "environments": [
+    {
+      "name": "benchmark-approval",
+      "known": true,
+      "requiredReviewers": true,
+      "reviewers": 1
+    },
+    {
+      "name": "copilot",
+      "known": true
+    },
+    {
+      "name": "github-pages",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/benchmark-daily.yml": "active",
+    ".github/workflows/benchmark-manual.yml": "active",
+    ".github/workflows/benchmark-pr.yml": "active",
+    ".github/workflows/clickhouse-cloud.yml": "active",
+    ".github/workflows/collect-results.yml": "active",
+    ".github/workflows/generate-results.yml": "active",
+    ".github/workflows/hardware-benchmark.yml": "active",
+    ".github/workflows/hardware-collect-results.yml": "active",
+    ".github/workflows/results-preview.yml": "active",
+    ".github/workflows/upload-history.yml": "active",
+    ".github/workflows/validate-results.yml": "active",
+    ".github/workflows/versions-benchmark.yml": "active",
+    ".github/workflows/versions-collect-results.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High path through `curl https://clickhouse.com/ | sh` was judged overstated: the reach (write token, secrets) is real but the script is the organisation's own installer, so the actor is not an outsider: Low.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "https://clickhouse.com/",
+        "tier": "low",
+        "pending": "the spec holds a first-party fetch (the organisation's own installer domain) at the insider ceiling, Medium (section 8.1), while the assessment argued Low: the repository already trusts its own release infrastructure."
+      }
+    ]
+  }
+}

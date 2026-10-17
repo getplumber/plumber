@@ -1,0 +1,370 @@
+name: Maven Compatibility Test
+
+# This workflow proactively tests build-info-extractor-maven3 compatibility with multiple Maven versions
+# to catch breaking changes early (e.g., new required fields in DefaultMavenPluginManager).
+#
+# Two scenarios are tested for each Maven version:
+#   1. Plain JFrog CLI (no Develocity) — catches NPE / components.xml issues
+#   2. JFrog CLI + Develocity extension  — catches reflection-based issues (getDeclaredMethod)
+#
+# The workflow builds the extractor from the current branch and injects it into the
+# jf CLI dependency cache so the PR changes are tested, not the published release.
+#
+# When a compatibility issue is detected:
+# 1. Check error logs for NullPointerException, NoSuchMethodError, NoSuchMethodException etc.
+# 2. Compare Maven's DefaultMavenPluginManager with our ArtifactoryEclipsePluginManager
+# 3. Add missing overrides or field declarations as needed
+
+on:
+  # Run nightly to catch new Maven releases
+  schedule:
+    - cron: '0 2 * * *'  # Every night at 2 AM UTC
+
+  # Run on PRs that touch the maven3 extractor
+  pull_request:
+    paths:
+      - 'build-info-extractor-maven3/**'
+      - 'build.gradle'
+
+  # Allow manual trigger with optional Develocity version override
+  workflow_dispatch:
+    inputs:
+      develocity-version:
+        description: 'Develocity Maven extension version to test against'
+        required: false
+        default: '2.4.0'
+
+env:
+  DEVELOCITY_VERSION: ${{ inputs.develocity-version || '2.4.0' }}
+
+jobs:
+  check-latest-maven-versions:
+    name: Determine Maven versions to test
+    runs-on: ubuntu-latest
+    outputs:
+      maven-versions: ${{ steps.set-versions.outputs.maven-versions }}
+
+    steps:
+      - name: Get latest Maven versions from Maven Central
+        id: maven-versions
+        run: |
+          echo "Fetching latest Maven versions from Maven Central..."
+
+          # Fetch Maven metadata
+          curl -s https://repo.maven.apache.org/maven2/org/apache/maven/maven-core/maven-metadata.xml > maven-metadata.xml
+
+          # Extract all stable versions (exclude alpha/beta/RC)
+          VERSIONS=$(grep -oP '(?<=<version>)[^<]+' maven-metadata.xml | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V)
+
+          echo "Available Maven versions:"
+          echo "$VERSIONS"
+
+          # Get latest versions for each major.minor series
+          LATEST_3_8=$(echo "$VERSIONS" | grep '^3\.8\.' | tail -1)
+          LATEST_3_9=$(echo "$VERSIONS" | grep '^3\.9\.' | tail -1)
+          LATEST_4_0=$(echo "$VERSIONS" | grep '^4\.0\.' | tail -1)
+
+          echo ""
+          echo "Latest versions by series:"
+          echo "  3.8.x: $LATEST_3_8"
+          echo "  3.9.x: $LATEST_3_9"
+          echo "  4.0.x: ${LATEST_4_0:-not released yet}"
+
+          echo "LATEST_3_8=$LATEST_3_8" >> $GITHUB_ENV
+          echo "LATEST_3_9=$LATEST_3_9" >> $GITHUB_ENV
+          echo "LATEST_4_0=$LATEST_4_0" >> $GITHUB_ENV
+
+      - name: Build version matrix
+        id: set-versions
+        run: |
+          # Fixed boundary versions around the checkPrerequisites change:
+          #   3.9.11 = last version WITHOUT checkPrerequisites on DefaultMavenPluginManager
+          #   3.9.12 = first version WITH  checkPrerequisites on DefaultMavenPluginManager
+          # These must always be tested regardless of what the "latest" is.
+          VERSIONS='["3.9.0", "3.9.11", "3.9.12"'
+
+          # Add latest 3.8.x
+          if [ -n "$LATEST_3_8" ]; then
+            VERSIONS+=', "'$LATEST_3_8'"'
+          fi
+
+          # Add latest 3.9.x (skip if it is already one of the fixed versions above)
+          if [ -n "$LATEST_3_9" ] && [ "$LATEST_3_9" != "3.9.11" ] && [ "$LATEST_3_9" != "3.9.12" ]; then
+            VERSIONS+=', "'$LATEST_3_9'"'
+          fi
+
+          # Add latest 4.0.x if released
+          if [ -n "$LATEST_4_0" ]; then
+            VERSIONS+=', "'$LATEST_4_0'"'
+          fi
+
+          VERSIONS+=']'
+
+          echo "Maven versions to test: $VERSIONS"
+          echo "maven-versions=$VERSIONS" >> $GITHUB_OUTPUT
+
+  build-extractor:
+    name: Build extractor from source
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 11 for build
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '11'
+
+      - name: Build uber-jar from source
+        run: ./gradlew :build-info-extractor-maven3:uberJar --no-daemon
+
+      - name: Locate built jar
+        id: jar-info
+        run: |
+          JAR=$(find build-info-extractor-maven3/build/libs -name "*-uber.jar" | head -1)
+          echo "Built jar: $JAR"
+          echo "jar-path=$JAR" >> $GITHUB_OUTPUT
+
+      - name: Upload uber-jar as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: extractor-uber-jar
+          path: ${{ steps.jar-info.outputs.jar-path }}
+          retention-days: 1
+
+  test-maven-compatibility:
+    name: Maven ${{ matrix.maven-version }} / Java ${{ matrix.java-version }} / ${{ matrix.develocity && 'with Develocity' || 'plain' }}
+    runs-on: ubuntu-latest
+    needs: [check-latest-maven-versions, build-extractor]
+
+    strategy:
+      fail-fast: false
+      matrix:
+        maven-version: ${{ fromJSON(needs.check-latest-maven-versions.outputs.maven-versions) }}
+        java-version:
+          - '11'
+          - '17'
+          - '21'
+        develocity:
+          - false
+          - true
+
+    steps:
+      - name: Set up JDK ${{ matrix.java-version }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: ${{ matrix.java-version }}
+
+      - name: Set up Maven ${{ matrix.maven-version }}
+        uses: stCarolas/setup-maven@v5
+        with:
+          maven-version: ${{ matrix.maven-version }}
+
+      - name: Verify Maven version
+        run: mvn --version
+
+      - name: Set up JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v4
+        env:
+          JF_URL: ${{ secrets.PLATFORM_URL }}
+          JF_USER: ${{ secrets.PLATFORM_USER }}
+          JF_ACCESS_TOKEN: ${{ secrets.PLATFORM_ADMIN_TOKEN }}
+        with:
+          version: latest
+
+      - name: Download built extractor jar
+        uses: actions/download-artifact@v4
+        with:
+          name: extractor-uber-jar
+          path: /tmp/extractor
+
+      - name: Inject built extractor into jf CLI dependency cache
+        run: |
+          # Trigger jf to download the published extractor so we get classworlds.conf
+          jf config add dummy-server \
+            --url=http://localhost:8081/artifactory \
+            --access-token=dummy \
+            --interactive=false --overwrite=true || true
+
+          mkdir -p /tmp/dummy-project/.jfrog/projects
+          cat > /tmp/dummy-project/.jfrog/projects/maven.yaml << 'EOF'
+          version: 1
+          type: maven
+          resolver:
+            serverID: dummy-server
+            releaseRepo: libs-release
+            snapshotRepo: libs-snapshot
+          deployer:
+            serverID: dummy-server
+            releaseRepo: libs-release
+            snapshotRepo: libs-snapshot
+          EOF
+
+          cat > /tmp/dummy-project/pom.xml << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <project xmlns="http://maven.apache.org/POM/4.0.0"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+            <modelVersion>4.0.0</modelVersion>
+            <groupId>dummy</groupId>
+            <artifactId>dummy</artifactId>
+            <version>1.0</version>
+          </project>
+          EOF
+
+          cd /tmp/dummy-project
+          jf mvn --version 2>/dev/null || true  # triggers extractor download, ignore failure
+
+          # Find the downloaded extractor directory
+          EXTRACTOR_DIR=$(find ~/.jfrog/dependencies/maven -maxdepth 1 -mindepth 1 -type d | head -1)
+          if [ -z "$EXTRACTOR_DIR" ]; then
+            echo "❌ Extractor download failed — cannot inject built jar"
+            exit 1
+          fi
+          EXTRACTOR_VERSION=$(basename "$EXTRACTOR_DIR")
+          echo "Extractor version expected by jf CLI: $EXTRACTOR_VERSION"
+          echo "EXTRACTOR_VERSION=$EXTRACTOR_VERSION" >> $GITHUB_ENV
+          echo "EXTRACTOR_DIR=$EXTRACTOR_DIR" >> $GITHUB_ENV
+
+          # Replace the published jar with our built jar
+          rm -f "$EXTRACTOR_DIR"/build-info-extractor-maven3-*.jar
+          BUILT_JAR=$(find /tmp/extractor -name "*-uber.jar" | head -1)
+          cp "$BUILT_JAR" "$EXTRACTOR_DIR/build-info-extractor-maven3-${EXTRACTOR_VERSION}-uber.jar"
+
+          echo "Injected: $(ls -lh $EXTRACTOR_DIR)"
+          echo "Built jar sha256: $(sha256sum $BUILT_JAR)"
+
+      - name: Create test Maven project
+        run: |
+          mkdir -p /tmp/test-project/src/main/java/com/test
+          mkdir -p /tmp/test-project/.jfrog/projects
+
+          cat > /tmp/test-project/pom.xml << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <project xmlns="http://maven.apache.org/POM/4.0.0"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+            <modelVersion>4.0.0</modelVersion>
+            <groupId>com.jfrog.test</groupId>
+            <artifactId>maven-compat-test</artifactId>
+            <version>1.0-SNAPSHOT</version>
+            <properties>
+              <maven.compiler.source>11</maven.compiler.source>
+              <maven.compiler.target>11</maven.compiler.target>
+            </properties>
+          </project>
+          EOF
+
+          cat > /tmp/test-project/src/main/java/com/test/App.java << 'EOF'
+          package com.test;
+          public class App {
+              public static void main(String[] args) {
+                  System.out.println("ok");
+              }
+          }
+          EOF
+
+          # Only configure the deployer, not the resolver.
+          # When resolver is omitted, ArtifactoryEclipsePluginManager.enforceResolutionRepositories
+          # gets an empty list and does NOT override plugin repositories — Maven keeps using
+          # Maven Central for plugins. This avoids "artifact not found in Artifactory" errors
+          # while still loading the extractor so compatibility is fully tested.
+          cat > /tmp/test-project/.jfrog/projects/maven.yaml << 'EOF'
+          version: 1
+          type: maven
+          deployer:
+            serverID: setup-jfrog-cli-server
+            releaseRepo: maven-local
+            snapshotRepo: maven-local
+          EOF
+
+      - name: Add Develocity extension
+        if: ${{ matrix.develocity }}
+        run: |
+          # Pre-download the Develocity jar from Maven Central using plain mvn
+          # before jf mvn takes over resolution routing through Artifactory.
+          # This avoids "could not find artifact" errors since Develocity may
+          # not be available in the configured Artifactory virtual repo.
+          # Download directly into the local Maven repo (~/.m2/repository).
+          # No -Ddest flag — dependency:get places the jar at its standard repo path
+          # so Maven finds it locally without any network call during jf mvn.
+          mvn dependency:get \
+            -Dartifact=com.gradle:develocity-maven-extension:${DEVELOCITY_VERSION} \
+            -Dmaven.repo.remote=https://repo.maven.apache.org/maven2 \
+            --batch-mode
+
+          DEVELOCITY_JAR=~/.m2/repository/com/gradle/develocity-maven-extension/${DEVELOCITY_VERSION}/develocity-maven-extension-${DEVELOCITY_VERSION}.jar
+          if [ ! -f "$DEVELOCITY_JAR" ]; then
+            echo "❌ Develocity jar download failed: $DEVELOCITY_JAR not found"
+            exit 1
+          fi
+          echo "✅ Develocity $DEVELOCITY_VERSION downloaded to local Maven repo"
+
+          mkdir -p /tmp/test-project/.mvn
+          cat > /tmp/test-project/.mvn/extensions.xml << EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <extensions>
+            <extension>
+              <groupId>com.gradle</groupId>
+              <artifactId>develocity-maven-extension</artifactId>
+              <version>$DEVELOCITY_VERSION</version>
+            </extension>
+          </extensions>
+          EOF
+          echo "Develocity extension configured"
+
+      - name: Run jf mvn
+        id: maven_test
+        timeout-minutes: 10
+        working-directory: /tmp/test-project
+        run: |
+          set -o pipefail
+          echo "=== Scenario: Maven ${{ matrix.maven-version }} / Java ${{ matrix.java-version }} / Develocity=${{ matrix.develocity }} ==="
+          jf mvn clean compile -B 2>&1 | tee maven-output.log
+          echo "✅ Build succeeded"
+
+      - name: Analyze failure
+        if: failure()
+        continue-on-error: true
+        working-directory: /tmp/test-project
+        run: |
+          echo "=========================================="
+          echo "Build Failure Analysis"
+          echo "Maven: ${{ matrix.maven-version }} | Java: ${{ matrix.java-version }} | Develocity: ${{ matrix.develocity }}"
+          echo "=========================================="
+
+          if grep -q "NoSuchMethodException.*checkPrerequisites" maven-output.log; then
+            echo "❌ Develocity reflection issue: getDeclaredMethod could not find checkPrerequisites"
+            echo "   Fix: add explicit @Override of checkPrerequisites in ArtifactoryEclipsePluginManager"
+            grep -A5 "NoSuchMethodException" maven-output.log | head -20
+
+          elif grep -q "NoSuchMethodError.*checkPrerequisites" maven-output.log; then
+            echo "❌ Runtime NoSuchMethodError: super.checkPrerequisites() called on Maven < 3.9.12"
+            echo "   Fix: guard the super call so it is only invoked when the parent method exists"
+            grep -A5 "NoSuchMethodError" maven-output.log | head -20
+
+          elif grep -q "NullPointerException.*prerequisitesCheckers" maven-output.log; then
+            echo "❌ NPE: prerequisitesCheckers is null — missing Plexus requirement in components.xml"
+            grep -A5 "NullPointerException" maven-output.log | head -20
+
+          elif grep -q "NoSuchMethodError\|NoClassDefFoundError\|IncompatibleClassChangeError" maven-output.log; then
+            echo "❌ Class/method compatibility error"
+            grep -A5 "NoSuchMethodError\|NoClassDefFoundError\|IncompatibleClassChangeError" maven-output.log | head -20
+
+          else
+            echo "ℹ️  Unknown failure — last 50 lines:"
+            tail -50 maven-output.log
+          fi
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-logs-maven${{ matrix.maven-version }}-java${{ matrix.java-version }}-develocity${{ matrix.develocity }}
+          path: /tmp/test-project/maven-output.log
+
+          retention-days: 7
+          if-no-files-found: ignore

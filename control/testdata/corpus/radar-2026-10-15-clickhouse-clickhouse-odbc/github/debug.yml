@@ -1,0 +1,11 @@
+# Log all debug info to facilitate debugging
+name: debug
+
+'on':
+  [push, pull_request, release]
+
+jobs:
+  DebugInfo:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: hmarr/debug-action@v3

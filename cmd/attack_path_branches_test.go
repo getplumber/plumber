@@ -64,7 +64,7 @@ func TestPlatformPushKeepsThePathShapeWithBranches(t *testing.T) {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	if want := []string{"entry_kind", "finding_hashes", "id", "jobs", "modifiers", "reach_kind", "sentence", "state", "tier"}; !reflect.DeepEqual(keys, want) {
+	if want := []string{"claims", "entry_kind", "finding_hashes", "id", "jobs", "modifiers", "reach_kind", "sentence", "state", "tier"}; !reflect.DeepEqual(keys, want) {
 		t.Errorf("pushed path keys = %v, want %v", keys, want)
 	}
 	var jobs, hashes []string

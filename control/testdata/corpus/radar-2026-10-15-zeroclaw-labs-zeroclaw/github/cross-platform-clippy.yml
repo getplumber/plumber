@@ -1,0 +1,58 @@
+name: Cross-Platform Clippy
+
+on:
+  # Manual plus scheduled only: keep platform-gated lint regressions visible
+  # without adding macOS/Windows latency to the required PR gate.
+  workflow_dispatch:
+  schedule:
+    - cron: "17 10 * * 1"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  clippy:
+    name: Clippy (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+        with:
+          toolchain: 1.98.0
+          components: clippy
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        id: rust-cache
+        with:
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/master' }}
+      - name: Ensure web/dist placeholder exists
+        shell: bash
+        run: mkdir -p web/dist && touch web/dist/.gitkeep
+      - name: Clippy
+        shell: bash
+        run: |
+          bash scripts/ci/run_clippy.sh \
+            --scope workspace \
+            --target ${{ matrix.target }} \
+            --summary-title "Cross-platform Clippy diagnostics: ${{ matrix.target }}" \
+            --log-name cargo-clippy-${{ matrix.target }}.log
+        env:
+          RUST_CACHE_HIT: ${{ steps.rust-cache.outputs.cache-hit }}

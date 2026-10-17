@@ -1,0 +1,41 @@
+name: Test Charts
+on:
+  - pull_request
+  - push
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  chart-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: azure/setup-helm@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          check-latest: true
+      - uses: helm/chart-testing-action@v2
+      - name: chart-testing (list-changed)
+        id: list-changed
+        run: |
+          changed=$(ct list-changed --target-branch ${{ github.event.repository.default_branch }} --chart-dirs deploy/charts)
+          if [[ -n "$changed" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: chart-testing (lint)
+        if: steps.list-changed.outputs.changed == 'true'
+        run: ct lint --target-branch ${{ github.event.repository.default_branch }} --chart-dirs deploy/charts --github-groups
+      - uses: helm/kind-action@v1
+        if: steps.list-changed.outputs.changed == 'true'
+      - name: chart-testing (install)
+        if: steps.list-changed.outputs.changed == 'true'
+        run: |
+          kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.3/cert-manager.crds.yaml
+          kubectl apply -f ./deploy/crds
+          ct install --target-branch ${{ github.event.repository.default_branch }} --chart-dirs deploy/charts --github-groups

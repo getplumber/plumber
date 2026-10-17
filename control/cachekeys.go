@@ -112,15 +112,21 @@ func openFamily(t keyTemplate) bool {
 // evidence is exactly the guess this program refuses to make. Otherwise,
 // unless either side's family is itself open (openFamily), the families
 // must agree; every part up to the shorter template's length must match
-// (keyPart.matches), except at the boundary where the lengths differ and
-// the shorter template is a restore-keys prefix: a prefix does not
-// necessarily end on a "-" boundary (a restore-keys value of "node-v"
-// must still match a saved key "node-v20-<hash>"), so there the longer
-// side's same-position literal only needs to start with the shorter
-// side's, not equal it. Two templates that are both exact (neither a
-// prefix) must also agree on length, so a literal remainder on the
-// longer one (a different cache that merely shares a prefix) never
-// matches.
+// (keyPart.matches), except at the last overlapping position when the
+// side that ends its own parts there is marked a restore-keys prefix: a
+// prefix does not necessarily end on a "-" boundary (a restore-keys
+// value of "node-v" must still match a saved key "node-v20-<hash>", and,
+// with the same part count on both sides, a restore-keys value of
+// "deps-Linux-n" must still match a saved key "deps-Linux-npm"), so
+// there the other side's same-position literal only needs to start with
+// the prefix side's, not equal it (shorterIsPrefixBoundary carries the
+// full rule, whatever the two sides' part counts). Everywhere else,
+// unequal lengths never match: GitHub requires the saved key to start
+// with the restore-keys value, so a prefix with MORE parts than the
+// other side cannot be a prefix of it, whatever its own literal text
+// reads, and two templates that are both exact (neither a prefix) must
+// also agree on length, so a literal remainder on the longer one (a
+// different cache that merely shares a prefix) never matches either.
 func (a keyTemplate) Matches(b keyTemplate) bool {
 	if a.unknown || b.unknown {
 		return true
@@ -134,7 +140,7 @@ func (a keyTemplate) Matches(b keyTemplate) bool {
 	}
 	for i := 0; i < n; i++ {
 		ap, bp := a.parts[i], b.parts[i]
-		if i == n-1 && len(a.parts) != len(b.parts) {
+		if i == n-1 {
 			if shorterIsPrefixBoundary(a, b, ap, bp) {
 				continue
 			}
@@ -143,7 +149,10 @@ func (a keyTemplate) Matches(b keyTemplate) bool {
 			return false
 		}
 	}
-	if !a.prefix && !b.prefix && len(a.parts) != len(b.parts) {
+	if len(a.parts) < len(b.parts) && !a.prefix {
+		return false
+	}
+	if len(b.parts) < len(a.parts) && !b.prefix {
 		return false
 	}
 	return true
@@ -151,19 +160,22 @@ func (a keyTemplate) Matches(b keyTemplate) bool {
 
 // shorterIsPrefixBoundary reports whether the comparison at the last
 // overlapping position is a restore-keys string-prefix check rather than
-// an ordinary part match: the shorter template (fewer parts) is marked
-// prefix and both the boundary parts are resolved literals, in which
-// case the longer side's literal must start with the shorter side's
-// (case-insensitively, the same rule a literal match itself would apply
-// if the two were the same semantic class; restore-keys text is plain,
-// so this stays a simple, case-sensitive prefix test). false when the
+// an ordinary part match: one side ends its own parts at this position
+// (it has no more parts afterwards, whether or not the other side does
+// too) and is marked prefix, and both boundary parts are resolved
+// literals, in which case the other side's literal must start with the
+// prefix side's (a simple, case-sensitive prefix test: restore-keys text
+// is plain, not an os/arch slot). A side that does not end here (it has
+// further parts the loop never reaches) never triggers this rule even
+// when marked prefix, so a prefix with MORE parts than the other side
+// still falls through to an ordinary, failing part match. false when the
 // boundary does not describe that shape at all, so the caller falls back
 // to an ordinary keyPart.matches call.
 func shorterIsPrefixBoundary(a, b keyTemplate, ap, bp keyPart) bool {
 	switch {
-	case len(a.parts) < len(b.parts) && a.prefix:
+	case len(a.parts) <= len(b.parts) && a.prefix:
 		return !ap.open && !bp.open && strings.HasPrefix(bp.literal, ap.literal)
-	case len(b.parts) < len(a.parts) && b.prefix:
+	case len(b.parts) <= len(a.parts) && b.prefix:
 		return !ap.open && !bp.open && strings.HasPrefix(ap.literal, bp.literal)
 	}
 	return false

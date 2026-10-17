@@ -1,0 +1,70 @@
+name: "Trufflehog evidence integration example"
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  trufflehog-secret-scan-and-evidence:
+    runs-on: ubuntu-latest
+    env:
+      REGISTRY_DOMAIN: ${{ vars.JF_URL }}
+      REPO_NAME: 'trufflehog-repo'
+      IMAGE_NAME: 'docker-trufflehog-image'
+      VERSION: ${{ github.run_number }}
+      BUILD_NAME: 'trufflehog-build'
+      ATTACH_OPTIONAL_CUSTOM_MARKDOWN_TO_EVIDENCE: true
+
+    steps:
+      # Setup JFrog CLI and checkout repository
+      - name: Setup jfrog cli
+        uses: jfrog/setup-jfrog-cli@v4
+        env:
+          JF_URL: ${{ vars.ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.ARTIFACTORY_ACCESS_TOKEN }}
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            examples/trufflehog/**
+          sparse-checkout-cone-mode: false
+      - name: Build and publish Docker Image to Artifactory
+        run: |
+          cd examples/trufflehog
+          docker build . --file Dockerfile --tag $REGISTRY_DOMAIN/$REPO_NAME/$IMAGE_NAME:$VERSION
+          jf rt docker-push $REGISTRY_DOMAIN/$REPO_NAME/$IMAGE_NAME:$VERSION $REPO_NAME --build-name=$BUILD_NAME --build-number=${{ github.run_number }}
+          cd -
+
+      # Run Trufflehog secret scan
+      - name: Run Trufflehog secret scan
+        run: |
+          echo "Running Trufflehog secret scan..."
+          docker run --rm -v "$PWD:/pwd" trufflesecurity/trufflehog:latest filesystem /pwd --json > trufflehog-results.jsonl || true
+          echo "Trufflehog scan completed"
+
+      # This is an optional step to generate a custom markdown report
+      - name: Generate optional custom markdown report
+        if: env.ATTACH_OPTIONAL_CUSTOM_MARKDOWN_TO_EVIDENCE == 'true'
+        run: |
+          python ./examples/trufflehog/process_trufflehog_results.py trufflehog-results.jsonl
+
+      # Attaching the evidence to associated package
+      - name: Attach evidence using jfrog cli
+        run: |
+          ls
+          python ./examples/trufflehog/jsonl_to_json_converted.py
+          # The JSONL still holds Raw/RawV2. Only the sanitized predicate and markdown are published.
+          rm -f trufflehog-results.jsonl
+          jf evd create \
+            --package-name $IMAGE_NAME \
+            --package-version $VERSION \
+            --package-repo-name $REPO_NAME \
+            --key "${{ secrets.PRIVATE_KEY }}" \
+            --key-alias "${{ vars.EVIDENCE_KEY_ALIAS }}" \
+            --predicate ./trufflehog.json \
+            --predicate-type https://trufflesecurity.com/TruffleHog \
+            ${{ env.ATTACH_OPTIONAL_CUSTOM_MARKDOWN_TO_EVIDENCE == 'true' && '--markdown "report_readme.md"' || '' }}
+          echo "Evidence attachment completed successfully"
+    

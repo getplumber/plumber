@@ -400,6 +400,16 @@ metadata).
 - uses: mycompany/internal-action@v2   # via trustedGithubActions: [mycompany/*]
 ```
 
+An action that is not pinned by commit SHA and also fails this rule
+anchors its attack path at the dependency ceiling (High) rather than
+the pinning-only one (Medium): nobody vetted the source, so a
+compromise is more likely. A first-party install script (fetched from
+the scanned repository's own owner or domain) or a sibling
+organisation's redirected action reads as an insider instead, held at
+the Medium ceiling and named by that owner in the path's `So` line,
+never by the generic "if this action is compromised" wording an
+outside source gets.
+
 **Config.**
 
 ```yaml
@@ -769,6 +779,15 @@ not flagged. This is a static, text-level match on the action's source: it
 catches the in-the-open shape, not an author who deliberately hides the
 fetch (that is ISSUE-715). A clean result asserts "no known pattern seen",
 not "safe".
+
+A SHA-pinned action this rule flags anchors no path at all when its
+own download never actually runs: a preinstalled-tool check that
+fires on the job's own hosted runner image, or a download the action
+itself verifies against a pinned digest. When the fetch does run and
+is unguarded and unverified, the path's actor names the actual host
+the code comes from ("if raw.githubusercontent.com is compromised"),
+unless that host is the scanned repository's own, in which case it
+reads as an insider instead, held at the Medium ceiling.
 
 ---
 
@@ -1545,6 +1564,15 @@ part of the line does.
 `https://example.com/*` exempts `example.com/...` but never bleeds
 into `evil.example.com/...`.
 
+A fetch from the scanned repository's own domain reads as a
+first-party source: an insider who can change it, held at the Medium
+ceiling, never the outsider wording a stranger's host gets. A fetch
+pinned to the exact commit the workflow itself runs at is an
+immutable self-reference instead, no dependency at all: the only
+party who could ever change it already committed here. The same
+fetch pinned to a branch or tag name, rather than a commit, is not
+immutable and falls back to the first-party reading above.
+
 ### Canonical fix
 
 ```yaml
@@ -1616,6 +1644,11 @@ jobs:
 Alternative: drop the head checkout entirely and let the job operate
 only on the base repo's content.
 
+A job the rule flags behind a label or another maintainer action
+still anchors a path, but at the High ceiling, Medium instead when
+the checkout also only ever pulls the commit the maintainer
+approved: the gate narrows who gets in, it does not clear the finding.
+
 ---
 
 ## ISSUE-804 — `pull-request-target-with-head-checkout`
@@ -1661,6 +1694,11 @@ requests — `github.event.pull_request.head.repo.full_name ==
 github.repository`, or a `head.repo.fork` check — is recognised as a
 valid mitigation: fork-controlled code never runs, so a job carrying
 such a guard is not flagged.
+
+A job this rule still flags, gated behind a label or another
+maintainer action, holds its attack path at the High ceiling instead
+of Critical, Medium when the job also only ever checks out the
+commit the maintainer approved.
 
 ---
 

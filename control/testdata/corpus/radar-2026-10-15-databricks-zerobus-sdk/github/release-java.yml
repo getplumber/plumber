@@ -1,0 +1,134 @@
+name: Build Java
+run-name: "Build Java SDK ${{ github.ref_name }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      jni-run-id:
+        description: "Run ID of the release-jni.yml build containing JNI artifacts."
+        required: true
+        type: string
+      macos-binaries-release:
+        description: "Optional GitHub Release tag holding laptop-built libzerobus_jni-osx-*.dylib files. Leave empty to skip extra macOS import (jni-osx-* artifacts from the JNI run are still packed)."
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  build-jar:
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Get JFrog OIDC token
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/jfrog-oidc-token.sh"
+
+      - name: Download JNI artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "${{ inputs.jni-run-id }}" \
+            --repo databricks/zerobus-sdk \
+            --pattern 'jni-*' \
+            --dir jni-artifacts/
+          echo "Downloaded JNI artifacts:"
+          find jni-artifacts/ -type f | sort
+
+      - name: Place JNI libraries in native directory
+        working-directory: java
+        run: |
+          for dir in ../jni-artifacts/jni-*/; do
+            platform=$(basename "$dir" | sed 's/jni-//')
+            mkdir -p src/main/resources/native/"$platform"
+            cp "$dir"/* src/main/resources/native/"$platform"/
+          done
+
+      - name: Import macOS dylibs from release
+        if: inputs.macos-binaries-release != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ inputs.macos-binaries-release }}
+        working-directory: java
+        run: |
+          set -euo pipefail
+          for arch in x86_64 aarch64; do
+            dest="src/main/resources/native/osx-$arch"
+            mkdir -p "$dest"
+            gh release download "$REF" \
+              --repo "${{ github.repository }}" \
+              --pattern "libzerobus_jni-osx-$arch.dylib" \
+              --dir "$dest"
+            test -f "$dest/libzerobus_jni-osx-$arch.dylib"
+            mv "$dest/libzerobus_jni-osx-$arch.dylib" "$dest/libzerobus_jni.dylib"
+          done
+
+      - name: Set up Java
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
+        with:
+          java-version: 11
+          distribution: temurin
+
+      - name: Configure Maven registry
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/configure-maven.sh"
+
+      - name: Build JAR
+        working-directory: java
+        run: mvn -DskipTests=true --batch-mode package
+
+      - name: Verify JAR bundles JNI libraries
+        working-directory: java
+        run: |
+          required_entries=(
+            native/linux-x86_64/libzerobus_jni.so
+            native/linux-aarch64/libzerobus_jni.so
+            native/linux-musl-x86_64/libzerobus_jni.so
+            native/linux-musl-aarch64/libzerobus_jni.so
+            native/windows-x86_64/zerobus_jni.dll
+          )
+          if [[ -f src/main/resources/native/osx-x86_64/libzerobus_jni.dylib ]]; then
+            required_entries+=(
+              native/osx-x86_64/libzerobus_jni.dylib
+              native/osx-aarch64/libzerobus_jni.dylib
+            )
+          fi
+
+          shopt -s nullglob
+          jars=(target/zerobus-ingest-sdk-*.jar)
+          checked=0
+          for jar in "${jars[@]}"; do
+            case "$jar" in
+              *-sources.jar|*-javadoc.jar) continue ;;
+            esac
+            checked=$((checked + 1))
+            echo "Verifying native entries in $jar"
+            for entry in "${required_entries[@]}"; do
+              if ! jar tf "$jar" | grep -Fxq "$entry"; then
+                echo "ERROR: $jar is missing $entry"
+                echo "Native entries present:"
+                jar tf "$jar" | grep '^native/' | sort || true
+                exit 1
+              fi
+            done
+          done
+
+          if [[ "$checked" -eq 0 ]]; then
+            echo "ERROR: no deployable zerobus-ingest-sdk JARs found"
+            exit 1
+          fi
+
+      - name: Upload JAR
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: java-jar
+          path: |
+            java/target/*.jar
+            java/target/*.pom
+          if-no-files-found: error

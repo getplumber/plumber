@@ -1,0 +1,43 @@
+# Tests that require access to a cloud JFrog platform instance
+name: Cloud Instance Tests
+on:
+  push:
+    branches:
+      - '**'
+    tags-ignore:
+      - '**'
+  # Triggers the workflow on labeled PRs only.
+  pull_request_target:
+    types: [ labeled ]
+# Ensures that only the latest commit is running for each PR at a time.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  Cloud-Tests:
+    if: contains(github.event.pull_request.labels.*.name, 'safe to test') || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          # Safe here: this job only runs after a maintainer applies the 'safe to test'
+          # label (see the 'if' above), which is the trust decision this flag requires.
+          allow-unsafe-pr-checkout: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install
+        run: npm install --no-fund
+
+      - name: Run tests
+        run: npm t
+        env:
+          ADO_JFROG_PLATFORM_URL: ${{ secrets.PLATFORM_URL }}
+          ADO_JFROG_PLATFORM_ACCESS_TOKEN: ${{ secrets.PLATFORM_ADMIN_TOKEN }}
+          ADO_JFROG_PLATFORM_DOCKER_DOMAIN: ${{ secrets.CONTAINER_REGISTRY }}
+          ADO_SKIP_TESTS: unit,proxy,generic,installer,npm,maven,gradle,conan,nuget,dotnet,go,pip

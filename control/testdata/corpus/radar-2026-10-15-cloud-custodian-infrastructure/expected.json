@@ -1,0 +1,30 @@
+{
+  "source": "https://github.com/cloud-custodian/infrastructure",
+  "commit": "4a46f2bad5e7bdddb68b15555e5e9dcdf09d6a6c",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": false
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/ci.yaml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High unprotected `main` path was judged overstated: the lint job it names holds no secret, only the inherited default token, a governance finding rather than an escalation, Low. The default token scope could not be observed (no run retained since 2022), so it stays unknown here.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "unprotected_push",
+        "subjectContains": "main",
+        "tier": "low"
+      }
+    ]
+  }
+}

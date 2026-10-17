@@ -1,0 +1,46 @@
+name: Sync Docs to Developer Hub
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+  workflow_dispatch:
+
+jobs:
+  sync-docs:
+    if: github.repository == 'run-llama/llama-agents'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source repo
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Checkout docs repo
+        uses: actions/checkout@v4
+        with:
+          repository: run-llama/developers
+          token: ${{ secrets.DEVELOPER_HUB_TOKEN }}
+          path: developer-hub
+
+      - name: Sync docs
+        run: ./scripts/sync-docs-to-developer-hub.sh developer-hub
+
+      - name: Commit and push
+        working-directory: developer-hub
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add src/content/docs/python/llamaagents/ api-reference/python/workflows/
+
+          if git diff --staged --quiet; then
+            echo "No docs changes to sync."
+            exit 0
+          fi
+
+          SOURCE_SHA="${GITHUB_SHA::8}"
+          git commit -m "sync: llama-agents docs from run-llama/llama-agents@${SOURCE_SHA}"
+          git push

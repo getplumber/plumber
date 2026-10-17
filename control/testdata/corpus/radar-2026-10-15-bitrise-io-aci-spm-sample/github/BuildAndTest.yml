@@ -1,0 +1,20 @@
+name: Build & Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    # https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#choosing-github-hosted-runners
+    # https://github.com/actions/virtual-environments/tree/main/images/macos
+    runs-on: macos-12
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Build
+        run: swift build -v
+      - name: Run tests
+        run: swift test -v

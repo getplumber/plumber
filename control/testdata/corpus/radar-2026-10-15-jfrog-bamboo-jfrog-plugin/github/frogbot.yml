@@ -1,0 +1,89 @@
+name: "Frogbot Security Scan"
+
+on:
+  # Trigger on pull requests for scanning
+  pull_request_target:
+    types: [ opened, synchronize ]
+  # Trigger on schedule for scanning and fixing
+  schedule:
+    # The repository will be scanned once a day at 00:00 GMT
+    - cron: "0 0 * * *"
+
+permissions:
+  contents: write
+  pull-requests: write
+  security-events: write
+
+jobs:
+  # Job for scanning pull requests
+  scan-pull-request:
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    # A pull request needs to be approved, before Frogbot scans it. Any GitHub user who is associated with the
+    # "frogbot" GitHub environment can approve the pull request to be scanned.
+    environment: frogbot
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      # Install prerequisites
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      - uses: jfrog/frogbot@v2
+        env:
+          # [Mandatory]
+          # JFrog platform URL (This functionality requires version 3.29.0 or above of Xray)
+          JF_URL: ${{ secrets.JF_URL }}
+
+          # [Mandatory if JF_USER and JF_PASSWORD are not provided]
+          # JFrog access token with 'read' permissions on Xray service
+          JF_ACCESS_TOKEN: ${{ secrets.JF_ACCESS_TOKEN }}
+
+          # [Mandatory]
+          # The GitHub token automatically generated for the job
+          JF_GIT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Job for scheduled scanning and creating fix pull requests
+  scan-and-fix:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # The repository scanning will be triggered periodically on the following branches
+        branch: [ "main" ]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.branch }}
+
+      # Install prerequisites
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      - uses: jfrog/frogbot@v2
+        env:
+          # [Mandatory]
+          # JFrog platform URL
+          JF_URL: ${{ secrets.JF_URL }}
+
+          # [Mandatory if JF_USER and JF_PASSWORD are not provided]
+          # JFrog access token with 'read' permissions on Xray service
+          JF_ACCESS_TOKEN: ${{ secrets.JF_ACCESS_TOKEN }}
+
+          # [Mandatory]
+          # The GitHub token automatically generated for the job
+          JF_GIT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+          # [Optional]
+          # Branch to create pull request against when fixing vulnerabilities
+          JF_GIT_BASE_BRANCH: ${{ matrix.branch }}
+
+

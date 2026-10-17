@@ -1,0 +1,53 @@
+{
+  "source": "https://github.com/ClickHouse/flink-connector-clickhouse",
+  "commit": "b291b77c49aa13595ff5d008d3e9a994e938ce84",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "copilot",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/build-and-publish-connector.yaml": "active",
+    ".github/workflows/integration-tests-cloud.yaml": "active",
+    ".github/workflows/integration-tests-scala-cloud.yaml": "active",
+    ".github/workflows/integration-tests-scala.yaml": "active",
+    ".github/workflows/integration-tests-schema-evolution-cloud.yaml": "active",
+    ".github/workflows/integration-tests-schema-evolution.yaml": "active",
+    ".github/workflows/integration-tests.yaml": "active",
+    ".github/workflows/nightly-java-client.yml": "active",
+    ".github/workflows/tests-cloud.yaml": "active",
+    ".github/workflows/tests-nightly.yaml": "active",
+    ".github/workflows/tests-scala-cloud.yaml": "active",
+    ".github/workflows/tests-scala.yaml": "active",
+    ".github/workflows/tests.yaml": "active",
+    ".github/workflows/update-version-and-create-GH-release.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The Critical pull_request_target path was judged false: every cloud test job needs a `gate` job that lets a fork pull request through only when a maintainer applies `run-cloud-tests` (same-repository pull requests come from writers), at the labelled head commit, so it holds at Medium at most; the Critical Gradle cache path into the Maven Central release was judged overstated: its writers are pushes, dispatches and the gated runs, no outsider, so it holds at High at most. The engine assembles no pull_request_target path at all here, where the spec keeps a maintainer-approved Medium one (section 5.3: the `gate` predecessor lets a fork in on the `run-cloud-tests` label, at the labelled head commit); the ceiling holds either way, so the gap is recorded here rather than asserted. No job here declares cache-mode, so GitHub keeps the cache of every low-trust run read-only and grants no job cache write: ISSUE-705 is silent and no cache path exists, so the cache ceiling admits none.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "pr_target",
+        "subjectContains": "github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.ref",
+        "tier": "medium"
+      },
+      {
+        "entryKind": "poisoned_cache",
+        "subjectContains": "",
+        "tier": "none"
+      }
+    ]
+  }
+}

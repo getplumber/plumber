@@ -1,0 +1,48 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+    tags:
+      - v*
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ ubuntu-latest, macos-latest, windows-latest ]
+        go: [ 'stable', 'oldstable' ]
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.os }} - go${{ matrix.go }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+      - name: Test gofmt
+        if: runner.os == 'Linux'
+        run: test -z "$(gofmt -l .)"
+      - name: Run go test
+        run: go test ./...
+      - name: Run go build
+        run: go build -o gokey ./cmd/gokey
+      - name: Command line password is preferred to a password file
+        if: runner.os == 'Linux'
+        run: |
+          echo -n wrong > /tmp/pass
+          [ $(./gokey -p hunter2 -P /tmp/pass -r test) == 'X"fZba:0S>' ]
+      - name: Password file is preferred to the environment variable
+        if: runner.os == 'Linux'
+        run: |
+          echo -n hunter2 > /tmp/pass
+          [ $(./gokey -P /tmp/pass -r test) == 'X"fZba:0S>' ]
+        env:
+          GOKEY_ROOT_PASS: wrong
+      - name: Set password through the environment variable
+        if: runner.os == 'Linux'
+        run: |
+          [ $(./gokey -r test) == 'X"fZba:0S>' ]
+        env:
+          GOKEY_ROOT_PASS: hunter2

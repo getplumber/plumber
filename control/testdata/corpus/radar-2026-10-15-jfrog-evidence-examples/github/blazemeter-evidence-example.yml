@@ -1,0 +1,96 @@
+name: "BlazeMeter evidence integration example"
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  actions: read
+
+jobs:
+  package-docker-image-with-blazemeter-evidence:
+    runs-on: ubuntu-latest
+    env:
+      REGISTRY_URL: ${{ vars.JF_URL}}
+      REPO_NAME: 'docker-blazemeter-repo'
+      IMAGE_NAME: 'docker-blazemeter-image'
+      TAG_NAME: ${{ github.run_number }}
+      BUILD_NAME: 'blazemeter-docker-build'
+      BUILD_NUMBER: ${{ github.run_number }}
+      BLAZEMETER_API_KEY: ${{ secrets.BLAZEMETER_API_KEY }}
+      BLAZEMETER_API_SECRET: ${{ secrets.BLAZEMETER_API_SECRET }}    
+      BLAZEMETER_TEST_ID: "14909295"
+      ATTACH_OPTIONAL_MARKDOWN_TO_EVIDENCE: true
+    steps:
+      - uses: jfrog/setup-jfrog-cli@v4
+        name: jfrog-cli setup
+        env:
+          JF_URL: ${{ vars.ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.JF_ACCESS_TOKEN }}
+      
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            examples/blazemeter/**
+          sparse-checkout-cone-mode: false
+      
+      - name: Build and publish Docker image
+        run: | 
+          docker build --file ./examples/blazemeter/app/Dockerfile ./examples/blazemeter/app --tag ${{ env.REGISTRY_URL }}/${{ env.REPO_NAME }}/${{ env.IMAGE_NAME }}:${{ env.TAG_NAME }}
+          jf rt docker-push ${{ env.REGISTRY_URL }}/${{ env.REPO_NAME }}/${{ env.IMAGE_NAME }}:${{ env.TAG_NAME }} ${{ env.REPO_NAME }} --build-name=${{ env.BUILD_NAME }} --build-number=${{ env.BUILD_NUMBER }}
+      
+      - name: Deploy app 
+        # In a real scenario, this step would deploy your Docker image to a staging environment accessible by BlazeMeter.
+        run: |
+          echo "Simulating deployment of ${{ env.IMAGE_NAME }}:${{ env.TAG_NAME }} to a staging environment."
+
+      - name: Run BlazeMeter Performance Test
+        id: blazemeter_test_run
+        uses: Blazemeter/github-action@v8.5
+        with:
+          apiKey: ${{ env.BLAZEMETER_API_KEY }}
+          apiSecret: ${{ env.BLAZEMETER_API_SECRET }}
+          testID: ${{ env.BLAZEMETER_TEST_ID }}
+          continuePipeline: "false" 
+
+      - name: Fetch BlazeMeter Results
+        working-directory: examples/blazemeter
+        run: |
+          LATEST_RUN_INFO=$(curl -s -X GET \
+            "https://a.blazemeter.com/api/v4/masters?testId=${{ env.BLAZEMETER_TEST_ID }}" \
+            -H "Content-Type: application/json" \
+            -u "${{ env.BLAZEMETER_API_KEY }}:${{ env.BLAZEMETER_API_SECRET }}" | \
+            jq -r '.result | sort_by(.id) | reverse | .[0]')
+
+          TEST_RUN_ID=$(echo "$LATEST_RUN_INFO" | jq -r '.id')
+
+          echo "Fetching BlazeMeter aggregate results"
+          BLAZEMETER_RESULTS=$(curl -s -X GET \
+            "https://a.blazemeter.com/api/v4/masters/$TEST_RUN_ID/reports/aggregatereport/data" \
+            -H "Content-Type: application/json" \
+            -u "${{ env.BLAZEMETER_API_KEY }}:${{ env.BLAZEMETER_API_SECRET }}")
+
+          echo "$BLAZEMETER_RESULTS" > blazemeter-predicate.json
+
+      - name: Generate optional custom markdown report
+        if: env.ATTACH_OPTIONAL_MARKDOWN_TO_EVIDENCE == 'true'
+        working-directory: examples/blazemeter
+        run: |
+          ARTIFACT_NAME="${{ env.REGISTRY_URL }}/${{ env.REPO_NAME }}/${{ env.IMAGE_NAME }}:${{ env.TAG_NAME }}"
+          python scripts/generate-markdown-report.py blazemeter-predicate.json "$ARTIFACT_NAME" "${{ env.BLAZEMETER_TEST_ID }}" > blazemeter-results.md
+
+      - name: Attach evidence to the package
+        working-directory: examples/blazemeter
+        run: |
+          jf evd create \
+          --package-name $IMAGE_NAME \
+          --package-version $TAG_NAME \
+          --package-repo-name $REPO_NAME \
+          --key "${{ secrets.PRIVATE_KEY }}" \
+          --key-alias "${{ secrets.PRIVATE_KEY_ALIAS }}" \
+          --predicate "blazemeter-predicate.json" \
+          --predicate-type "http://blazemeter.com/performance-results/v1" \
+          --provider-id "blazemeter" \
+          ${{ env.ATTACH_OPTIONAL_MARKDOWN_TO_EVIDENCE == 'true' && '--markdown "blazemeter-results.md"' || '' }}

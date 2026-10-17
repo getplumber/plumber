@@ -1,0 +1,71 @@
+name: test
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        required: true
+        type: string
+        description: "From which folder this pipeline executes"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version:
+          - "3.10"
+          - "3.11"
+          - "3.12"
+          - "3.13"
+    name: "make test #${{ matrix.python-version }}"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python ${{ matrix.python-version }} + uv
+        uses: "./.github/actions/uv_setup"
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Check Python compatibility
+        id: compat
+        shell: bash
+        run: |
+          MIN_PY=$(grep -oP 'requires-python\s*=\s*">=\K[0-9]+\.[0-9]+' pyproject.toml || echo "3.0")
+          CUR_PY=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+          if python3 -c "exit(0 if tuple(map(int,'$CUR_PY'.split('.'))) >= tuple(map(int,'$MIN_PY'.split('.'))) else 1)"; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Skipping: Python $CUR_PY < required $MIN_PY"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install dependencies
+        if: steps.compat.outputs.skip != 'true'
+        shell: bash
+        run: uv sync --group test --group test_integration
+
+      - name: Run core tests
+        if: steps.compat.outputs.skip != 'true'
+        shell: bash
+        run: |
+          make test
+
+      - name: Ensure the tests did not create any additional files
+        if: steps.compat.outputs.skip != 'true'
+        shell: bash
+        run: |
+          set -eu
+
+          STATUS="$(git status)"
+          echo "$STATUS"
+
+          # grep will exit non-zero if the target message isn't found,
+          # and `set -e` above will cause the step to fail.
+          echo "$STATUS" | grep 'nothing to commit, working tree clean'

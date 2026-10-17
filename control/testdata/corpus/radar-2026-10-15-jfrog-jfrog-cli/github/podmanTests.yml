@@ -1,0 +1,45 @@
+name: Podman Tests
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  Podman-tests:
+    name: Podman tests (${{ matrix.os.name }})
+    strategy:
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+          # Safe: this workflow only runs after human approval via the build-gate environment.
+          allow-unsafe-pr-checkout: true
+
+      - name: Configure Docker 29 for Legacy Support
+        run: |
+          sudo bash -c 'cat <<EOF > /etc/docker/daemon.json
+          {
+            "insecure-registries": ["localhost:8082"],
+            "features": {
+              "containerd-snapshotter": false
+            }
+          }
+          EOF'
+          sudo systemctl restart docker
+
+      - name: Setup FastCI
+        uses: jfrog-fastci/fastci@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          fastci_otel_token: ${{ secrets.FASTCI_TOKEN }}
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Run podman tests
+        run: go test -v -timeout 0 --test.podman --jfrog.url=${{ secrets.EPLUS_PLATFORM_URL }} --jfrog.adminToken=${{ secrets.EPLUS_ADMIN_TOKEN }} --test.containerRegistry=${{ secrets.CONTAINER_REGISTRY }}

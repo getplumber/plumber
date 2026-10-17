@@ -1,0 +1,44 @@
+name: "Static Analysis"
+
+on:
+  workflow_dispatch:
+  # NOTE: disabling spotbugs for now, as it does not have any official release supporting Gradle v9
+#  push:
+#    branches:
+#      - '**'
+#    tags-ignore:
+#      - '**'
+#  pull_request:
+
+permissions:
+  checks: write
+
+jobs:
+  spotbugs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      # Install required tools
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: "zulu"
+          java-version: "17"
+
+      # Run tests
+      - name: Run Spotbugs
+        run: ./gradlew clean spotbugs
+
+      # Show Spotbugs report
+      - name: Show Spotbugs report
+        uses: jwgmeligmeyling/spotbugs-github-action@master
+        with:
+          path: "build/reports/spotbugs/main/spotbugs.xml"
+        if: failure()
+
+      # Stop Gradle daemon
+      - name: Stop Gradle
+        run: ./gradlew --stop
+        if: always()

@@ -1,0 +1,74 @@
+name: Report Integration Test Skip
+
+# Posts the PR-open "skipped" placeholder for the required
+# `Node.js Integration Tests` check.
+#
+# Why a separate workflow (not an inline job in trigger-integration-tests.yml):
+#   - `Node.js Integration Tests` is a required status check. A fork PR runs its
+#     own `pull_request` workflows with a READ-ONLY GITHUB_TOKEN, so an inline
+#     `github.token` stub can't post the check on a fork head (checks.create
+#     403s). That left fork PRs unable to satisfy the required check and stuck
+#     out of the merge queue.
+#   - `workflow_run` workflows always run in THIS (base) repo's context using the
+#     definition from the default branch, with a read-write token — even when the
+#     triggering run came from a fork. So this can post the placeholder on any PR
+#     head, fork or not, letting every PR auto-enqueue with no label.
+#
+# The required check is PINNED to the driver-test app's integration id in the
+# ruleset, so the placeholder must be posted BY that app — hence this mints the
+# INTEGRATION_TEST_APP token (scoped to this repo) and posts with it, rather than
+# using `github.token` (github-actions app), which would not satisfy the pinned
+# gate. Secrets are available here because this runs in the base-repo context. The
+# real suite is unaffected: it runs as the required gate on the `merge_group`
+# commit (also posted by the driver-test app) and as a label preview.
+#
+# SECURITY: runs with a write token in a privileged context. It MUST NOT check out
+# or execute any PR/fork-controlled content — it only calls checks.create with a
+# static body; the sole fork-controlled input is the opaque `workflow_run.head_sha`
+# passed to the API. Do not add `actions/checkout` or a `run:` step that executes
+# repo content here.
+
+on:
+  workflow_run:
+    workflows: ['Trigger Integration Tests']
+    types: [requested]
+
+jobs:
+  report-skip:
+    # Only for PR-triggered runs; the merge_group run posts the real required check.
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    permissions:
+      checks: write
+    steps:
+      - name: Generate GitHub App token (this repo)
+        id: app-token
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        with:
+          app-id: ${{ secrets.INTEGRATION_TEST_APP_ID }}
+          private-key: ${{ secrets.INTEGRATION_TEST_PRIVATE_KEY }}
+          owner: databricks
+          repositories: databricks-sql-nodejs
+
+      - name: Post skipped Node.js Integration Tests check
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'Node.js Integration Tests',
+              head_sha: process.env.HEAD_SHA,
+              status: 'completed',
+              conclusion: 'success',
+              completed_at: new Date().toISOString(),
+              output: {
+                title: 'Skipped on PR - runs in merge queue',
+                summary: 'Node.js integration tests are skipped on ordinary PR events and run as the required gate in the merge queue. Add the `integration-test` label to preview them on an internal PR.'
+              }
+            });

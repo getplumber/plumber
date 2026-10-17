@@ -1,0 +1,51 @@
+name: E2E Tests
+on:
+  push:
+    branches:
+      - '**'
+    tags-ignore:
+      - '**'
+  workflow_dispatch:
+  pull_request_target:
+    types: [ labeled ]
+# Ensures that only the latest commit is running for each PR at a time.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  e2e-tests:
+    # To avoid running code from untrusted contributors without review, we only run E2E tests on PRs labeled 'safe to test'
+    if: contains(github.event.pull_request.labels.*.name, 'safe to test') || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    name: E2E tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Unlabel 'safe to test'
+        uses: actions-ecosystem/action-remove-labels@v1
+        if: ${{ github.event_name != 'push' && github.event_name != 'workflow_dispatch' }}
+        with:
+          labels: "safe to test"
+
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          allow-unsafe-pr-checkout: true
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Run E2E Tests
+        run: |
+          make e2e-test-ci
+        env:
+          JFROG_APPTRUST_CLI_TESTS_JFROG_URL: ${{ secrets.JFROG_APPTRUST_CLI_TESTS_JFROG_URL }}
+          JFROG_APPTRUST_CLI_TESTS_JFROG_ACCESS_TOKEN: ${{ secrets.JFROG_APPTRUST_CLI_TESTS_JFROG_ACCESS_TOKEN }}
+
+      - name: Publish Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always()
+        with:
+          files: |
+            e2e-tests-report.xml

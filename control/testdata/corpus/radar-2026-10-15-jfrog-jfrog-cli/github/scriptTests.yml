@@ -1,0 +1,154 @@
+name: Scripts Tests
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  Scripts-tests:
+    name: Script tests (${{ matrix.os.name }}-${{ matrix.os.version }})
+    defaults:
+      run:
+        shell: sh
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+            osSuffix: ""
+
+          - name: ubuntu
+            version: 22.04
+            osSuffix: ""
+
+          - name: macos
+            version: latest
+            osSuffix: ""
+
+          - name: macos
+            version: 14
+            osSuffix: ""
+
+          - name: windows
+            version: 2022
+            osSuffix: ".exe"
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+          # Safe: this workflow only runs after human approval via the build-gate environment.
+          allow-unsafe-pr-checkout: true
+
+      - name: Setup FastCI
+        uses: jfrog-fastci/fastci@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          fastci_otel_token: ${{ secrets.FASTCI_TOKEN }}
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Test install CLI - jf
+        run: |
+          sh build/installcli/jf.sh
+          jf --version
+
+      - name: Test install CLI - jfrog
+        run: |
+          sh build/installcli/jfrog.sh
+          jfrog --version
+
+      - name: Test get CLI - jf
+        run: |
+          sh build/getcli/jf.sh
+          ./jf --version
+
+      - name: Test get CLI - jfrog
+        run: |
+          sh build/getcli/jfrog.sh
+          ./jfrog --version
+
+      - name: Test setup CLI - jf (download, verify, and PATH install only)
+        run: |
+          # jf setup with no package-manager arg drops into an interactive
+          # picker; with stdin from /dev/null it fails fast (non-zero exit)
+          # rather than hanging. That's fine here - this step only checks
+          # that the download + checksum verification + PATH-install steps
+          # before it succeeded, not that the interactive wizard completed.
+          # build/setupcli/jf.sh moves the binary onto PATH (into
+          # /usr/local/bin or similar), it does not leave it in this step's
+          # working directory - and on Windows it's named jf.exe, not jf -
+          # so invoke it via PATH resolution rather than a cwd-relative path.
+          out=$(sh build/setupcli/jf.sh </dev/null 2>&1 || true)
+          printf '%s\n' "$out"
+          echo "$out" | grep -q "Checksum verified" || exit 1
+          echo "$out" | grep -q "was installed in" || exit 1
+
+      - name: Check Windows Certificate Expiration Date
+        shell: pwsh
+        run: |
+          $signature = Get-AuthenticodeSignature -FilePath ./jfrog.exe
+          $expirationDate = $signature.SignerCertificate.NotAfter
+          Write-Host "Certificate Expiration Date: $expirationDate"
+          $daysUntilExpiration = ($expirationDate - (Get-Date)).Days
+          if ($daysUntilExpiration -lt 30) {
+            Write-Host "The JFrog CLI Windows binary's certificate will expire within $daysUntilExpiration days."
+            exit 1
+          }
+        if: matrix.os.name == 'windows'
+
+      - name: Test Build CLI - sh
+        run: |
+          rm -f ./jf
+          sh build/build.sh
+          ./jf --version
+        if: matrix.os.name == 'macos' || matrix.os.name == 'ubuntu'
+
+      - name: Test Build CLI - bat
+        run: |
+          rm ./jfrog.exe
+          build/build.bat
+          ./jfrog.exe --version
+        if: matrix.os.name == 'windows'
+
+      - name: Test install npm - v2
+        working-directory: build/npm/v2
+        # Prior to the release, we set the new version in the package.json files, introducing the pre-released version.
+        # This adjustment may result in an attempt to download a version that hasn't been published to releases.jfrog.io yet.
+        # To handle it, we fetch the most recent JFrog CLI release and store it in the latest_version param.
+        run: |
+          latest_version=$(npm view jfrog-cli-v2 version)
+          npm version $latest_version --allow-same-version
+          npm install --no-audit
+          ./bin/jfrog${{ matrix.os.osSuffix }} --version
+
+      - name: Test install npm - v2-jf
+        working-directory: build/npm/v2-jf
+        # Prior to the release, we set the new version in the package.json files, introducing the pre-released version.
+        # This adjustment may result in an attempt to download a version that hasn't been published to releases.jfrog.io yet.
+        # To handle it, we fetch the most recent JFrog CLI release and store it in the latest_version param.
+        run: |
+          latest_version=$(npm view jfrog-cli-v2-jf version)
+          npm version $latest_version --allow-same-version
+          npm install --no-audit
+          ./bin/jf${{ matrix.os.osSuffix }} --version
+
+  checksum-verification-unit-tests:
+    name: Install script checksum verification (unit tests)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+
+      - name: Setup FastCI
+        uses: jfrog-fastci/fastci@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          fastci_otel_token: ${{ secrets.FASTCI_TOKEN }}
+
+      - name: Run install script checksum verification tests
+        run: sh build/scripts_test/run_tests.sh

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/getplumber/plumber/control"
 	"github.com/getplumber/plumber/internal/runcache"
@@ -492,5 +493,73 @@ func TestExplainAttackPrintsEveryFindingInFull(t *testing.T) {
 		if again.String() != got {
 			t.Errorf("explain -a 1 %s:\n%s\nwant:\n%s", name, again.String(), got)
 		}
+	}
+}
+
+// With claims on the path, `explain -a` prints a Claims section after
+// the block, one line per claim, its kind, subject, state and source
+// aligned in columns, in claim order.
+func TestExplainAttackPrintsTheClaimsSection(t *testing.T) {
+	root := withCacheDir(t)
+	p := control.AttackPath{
+		ID: "c1", Tier: control.TierLow, BaseTier: control.TierLow,
+		Claims: []control.Claim{
+			{Kind: "entry", Subject: "o/a@v1", State: control.ClaimProven},
+			{Kind: "secret", Subject: "API_KEY", State: control.ClaimUnknown},
+			{Kind: "token", Subject: "contents", State: control.ClaimProven, Source: "declared"},
+		},
+	}
+	block := control.PathBlock{Tier: p.Tier, Entry: "entry of c1", So: "the runner can be abused", Fix: "fix it"}
+	raw, err := json.Marshal(map[string]any{
+		"plumberScore": map[string]any{"paths": []control.AttackPath{p}},
+		"pathBlocks":   []jsonPathBlock{jsonPathBlockOf(p.ID, block)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runcache.Write(root, "github/o/r.json", raw); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := runExplainAttack(&out, "1", attackSource{}, termCaps{Color: colorOff}); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	want := "       Claims\n" +
+		"         entry   o/a@v1    proven\n" +
+		"         secret  API_KEY   unknown\n" +
+		"         token   contents  proven   declared\n"
+	if !strings.Contains(got, want) {
+		t.Errorf("explain -a 1 lacks the Claims section %q:\n%s", want, got)
+	}
+}
+
+// The claim subjects and sources come from the scanned repository (job
+// names, environment names, action refs, expression references), so
+// the Claims section runs them through sanitizeTerminal like every other
+// repository-controlled text the terminal sees: an escape sequence in
+// an environment name must not reach the operator's terminal, and the
+// columns are aligned on the text that is actually printed.
+func TestClaimLinesDropControlRunesFromRepositoryText(t *testing.T) {
+	lines := claimLines([]control.Claim{
+		{Kind: "environment", Subject: "prod\x1b]0;owned\x07", State: control.ClaimUnknown, Source: "env\x1b[31m"},
+		{Kind: "token", Subject: "GITHUB_TOKEN", State: control.ClaimProven},
+	})
+	if len(lines) != 3 {
+		t.Fatalf("want a label and two claim lines, got %q", lines)
+	}
+	for _, l := range lines {
+		if strings.ContainsFunc(l, unicode.IsControl) {
+			t.Errorf("a control rune reached the terminal: %q", l)
+		}
+	}
+	want := findingIndent + "environment  prod]0;owned  unknown  env[31m"
+	if lines[1] != want {
+		t.Errorf("line = %q, want %q", lines[1], want)
+	}
+	// The state column starts at the same offset on both lines once the
+	// subject widths are measured on the printed text.
+	if idx := strings.Index(lines[2], "proven"); idx != strings.Index(lines[1], "unknown") {
+		t.Errorf("state column misaligned: %q vs %q", lines[1], lines[2])
 	}
 }

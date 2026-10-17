@@ -1,0 +1,107 @@
+name: Integration Tests CI (Java, Cloud)
+
+# Cloud counterpart of integration-tests.yaml. Same-repo branch PRs run
+# automatically via `pull_request`; fork PRs run via `pull_request_target` only
+# after the `run-cloud-tests` label is added (see the `gate` job, which keeps
+# the two paths from double-running).
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - 'examples'
+  pull_request_target:
+    types: [opened, reopened, synchronize, labeled]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - 'examples'
+  workflow_dispatch:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    # Run for
+    # - Internal PRs (from repo collaborators): auto-run on open/reopen/sync (NOT on random label additions)
+    # - External PRs (from forks): only when 'run-cloud-tests' label is added (secure, no auto-run on new commits)
+    if: >-
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request_target' && (
+                   (github.event.pull_request.head.repo.full_name == github.repository && github.event.action != 'labeled') ||
+                   (github.event.action == 'labeled' && github.event.label.name == 'run-cloud-tests')
+                 ))
+    steps:
+      - run: echo "Cloud tests approved for ${{ github.event_name }}"
+
+  test-integration-tests:
+    needs: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        clickhouse: [ "cloud" ]
+        flink: [ "1.17.2", "1.18.1", "1.19.3", "1.20.2", "2.0.0", "2.1.0" , "latest"]
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.ref }}
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'adopt'
+          architecture: x64
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+      - name: Publish locally flink-connector-clickhouse-1.17
+        run: ./gradlew :flink-connector-clickhouse-1.17:publishToMavenLocal
+      - name: Publish locally flink-connector-clickhouse-2.0.0
+        run: ./gradlew :flink-connector-clickhouse-2.0.0:publishToMavenLocal
+      - name: Generate Flink Covid App example 2.X
+        working-directory: ./examples/maven/flink-v2/covid
+        run: mvn clean install
+      - name: Generate Flink Covid App example 1.17+
+        working-directory: ./examples/maven/flink-v1.7/covid
+        run: mvn clean install
+      - name: Generate Flink SQL sink example 2.X
+        working-directory: ./examples/maven/flink-v2/sql
+        run: mvn clean install
+      - name: Generate Flink SQL sink example 1.17+
+        working-directory: ./examples/maven/flink-v1.7/sql
+        run: mvn clean install
+      - name: Execute Gradle 'integration-test' task
+        env:
+          CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
+          CLICKHOUSE_CLOUD_HOST: ${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_HOST_SMT }}
+          CLICKHOUSE_CLOUD_PASSWORD: ${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_PASSWORD_SMT }}
+          FLINK_VERSION: ${{ matrix.flink }}
+        run: ./gradlew :flink-connector-clickhouse-integration:test
+
+  remove-label:
+    needs: [ test-integration-tests ]
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    if: >-
+      always() &&
+      github.event_name == 'pull_request_target' &&
+      github.event.pull_request.head.repo.full_name != github.repository &&
+      contains(github.event.pull_request.labels.*.name, 'run-cloud-tests')
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                name: 'run-cloud-tests'
+              });
+            } catch (e) {
+              core.info(`Label removal skipped: ${e.message}`);
+            }

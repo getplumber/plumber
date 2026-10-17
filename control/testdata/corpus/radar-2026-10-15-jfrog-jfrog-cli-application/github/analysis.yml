@@ -1,0 +1,30 @@
+name: "Static Analysis"
+on:
+  push:
+    branches:
+      - '**'
+    tags-ignore:
+      - '**'
+  pull_request:
+jobs:
+  Static-Check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Generate Mocks
+        run: make generate-mock
+        
+      - name: Static Code Analysis
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: latest
+
+      - name: Check AI help coverage
+        uses: jfrog/.github/actions/ai-help-coverage@main

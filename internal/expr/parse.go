@@ -1,25 +1,20 @@
 package expr
 
-import "strings"
+import (
+	"encoding/json"
+	"strings"
+)
 
-// node is the sealed interface implemented by every AST node this
+// node is the interface every AST node this
 // package produces. It has no methods a caller would ever call; it only
 // restricts which types can appear in the tree.
-type node interface {
-	astNode()
-}
+type node interface{}
 
 type nodeAnd struct{ left, right node }
 
-func (nodeAnd) astNode() {}
-
 type nodeOr struct{ left, right node }
 
-func (nodeOr) astNode() {}
-
 type nodeNot struct{ x node }
-
-func (nodeNot) astNode() {}
 
 // nodeEq is both "==" (neq false) and "!=" (neq true).
 type nodeEq struct {
@@ -27,26 +22,20 @@ type nodeEq struct {
 	neq         bool
 }
 
-func (nodeEq) astNode() {}
-
 type nodeCall struct {
 	name string
 	args []node
 }
 
-func (nodeCall) astNode() {}
-
 type nodeStrLit struct{ val string }
-
-func (nodeStrLit) astNode() {}
 
 type nodeBoolLit struct{ val bool }
 
-func (nodeBoolLit) astNode() {}
+// nodeStrList is a literal list of strings, read off
+// `fromJSON('["a","b"]')`: contains() tests membership in it.
+type nodeStrList struct{ vals []string }
 
 type nodeRef struct{ ref string }
-
-func (nodeRef) astNode() {}
 
 // nodeUnknown stands for anything the grammar does not cover: a parse
 // failure never surfaces as an error, it surfaces as this leaf, which
@@ -56,8 +45,6 @@ func (nodeRef) astNode() {}
 // recover stays as a last-resort net for what per-operand isolation
 // cannot localize, such as a genuinely unbalanced parenthesis.
 type nodeUnknown struct{}
-
-func (nodeUnknown) astNode() {}
 
 // stripWrapper trims surrounding whitespace and, when present, the
 // "${{ ... }}" wrapper GitHub Actions expressions are usually written
@@ -198,9 +185,31 @@ func isIdentPart(c byte) bool {
 type parseFail struct{}
 
 type parser struct {
-	toks []token
-	pos  int
+	toks  []token
+	pos   int
+	depth int
 }
+
+// maxNesting bounds the recursion of the parser (and, through the tree
+// it builds, of every walker): a condition nested deeper than this is
+// no condition anyone writes, and a goroutine stack overflow is fatal,
+// not a panic, so recover() could never catch it. maxExpressionLen
+// bounds the input before lexing for the same reason.
+const (
+	maxNesting       = 64
+	maxExpressionLen = 16 * 1024
+)
+
+// enter counts one level of nesting and fails the parse past
+// maxNesting; leave undoes it.
+func (p *parser) enter() {
+	p.depth++
+	if p.depth > maxNesting {
+		panic(parseFail{})
+	}
+}
+
+func (p *parser) leave() { p.depth-- }
 
 func (p *parser) peek() token {
 	return p.toks[p.pos]
@@ -231,6 +240,9 @@ func parse(expression string) (result node) {
 			result = nodeUnknown{}
 		}
 	}()
+	if len(expression) > maxExpressionLen {
+		return nodeUnknown{}
+	}
 	p := &parser{toks: lex(expression)}
 	n := p.parseOr()
 	if p.peek().kind != tEOF {
@@ -344,6 +356,8 @@ func (p *parser) safely(fn func() node) (result node) {
 func (p *parser) parseUnary() node {
 	if p.peek().kind == tNot {
 		p.next()
+		p.enter()
+		defer p.leave()
 		return nodeNot{x: p.parseUnary()}
 	}
 	return p.parsePrimary()
@@ -353,6 +367,8 @@ func (p *parser) parsePrimary() node {
 	switch t := p.peek(); t.kind {
 	case tLParen:
 		p.next()
+		p.enter()
+		defer p.leave()
 		inner := p.parseOr()
 		p.expect(tRParen)
 		return inner
@@ -404,10 +420,33 @@ func (p *parser) parseOperand() node {
 	case tString:
 		return nodeStrLit{val: t.text}
 	case tIdent:
+		if p.peek().kind == tLParen && strings.EqualFold(t.text, "fromJSON") {
+			return fromJSONOperand(p.parseCall(t.text).(nodeCall))
+		}
 		return identOperand(t.text)
 	default:
 		panic(parseFail{})
 	}
+}
+
+// fromJSONOperand is a fromJSON call used as a function argument: the
+// list of strings it names when its one argument is a literal JSON array
+// of strings (`fromJSON('["push","schedule"]')`, the shape conditions use
+// to name a set of events), else the call itself, which evaluates
+// unknown.
+func fromJSONOperand(call nodeCall) node {
+	if len(call.args) != 1 {
+		return call
+	}
+	lit, ok := call.args[0].(nodeStrLit)
+	if !ok {
+		return call
+	}
+	var vals []string
+	if json.Unmarshal([]byte(lit.val), &vals) != nil || vals == nil {
+		return call
+	}
+	return nodeStrList{vals: vals}
 }
 
 // identOperand turns raw identifier text into the boolean literal it

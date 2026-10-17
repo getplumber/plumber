@@ -1,0 +1,56 @@
+name: Changelog
+
+# Validates the changelog.d/ fragments that replace direct edits to CHANGELOG.md's Unreleased
+# section, and renders the pending entries into the job summary so reviewers can read the
+# assembled notes without checking out the branch.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "changelog.d/**"
+      - "CHANGELOG.md"
+      - "RELEASENOTES.md"
+      - "scripts/changelog.cs"
+      - ".github/workflows/changelog.yml"
+  push:
+    branches: [main]
+    paths:
+      - "changelog.d/**"
+      - "CHANGELOG.md"
+      - "RELEASENOTES.md"
+      - "scripts/changelog.cs"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate fragments
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.x
+
+      # Fails if a fragment has an unknown category or a non-bullet body, if CHANGELOG.md's
+      # Unreleased section was edited directly, or if RELEASENOTES.md has drifted from the
+      # CHANGELOG.md it is generated from.
+      - name: Check
+        run: dotnet run scripts/changelog.cs -- --check
+
+      - name: Render pending entries
+        if: always()
+        run: |
+          {
+            echo "## Pending changelog entries"
+            echo
+            dotnet run scripts/changelog.cs -- --render 2>/dev/null || echo "_Could not render — see the Check step._"
+          } >> "$GITHUB_STEP_SUMMARY"

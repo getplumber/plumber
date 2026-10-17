@@ -1,0 +1,146 @@
+# Engineer Bot — follow-up.
+#
+# When someone replies to a review thread on a PR carrying the `engineer-bot`
+# label (or the label is applied), the bot re-evaluates the open threads in
+# catch-up mode, applies a fixup (or replies / marks blocked), and pushes to the
+# PR branch. Driven by this repo's .bot/ prompts.
+#
+# Like the author, this installs connector deps (`npm ci` via the JFrog mirror)
+# so the agent can run the MOCKED unit suite (`npm test`) to verify a fixup.
+# Unlike the author it wires NO live-warehouse env — the follow-up prompt runs
+# only unit tests and forbids the live e2e suite (no live creds in an LLM-driven
+# fixup step for no functional benefit).
+#
+# The gate below is the canonical label-gated form from the engine dogfood. It
+# ANDs with the engine-side floor; do not weaken it.
+name: Engineer Bot — Follow-up
+
+on:
+  pull_request_review_comment:
+    types: [created]
+  # `engineer-bot` label applied → catch-up over pre-existing review threads.
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: write # push fixup commits to the PR branch
+  pull-requests: write # post inline replies
+  id-token: write # JFrog OIDC exchange for npm + the engine/SDK/CLI install
+
+jobs:
+  followup:
+    # SECURITY + scope (CANONICAL label-gated model — verbatim from the engine):
+    #  - skip fork PRs — keep the model + App token out of untrusted code's reach
+    #    (critical on a PUBLIC repo);
+    #  - operate only on non-fork OPEN PRs carrying the `engineer-bot` label
+    #    (maintainer-applied opt-in; label requires triage+);
+    #  - comment path: trusted commenters only
+    #    (OWNER/MEMBER/COLLABORATOR/CONTRIBUTOR, or a bot — reviewer-bot/Copilot),
+    #    never the engineer-bot's own comments, and never a reviewer-bot reconcile
+    #    loopback. CONTRIBUTOR is included because a maintainer with PRIVATE org
+    #    membership is reported as `author_association: CONTRIBUTOR` in the webhook
+    #    payload (even though REST shows MEMBER) — without it, such a maintainer's
+    #    review comments SILENTLY fail this gate and the bot never engages. Low
+    #    risk: this path already requires a non-fork, OPEN, `engineer-bot`-labeled
+    #    PR (a maintainer-applied opt-in);
+    #  - labeled path: the `engineer-bot` label was just applied by a human.
+    if: >-
+      github.event.pull_request.head.repo.fork == false
+      && github.event.pull_request.state == 'open'
+      && (
+        (
+          github.event_name == 'pull_request_review_comment'
+          && contains(github.event.pull_request.labels.*.name, 'engineer-bot')
+          && !startsWith(github.event.comment.user.login, 'peco-engineer-bot')
+          && !contains(github.event.comment.body, '<!-- pr-review-bot:v1 reconcile -->')
+          && (
+            contains(fromJson('["OWNER","MEMBER","COLLABORATOR","CONTRIBUTOR"]'), github.event.comment.author_association)
+            || (
+              github.event.comment.user.type == 'Bot'
+              && (
+                startsWith(github.event.comment.user.login, 'peco-review-bot')
+                || startsWith(github.event.comment.user.login, 'Copilot')
+                || startsWith(github.event.comment.user.login, 'copilot')
+              )
+            )
+          )
+        )
+        || (
+          github.event_name == 'pull_request'
+          && github.event.action == 'labeled'
+          && github.event.label.name == 'engineer-bot'
+          && github.event.sender.type != 'Bot'
+          && !startsWith(github.event.sender.login, 'peco-engineer-bot')
+        )
+      )
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: engineer-bot-followup-pr-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    steps:
+      # Checkout FIRST (remote action) so the local `./` composites resolve. Check
+      # out the PR head BRANCH (not the merge ref) so fixups push back to it.
+      # persist-credentials:false; the run step sets an authenticated push remote.
+      - name: Checkout PR head branch
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # --- connector deps (for the agent's `npm test` self-verify) -------------
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20'
+
+      - name: Setup JFrog
+        uses: ./.github/actions/setup-jfrog
+
+      - name: Install connector deps (npm ci)
+        run: npm ci
+
+      # Scope the JFrog credential away from the model-driven followup step:
+      # `npm ci` above consumed ~/.npmrc, and the agent's `npm test` doesn't need
+      # the registry. (Addresses the reviewer-bot finding on the odbc onboarding PR.)
+      - name: Scrub JFrog credentials before the agent runs
+        run: |
+          rm -f ~/.npmrc
+          echo "JFROG_ACCESS_TOKEN=" >> "$GITHUB_ENV"
+
+      # --- shared bot setup ----------------------------------------------------
+      - name: Bot prelude (tokens + Node + engine install)
+        id: prelude
+        uses: ./.github/actions/bot-prelude
+        with:
+          app-id: ${{ secrets.ENGINEER_BOT_APP_ID }}
+          private-key: ${{ secrets.ENGINEER_BOT_APP_PRIVATE_KEY }}
+
+      # Run the follow-up. NOTE: no live-warehouse connection env (E2E_* /
+      # DATABRICKS_TEST_CONFIG_FILE) is wired here — the followup prompt
+      # (.bot/prompts/engineer-followup/system.md) runs only the mocked `npm test`
+      # unit suite and forbids the live e2e suite, so the agent never needs them.
+      - name: Run engineer follow-up (catch-up over all unaddressed threads)
+        env:
+          GH_TOKEN: ${{ steps.prelude.outputs.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          TRIGGER_COMMENT_ID: ${{ github.event.comment.id }}
+          MODEL_ENDPOINT: https://${{ secrets.DATABRICKS_HOST }}/serving-endpoints/databricks-claude-opus-4-8/invocations
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+          RUNNER_TEMP: ${{ runner.temp }}
+          # The agent's working tree AND the .bot/ lookup root. run.py resolves the
+          # config at <REPO_ROOT>/.bot/config.yaml. The engine has NO path default —
+          # it fails with a clear error if this is unset.
+          REPO_ROOT: ${{ github.workspace }}
+        run: |
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          python -m databricks_bot_engine.engineer_bot.run --phase followup \
+            --system-prompt "$GITHUB_WORKSPACE/.bot/prompts/engineer-followup/system.md"

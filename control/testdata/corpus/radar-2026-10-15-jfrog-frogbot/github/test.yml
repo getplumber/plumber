@@ -1,0 +1,566 @@
+name: "Go Tests - V3"
+
+on:
+  push:
+    branches: [main]
+  # Triggers the workflow on labeled PRs only.
+  pull_request_target:
+    types: [labeled]
+    branches: [main]
+
+
+# Ensures that only the latest commit is running for each PR at a time.
+# Ignores this rule for push events.
+concurrency:
+  group: ${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+env:
+  EXTERNAL_OTEL_ENDPOINT: ingress.coralogix.us:443
+  EXTERNAL_OTEL_HEADERS: "Authorization=Bearer ${{ secrets.CORALOGIX_OTEL_API_KEY }}"
+
+jobs:
+  Pretest:
+    if: contains(github.event.pull_request.labels.*.name, 'safe to test') || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Unlabel 'safe to test'
+        uses: actions-ecosystem/action-remove-labels@v1
+        if: ${{ github.event_name != 'push' }}
+        with:
+          labels: "safe to test"
+
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          allow-unsafe-pr-checkout: true
+          persist-credentials: false
+
+      - uses: jfrog/boost@v0
+        with:
+          accept_terms: yes
+
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: false
+
+      - name: Go Cache
+        uses: actions/cache@v4
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: ${{ runner.os }}-go-
+
+      # Generate mocks
+      - name: Generate mocks
+        run: go generate ./...
+
+      - name: Lint
+        run: go vet -v ./...
+
+  tests:
+    needs: Pretest
+    name: ${{ matrix.suite.name }} Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}-latest
+    env:
+      JFROG_CLI_LOG_LEVEL: "DEBUG"
+      GRADLE_OPTS: -Dorg.gradle.daemon=false
+    strategy:
+      fail-fast: false
+      matrix:
+        suite:
+          - name: 'Unit'
+
+          - name: 'Scan Repository'
+            package: 'scanrepository'
+
+          - name: 'Scan Pull Request'
+            package: 'scanpullrequest'
+
+          - name: 'Auto PR'
+            package: 'autopr'
+
+        os: [ ubuntu, windows, macos ]
+    steps:
+      # Configure prerequisites
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          allow-unsafe-pr-checkout: true
+          persist-credentials: false
+
+      - uses: jfrog/boost@v0
+        with:
+          accept_terms: yes
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: false
+
+      - name: Go Cache Dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Go Cache Build & Tests
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~\AppData\Local\go-build
+            ~/Library/Caches/go-build
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}-${{ hashFiles('**/*.go') }}
+          restore-keys: |
+            ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}-
+            ${{ runner.os }}-go-
+
+      - name: Install npm
+        uses: actions/setup-node@v3
+        with:
+          node-version: "16"
+
+      - name: Setup Python3
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.x"
+
+      - name: Install python components
+        run: python -m pip install pipenv poetry
+
+      - name: Install Mono on macOS
+        run: brew install mono
+        if: runner.os == 'macOS'
+
+      - name: Install dotnet
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "6.x"
+
+      - name: Install Mono on linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mono-devel
+
+      - name: Install NuGet on Linux
+        uses: nuget/setup-nuget@v2
+        with:
+          nuget-version: 6.11.0
+        if: runner.os == 'Linux' || runner.os == 'macOS'
+
+      - uses: awalsh128/cache-apt-pkgs-action@latest
+        if: runner.os == 'Linux'
+        with:
+          packages: apt-transport-https dirmngr gnupg ca-certificates
+          version: 1.0
+
+      - name: Install Pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 8
+
+      - name: Install Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: "adopt"
+          java-version: "11"
+
+      - name: Install Conan
+        run: |
+          python -m pip install conan
+          conan profile detect
+
+      # Generate mocks
+      - name: Generate mocks
+        run: go generate ./...
+
+      - name: Run Tests
+        if: ${{ matrix.suite.name != 'GitHub Integration' || matrix.os == 'ubuntu' }}
+        run: go test github.com/jfrog/frogbot/v3/${{ matrix.suite.package }} -v -race -timeout 50m -cover
+        env:
+          JF_URL: ${{ secrets.PLATFORM_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.PLATFORM_ADMIN_TOKEN }}
+
+  github-integration:
+    name: GitHub Integration Tests
+    needs: Pretest
+    runs-on: ubuntu-latest
+    concurrency:
+      group: github-integration-fixture
+      cancel-in-progress: false
+    env:
+      JFROG_CLI_LOG_LEVEL: "DEBUG"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          allow-unsafe-pr-checkout: true
+          persist-credentials: false
+
+      - uses: jfrog/boost@v0
+        with:
+          accept_terms: yes
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: false
+      - name: Go Cache Build & Tests
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~\AppData\Local\go-build
+            ~/Library/Caches/go-build
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}-${{ hashFiles('**/*.go') }}
+          restore-keys: |
+            ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}-
+            ${{ runner.os }}-go-
+
+      - name: Run Tests
+        run: go test -tags integration -run 'TestGitHub_' github_test.go integrationutils.go commands.go -v -race -timeout 30m -cover
+        env:
+          JF_URL: ${{ secrets.PLATFORM_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.PLATFORM_ADMIN_TOKEN }}
+          FROGBOT_V3_TESTS_GITHUB_TOKEN: ${{ secrets.FROGBOT_V3_TESTS_GITHUB_TOKEN }}
+
+  github-integration-cleanup:
+    name: Cleanup GitHub Integration Test Artifacts
+    needs: [ Pretest, github-integration ]
+    if: ${{ always() && !cancelled() && needs.Pretest.result != 'skipped' && needs.github-integration.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    concurrency:
+      group: github-integration-fixture
+      cancel-in-progress: false
+    env:
+      JFROG_CLI_LOG_LEVEL: "DEBUG"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          allow-unsafe-pr-checkout: true
+          persist-credentials: false
+
+      - uses: jfrog/boost@v0
+        with:
+          accept_terms: yes
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: false
+
+      - name: Run Cleanup
+        run: go test -tags integration -run TestHelper_CleanupIntegrationTestsArtifactsGitHub github_test.go integrationutils.go commands.go -v
+        env:
+          JF_URL: ${{ secrets.PLATFORM_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.PLATFORM_ADMIN_TOKEN }}
+          FROGBOT_V3_TESTS_GITHUB_TOKEN: ${{ secrets.FROGBOT_V3_TESTS_GITHUB_TOKEN }}
+
+  azure-integration:
+    name: Azure Integration Tests
+    needs: Pretest
+    runs-on: ${{ matrix.os }}-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        os: [ ubuntu, windows, macos ]
+    concurrency:
+      group: azure-integration-fixture
+      cancel-in-progress: false
+    env:
+      JFROG_CLI_LOG_LEVEL: "DEBUG"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          allow-unsafe-pr-checkout: true
+          persist-credentials: false
+
+      - uses: jfrog/boost@v0
+        with:
+          accept_terms: yes
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: false
+      - name: Go Cache Build & Tests
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~\AppData\Local\go-build
+            ~/Library/Caches/go-build
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}-${{ hashFiles('**/*.go') }}
+          restore-keys: |
+            ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}-
+            ${{ runner.os }}-go-
+
+      - name: Run Tests
+        run: go test -tags integration -run 'TestAzureRepos_' azure_test.go integrationutils.go commands.go -v -race -timeout 30m -cover
+        env:
+          JF_URL: ${{ secrets.PLATFORM_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.PLATFORM_ADMIN_TOKEN }}
+          FROGBOT_V3_TESTS_AZURE_TOKEN: ${{ secrets.FROGBOT_V3_TESTS_AZURE_TOKEN }}
+
+  azure-integration-cleanup:
+    name: Cleanup Azure Integration Test Artifacts
+    needs: [ Pretest, azure-integration ]
+    if: ${{ always() && !cancelled() && needs.Pretest.result != 'skipped' && needs.azure-integration.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    concurrency:
+      group: azure-integration-fixture
+      cancel-in-progress: false
+    env:
+      JFROG_CLI_LOG_LEVEL: "DEBUG"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          allow-unsafe-pr-checkout: true
+          persist-credentials: false
+
+      - uses: jfrog/boost@v0
+        with:
+          accept_terms: yes
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: false
+
+      - name: Run Cleanup
+        run: go test -tags integration -run TestHelper_CleanupIntegrationTestsArtifactsAzureRepos azure_test.go integrationutils.go commands.go -v
+        env:
+          JF_URL: ${{ secrets.PLATFORM_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.PLATFORM_ADMIN_TOKEN }}
+          FROGBOT_V3_TESTS_AZURE_TOKEN: ${{ secrets.FROGBOT_V3_TESTS_AZURE_TOKEN }}
+
+  gitlab-integration:
+    name: GitLab Integration Tests
+    needs: Pretest
+    runs-on: ${{ matrix.os }}-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        os: [ ubuntu, windows, macos ]
+    concurrency:
+      group: gitlab-integration-fixture
+      cancel-in-progress: false
+    env:
+      JFROG_CLI_LOG_LEVEL: "DEBUG"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          allow-unsafe-pr-checkout: true
+          persist-credentials: false
+
+      - uses: jfrog/boost@v0
+        with:
+          accept_terms: yes
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: false
+      - name: Go Cache Build & Tests
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~\AppData\Local\go-build
+            ~/Library/Caches/go-build
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}-${{ hashFiles('**/*.go') }}
+          restore-keys: |
+            ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}-
+            ${{ runner.os }}-go-
+
+      - name: Run Tests
+        run: go test -tags integration -run 'TestGitLab_' gitlab_test.go integrationutils.go commands.go -v -race -timeout 30m -cover
+        env:
+          JF_URL: ${{ secrets.PLATFORM_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.PLATFORM_ADMIN_TOKEN }}
+          FROGBOT_V3_TESTS_GITLAB_TOKEN: ${{ secrets.FROGBOT_V3_TESTS_GITLAB_TOKEN }}
+
+  gitlab-integration-cleanup:
+    name: Cleanup GitLab Integration Test Artifacts
+    needs: [ Pretest, gitlab-integration ]
+    if: ${{ always() && !cancelled() && needs.Pretest.result != 'skipped' && needs.gitlab-integration.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    concurrency:
+      group: gitlab-integration-fixture
+      cancel-in-progress: false
+    env:
+      JFROG_CLI_LOG_LEVEL: "DEBUG"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          allow-unsafe-pr-checkout: true
+          persist-credentials: false
+
+      - uses: jfrog/boost@v0
+        with:
+          accept_terms: yes
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: false
+
+      - name: Run Cleanup
+        run: go test -tags integration -run TestHelper_CleanupIntegrationTestsArtifactsGitLab gitlab_test.go integrationutils.go commands.go -v
+        env:
+          JF_URL: ${{ secrets.PLATFORM_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.PLATFORM_ADMIN_TOKEN }}
+          FROGBOT_V3_TESTS_GITLAB_TOKEN: ${{ secrets.FROGBOT_V3_TESTS_GITLAB_TOKEN }}
+
+  bitbucket-cloud-integration:
+    name: Bitbucket Cloud Integration Tests
+    needs: Pretest
+    runs-on: ${{ matrix.os }}-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        os: [ ubuntu, windows, macos ]
+    concurrency:
+      group: bitbucket-cloud-integration-fixture
+      cancel-in-progress: false
+    env:
+      JFROG_CLI_LOG_LEVEL: "DEBUG"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          allow-unsafe-pr-checkout: true
+          persist-credentials: false
+
+      - uses: jfrog/boost@v0
+        with:
+          accept_terms: yes
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: false
+      - name: Go Cache Build & Tests
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~\AppData\Local\go-build
+            ~/Library/Caches/go-build
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}-${{ hashFiles('**/*.go') }}
+          restore-keys: |
+            ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}-
+            ${{ runner.os }}-go-
+
+      - name: Run Tests
+        run: go test -tags integration -run 'TestBitbucketCloud_' bitbucket_cloud_test.go integrationutils.go commands.go -v -race -timeout 30m -cover
+        env:
+          JF_URL: ${{ secrets.PLATFORM_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.PLATFORM_ADMIN_TOKEN }}
+          FROGBOT_V3_TESTS_BITBUCKET_CLOUD_TOKEN: ${{ secrets.FROGBOT_V3_TESTS_BITBUCKET_CLOUD_TOKEN }}
+
+  bitbucket-cloud-integration-cleanup:
+    name: Cleanup Bitbucket Cloud Integration Test Artifacts
+    needs: [ Pretest, bitbucket-cloud-integration ]
+    if: ${{ always() && !cancelled() && needs.Pretest.result != 'skipped' && needs.bitbucket-cloud-integration.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    concurrency:
+      group: bitbucket-cloud-integration-fixture
+      cancel-in-progress: false
+    env:
+      JFROG_CLI_LOG_LEVEL: "DEBUG"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          allow-unsafe-pr-checkout: true
+          persist-credentials: false
+
+      - uses: jfrog/boost@v0
+        with:
+          accept_terms: yes
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: false
+
+      - name: Run Cleanup
+        run: go test -tags integration -run TestHelper_CleanupIntegrationTestsArtifactsBitbucketCloud bitbucket_cloud_test.go integrationutils.go commands.go -v
+        env:
+          JF_URL: ${{ secrets.PLATFORM_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.PLATFORM_ADMIN_TOKEN }}
+          FROGBOT_V3_TESTS_BITBUCKET_CLOUD_TOKEN: ${{ secrets.FROGBOT_V3_TESTS_BITBUCKET_CLOUD_TOKEN }}
+
+  bitbucket-server-integration:
+    name: Bitbucket Server Integration Tests
+    needs: Pretest
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          allow-unsafe-pr-checkout: true
+          persist-credentials: false
+
+      - uses: jfrog/boost@v0
+        with:
+          accept_terms: yes
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: false
+
+      - name: Unzip Preconfigured Bitbucket Home
+        run: unzip ${{ github.workspace }}/testdata/resources/bitbucket_server_home.zip -d ${PWD}
+
+      - name: Download Bitbucket Server and Run
+        run: |
+          bb_script_path="${{ github.workspace }}/testdata/resources/bitbucket_server_run.sh"
+          chmod +x $bb_script_path
+          sh $bb_script_path
+
+      - name: Go Cache Build & Tests
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~\AppData\Local\go-build
+            ~/Library/Caches/go-build
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}-${{ hashFiles('**/*.go') }}
+          restore-keys: |
+            ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}-
+            ${{ runner.os }}-go-
+
+      - name: Run Tests
+        env:
+          JF_URL: ${{ secrets.PLATFORM_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.PLATFORM_ADMIN_TOKEN }}
+          FROGBOT_V3_TESTS_BB_SERVER_TOKEN: ${{ secrets.FROGBOT_V3_TESTS_BB_SERVER_TOKEN }}
+          JFROG_CLI_LOG_LEVEL: "DEBUG"
+        run: go test -tags integration -v bitbucket_server_test.go commands.go integrationutils.go

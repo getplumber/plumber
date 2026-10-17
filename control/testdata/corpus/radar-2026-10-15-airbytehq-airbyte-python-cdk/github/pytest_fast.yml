@@ -1,0 +1,87 @@
+name: Pytest (Fast)
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  test-build:
+    name: Build and Inspect Python Package
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: "2.0.1"
+
+      - name: Check Poetry lock file is current
+        run: poetry check
+
+      - uses: hynek/build-and-inspect-python-package@v2
+        env:
+          # Pass in dummy version '0.0.0dev0' version to appease dynamic versioning
+          POETRY_DYNAMIC_VERSIONING_BYPASS: 0.0.0dev0
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Packages-${{ github.run_id }}
+          path: |
+            /tmp/baipp/dist/*.whl
+            /tmp/baipp/dist/*.tar.gz
+
+  pytest-fast:
+    name: Pytest (Fast)
+    runs-on: ubuntu-24.04
+    steps:
+      # Common steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set up Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: "2.0.1"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "poetry"
+      - name: Install dependencies
+        run: poetry install --all-extras
+
+      - name: Run Pytest with Coverage (Fast Tests Only)
+        timeout-minutes: 20
+        run: >
+          poetry run coverage run -m pytest
+          --durations=5 --exitfirst
+          -m "not slow"
+
+      - name: Print Coverage Report
+        if: always()
+        run: poetry run coverage report
+
+      - name: Create Coverage Artifacts
+        if: always()
+        run: |
+          poetry run coverage html -d htmlcov
+          poetry run coverage xml -o htmlcov/coverage.xml
+
+      - name: Publish Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always() && !cancelled()
+        continue-on-error: true
+        with:
+          check_name: "PyTest Results (Fast)"
+          large_files: true
+          files: |
+            build/test-results/**/*.xml
+      - name: Upload coverage to GitHub Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fasttest-coverage
+          path: htmlcov/

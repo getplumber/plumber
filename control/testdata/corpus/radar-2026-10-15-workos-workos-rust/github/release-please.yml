@@ -1,0 +1,243 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # release-please owns tag + GitHub Release creation (no
+  # skip-github-release). Because it tags every release inside its own run
+  # — before it computes the next release PR — it always knows the previous
+  # release boundary, so it never regenerates the changelog from the start
+  # of history or proposes a spurious major bump. This job is kept minimal
+  # so nothing downstream (changelog enrichment, release notes) can fail it.
+  release-please:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      pr: ${{ steps.release.outputs.pr }}
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - name: Generate token
+        id: generate-token
+        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # 3.1.1
+        with:
+          app-id: ${{ vars.SDK_BOT_APP_ID }}
+          private-key: ${{ secrets.SDK_BOT_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Run release-please
+        id: release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # 5.0.0
+        with:
+          token: ${{ steps.generate-token.outputs.token }}
+
+  # While the release PR is open, enrich it before it merges. Runs as its
+  # own job (gated on the PR existing) so a failure here can never block the
+  # release or the crates.io publish that depends on release-please.
+  enrich-release-pr:
+    needs: release-please
+    if: needs.release-please.outputs.pr
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Generate token
+        id: generate-token
+        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # 3.1.1
+        with:
+          app-id: ${{ vars.SDK_BOT_APP_ID }}
+          private-key: ${{ secrets.SDK_BOT_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Checkout release PR branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ fromJSON(needs.release-please.outputs.pr).headBranchName }}
+          token: ${{ steps.generate-token.outputs.token }}
+
+      # Inline pending changelog fragments under the version heading
+      # release-please just wrote in CHANGELOG.md. For PRs that have a
+      # fragment (the autogen flow always writes one), drop the line
+      # release-please rendered and use the fragment instead. For PRs
+      # without a fragment (typical for human-authored PRs), keep what
+      # release-please wrote. Fragments are deleted in the same commit.
+      # Idempotent: if no fragments exist, skip silently.
+      - name: Inline rich changelog fragments
+        env:
+          PR_JSON: ${{ needs.release-please.outputs.pr }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          fragments=(.changelog-pending/*.md)
+          if [ ${#fragments[@]} -eq 0 ]; then
+            echo "No .changelog-pending fragments; leaving release-please CHANGELOG.md as-is."
+            exit 0
+          fi
+
+          VERSION=$(echo "$PR_JSON" | jq -r '.title' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          export VERSION
+
+          python3 - <<'PY'
+          import os, re, pathlib, glob
+
+          version = os.environ["VERSION"]
+
+          # Load fragments + extract the PR number each one covers from
+          # its top-line "* [#NN](url) ...".
+          fragments = []
+          covered = set()
+          for path in sorted(glob.glob(".changelog-pending/*.md")):
+              body = pathlib.Path(path).read_text().rstrip()
+              m = re.search(r'\[#(\d+)\]', body)
+              if m:
+                  covered.add(m.group(1))
+              fragments.append(body)
+
+          changelog = pathlib.Path("CHANGELOG.md")
+          text = changelog.read_text()
+          section_re = re.compile(
+              r'(^## \[' + re.escape(version) + r'\][^\n]*\n)(.*?)(?=^## |\Z)',
+              re.MULTILINE | re.DOTALL,
+          )
+          match = section_re.search(text)
+          if not match:
+              raise SystemExit(f"Could not find '## [{version}]' heading in CHANGELOG.md")
+          heading, body = match.group(1), match.group(2)
+
+          # Drop any release-please line that references a PR we have a
+          # fragment for.
+          kept = []
+          for line in body.split("\n"):
+              if any(pr in covered for pr in re.findall(r'\[#(\d+)\]', line)):
+                  continue
+              kept.append(line)
+          filtered = "\n".join(kept)
+
+          # Collapse "### Heading\n(blank lines)\n" with nothing under
+          # it. Run repeatedly until stable in case of stacked empties.
+          empty_section = re.compile(
+              r'^### [^\n]*\n(?:\s*\n)*(?=^### |\Z)',
+              re.MULTILINE,
+          )
+          while True:
+              new = empty_section.sub('', filtered)
+              if new == filtered:
+                  break
+              filtered = new
+          filtered = filtered.strip()
+
+          parts = []
+          if filtered:
+              parts.append(filtered)
+          parts.extend(fragments)
+          new_body = "\n\n".join(parts)
+
+          new_text = text[:match.start()] + heading + "\n" + new_body + "\n\n" + text[match.end():]
+          changelog.write_text(new_text)
+          PY
+
+          git config user.name "workos-sdk-automation[bot]"
+          git config user.email "255426317+workos-sdk-automation[bot]@users.noreply.github.com"
+          git rm .changelog-pending/*.md
+          git add CHANGELOG.md
+          git diff --staged --quiet || git commit -m "chore: inline release notes from .changelog-pending"
+          git push
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@2b1f5e9b395427c92ee4e3331786ca3c37afe2d7 # v1.16.0
+        with:
+          toolchain: stable
+          components: cargo
+
+      - name: Update lockfile
+        run: |
+          cargo update --workspace
+          git config user.name "workos-sdk-automation[bot]"
+          git config user.email "255426317+workos-sdk-automation[bot]@users.noreply.github.com"
+          git add Cargo.lock
+          git diff --staged --quiet || git commit -m "chore: update Cargo.lock"
+          git push
+
+  # After release-please tags the release and creates the GitHub Release,
+  # replace its body with the rich section from CHANGELOG.md (release-please
+  # writes only its terse default rendering). Cosmetic-only: never fails the
+  # release if the section can't be found.
+  update-release-notes:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Generate token
+        id: generate-token
+        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # 3.1.1
+        with:
+          app-id: ${{ vars.SDK_BOT_APP_ID }}
+          private-key: ${{ secrets.SDK_BOT_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          token: ${{ steps.generate-token.outputs.token }}
+
+      - name: Set rich release notes from CHANGELOG.md
+        env:
+          GH_TOKEN: ${{ steps.generate-token.outputs.token }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          awk -v v="$VERSION" '
+            $0 ~ ("^## \\[" v "\\]") { found=1; next }
+            found && /^## \[/ { exit }
+            found
+          ' CHANGELOG.md > /tmp/release-notes.md
+          if [ -s /tmp/release-notes.md ]; then
+            gh release edit "$TAG" --notes-file /tmp/release-notes.md
+          else
+            echo "No CHANGELOG.md body for $TAG; keeping release-please default notes."
+          fi
+
+  publish:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@2b1f5e9b395427c92ee4e3331786ca3c37afe2d7 # v1.16.0
+        with:
+          toolchain: stable
+          components: cargo
+
+      - name: Authenticate with crates.io
+        id: auth
+        uses: rust-lang/crates-io-auth-action@v1
+
+      - name: Publish to crates.io
+        run: cargo publish --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}

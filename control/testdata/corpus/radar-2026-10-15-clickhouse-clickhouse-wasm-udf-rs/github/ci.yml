@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
+  RUST_BACKTRACE: 1
+
+jobs:
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+
+      - run: rustup target add wasm32-unknown-unknown
+      - run: rustup component add clippy
+
+      - run: cargo clippy --target wasm32-unknown-unknown
+      - run: cargo clippy -p clickhouse-wasm-udf-macros
+      - run: cargo clippy --target wasm32-unknown-unknown -p example
+
+  rustfmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: rustup component add rustfmt
+      - run: cargo fmt -- --check
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: rustup toolchain install nightly --target wasm32-unknown-unknown
+      - run: rustup override set nightly
+      - run: cargo rustdoc -p clickhouse-wasm-udf-macros --all-features -- -D warnings --cfg docsrs
+      - run: cargo rustdoc -p clickhouse-wasm-udf --all-features --target wasm32-unknown-unknown -- -D warnings --cfg docsrs

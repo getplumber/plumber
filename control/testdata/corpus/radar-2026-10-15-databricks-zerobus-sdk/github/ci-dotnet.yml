@@ -1,0 +1,138 @@
+name: .NET CI
+
+on:
+  workflow_call:
+    inputs:
+      run_published_artifact_tests:
+        description: 'Run smoke tests that download and consume published FFI artifacts'
+        type: boolean
+        default: true
+
+jobs:
+  fmt:
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    defaults:
+      run:
+        working-directory: dotnet
+    env:
+        SkipNativeBuild: true
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install dotnet-format
+        run: |
+            dotnet tool install -g dotnet-format
+            echo "$HOME/.dotnet/tools" >> $GITHUB_PATH
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          components: rustfmt
+
+      - name: Format all files
+        run: make fmt
+
+      - name: Fail on differences
+        run: git diff --exit-code
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux-ubuntu-latest
+            runner: { group: databricks-protected-runner-group, labels: linux-ubuntu-latest }
+          - os: windows-server-latest
+            runner: { group: databricks-protected-runner-group, labels: windows-server-latest }
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        working-directory: dotnet
+        shell: bash
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Unshallow
+        run: git fetch --prune --unshallow
+
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+            dotnet-version: 10.0.x
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          targets: x86_64-pc-windows-gnu
+
+      # Protected runners can't reach crates.io; route cargo through JFrog.
+      - name: Get JFrog OIDC token
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/jfrog-oidc-token.sh"
+      - name: Configure Cargo registry
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/configure-cargo.sh"
+
+      - name: Build Rust FFI
+        run: make build-rust
+
+      - name: Build .NET SDK
+        run: make build-dotnet
+
+      - name: Run tests
+        run: make test
+
+      - name: Build examples
+        run: make examples
+
+  user-experience:
+    if: inputs.run_published_artifact_tests
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux-ubuntu-latest
+            runner: { group: databricks-protected-runner-group, labels: linux-ubuntu-latest }
+            lib: lib/linux_amd64/libzerobus_ffi.a
+          - os: windows-server-latest
+            runner: { group: databricks-protected-runner-group, labels: windows-server-latest }
+            lib: lib/windows_amd64/libzerobus_ffi.a
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        working-directory: dotnet
+        shell: bash
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: 10.0.x
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      # Protected runners can't reach crates.io; route cargo through JFrog.
+      - name: Get JFrog OIDC token
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/jfrog-oidc-token.sh"
+      - name: Configure Cargo registry
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/configure-cargo.sh"
+
+      - name: Test .NET build works (user step 2)
+        run: dotnet build
+
+      - name: Test JSON single example builds
+        working-directory: dotnet/examples/JsonSingle
+        run: dotnet build
+
+      - name: Test JSON batch example builds
+        working-directory: dotnet/examples/JsonBatch
+        run: dotnet build
+
+      - name: Test Proto single example builds
+        working-directory: dotnet/examples/ProtoSingle
+        run: dotnet build

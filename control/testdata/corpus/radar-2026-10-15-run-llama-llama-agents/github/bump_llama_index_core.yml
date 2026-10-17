@@ -1,0 +1,37 @@
+name: Bump llama-index-core
+
+on:
+  repository_dispatch:
+    types: [llama-index-core-release]
+  workflow_dispatch:
+
+jobs:
+  bump-dependency:
+    if: github.repository == 'run-llama/llama-agents'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+
+      - run: uv lock --upgrade-package llama-index-core
+
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.CI_BOT_APP_ID }}
+          private-key: ${{ secrets.CI_BOT_PRIVATE_KEY }}
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          commit-message: "chore: bump llama-index-core"
+          branch: bump-llama-index-core
+          delete-branch: true
+          title: "chore: bump llama-index-core"
+          labels: |
+            dependencies
+            automated

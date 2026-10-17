@@ -1,0 +1,53 @@
+name: "Publish to Gradle Gallery"
+# During the build-info release, the build-info JARs upload to the Maven Central repository.
+# The upload is asynchronous and may take few hours.
+# Since the Gradle plugin depends on the build-info JARs, we should publish it to the Gradle Gallery only after we make
+# sure the upload to Maven Central completed successfully.
+# To solve this out, this workflow runs every 4 hours to check if the Gradle plugin should be published to the Gradle
+# Gallery and publish the Gradle plugin if needed.
+on:
+  schedule:
+    # Once per 4 hours
+    - cron: "0 */4 * * *"
+jobs:
+  Publish_if_needed:
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Get Maven Central Latest Version"
+        run: |
+          export LATEST_MVN_CENTRAL_VERSION=`curl -s https://search.maven.org/solrsearch/select\?q\=g:"org.jfrog.buildinfo"+AND+a:"build-info-extractor-gradle" | jq -r '.response.docs[0].latestVersion'`
+          echo "LATEST_MVN_CENTRAL_VERSION=$LATEST_MVN_CENTRAL_VERSION" >> $GITHUB_ENV
+      - name: "Convert Version to Regex"
+        uses: actions-ecosystem/action-regex-match@v2
+        id: check-version
+        with:
+          text: ${{ env.LATEST_MVN_CENTRAL_VERSION }}
+          regex: "[0-9]+.[0-9]+.[0-9]+"
+      - name: "Test Resolved Version"
+        run: |
+          echo "Illegal version: $LATEST_MVN_CENTRAL_VERSION"
+          exit 1
+        if: ${{ steps.check-version.outputs.match == '' }}
+      - name: "Check Version in Gradle Gallery"
+        run: |
+          if curl -fL https://plugins.gradle.org/m2/org.jfrog.buildinfo/build-info-extractor-gradle/${{ steps.check-version.outputs.match }}; then
+            echo "SHOULD_NOT_PUBLISH=TRUE" >> $GITHUB_ENV
+          fi
+      - name: "Log if Already Exist"
+        run: echo "::warning::Version $LATEST_MVN_CENTRAL_VERSION already exist in the Gradle Gallery."
+        if: ${{ env.SHOULD_NOT_PUBLISH == 'TRUE'}}
+      - uses: actions/checkout@v2
+        with:
+          ref: refs/tags/build-info-gradle-extractor-${{ env.LATEST_MVN_CENTRAL_VERSION }}
+        if: ${{ env.SHOULD_NOT_PUBLISH != 'TRUE'}}
+      - uses: actions/setup-java@v2
+        with:
+          distribution: "adopt"
+          java-version: "8"
+        if: ${{ env.SHOULD_NOT_PUBLISH != 'TRUE'}}
+      - name: "Publish to Gradle Gallery"
+        run: ./gradlew clean build -x test publishPlugins
+        if: ${{ env.SHOULD_NOT_PUBLISH != 'TRUE'}}
+        env:
+          GRADLE_PUBLISH_KEY: ${{ secrets.GRADLE_PUBLISH_KEY }}
+          GRADLE_PUBLISH_SECRET: ${{ secrets.GRADLE_PUBLISH_SECRET }}

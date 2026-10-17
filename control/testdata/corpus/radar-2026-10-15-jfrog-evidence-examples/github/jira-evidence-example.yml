@@ -1,0 +1,90 @@
+name: "Jira evidence integration example"
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_commit:
+        description: "Starting commit (excluded from evidence filter)"
+        required: true
+      fetch_depth:
+        description: "Number of previous commits to fetch (default is 10)"
+        required: false
+        default: "10"
+
+jobs:
+  docker-build-with-jira-evidence:
+    runs-on: ubuntu-latest
+    env:
+      REGISTRY_DOMAIN: ${{ vars.JF_URL }}
+      REPO_NAME: 'docker-jira-repo-local'
+      IMAGE_NAME: 'docker-jira-image'
+      VERSION: ${{ github.run_number }}
+      BUILD_NAME: 'jira-docker-build'
+      JIRA_ID_REGEX: '[A-Z]+-[0-9]+'
+      JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+      JIRA_URL: ${{ vars.JIRA_URL }}
+      JIRA_USERNAME: ${{ secrets.JIRA_USERNAME }}
+      ATTACH_OPTIONAL_CUSTOM_MARKDOWN_TO_EVIDENCE: true
+    steps:
+      - name: Setup jfrog cli
+        uses: jfrog/setup-jfrog-cli@v4
+        env:
+          JF_URL: ${{ vars.ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.ARTIFACTORY_ACCESS_TOKEN }}
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: ${{ github.event.inputs.fetch_depth }}
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+      - name: Build JIRA helper binary
+        run: |
+          cd examples/jira/helper
+          chmod +x build.sh
+          ./build.sh
+          cd -
+      - name: Log in to Artifactory Docker Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ vars.ARTIFACTORY_URL }}
+          username: ${{ secrets.JF_USER }}
+          password: ${{ secrets.ARTIFACTORY_ACCESS_TOKEN }}
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build and publish Docker Image to Artifactory
+        run: |
+          cd examples/jira
+          docker build . --file Dockerfile --tag $REGISTRY_DOMAIN/$REPO_NAME/$IMAGE_NAME:$VERSION
+          
+          IMAGE_TAG="$REGISTRY_DOMAIN/$REPO_NAME/$IMAGE_NAME:$VERSION"
+          docker push $IMAGE_TAG
+          
+          REGISTRY_DIGEST=$(docker inspect $IMAGE_TAG | jq -r '.[0].RepoDigests[0]' | cut -d'@' -f2)
+          echo "$IMAGE_TAG@$REGISTRY_DIGEST" > metadata.txt
+          
+          jf rt build-docker-create $REPO_NAME --image-file metadata.txt --build-name=$BUILD_NAME --build-number=$VERSION
+          jf rt build-collect-env
+          jf rt build-add-git
+          jf rt build-publish $BUILD_NAME $VERSION
+          cd -
+      - name: Fetch details from jira
+        run: | 
+          cd examples/jira/helper
+          ./main "${{ github.event.inputs.start_commit }}"
+          cd -
+
+
+      - name: Create JIRA evidence
+        run: |
+          jf evd create \
+            --build-name $BUILD_NAME \
+            --build-number ${{ github.run_number }} \
+            --key "${{ secrets.PRIVATE_KEY }}" \
+            --key-alias "${{ vars.EVIDENCE_KEY_ALIAS }}" \
+            --predicate ./examples/jira/helper/transformed_jira_data.json \
+            --predicate-type http://atlassian.com/jira/issues/v1 \
+            --provider-id "jira" \
+            ${{ env.ATTACH_OPTIONAL_CUSTOM_MARKDOWN_TO_EVIDENCE == 'true' && '--markdown "examples/jira/helper/transformed_jira_data.md"' || '' }}
+

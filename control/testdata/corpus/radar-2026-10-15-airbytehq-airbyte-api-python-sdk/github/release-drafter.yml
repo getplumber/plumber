@@ -1,0 +1,57 @@
+# Release Drafter Workflow
+#
+# This workflow automatically creates and updates draft releases based on merged PRs.
+# It uses semantic PR titles (conventional commits format) to categorize changes.
+#
+# How it works:
+# - On push to main: Updates the draft release with the merged PR
+# - Categories are determined by conventional commit type (feat, fix, chore, etc.)
+#
+# To publish a release:
+# 1. Go to the Releases page
+# 2. Find the draft release
+# 3. Edit the version number if needed
+# 4. Click "Publish release" - this creates the git tag and triggers the Publish workflow
+
+name: Release Drafter
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: release-drafter
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  draft_release:
+    name: Draft Release
+    permissions:
+      contents: write
+      pull-requests: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create draft release
+        uses: aaronsteers/semantic-pr-release-drafter@v2.2.0
+        id: release-drafter
+        with:
+          name-template: 'v$RESOLVED_VERSION'
+          tag-template: 'v$RESOLVED_VERSION'
+          change-template: '- $TITLE (#$NUMBER)'
+          template: |
+            ## Changes
+
+            $CHANGES
+
+            ## Installation
+
+            ```bash
+            pip install airbyte-api==$RESOLVED_VERSION
+            ```
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

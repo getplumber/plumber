@@ -1,0 +1,320 @@
+name: Build and Test - Windows
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * 1'
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ '**' ]
+  release:
+    types:
+      - created
+
+concurrency:
+  group: windows-${{ github.head_ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: powershell
+    working-directory: run
+
+jobs:
+  build_and_test:
+
+    env:
+      CLOUD_TESTS_ENABLED: ${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_HOST_SMT != '' }}
+      TEST_DATABASE: ''
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025]
+        odbc_provider: [MDAC]
+        build_type: [Debug, Release]
+        architecture: [x86, x64]
+        wsl_distribution: [Ubuntu-24.04]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+
+    - name: Create directories
+      working-directory: ${{ github.workspace }}
+      run: |
+        new-item ${{ github.workspace }}/run -itemtype directory
+        new-item ${{ github.workspace }}/build -itemtype directory
+        new-item ${{ github.workspace }}/prefix -itemtype directory
+        new-item ${{ github.workspace }}/install -itemtype directory
+        new-item ${{ github.workspace }}/package -itemtype directory
+
+    - name: Clone the repo
+      uses: actions/checkout@v4
+      with:
+        path: source
+        submodules: true
+
+    - name: Set up Visual Studio shell
+      uses: egor-tensin/vs-shell@v2
+      with:
+        arch: ${{ matrix.architecture }}
+
+    - name: Configure with CMake
+      run: |
+        $dsnList = @(
+          "ClickHouse DSN ANSI",
+          "ClickHouse DSN Unicode",
+          "ClickHouse DSN ANSI ZSTD",
+          "ClickHouse DSN Unicode ZSTD",
+          "ClickHouse AWS ANSI ZSTD",
+          "ClickHouse AWS Unicode ZSTD"
+        ) -join ";"
+
+        cmake -S ${{ github.workspace }}/source -B ${{ github.workspace }}/build `
+          -A ${{ fromJSON('{"x86": "Win32", "x64": "x64"}')[matrix.architecture] }} `
+          -DCMAKE_POLICY_VERSION_MINIMUM="3.5" `
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} `
+          -DODBC_PROVIDER=${{ matrix.odbc_provider }} `
+          -DTEST_DSN_LIST="$dsnList" `
+          -DBUILD_TESTING=YES
+
+    - name: Build
+      run: cmake --build ${{ github.workspace }}/build --config ${{ matrix.build_type }}
+
+    - name: Check driver does not depend on the Visual C++ Redistributable
+      working-directory: ${{ github.workspace }}/build/driver/${{ matrix.build_type }}
+      run: |
+        $failed = $false
+        foreach ($f in @("clickhouseodbc.dll", "clickhouseodbcw.dll")) {
+          $deps = (dumpbin /dependents $f) -join "`n"
+          if ($deps -match '(?i)\b(vcruntime|msvcp|ucrtbase|api-ms-win-crt)[^\s]*\.dll') {
+            Write-Host "FAIL (shared CRT dependency): $f"
+            Write-Host $deps
+            $failed = $true
+          } else {
+            Write-Host "ok (static CRT): $f"
+          }
+        }
+        if ($failed) { exit 1 }
+
+    - name: Package
+      run: cmake --build ${{ github.workspace }}/build --config ${{ matrix.build_type }} --target package
+
+    - name: List artifacts
+      run: |
+        echo REF: ${{ github.ref }}
+        dir ${{ github.workspace }}/build
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+          name: clickhouse-odbc-windows-${{ matrix.architecture }}-${{ matrix.build_type }}
+          path: ${{ github.workspace }}/build/clickhouse-odbc-*
+
+    - name: Test - Run unit tests
+      working-directory: ${{ github.workspace }}/build
+      run: ctest --output-on-failure --build-config ${{ matrix.build_type }} -R '.*-ut.*'
+
+    - name: Create Test Database
+      if: ${{ env.CLOUD_TESTS_ENABLED == 'true' && matrix.build_type == 'Release' && matrix.architecture == 'x64' }}
+      run: |
+        $timestamp = [math]::Round([double](Get-Date -UFormat %s) * 1000)
+        $database = "test${timestamp}_odbc_win_${{ matrix.architecture }}_${{ matrix.build_type }}"
+        "TEST_DATABASE=$database" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+        curl.exe --fail-with-body -X POST `
+          "https://${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_HOST_SMT }}:8443/?query=" `
+          -u "default:${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_PASSWORD_SMT }}" `
+          -d "create database $database"
+
+        Write-Host "The test database name is: $database"
+
+    - name: Register ODBC driver in Windows Registry
+      run: |
+        $driverDir = "${{ github.workspace }}\build\driver\${{ matrix.build_type }}"
+        $driverSection = "${{ fromJSON('{"x86": "WOW6432Node\\ODBC", "x64": "ODBC"}')[matrix.architecture] }}"
+        $escapedDriverDir = $driverDir.Replace('\', '\\')
+
+        $regContent = @"
+        Windows Registry Editor Version 5.00
+
+        [HKEY_LOCAL_MACHINE\SOFTWARE\$driverSection\ODBCINST.INI\ODBC Drivers]
+        "ClickHouse ODBC Driver (ANSI)"="Installed"
+        "ClickHouse ODBC Driver (Unicode)"="Installed"
+
+        [HKEY_LOCAL_MACHINE\SOFTWARE\$driverSection\ODBCINST.INI\ClickHouse ODBC Driver (ANSI)]
+        "Description"="ODBC Driver (ANSI) for ClickHouse"
+        "Driver"="$escapedDriverDir\\clickhouseodbc.dll"
+        "Setup"="$escapedDriverDir\\clickhouseodbc.dll"
+        "DriverODBCVer"="03.80"
+        "ConnectFunctions"="YYN"
+        "APILevel"="1"
+        "SQLLevel"="1"
+        "FileUsage"="0"
+
+        [HKEY_LOCAL_MACHINE\SOFTWARE\$driverSection\ODBCINST.INI\ClickHouse ODBC Driver (Unicode)]
+        "Description"="ODBC Driver (Unicode) for ClickHouse"
+        "Driver"="$escapedDriverDir\\clickhouseodbcw.dll"
+        "Setup"="$escapedDriverDir\\clickhouseodbcw.dll"
+        "DriverODBCVer"="03.80"
+        "ConnectFunctions"="YYN"
+        "APILevel"="1"
+        "SQLLevel"="1"
+        "FileUsage"="0"
+        "@
+
+        Write-Host "Writing the registry file"
+        $regContent | Out-File -FilePath ${{ github.workspace }}/run/driver.reg -Encoding ASCII
+        Get-Content ${{ github.workspace }}/run/driver.reg
+
+        Write-Host "Exporting the file to the registry"
+        reg import ${{ github.workspace }}/run/driver.reg
+
+        Write-Host "Registry keys after export"
+        reg query "HKEY_LOCAL_MACHINE\SOFTWARE\$driverSection\ODBCINST.INI\" /s
+
+    - name: Configure ClickHouse ODBC DSNs
+      run: |
+        $platform = "${{ fromJSON('{"x86": "32-bit", "x64": "64-bit"}')[matrix.architecture] }}"
+
+        Add-OdbcDsn `
+          -Name "ClickHouse DSN ANSI" `
+          -DriverName "ClickHouse ODBC Driver (ANSI)" `
+          -DsnType "System" `
+          -Platform "$platform" `
+          -SetPropertyValue @("Url=http://127.0.0.1:8123/", "User=default", "Compression=0")
+
+        Add-OdbcDsn `
+          -Name "ClickHouse DSN Unicode" `
+          -DriverName "ClickHouse ODBC Driver (Unicode)" `
+          -DsnType "System" `
+          -Platform "$platform" `
+          -SetPropertyValue @("Url=http://127.0.0.1:8123/", "User=default", "Compression=0")
+
+        Add-OdbcDsn `
+          -Name "ClickHouse DSN ANSI ZSTD" `
+          -DriverName "ClickHouse ODBC Driver (ANSI)" `
+          -DsnType "System" `
+          -Platform "$platform" `
+          -SetPropertyValue @("Url=http://127.0.0.1:8123/", "User=default", "Compression=1")
+
+        Add-OdbcDsn `
+          -Name "ClickHouse DSN Unicode ZSTD" `
+          -DriverName "ClickHouse ODBC Driver (Unicode)" `
+          -DsnType "System" `
+          -Platform "$platform" `
+          -SetPropertyValue @("Url=http://127.0.0.1:8123/", "User=default", "Compression=1")
+
+    - name: Configure ClickHouse Cloud ODBC DSNs
+      if: ${{ env.CLOUD_TESTS_ENABLED == 'true' && matrix.build_type == 'Release' && matrix.architecture == 'x64' }}
+      run: |
+        $platform = "${{ fromJSON('{"x86": "32-bit", "x64": "64-bit"}')[matrix.architecture] }}"
+
+        Add-OdbcDsn `
+          -Name "ClickHouse AWS ANSI ZSTD" `
+          -DriverName "ClickHouse ODBC Driver (ANSI)" `
+          -DsnType "System" `
+          -Platform "$platform" `
+          -SetPropertyValue @("Url=https://${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_HOST_SMT }}:8443/?database=$env:TEST_DATABASE", "Username=default", "Password=${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_PASSWORD_SMT }}", "Compression=1")
+
+        Add-OdbcDsn `
+          -Name "ClickHouse AWS Unicode ZSTD" `
+          -DriverName "ClickHouse ODBC Driver (Unicode)" `
+          -DsnType "System" `
+          -Platform "$platform" `
+          -SetPropertyValue @("Url=https://${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_HOST_SMT }}:8443/?database=$env:TEST_DATABASE", "Username=default", "Password=${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_PASSWORD_SMT }}", "Compression=1")
+
+    - name: List enabled ODBC DSNs
+      run: |
+        Write-Host "List of enabled DSNs:"
+        Get-OdbcDsn -DsnType "System"
+
+    - name: Enable WSL and Install Dependencies
+      uses: Vampire/setup-wsl@v5
+      with:
+          distribution: ${{ matrix.wsl_distribution }}
+          additional-packages:
+            podman
+            podman-compose
+
+    - name: Start ClickHouse Server
+      shell: wsl-bash {0}
+      run: |
+        echo "Starting ClickHouse container"
+        cd $(wslpath -u "${{ github.workspace }}/source/test/")
+        podman-compose up -d
+
+        echo "Waiting for ClickHouse to start..."
+        timeout 60s bash -c \
+            'until curl -s -o /dev/null -w "%{http_code}" http://localhost:8123 | grep -q "200"; do sleep 2; done'
+
+        echo "Checking ClickHouse version"
+        curl -s http://localhost:8123/?query=SELECT%20VERSION%28%29
+
+    - name: Ping ClickHouse Server from Windows
+      run: |
+          curl.exe http://localhost:8123/?query=SELECT%20VERSION%28%29
+
+    - name: Test - Run C++ integration tests
+      working-directory: ${{ github.workspace }}/build
+      run: |
+        ctest --output-on-failure --build-config ${{ matrix.build_type }} -E '(.*-ut.*|-dsn-[45]$)'
+
+    - name: Test - Run C++ integration test in the Cloud
+      if: ${{ env.CLOUD_TESTS_ENABLED == 'true' && matrix.build_type == 'Release' && matrix.architecture == 'x64' }}
+      working-directory: ${{ github.workspace }}/build
+      env:
+        GTEST_FILTER: -AuthenticationTest.PasswordEncoding:PerformanceTest*:DateTime*:ScalarFunctionsTest.CONVERT
+      run: |
+        ctest --output-on-failure --build-config ${{ matrix.build_type }} -R '.*-dsn-[45]$'
+
+    - name: Prepare Pythons dependencies
+      if: ${{ matrix.architecture == 'x64' }}
+      working-directory: source/test
+      run: |
+        Write-Host "Check python version and architecture"
+        python --version
+        python -c "import platform; print(platform.architecture()[0])"
+
+        Write-Host "Prepare Python dependencies"
+        python -m pip install -r requirements.txt
+
+    - name: Test - Run Python e2e tests for the ANSI driver
+      if: ${{ matrix.architecture == 'x64' }}
+      working-directory: source/test
+      env:
+        DSN: "ClickHouse DSN ANSI"
+      run: |
+        python -m pytest --log-level=DEBUG -v
+
+    - name: Test - Run Python e2e tests for the Unicode driver
+      if: ${{ matrix.architecture == 'x64' }}
+      working-directory: source/test
+      env:
+        DSN: "ClickHouse DSN Unicode"
+      run: |
+        python -m pytest --log-level=DEBUG -v
+
+    - name: Upload artifacts as release assets
+      if: ${{ github.event_name == 'release' && matrix.build_type == 'Release' }}
+      uses: svenstaro/upload-release-action@v2
+      with:
+        repo_token: ${{ secrets.GITHUB_TOKEN }}
+        file: ${{ github.workspace }}/build/clickhouse-odbc-*
+        overwrite: true
+        tag: ${{ github.ref }}
+        file_glob: true
+
+    - name: Drop Test Database
+      if: always() && env.CLOUD_TESTS_ENABLED == 'true' && env.TEST_DATABASE != ''
+      run: |
+        curl.exe --fail-with-body -X POST `
+          "https://${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_HOST_SMT }}:8443/?query=" `
+          -u "default:${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_PASSWORD_SMT }}" `
+          -d "select name from system.tables where database = '$env:TEST_DATABASE'"
+        curl.exe --fail-with-body -X POST `
+          "https://${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_HOST_SMT }}:8443/?query=" `
+          -u "default:${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_PASSWORD_SMT }}" `
+          -d "drop database if exists $env:TEST_DATABASE"

@@ -1,0 +1,42 @@
+name: tag
+
+on:
+  # Update tags on every push to main.
+  push:
+    branches:
+      - main
+
+  # To allow for manual testing.
+  workflow_dispatch:
+
+jobs:
+  tag:
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Tag new versions
+        shell: bash
+        run: |
+          set -e
+
+          commits=$(git log --pretty=format:"%h" ./VERSION)
+          for commit in $commits; do
+              version=$(git show $commit:./VERSION)
+              if [ -n "$(git tag -l "v${version}")" ]; then
+                  continue
+              fi
+
+              echo "Tagging $commit as v${version}"
+              git tag "v${version}" $commit
+          done
+
+      - name: Push new tags
+        shell: bash
+        run: git push --tags

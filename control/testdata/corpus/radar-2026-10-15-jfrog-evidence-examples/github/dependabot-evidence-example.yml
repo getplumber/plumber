@@ -1,0 +1,87 @@
+name: "Dependabot evidence integration example"
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  dependabot-evidence-example:
+    runs-on: ubuntu-latest
+    env: 
+      REPO_NAME: 'dependabot-docker-local'
+      IMAGE_NAME: 'dependabot-docker-image'
+      BUILD_NAME: 'dependabot-evidence-eg'
+      VERSION: ${{ github.run_number }}
+      REGISTRY_DOMAIN: ${{ vars.JF_URL }}
+      ATTACH_OPTIONAL_CUSTOM_MARKDOWN_TO_EVIDENCE: true
+
+    steps:
+      # Build and publish the packages to JFrog Artifactory
+      - name: Setup jfrog cli
+        uses: jfrog/setup-jfrog-cli@v4
+        env:
+          JF_URL: ${{ vars.ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.ARTIFACTORY_ACCESS_TOKEN }}
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Build and Push Docker Image to Artifactory
+        run: |
+          docker build -f ./examples/github/dependabot/Dockerfile . --tag $REGISTRY_DOMAIN/$REPO_NAME/$IMAGE_NAME:$VERSION
+          jf rt docker-push $REGISTRY_DOMAIN/$REPO_NAME/$IMAGE_NAME:$VERSION $REPO_NAME --build-name=$BUILD_NAME --build-number=$VERSION
+
+      # Fetch Dependabot Vulnerability Snapshot
+      # Github token with 'security_events: read' permission has to be provided
+      - name: Fetch Dependabot Vulnerability Snapshot
+        env: 
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+        run: |
+          gh api "repos/${OWNER}/${REPO}/dependabot/alerts?state=open" \
+          --jq '[.[] |
+              {
+                packageName: .dependency.package.name,
+                ecosystem: .dependency.package.ecosystem,
+                vulnerableVersionRange: .security_vulnerability.vulnerable_version_range,
+                patchedVersion: (try .security_vulnerability.first_patched_version.identifier // "N/A"),
+                severity: .security_vulnerability.severity,
+                ghsaId: .security_advisory.ghsa_id,
+                cveId: (.security_advisory.cve_id // "N/A"),
+                advisoryUrl: .html_url,
+                summary: .security_advisory.summary,
+                detectedAt: .created_at
+              }
+            ]' > result.json
+          jq -n --argjson data "$(cat result.json)" '{ data: $data }' > dependabot.json
+
+      # This is an optional step to generate a custom markdown report
+      - name: Generate optional custom markdown report
+        if: env.ATTACH_OPTIONAL_CUSTOM_MARKDOWN_TO_EVIDENCE == 'true'
+        run: |
+          ARTIFACT_NAME="$REGISTRY_DOMAIN/$REPO_NAME/$IMAGE_NAME:$VERSION"
+          IMAGE_ID=$(docker images --format "{{.ID}}" "$ARTIFACT_NAME")
+          IMAGE_SIZE=$(docker images --format "{{.Size}}" "$ARTIFACT_NAME" | sed 's/MB//' | awk '{print $1 * 1024 * 1024}')
+          SCAN_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          python ./examples/github/dependabot/markdown_helper.py \
+            "dependabot.json" \
+            "dependabot_report.md" \
+            "$REGISTRY_DOMAIN/$REPO_NAME/$IMAGE_NAME:$VERSION" \
+            "$SCAN_DATE" \
+            "$IMAGE_ID" \
+            "$IMAGE_SIZE"
+
+      # Attaching the evidence to associated package
+      - name: Attach Evidence using JFrog CLI
+        run: |
+          jf evd create \
+            --package-name $IMAGE_NAME \
+            --package-version $VERSION \
+            --package-repo-name $REPO_NAME \
+            --key "${{ secrets.PRIVATE_KEY }}" \
+            --key-alias "${{ vars.EVIDENCE_KEY_ALIAS }}" \
+            --predicate ./dependabot.json \
+            --predicate-type http://Github.com/Dependabot/static-analysis \
+            --provider-id "github" \
+            ${{ env.ATTACH_OPTIONAL_CUSTOM_MARKDOWN_TO_EVIDENCE == 'true' && '--markdown "dependabot_report.md"' || '' }}

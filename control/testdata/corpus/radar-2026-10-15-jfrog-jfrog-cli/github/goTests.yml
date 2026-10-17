@@ -1,0 +1,36 @@
+name: Go Tests
+# Reusable suite: invoked by build-gate.yml behind the `build-gate` approval.
+# Also runnable standalone via workflow_dispatch. Approval/label gating now lives in the
+# orchestrator, not here.
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  GO-tests:
+    # Go modules doesn't allow passing credentials to a private registry using an HTTP URL. Therefore, the Go tests run against a remote Artifactory server.
+    name: Go tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu, windows, macos]
+    runs-on: ${{ matrix.os }}-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+          # Safe: this workflow only runs after human approval via the build-gate environment.
+          allow-unsafe-pr-checkout: true
+
+      - name: Setup FastCI
+        uses: jfrog-fastci/fastci@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          fastci_otel_token: ${{ secrets.FASTCI_TOKEN }}
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Run Go tests
+        run: go test -v -timeout 0 --test.go --jfrog.url=${{ secrets.PLATFORM_URL }} --jfrog.adminToken=${{ secrets.PLATFORM_ADMIN_TOKEN }} --ci.runId=${{ runner.os }}-go

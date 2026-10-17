@@ -1,0 +1,44 @@
+name: Cloud Tests
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: false
+        type: string
+
+jobs:
+  cloud:
+    name: Cloud Tests - AWS
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - uses: actions/cache@v6
+        name: Cache NuGet
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Setup .NET Core
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: |
+            10.x
+
+      - name: Test
+        run: dotnet test ClickHouse.Driver.Tests/ClickHouse.Driver.Tests.csproj
+              --framework net10.0 --configuration Release --verbosity normal --logger GitHubActions
+              /clp:ErrorsOnly /p:CollectCoverage=true /p:CoverletOutputFormat=opencover /p:SkipAutoProps=true
+              --filter "Category=Cloud"
+        env:
+          CLICKHOUSE_CONNECTION: Host=${{ secrets.CLICKHOUSE_CLOUD_HOST }};Port=8443;User=${{ secrets.CLICKHOUSE_CLOUD_USER }};Password=${{ secrets.CLICKHOUSE_CLOUD_PASSWORD }};Protocol=https
+          CLICKHOUSE_TEST_ENVIRONMENT: cloud
+          CLICKHOUSE_CLOUD_JWT: ${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_JWT_DESERT_VM_43 }}

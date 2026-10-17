@@ -1,0 +1,217 @@
+name: End 2 End Tests
+
+on:
+  workflow_dispatch:
+
+jobs:
+  end2end-tests:
+    name: Run E2E Tests with Docker Services
+    runs-on: ubuntu-latest
+    env:
+      JFROG_CLI_KEY_ALIAS: ${{ vars.JFROG_CLI_KEY_ALIAS }}
+      JFROG_CLI_SIGNING_KEY: ${{ secrets.JFROG_CLI_SIGNING_KEY }}
+      DOCKER_REGISTRY: ${{ vars.JF_HOST }}/quotopia-qa-docker
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup JFrog CLI
+      uses: jfrog/setup-jfrog-cli@v4
+      with:
+        version: latest
+      env:
+        JF_URL: ${{ vars.JF_URL }}
+        JF_USER: ${{ vars.JF_USER }}
+        JF_ACCESS_TOKEN: ${{ secrets.JF_ACCESS_TOKEN }}
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: e2e-tests/package-lock.json
+
+    - name: Login to Docker Registry
+      run: |
+        echo "🔐 Logging into JFrog Artifactory Docker registry..."
+        echo "Registry: ${{ env.DOCKER_REGISTRY }}"
+        echo ${{ secrets.JF_ACCESS_TOKEN }} | docker login -u ${{ vars.JF_USER }} --password-stdin ${{ env.DOCKER_REGISTRY }}
+        echo "✅ Successfully logged into Docker registry"
+
+    - name: Get latest Docker images from Artifactory for QA environment
+      id: get-images
+      run: |
+        echo "🔍 Fetching latest Docker images from Artifactory..."
+        
+        # Get latest images
+        QUOTE_RESPONSE=$(curl -s -X POST \
+          -H "Authorization: Bearer ${{ secrets.JF_ACCESS_TOKEN }}" \
+          -H "Content-Type: text/plain" \
+          -d 'items.find({"repo": "quotopia-qa-docker", "name": "list.manifest.json", "path": {"$match": "quoteofday/*"}}).sort({"$desc": ["created"]}).limit(1)' \
+            "${{ vars.JF_URL }}/artifactory/api/search/aql")
+        echo "Quoteofday API Response: $QUOTE_RESPONSE"        
+
+        QUOTE_IMAGE_TAG=$(echo "$QUOTE_RESPONSE" | jq -r '.results[0].path | split("/") | .[1] // empty')        
+        echo "✅ Found quoteofday image tag: $QUOTE_IMAGE_TAG"
+
+        UI_RESPONSE=$(curl -s -X POST \
+          -H "Authorization: Bearer ${{ secrets.JF_ACCESS_TOKEN }}" \
+          -H "Content-Type: text/plain" \
+          -d 'items.find({"repo": "quotopia-qa-docker", "name": "list.manifest.json", "path": {"$match": "quotopia-ui/*"}}).sort({"$desc": ["created"]}).limit(1)' \
+            "${{ vars.JF_URL }}/artifactory/api/search/aql")
+        echo "quotopia-ui API Response: $UI_RESPONSE"        
+
+        UI_IMAGE_TAG=$(echo "$UI_RESPONSE" | jq -r '.results[0].path | split("/") | .[1] // empty')        
+        echo "✅ Found quotopia-ui image tag: $UI_IMAGE_TAG"
+
+        
+        # Set output variables
+        echo "quote_version=$QUOTE_IMAGE_TAG" >> $GITHUB_OUTPUT
+        echo "ui_version=$UI_IMAGE_TAG" >> $GITHUB_OUTPUT
+        
+        echo "📋 Image Summary:"
+        echo "- Quoteofday: ${{ env.DOCKER_REGISTRY }}/quoteofday:$QUOTE_IMAGE_TAG"
+        echo "- Quotopia UI: ${{ env.DOCKER_REGISTRY }}/quotopia-ui:$UI_IMAGE_TAG"
+
+    - name: Pull Docker images
+      run: |
+        echo "📥 Pulling Docker images..."
+        
+        # Pull quoteofday image
+        echo "📦 Pulling quoteofday image..."
+        docker pull ${{ env.DOCKER_REGISTRY }}/quoteofday:${{ steps.get-images.outputs.quote_version }}
+        
+        # Pull quotopia-ui image
+        echo "📦 Pulling quotopia-ui image..."
+        docker pull ${{ env.DOCKER_REGISTRY }}/quotopia-ui:${{ steps.get-images.outputs.ui_version }}
+        
+        echo "✅ All images pulled successfully"
+
+    - name: Start Docker services
+      run: |
+        echo "🚀 Starting Docker services..."
+        
+        # Start quoteofday service
+        echo "🔧 Starting quoteofday service..."
+        docker run -d --name quoteofday-service \
+          -p 8001:8001 \
+          ${{ env.DOCKER_REGISTRY }}/quoteofday:${{ steps.get-images.outputs.quote_version }}
+        
+        # Start quotopia-ui service
+        echo "🔧 Starting quotopia-ui service..."
+        docker run -d --name quotopia-ui-service \
+          -p 8081:80 \
+          --add-host host.docker.internal:host-gateway \
+          ${{ env.DOCKER_REGISTRY }}/quotopia-ui:${{ steps.get-images.outputs.ui_version }}
+        
+        # Wait for services to be ready
+        echo "⏳ Waiting for services to be ready..."
+        sleep 10
+        
+        # Check if services are running
+        if ! docker ps | grep -q quoteofday-service; then
+          echo "❌ Quoteofday service failed to start"
+          docker logs quoteofday-service
+          exit 1
+        fi
+        
+        if ! docker ps | grep -q quotopia-ui-service; then
+          echo "❌ Quotopia UI service failed to start"
+          docker logs quotopia-ui-service
+          exit 1
+        fi
+        
+        echo "✅ All services started successfully"
+
+    - name: Install E2E test dependencies
+      run: |
+        echo "📦 Installing E2E test dependencies..."
+        cd e2e-tests
+        npm ci
+        echo "✅ Dependencies installed"
+
+    - name: Run E2E tests with report generation
+      run: |
+        echo "🧪 Running E2E tests with report generation..."
+        cd e2e-tests
+        
+        # Run tests and generate reports
+        npm run test:report
+        
+        echo "✅ Tests completed and reports generated"
+
+    - name: Verify test results
+      run: |
+        echo "🔍 Verifying test results..."
+        cd e2e-tests
+        
+        # Check if reports were generated
+        if [ ! -f "test-report.md" ]; then
+          echo "❌ Markdown report not found"
+          exit 1
+        fi
+        
+        if [ ! -f "test-report.json" ]; then
+          echo "❌ JSON report not found"
+          exit 1
+        fi
+        
+        # Check test results from JSON
+        TOTAL_TESTS=$(jq -r '.summary.totalTests' test-report.json)
+        PASSING_TESTS=$(jq -r '.summary.passing' test-report.json)
+        FAILING_TESTS=$(jq -r '.summary.failing' test-report.json)
+        
+        echo "📊 Test Results:"
+        echo "- Total Tests: $TOTAL_TESTS"
+        echo "- Passing: $PASSING_TESTS"
+        echo "- Failing: $FAILING_TESTS"
+        
+        if [ "$FAILING_TESTS" -gt 0 ]; then
+          echo "❌ Some tests failed"
+          exit 1
+        fi
+        
+        echo "✅ All tests passed successfully"
+
+    - name: Create evidence from test results
+      run: |
+        echo "📋 Creating evidence from test results..."
+        cd e2e-tests
+        jf evd create \
+          --subject-repo-path quotopia-release-bundles-v2/quotopia-app/24/release-bundle.json.evd \
+          --predicate-type https://cypress.io/evidence/e2e/v1 --predicate test-report.json --markdown test-report.md \
+          --provider-id cypress 
+                 
+        echo "✅ Evidence created successfully"
+
+
+    - name: Display test summary
+      run: |
+        echo "📋 Test Summary:"
+        cd e2e-tests
+        
+        if [ -f "test-report.md" ]; then
+          echo "📄 Markdown Report Preview:"
+          cat test-report.md >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        if [ -f "test-report.json" ]; then
+          echo "📊 JSON Report Summary:"
+          cat test-report.json
+        fi
+
+    - name: Cleanup Docker services
+      if: always()
+      run: |
+        echo "🧹 Cleaning up Docker services..."
+        
+        # Stop and remove containers
+        docker stop quoteofday-service quotopia-ui-service 2>/dev/null || true
+        docker rm quoteofday-service quotopia-ui-service 2>/dev/null || true
+        
+        # Clean up images
+        docker image prune -f
+        
+        echo "✅ Cleanup completed"
+        

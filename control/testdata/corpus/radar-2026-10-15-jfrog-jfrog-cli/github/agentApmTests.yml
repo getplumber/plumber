@@ -1,0 +1,89 @@
+name: Agent APM Tests
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  Agent-APM-Tests:
+    name: agent-apm ${{ matrix.os.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: windows
+            version: 2022
+          - name: macos
+            version: 14
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    steps:
+      - name: Skip macOS - JGC-413
+        if: matrix.os.name == 'macos'
+        run: |
+          echo "::warning::JGC-413 - Skip until artifactory bootstrap in osx is fixed"
+          exit 0
+
+      - name: Checkout code
+        if: matrix.os.name != 'macos'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+          # Safe: this workflow only runs after human approval via the build-gate environment.
+          allow-unsafe-pr-checkout: true
+
+      - name: Setup FastCI
+        if: matrix.os.name != 'macos'
+        uses: jfrog-fastci/fastci@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          fastci_otel_token: ${{ secrets.FASTCI_TOKEN }}
+
+      - name: Setup Go with cache
+        if: matrix.os.name != 'macos'
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Install APM (Linux)
+        if: matrix.os.name == 'ubuntu'
+        run: |
+          APM_VERSION="v0.23.1"
+          OS="linux"
+          ARCH="x86_64"
+          curl -sL "https://github.com/microsoft/apm/releases/download/${APM_VERSION}/apm-${OS}-${ARCH}.tar.gz" -o apm.tar.gz
+          tar -xzf apm.tar.gz
+          sudo mkdir -p /opt/apm
+          sudo mv apm-${OS}-${ARCH}/* /opt/apm/
+          sudo chmod +x /opt/apm/apm
+          echo "/opt/apm" >> $GITHUB_PATH
+          rm -rf apm-${OS}-${ARCH} apm.tar.gz
+          /opt/apm/apm --version
+
+      - name: Install APM (Windows)
+        if: matrix.os.name == 'windows'
+        shell: pwsh
+        run: |
+          $APM_VERSION = "v0.28.0"
+          $OS = "windows"
+          $ARCH = "x86_64"
+          $APM_URL = "https://github.com/microsoft/apm/releases/download/${APM_VERSION}/apm-${OS}-${ARCH}.zip"
+          curl.exe -sL "$APM_URL" -o apm.zip
+          Expand-Archive -Path apm.zip -DestinationPath .
+          New-Item -ItemType Directory -Path "C:\tools\apm" -Force | Out-Null
+          Move-Item -Path "apm-${OS}-${ARCH}\*" -Destination "C:\tools\apm\" -Force
+          Add-Content -Path $env:GITHUB_PATH -Value "C:\tools\apm"
+          Remove-Item -Path "apm-${OS}-${ARCH}", "apm.zip" -Recurse -Force
+          & "C:\tools\apm\apm.exe" --version
+
+      - name: Install local Artifactory
+        if: matrix.os.name != 'macos'
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: ${{ env.RT_CONNECTION_TIMEOUT_SECONDS || '1200' }}
+
+      - name: Run agent apm tests
+        if: matrix.os.name != 'macos'
+        run: >-
+          go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.apm
+          ${{ env.JFROG_TESTS_IS_EXTERNAL == 'true' && format('--jfrog.url={0} --jfrog.adminToken={1}', env.JFROG_TESTS_URL, env.JFROG_TESTS_LOCAL_ACCESS_TOKEN) || '' }}

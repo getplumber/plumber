@@ -1,0 +1,99 @@
+name: apt Tests
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  apt-Tests:
+    name: apt tests (${{ matrix.distro.name }}, ${{ matrix.user_mode }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        distro:
+          - image: ubuntu:20.04
+            name: ubuntu-focal
+            dist: focal
+          - image: ubuntu:22.04
+            name: ubuntu-jammy
+            dist: jammy
+          - image: ubuntu:24.04
+            name: ubuntu-noble
+            dist: noble
+          - image: debian:12
+            name: debian-bookworm
+            dist: bookworm
+          - image: debian:13
+            name: debian-trixie
+            dist: trixie
+        user_mode:
+          - root
+          - nonroot
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+          # Safe: this workflow only runs after human approval via the build-gate environment.
+          allow-unsafe-pr-checkout: true
+
+      - name: Setup FastCI
+        uses: jfrog-fastci/fastci@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          fastci_otel_token: ${{ secrets.FASTCI_TOKEN }}
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      # Runs on the host runner, not inside a distro container - stable, no OOM.
+      - name: Install local Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: '1200'
+
+      # Compiled once on the host, then bind-mounted into every distro container below.
+      # CGO_ENABLED=0 keeps the binary statically linked so it runs unchanged across
+      # glibc versions from Ubuntu 20.04 through Debian 13.
+      - name: Compile apt test binary
+        run: go test -c -o apt.test .
+        env:
+          CGO_ENABLED: "0"
+
+      # --network host puts the container on the runner's network namespace, so
+      # localhost:8081 inside the container reaches the Artifactory started above.
+      # exec.Command("apt-get", ...) and /etc/apt/, /var/log/apt/ inside apt.test
+      # all hit this container's native environment, not the host's.
+      - name: Run apt tests (${{ matrix.distro.image }}, ${{ matrix.user_mode }})
+        run: |
+          docker run --rm --network host \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            -e JFROG_TESTS_LOCAL_ACCESS_TOKEN \
+            -e APT_TEST_DIST="${{ matrix.distro.dist }}" \
+            -e USER_MODE="${{ matrix.user_mode }}" \
+            -e CI_RUN_ID="${{ matrix.distro.name }}-${{ matrix.user_mode }}" \
+            "${{ matrix.distro.image }}" \
+            bash -c '
+              set -eu
+              apt-get update -y
+              apt-get install -y --no-install-recommends gnupg sudo
+
+              if [ "$USER_MODE" = "nonroot" ]; then
+                useradd -m -u 1001 -s /bin/bash testuser
+                echo "testuser ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/bin/apt" > /etc/sudoers.d/testuser-apt
+                chmod 0440 /etc/sudoers.d/testuser-apt
+                mkdir -p /etc/apt/keyrings
+                chown -R testuser:testuser \
+                  /etc/apt/sources.list.d /etc/apt/preferences.d /etc/apt/keyrings /workspace
+
+                su -c "/workspace/apt.test -test.v -test.timeout=0 -test.run=TestApt \
+                  --test.apt --ci.runId=$CI_RUN_ID" testuser
+              else
+                /workspace/apt.test -test.v -test.timeout=0 -test.run=TestApt \
+                  --test.apt --ci.runId="$CI_RUN_ID"
+              fi
+            '

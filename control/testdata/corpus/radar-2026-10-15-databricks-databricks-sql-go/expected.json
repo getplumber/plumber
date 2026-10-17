@@ -1,0 +1,61 @@
+{
+  "source": "https://github.com/databricks/databricks-sql-go",
+  "commit": "59f8baeed996bc754f3d11ed30d4768a5efe5c02",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "azure-prod",
+      "known": true
+    },
+    {
+      "name": "copilot",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/dco-check.yml": "active",
+    ".github/workflows/engineer-bot-followup.yml": "active",
+    ".github/workflows/engineer-bot-learning.yml": "active",
+    ".github/workflows/engineer-bot.yml": "active",
+    ".github/workflows/go.yml": "active",
+    ".github/workflows/nightly-e2e.yml": "active",
+    ".github/workflows/on-demand-e2e.yml": "active",
+    ".github/workflows/reviewer-bot-followup.yml": "active",
+    ".github/workflows/reviewer-bot.yml": "active",
+    ".github/workflows/securityScan.yml": "active",
+    ".github/workflows/skip-checks-reporter.yml": "active",
+    ".github/workflows/trigger-integration-tests.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "actionMetadata": {
+    "actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6": {
+      "refKind": "commit",
+      "mutableRemoteExec": {
+        "tier": "exec",
+        "url": "https://sh.rustup.rs",
+        "file": "action.yml",
+        "downloadGuard": "rustup"
+      }
+    }
+  },
+  "note": "The High path through the SHA-pinned `actions-rust-lang/setup-rust-toolchain` was judged overstated: the SHA-pinned Rust toolchain action only fetches `sh.rustup.rs` under `if ! command -v rustup`, and the next step downloads the toolchain from the same vendor, so the actor is the Rust distribution on a runner without rustup, Medium at most.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "actions-rust-lang/setup-rust-toolchain@46268bd06076",
+        "tier": "medium"
+      }
+    ]
+  }
+}

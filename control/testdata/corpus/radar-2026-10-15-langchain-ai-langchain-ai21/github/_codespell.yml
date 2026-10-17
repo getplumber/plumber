@@ -1,0 +1,39 @@
+---
+name: make spell_check
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        required: true
+        type: string
+        description: "From which folder this pipeline executes"
+
+permissions:
+  contents: read
+
+jobs:
+  codespell:
+    name: (Check for spelling errors)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          pip install toml
+
+      - name: Extract Ignore Words List
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          # Use a Python script to extract the ignore words list from pyproject.toml
+          python ../../.github/workflows/extract_ignored_words_list.py
+        id: extract_ignore_words
+
+      - name: Codespell
+        uses: codespell-project/actions-codespell@v2
+        with:
+          skip: guide_imports.json
+          ignore_words_list: ${{ steps.extract_ignore_words.outputs.ignore_words_list }}

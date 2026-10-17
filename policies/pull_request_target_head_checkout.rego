@@ -11,8 +11,11 @@
 # an operator can prioritise it above the general trigger warning.
 #
 # A job-level `if:` that restricts execution to same-repository
-# (non-fork) pull requests neutralises the exploit — fork-controlled
-# code never runs — so a job carrying such a guard is not flagged.
+# (non-fork) pull requests neutralises the exploit (fork-controlled
+# code never runs), but the guard is read off the condition's text, so
+# it downgrades the finding rather than suppressing it: the finding is
+# still emitted, marked `forkGuard: true`, and control.MarkGatedFindings
+# prices it Low with the gate note, the route of every gated finding.
 package pull_request_target_head_checkout
 
 import rego.v1
@@ -30,13 +33,12 @@ deny contains finding if {
 	some i, j
 	job := input.pipeline.jobs[i]
 	_under_pull_request_target(job)
-	not _has_fork_guard(job)
 	action := job.uses[j]
 	startswith(action.uses, "actions/checkout@")
 	ref := action.with.ref
 	is_string(ref)
 	_ref_points_at_pr_head(ref)
-	finding := {
+	finding := object.union({
 		"code":     "ISSUE-804",
 		"severity": "critical",
 		"message":  sprintf("job %q runs under pull_request_target AND checks out the PR head (ref=%q) — base-repo secrets and fork-controlled code in the same run (tj-actions / CVE-2025-30066 pattern)", [job.name, ref]),
@@ -44,8 +46,14 @@ deny contains finding if {
 		"uses":     action.uses,
 		"ref":      ref,
 		"line":     object.get(action, "line", 0),
-	}
+	}, _fork_guard_fields(job, action))
 }
+
+# _fork_guard_fields marks a finding whose job carries a fork guard; a
+# job without one keeps the finding's original shape.
+default _fork_guard_fields(_, _) := {}
+
+_fork_guard_fields(job, action) := {"forkGuard": true} if _has_fork_guard(job, action)
 
 _under_pull_request_target(job) if {
 	some t in job.triggers
@@ -69,8 +77,14 @@ fork_guard_patterns := [
 	`!\s*github\.event\.pull_request\.head\.repo\.fork`,
 ]
 
-_has_fork_guard(job) if {
-	some cond in job.conditions
+# Only the conditions that gate the checkout count: the job-level if:,
+# which gates every step, and the checkout step's own if:. A guard on
+# another step (a deploy after the build) gates nothing the checked-out
+# code runs, so job.conditions, which flattens every step's if:, is not
+# read here.
+_has_fork_guard(job, action) if {
+	some cond in [object.get(job, "if", ""), object.get(action, "if", "")]
+	cond != ""
 	some p in fork_guard_patterns
 	regex.match(p, cond)
 }

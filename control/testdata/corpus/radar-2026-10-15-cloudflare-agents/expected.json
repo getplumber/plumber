@@ -1,0 +1,51 @@
+{
+  "source": "https://github.com/cloudflare/agents",
+  "commit": "f56cd20dd58dc88f4b76a601bcd94b9eabcd6661",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "copilot",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/pullrequest.yml": "active",
+    ".github/workflows/release.yml": "active",
+    ".github/workflows/bonk.yml": "active",
+    ".github/workflows/nightly.yml": "active",
+    ".github/workflows/playground-e2e.yml": "active",
+    ".github/workflows/semgrep.yml": "active",
+    ".github/workflows/conformance.yml": "active",
+    ".github/workflows/ai-sdk-compat.yml": "active",
+    ".github/workflows/import-sizes.yml": "active",
+    ".github/workflows/gardener-sync.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "actionMetadata": {
+    "ask-bonk/ask-bonk/github@main": {
+      "refKind": "branch",
+      "redirectedOwner": "Cloudflare-Studio"
+    }
+  },
+  "note": "The High `ask-bonk/ask-bonk/github@main` path was judged overstated: the action's repository redirects to `Cloudflare-Studio/ask-bonk`, Cloudflare's own sibling organisation, so it is a mutable action of the organisation, an insider entry, Medium at most.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "ask-bonk/ask-bonk/github@main",
+        "tier": "medium",
+        "pending": "the redirect of `ask-bonk/ask-bonk` to the sibling organisation `Cloudflare-Studio` is carried only on the unpinned-action finding, so the path keeps the outside-dependency actor and the High ceiling instead of the insider one at Medium."
+      }
+    ]
+  }
+}

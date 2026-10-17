@@ -1,0 +1,37 @@
+name: MSRV
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/msrv.yml"
+
+permissions:
+  contents: read
+
+env:
+  DO_NOT_TRACK: "1"
+
+jobs:
+  msrv:
+    name: Check on declared rust-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Keep in sync with `rust-version` in the crate manifests.
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable @ 2026-10-01
+        with:
+          toolchain: "1.94"
+
+      - name: Check all targets
+        run: |
+          cargo check --locked --workspace --all-targets
+          cargo check --locked -p clickhousectl --all-targets --no-default-features
+          cargo check --locked --workspace --all-targets --all-features

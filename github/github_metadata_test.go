@@ -4,12 +4,93 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/cli/go-gh/v2/pkg/api"
 	version "github.com/hashicorp/go-version"
 )
+
+// Test_latestReleaseTag_picksTheHighestCleanSemver pins the ISSUE-709
+// latest-release pick across the releases listing: the highest semver
+// wins (v10.0.0 over v3.x, never a lexical order), a draft or a
+// prerelease is skipped whatever its version, a clean-looking release
+// whose semver carries a prerelease segment (`v3.1.0-node20`, published
+// with prerelease false) is rejected, and a later page is read when the
+// first one is full.
+func Test_latestReleaseTag_picksTheHighestCleanSemver(t *testing.T) {
+	var page1 strings.Builder
+	page1.WriteString(`[{"tag_name":"v2.0.0"},{"tag_name":"v3.1.0-node20","prerelease":false},{"tag_name":"v99.0.0","draft":true},{"tag_name":"v98.0.0","prerelease":true},{"tag_name":"codeql-bundle-v2.25.2"}`)
+	for i := 0; i < 45; i++ {
+		page1.WriteString(`,{"tag_name":"v1.0.` + strconv.Itoa(i) + `"}`)
+	}
+	page1.WriteString(`]`)
+	c := stubbedMetadataClient(t, func(r *http.Request) (string, int) {
+		if !strings.HasSuffix(r.URL.Path, "/repos/acme/widget/releases") {
+			return `{}`, http.StatusNotFound
+		}
+		switch r.URL.Query().Get("page") {
+		case "1":
+			return page1.String(), http.StatusOK
+		case "2":
+			return `[{"tag_name":"v10.0.0"},{"tag_name":"v9.9.9"}]`, http.StatusOK
+		}
+		return `[]`, http.StatusOK
+	})
+	if got := c.latestReleaseTag("acme", "widget"); got != "v10.0.0" {
+		t.Fatalf("latestReleaseTag = %q, want v10.0.0", got)
+	}
+}
+
+// Test_latestReleaseTag_rejectsAPrereleaseSegment pins the guard on its
+// own: a listing whose only higher entry is `v3.1.0-node20` (published
+// with prerelease false) still answers the clean v2.0.0.
+func Test_latestReleaseTag_rejectsAPrereleaseSegment(t *testing.T) {
+	c := stubbedMetadataClient(t, func(r *http.Request) (string, int) {
+		if r.URL.Query().Get("page") == "1" {
+			return `[{"tag_name":"v2.0.0"},{"tag_name":"v3.1.0-node20","prerelease":false}]`, http.StatusOK
+		}
+		return `[]`, http.StatusOK
+	})
+	if got := c.latestReleaseTag("acme", "widget"); got != "v2.0.0" {
+		t.Fatalf("latestReleaseTag = %q, want v2.0.0", got)
+	}
+}
+
+// Test_resolveTag_dereferencesAnAnnotatedTag pins the second lookup an
+// annotated tag needs: git/ref/tags/<tag> answers the tag object, and
+// git/tags/<object sha> names the commit it points at. The commit SHA
+// is what the ref-version-mismatch enrichment compares, never the tag
+// object's own SHA. A lightweight tag (object type commit) answers its
+// commit directly.
+func Test_resolveTag_dereferencesAnAnnotatedTag(t *testing.T) {
+	const (
+		tagObjSha = "1111111111111111111111111111111111111111"
+		commitSha = "2222222222222222222222222222222222222222"
+		lightSha  = "3333333333333333333333333333333333333333"
+	)
+	c := stubbedMetadataClient(t, func(r *http.Request) (string, int) {
+		switch r.URL.Path {
+		case "/repos/foo/bar/git/ref/tags/v7":
+			return `{"object":{"type":"tag","sha":"` + tagObjSha + `"}}`, http.StatusOK
+		case "/repos/foo/bar/git/tags/" + tagObjSha:
+			return `{"object":{"type":"commit","sha":"` + commitSha + `"}}`, http.StatusOK
+		case "/repos/foo/bar/git/ref/tags/v8":
+			return `{"object":{"type":"commit","sha":"` + lightSha + `"}}`, http.StatusOK
+		}
+		return `{}`, http.StatusNotFound
+	})
+	if sha, ok := c.resolveTag("foo", "bar", "v7"); !ok || sha != commitSha {
+		t.Fatalf("resolveTag(v7) = %q %v, want the dereferenced commit %q", sha, ok, commitSha)
+	}
+	if got := c.ResolveTagSha("foo/bar", "v7"); got != commitSha {
+		t.Fatalf("ResolveTagSha(v7) = %q, want %q", got, commitSha)
+	}
+	if sha, ok := c.resolveTag("foo", "bar", "v8"); !ok || sha != lightSha {
+		t.Fatalf("resolveTag(v8) = %q %v, want %q", sha, ok, lightSha)
+	}
+}
 
 // roundTripFunc adapts a function into an http.RoundTripper so tests can
 // stub the authenticated REST transport.
@@ -509,7 +590,7 @@ func Test_resolveUncached_refKnownAbsentGuard(t *testing.T) {
 }
 
 // Test_resolveUncached_redirectedOwner pins the RedirectedOwner signal
-// trust.ActorFor reads a sibling-organisation redirect off: the
+// trust.actorFor reads a sibling-organisation redirect off: the
 // repository object's own `full_name` is who can actually change the
 // code, which can differ from the `uses` owner after a rename or an
 // organisation transfer (ask-bonk/ask-bonk -> Cloudflare-Studio/ask-bonk).

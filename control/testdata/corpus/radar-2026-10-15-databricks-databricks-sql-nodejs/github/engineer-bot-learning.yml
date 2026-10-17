@@ -1,0 +1,128 @@
+# Engineer Bot — learning (retrospective) extraction — DAILY CRON.
+#
+# Over an adaptive look-back window the engine gathers merged PRs (diff + review
+# comments) AND recent engineer-bot author-run console logs ITSELF via the GitHub
+# API — no in-workflow context gathering, no per-PR trigger — and if the model
+# finds durable, reusable learnings, opens ONE ROLLING PR on a stable branch
+# (`ai/learning-pr`), appending a dated section per day until a human merges it.
+# Human-gated by design: it NEVER commits the canonical log directly.
+#
+# Own job (NOT `uses: databricks/databricks-bot-engine/...`): an external repo
+# can't resolve the internal engine's reusable workflows ("not found"). It shares
+# the SAME prelude the other bots use — ./.github/actions/bot-prelude (tokens +
+# Node + pinned engine install) — so the engine pin stays single-sourced in
+# bot-prelude's `engine-ref` default (no second SHA to drift).
+#
+# Opt-in is purely via the `retrospective:` block in .bot/config.yaml + this
+# workflow; absent that block the engine phase is a clean no-op.
+name: Engineer Bot — Learning
+
+on:
+  schedule:
+    # 17:23 UTC daily — off-peak, off-:00 minute (GitHub delays/drops on-the-hour crons).
+    - cron: '23 17 * * *'
+  workflow_dispatch:
+    inputs:
+      since:
+        description: 'ISO lower bound to shorten the window and recover a wedged flow. Empty = adaptive cursor.'
+        type: string
+        default: ''
+      window-hours:
+        # STRING, not number: a `type: number` workflow_dispatch input fails the
+        # whole run at startup ("workflow file issue") when combined with the
+        # `schedule` trigger. argparse coerces it to int downstream.
+        description: 'Fallback look-back window (hours) used only when there is no prior successful run.'
+        type: string
+        default: '24'
+
+permissions:
+  contents: write # push the learning branch / open the learning PR
+  pull-requests: write
+  # Track B lists engineer-bot author runs + downloads their logs via the App
+  # token; the engineer-bot App installation must ALSO carry actions:read (a
+  # missing scope surfaces as a 403 that fails the whole run — list_author_runs
+  # raises, no escape hatch).
+  actions: read
+  id-token: write # JFrog OIDC exchange for the engine/SDK/CLI install
+
+concurrency:
+  # One learning run at a time; a queued run waits rather than racing the rolling
+  # PR's branch. Not keyed on a PR number (this is a cron, no PR event).
+  group: engineer-bot-learning-cron
+  cancel-in-progress: false
+
+jobs:
+  learning:
+    environment: azure-prod # DATABRICKS_HOST / DATABRICKS_TOKEN live here
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # Checkout the default branch (the learning PR is cut from it) FIRST, so the
+      # local `./` composites below resolve. persist-credentials:false — the
+      # retrospective sets its own authenticated push remote (see the run step),
+      # so no token is left in .git/config.
+      - name: Checkout default branch (learning PR is cut from it)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # No separate `setup-jfrog` step. install-bot-engine (via bot-prelude) does
+      # its own keyless OIDC→JFrog mint and passes the credential through job-local
+      # files + per-command --index-url flags; it never reads PIP_INDEX_URL /
+      # JFROG_ACCESS_TOKEN from the environment. A preceding setup-jfrog would be
+      # redundant (the engine install is the only fetch — the learning flow runs no
+      # `npm` build) AND harmful: setup-jfrog exports a token-bearing PIP_INDEX_URL
+      # to $GITHUB_ENV, exposing it to every later step including the model run.
+      # Mirrors the read-only sibling reviewer-bot.yml.
+      - name: Setup Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: '3.11'
+
+      # Shared prelude: mint the engineer-bot token (opens the learning PR) + the
+      # engine-scoped token, set up Node, install the pinned engine (PAT-free). The
+      # engine pin comes from bot-prelude's `engine-ref` default — the SINGLE source
+      # of truth for every bot; there is no second SHA in this file to drift.
+      - name: Bot prelude (tokens + Node + engine install)
+        id: prelude
+        uses: ./.github/actions/bot-prelude
+        with:
+          app-id: ${{ secrets.ENGINEER_BOT_APP_ID }}
+          private-key: ${{ secrets.ENGINEER_BOT_APP_PRIVATE_KEY }}
+
+      # NOTE: no git-identity step — the engine's retrospective configures the git
+      # user AND DCO sign-off itself from .bot/config.yaml `bot_login_prefix`.
+      # NOTE: no context-gather step — the daily-cron engine enumerates merged PRs
+      # + author runs itself over the adaptive window.
+      - name: Extract learnings + open rolling PR
+        env:
+          GH_TOKEN: ${{ steps.prelude.outputs.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          # Use the concrete `.../serving-endpoints/<model>/invocations` form (same
+          # as reviewer-bot.yml / engineer-bot.yml). sdk_agent.translate_endpoint
+          # strips it to the `.../serving-endpoints/anthropic` base the CLI needs.
+          # Do NOT use `.../serving-endpoints/anthropic/invocations` here: that hits
+          # translate_endpoint's already-v2 early-return, which keeps the trailing
+          # `invocations`, so the CLI appends `/v1/messages` →
+          # `.../anthropic/invocations/v1/messages` → HTTP 400 (unsupported path).
+          # The effective model is set by the engine default (no retrospective.model).
+          MODEL_ENDPOINT: https://${{ secrets.DATABRICKS_HOST }}/serving-endpoints/databricks-claude-opus-4-8/invocations
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+          RUNNER_TEMP: ${{ runner.temp }}
+          SINCE: ${{ inputs.since }}
+          WINDOW_HOURS: ${{ inputs.window-hours }}
+        # The retrospective pushes the learning branch with a plain `git push
+        # origin`, and the checkout ran persist-credentials:false — so set an
+        # authenticated push remote from the minted App token first, mirroring
+        # engineer-bot.yml's publish step. --since / --window-hours are passed only
+        # when provided via workflow_dispatch (the schedule trigger leaves them
+        # empty → the adaptive cursor drives the window).
+        run: |
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          args=(--repo-dir "$GITHUB_WORKSPACE")
+          [ -n "$SINCE" ] && args+=(--since "$SINCE")
+          [ -n "$WINDOW_HOURS" ] && args+=(--window-hours "$WINDOW_HOURS")
+          python -m databricks_bot_engine.engineer_bot.retrospective "${args[@]}"

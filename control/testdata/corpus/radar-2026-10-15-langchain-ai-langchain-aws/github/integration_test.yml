@@ -1,0 +1,85 @@
+name: integration-test
+
+on:
+  workflow_dispatch:
+    inputs:
+      working-directory:
+        required: true
+        type: choice
+        options:
+          - libs/aws
+          - libs/langgraph-checkpoint-aws
+          - libs/agentcore-codeinterpreter
+      fork:
+        required: true
+        type: string
+        default: "langchain-ai"
+        description: "Which fork to run this test against"
+      branch:
+        required: true
+        type: string
+        default: "main"
+        description: "Which branch to run this test against"
+      test-file:
+        required: true
+        type: string
+        default: "tests/integration_tests/"
+        description: "Which test file to run"
+
+env:
+  PYTHON_VERSION: "3.13"
+
+permissions:
+  contents: read
+  actions: write
+  id-token: write
+
+jobs:
+  build:
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # Needed for aws-actions/configure-aws-credentials
+      actions: write
+    name: "make integration_test"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: "${{ inputs.fork }}/langchain-aws"
+          ref: "${{ inputs.branch }}"
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }} + uv
+        uses: "./.github/actions/uv_setup"
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        shell: bash
+        run: uv sync --group test --group test_integration
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Run integration tests
+        shell: bash
+        run: |
+          uv run pytest -n auto -vv -s ${{ inputs.test-file }}
+
+      - name: Ensure the tests did not create any additional files
+        shell: bash
+        run: |
+          set -eu
+
+          STATUS="$(git status)"
+          echo "$STATUS"
+
+          # grep will exit non-zero if the target message isn't found,
+          # and `set -e` above will cause the step to fail.
+          echo "$STATUS" | grep 'nothing to commit, working tree clean'

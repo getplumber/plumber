@@ -1,0 +1,98 @@
+name: HuggingFace Tests
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  HuggingFace-Tests:
+    name: HuggingFace tests (${{ matrix.os.name }}, huggingface_hub ${{ matrix.hf_version }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: windows
+            version: 2022
+          - name: macos
+            version: 14
+        # 1.20.0/1.29.0 exercise huggingface_hub's stricter RepoUrl/parse_hf_uri
+        # parsing (PR #4324) against Artifactory's commitUrl, fixed in
+        # jfrog/jfrog-cli-artifactory#548 (this repo's go.mod is bumped to include it).
+        hf_version: ['1.19.0', '1.20.0', '1.29.0']
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    steps:
+      - name: Skip macOS - JGC-413
+        if: matrix.os.name == 'macos'
+        run: |
+          echo "::warning::JGC-413 - Skip until artifactory bootstrap in osx is fixed"
+          exit 0
+
+      - name: Checkout code
+        if: matrix.os.name != 'macos'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+          # Safe: this workflow only runs after human approval via the build-gate environment.
+          allow-unsafe-pr-checkout: true
+
+      - name: Setup FastCI
+        if: matrix.os.name != 'macos'
+        uses: jfrog-fastci/fastci@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          fastci_otel_token: ${{ secrets.FASTCI_TOKEN }}
+
+      - name: Setup Go with cache
+        if: matrix.os.name != 'macos'
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Setup Python
+        if: matrix.os.name != 'macos'
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+
+      - name: Install HuggingFace Library
+        if: matrix.os.name != 'macos'
+        run: |
+          pip install "huggingface_hub==${{ matrix.hf_version }}"
+        shell: bash
+
+      - name: Debug macOS Environment and Set Timeout
+        if: runner.os == 'macOS'
+        run: |
+          echo "=== macOS Debug Information ==="
+          echo "Architecture: $(uname -m)"
+          echo "macOS Version: $(sw_vers -productVersion)"
+          echo "macOS Build: $(sw_vers -buildVersion)"
+          echo "Available memory: $(system_profiler SPHardwareDataType | grep Memory || echo 'Memory info not available')"
+          echo "Available disk space: $(df -h)"
+          echo "Go version: $(go version)"
+          echo "Setting RT_CONNECTION_TIMEOUT_SECONDS to 2400 for macOS"
+          echo "RT_CONNECTION_TIMEOUT_SECONDS=2400" >> $GITHUB_ENV
+
+      - name: Install local Artifactory
+        if: matrix.os.name != 'macos'
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: ${{ env.RT_CONNECTION_TIMEOUT_SECONDS || '1200' }}
+
+      - name: Get ID Token and Exchange Token
+        if: matrix.os.name != 'macos'
+        shell: bash
+        run: |
+          ID_TOKEN=$(curl -sLS -H "User-Agent: actions/oidc-client" -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+          "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=jfrog-github" | jq .value | tr -d '"')
+          echo "JFROG_CLI_OIDC_EXCHANGE_TOKEN_ID=${ID_TOKEN}" >> $GITHUB_ENV
+
+      - name: Run HuggingFace tests
+        if: matrix.os.name != 'macos'
+        run: >-
+          go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.huggingface
+          --jfrog.url=${{ env.JFROG_TESTS_URL || 'http://127.0.0.1:8082' }}
+          --jfrog.adminToken=${{ env.JFROG_TESTS_LOCAL_ACCESS_TOKEN }}

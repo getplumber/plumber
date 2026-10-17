@@ -1,0 +1,60 @@
+name: Build Jfrog Kubelet Plugin
+# This workflow builds the Jfrog Kubelet Plugin and eventually have unit tests
+on:
+  workflow_dispatch:
+    inputs:
+      push_to_release:
+        description: 'Push to release for test CI'
+        required: true
+        default: "false"
+        type: boolean
+    
+    
+permissions:
+  id-token: write
+  contents: write
+  pull-requests: write
+
+jobs:
+  build-plugin:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v2
+        with:
+          go-version: '1.23'
+
+      - name: Install utilities
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y make
+          sudo apt-get install -y jq
+          sudo apt-get install -y unzip
+          sudo apt-get install -y python3-pip
+          pip3 install --upgrade pip
+          pip3 install awscliv2
+
+      - name: Build go binaries
+        run: |
+          cd build/
+          make build-all
+  
+      - name: Create CI Release for Binaries
+        if: github.event.inputs.push_to_release == 'true'
+        id: create_ci_release
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ci-binaries-${{ github.run_id }}-${{ github.run_attempt }}
+          name: "CI Binaries for Run ${{ github.run_id }} (Attempt ${{ github.run_attempt }})"
+          body: "Temporary binaries for CI run ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          draft: false
+          prerelease: true
+          files: |
+            build/bin/jfrog-credential-provider-linux-amd64
+            build/bin/jfrog-credential-provider-linux-arm64
+          fail_on_unmatched_files: true 

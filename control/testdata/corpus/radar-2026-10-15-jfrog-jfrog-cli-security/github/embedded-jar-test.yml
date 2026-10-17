@@ -1,0 +1,31 @@
+# This test verifies that gradle-dep-tree.jar and maven-dep-tree.jar are kept up-to-date with the version specified in buildscripts/download-jars.js. 
+# It accomplishes this by downloading the JARs and executing a "git diff" command. 
+# In case there are any differences detected, the test will result in failure.
+name: Embedded Jars Tests
+on:
+  push:
+    branches:
+      - '**'
+    tags-ignore:
+      - '**'
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          allow-unsafe-pr-checkout: true
+
+      - name: Download JARs
+        run: buildscripts/download-jars.sh
+
+      - name: Check Diff
+        run: git diff --exit-code
+        
+      - name: Log if Failure
+        run: echo "::warning::Please run ./buildscripts/download-jars to use compatible Maven and Gradle dependency tree JARs."
+        if: ${{ failure() }}
+

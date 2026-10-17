@@ -1,0 +1,87 @@
+name: "Go Tests"
+
+on:
+  push:
+  # Triggers the workflow on labeled PRs only.
+  pull_request_target:
+    types: [labeled]
+
+# Ensures that only the latest commit is running for each PR at a time.
+# Ignores this rule for push events.
+concurrency:
+  group: ${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+jobs:
+  Pretest:
+    if: contains(github.event.pull_request.labels.*.name, 'safe to test') || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Unlabel 'safe to test'
+        uses: actions-ecosystem/action-remove-labels@v1
+        if: ${{ github.event_name != 'push' }}
+        with:
+          labels: "safe to test"
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Install Go
+        uses: actions/setup-go@v3
+        with:
+          go-version: 1.26.x
+
+      - name: Go Cache
+        uses: actions/cache@v3
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: ${{ runner.os }}-go-
+
+      # Generate mocks
+      - name: Generate mocks
+        run: go generate ./...
+
+      - name: Lint
+        run: go vet -v ./...
+
+  tests:
+    needs: Pretest
+    name: ${{ matrix.suite.name }} Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}-latest
+    env:
+      JFROG_CLI_LOG_LEVEL: "DEBUG"
+    strategy:
+      fail-fast: false
+      matrix:
+        suite:
+          - name: 'Unit'
+
+          - name: 'Scan Repository'
+            package: 'scanrepository'
+
+          - name: 'Scan Pull Request'
+            package: 'scanpullrequest'
+
+          - name: 'Package Handlers'
+            package: 'packagehandlers'
+
+        os: [ ubuntu, windows, macos ]
+    steps:
+      # Configure prerequisites
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Setup Go
+        uses: actions/setup-go@v3
+        with:
+          go-version: 1.26.x
+
+      - name: Go Cache
+        uses: actions/cache@v3
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-

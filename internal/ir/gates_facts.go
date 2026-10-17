@@ -24,19 +24,63 @@ const (
 // never equal a maintainer's or a bot's literal login.
 const outsiderIdentity = "outsider"
 
-// canonicalOutsiderTypes is the default `github.event.action` values an
-// outsider can produce for a trigger, used when the workflow's
-// `on.<trigger>.types` filter is absent (every type fires).
+// canonicalOutsiderTypes is, per trigger, every `github.event.action`
+// value an outsider can produce on their own (opening, editing or closing
+// their own pull request, issue, comment or discussion, requesting a run
+// from a fork). It is also the set a trigger without a `types:` filter
+// (every type fires) is evaluated over.
 var canonicalOutsiderTypes = map[string][]string{
-	"pull_request_target":         {"opened", "synchronize", "reopened", "edited", "ready_for_review"},
-	"pull_request":                {"opened", "synchronize", "reopened", "edited", "ready_for_review"},
-	"issue_comment":               {"created"},
-	"pull_request_review_comment": {"created"},
-	"discussion_comment":          {"created"},
-	"pull_request_review":         {"submitted"},
-	"workflow_run":                {"completed"},
-	"issues":                      {"opened"},
-	"discussion":                  {"opened"},
+	"pull_request_target":         {"opened", "synchronize", "reopened", "edited", "closed", "ready_for_review", "converted_to_draft"},
+	"pull_request":                {"opened", "synchronize", "reopened", "edited", "closed", "ready_for_review", "converted_to_draft"},
+	"issue_comment":               {"created", "edited", "deleted"},
+	"pull_request_review_comment": {"created", "edited", "deleted"},
+	"discussion_comment":          {"created", "edited", "deleted"},
+	"pull_request_review":         {"submitted", "edited", "dismissed"},
+	"workflow_run":                {"requested", "completed", "in_progress"},
+	"issues":                      {"opened", "edited", "closed", "reopened"},
+	"discussion":                  {"created", "edited", "answered", "unanswered", "category_changed"},
+}
+
+// maintainerOnlyTypes is every `github.event.action` value only a
+// maintainer (someone with triage or write access) produces, whatever the
+// trigger: a label, an assignment, a milestone, a lock, a transfer, a
+// pin, requesting a reviewer, auto-merge, the merge queue. A type in neither
+// this list nor the trigger's canonicalOutsiderTypes is unknown: the gate
+// it gives is unknown, never a maintainer's.
+var maintainerOnlyTypes = map[string]bool{
+	"labeled": true, "unlabeled": true,
+	"assigned": true, "unassigned": true,
+	"milestoned": true, "demilestoned": true,
+	"locked": true, "unlocked": true,
+	"transferred": true,
+	"pinned":      true, "unpinned": true,
+	"review_requested": true, "review_request_removed": true,
+	"auto_merge_enabled": true, "auto_merge_disabled": true,
+	"enqueued": true, "dequeued": true,
+}
+
+// triggerActivityTypes is, per trigger the condition model knows, every
+// `github.event.action` value GitHub can deliver for it, whoever acts. A
+// condition comparing the action to a value outside its trigger's list
+// names a run that trigger never makes (eventFamilyRefs).
+var triggerActivityTypes = map[string][]string{
+	"pull_request_target":         pullRequestActivityTypes,
+	"pull_request":                pullRequestActivityTypes,
+	"issue_comment":               {"created", "edited", "deleted"},
+	"pull_request_review_comment": {"created", "edited", "deleted"},
+	"discussion_comment":          {"created", "edited", "deleted"},
+	"pull_request_review":         {"submitted", "edited", "dismissed"},
+	"workflow_run":                {"requested", "completed", "in_progress"},
+	"issues": {"opened", "edited", "deleted", "transferred", "pinned", "unpinned", "closed", "reopened",
+		"assigned", "unassigned", "labeled", "unlabeled", "locked", "unlocked", "milestoned", "demilestoned", "typed", "untyped"},
+	"discussion": {"created", "edited", "deleted", "transferred", "pinned", "unpinned", "labeled", "unlabeled",
+		"locked", "unlocked", "category_changed", "answered", "unanswered"},
+}
+
+var pullRequestActivityTypes = []string{
+	"assigned", "unassigned", "labeled", "unlabeled", "opened", "edited", "closed", "reopened", "synchronize",
+	"converted_to_draft", "locked", "unlocked", "enqueued", "dequeued", "milestoned", "demilestoned",
+	"ready_for_review", "review_requested", "review_request_removed", "auto_merge_enabled", "auto_merge_disabled",
 }
 
 // isOutsiderProducibleType reports whether an outsider can make trigger
@@ -50,26 +94,29 @@ func isOutsiderProducibleType(trigger, t string) bool {
 	return false
 }
 
-// outsiderProducibleTypes is the subset of types an outsider can
-// actually produce for trigger. An empty types means "every type", so
-// it resolves to the canonical default set.
-func outsiderProducibleTypes(trigger string, types []string) []string {
+// splitTypes sorts a trigger's `types:` filter into the types an outsider
+// can produce and the types neither list knows (unknownTypes); the rest
+// are maintainer-only. An empty types means "every type", so it resolves
+// to the canonical outsider set.
+func splitTypes(trigger string, types []string) (producible, unknownTypes []string) {
 	if len(types) == 0 {
-		return canonicalOutsiderTypes[trigger]
+		return canonicalOutsiderTypes[trigger], nil
 	}
-	var out []string
 	for _, t := range types {
-		if isOutsiderProducibleType(trigger, t) {
-			out = append(out, t)
+		switch {
+		case isOutsiderProducibleType(trigger, t):
+			producible = append(producible, t)
+		case !maintainerOnlyTypes[t]:
+			unknownTypes = append(unknownTypes, t)
 		}
 	}
-	return out
+	return producible, unknownTypes
 }
 
 // pullRequestRefTriggers are the triggers whose `github.ref` an outsider
-// pull request sets to the merge ref rather than a branch ref.
+// pull request sets to the merge ref rather than a branch ref
+// (pull_request_target runs on the base branch instead: ref).
 var pullRequestRefTriggers = map[string]bool{
-	"pull_request_target":         true,
 	"pull_request":                true,
 	"pull_request_review":         true,
 	"pull_request_review_comment": true,
@@ -83,6 +130,16 @@ type outsiderFacts struct {
 	trigger   string
 	eventType string
 	pushRef   string
+	// base is the branch a pull request targets: the repository's
+	// default branch, the one an outsider's pull request is opened
+	// against in the model.
+	base string
+	// baseKnown is whether the base may be read as the default branch:
+	// every literal the conditions compare the base references to
+	// (baseRefs) is the default branch. An outsider opens a pull request
+	// against any existing branch, so a condition naming another branch
+	// leaves the base unresolved rather than settling it either way.
+	baseKnown bool
 	byName    map[string]Job
 	// hide forces the named references unknown regardless of what the
 	// model would otherwise answer, used to find which fact family a
@@ -97,22 +154,81 @@ type outsiderFacts struct {
 	resolving []string
 }
 
-func newOutsiderFacts(trigger, eventType string, job Job, byName map[string]Job) outsiderFacts {
+// newOutsiderFacts is the model for job on trigger with event action
+// eventType; base is the branch a pull request targets ("" reads main).
+func newOutsiderFacts(trigger, eventType string, job Job, byName map[string]Job, base string) outsiderFacts {
+	if base == "" {
+		base = "main"
+	}
 	return outsiderFacts{
 		trigger:   trigger,
 		eventType: eventType,
 		pushRef:   defaultPushRef(job),
+		base:      base,
+		baseKnown: baseLiteralsAreDefault(job, byName, base),
 		byName:    byName,
 	}
 }
 
+// baseRefs are the references that name the branch a pull request
+// targets on pull_request_target (github.ref, github.ref_name,
+// github.base_ref; on pull_request only github.base_ref does).
+var baseRefs = []string{"github.ref", "github.ref_name", "github.base_ref"}
+
+// baseLiteralsAreDefault reports whether every literal the conditions
+// the evaluation can read (job's own if:, and the if: and step
+// conditions of every job it needs, transitively: the predecessors and
+// outputs evalJobCondition and resolveNeedsOutput walk) compare a base
+// reference to is the default branch (refs/heads/<base> for github.ref,
+// <base> for the two names), each wanting them equal (expr.Comparisons:
+// no `!=`, no negation). The outsider picks the base, so a condition
+// that only ever asks for the default branch is the one their best
+// choice settles; `!= 'main'` or another branch they could satisfy by
+// targeting another branch, which the model cannot name, so it stays
+// unresolved. A step condition the walk never reads only ever leaves the
+// base unresolved more often, the safe side.
+func baseLiteralsAreDefault(job Job, byName map[string]Job, base string) bool {
+	conds := []string{job.If}
+	seen := map[string]bool{job.Name: true}
+	queue := append([]string(nil), job.Needs...)
+	for len(queue) > 0 {
+		name := queue[0]
+		queue = queue[1:]
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		pred, ok := byName[name]
+		if !ok {
+			continue
+		}
+		conds = append(conds, pred.If)
+		conds = append(conds, pred.ScriptIfs...)
+		queue = append(queue, pred.Needs...)
+	}
+	for _, c := range conds {
+		for _, cmp := range expr.Comparisons(c, baseRefs[:1]) {
+			if cmp.Negated || !strings.EqualFold(cmp.Literal, "refs/heads/"+base) {
+				return false
+			}
+		}
+		for _, cmp := range expr.Comparisons(c, baseRefs[1:]) {
+			if cmp.Negated || !strings.EqualFold(cmp.Literal, base) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // withHidden returns a copy of f that answers unknown for every
-// reference in refs, otherwise unchanged. The copy still resolves
-// needs.*.outputs.* through the same hiding, since that resolution
-// evaluates a predecessor's step condition against f itself.
+// reference in refs, on top of those f already hides, otherwise
+// unchanged. The copy still resolves needs.*.outputs.* through the same
+// hiding, since that resolution evaluates a predecessor's step condition
+// against f itself.
 func (f outsiderFacts) withHidden(refs []string) outsiderFacts {
 	g := f
-	g.hide = refs
+	g.hide = append(append([]string(nil), f.hide...), refs...)
 	return g
 }
 
@@ -186,11 +302,40 @@ func (f outsiderFacts) Resolve(ref string) (string, bool) {
 		return scannedRepository, true
 	case "github.ref":
 		return f.ref()
+	case "github.ref_name":
+		ref, ok := f.ref()
+		if !ok {
+			return "", false
+		}
+		if name, isBranch := strings.CutPrefix(ref, "refs/heads/"); isBranch {
+			return name, true
+		}
+		return strings.TrimPrefix(ref, "refs/pull/"), true
+	case "github.base_ref":
+		// The branch the pull request targets, on the two pull request
+		// events only. Its head (github.head_ref) is the outsider's own
+		// branch, named as they like: it stays unresolved, no literal
+		// comparison of it settled either way.
+		// Read as the default branch only when that is the one branch the
+		// conditions name (baseKnown).
+		if (f.trigger == "pull_request_target" || f.trigger == "pull_request") && f.baseKnown {
+			return f.base, true
+		}
 	}
 	return "", false
 }
 
+// ref is github.ref: a pull_request_target run is on the base branch the
+// pull request targets (refs/heads/<base>, when the conditions name no
+// other branch: baseKnown; unresolved otherwise), the other pull request
+// events on the pull request's merge ref, a push on its branch.
 func (f outsiderFacts) ref() (string, bool) {
+	if f.trigger == "pull_request_target" {
+		if !f.baseKnown {
+			return "", false
+		}
+		return "refs/heads/" + f.base, true
+	}
 	if pullRequestRefTriggers[f.trigger] {
 		return "refs/pull/1/merge", true
 	}
@@ -294,23 +439,58 @@ func findOutputStep(job Job, output string) (value, cond string, found bool) {
 // "run_privileged=true" >> $GITHUB_OUTPUT` yields ("true", true) for
 // output "run_privileged". It is a plain text scan, not a shell parser:
 // good enough for the common `echo "name=value" >> $GITHUB_OUTPUT`
-// shape this model needs to read.
+// shape this model needs to read. The name must start a word: another
+// output whose name ends in the wanted name (dry_run for run) is a
+// different output and is skipped.
 func scriptOutputValue(script, output string) (string, bool) {
 	if !strings.Contains(script, "GITHUB_OUTPUT") {
 		return "", false
 	}
 	marker := output + "="
-	idx := strings.Index(script, marker)
+	idx := -1
+	for from := 0; from <= len(script)-len(marker); {
+		i := strings.Index(script[from:], marker)
+		if i < 0 {
+			break
+		}
+		at := from + i
+		if at == 0 || isOutputNameBoundary(script[at-1]) {
+			idx = at
+			break
+		}
+		from = at + 1
+	}
 	if idx < 0 {
 		return "", false
 	}
 	rest := script[idx+len(marker):]
 	end := len(rest)
 	for i, r := range rest {
-		if r == '"' || r == '\'' || r == '\n' || r == ' ' || r == '\t' {
+		if strings.ContainsRune("\"'\n \t>;&|)<", r) {
 			end = i
 			break
 		}
 	}
-	return strings.TrimSpace(rest[:end]), true
+	val := strings.TrimSpace(rest[:end])
+	// A value computed at run time (an expression `${{ ... }}`, a shell
+	// variable, a command substitution) is no settled literal: reading
+	// its first token as the value would close a gate on text an
+	// outsider may control. Unknown keeps the path, unverified.
+	if strings.HasPrefix(val, "$") {
+		return "", false
+	}
+	return val, true
+}
+
+// isOutputNameBoundary reports whether the byte before an output name
+// lets the name start a word in a shell script: whitespace, a quote, or
+// the characters a shell puts right before a word (`(`, `{`, `;`, `&`,
+// `|`). A letter, digit or underscore means the match sits inside a
+// longer name.
+func isOutputNameBoundary(b byte) bool {
+	switch b {
+	case ' ', '\t', '\n', '\r', '"', '\'', '(', '{', ';', '&', '|', '`':
+		return true
+	}
+	return false
 }

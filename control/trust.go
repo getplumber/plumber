@@ -18,7 +18,7 @@ import (
 // insider, capped at the Medium ceiling, never an outsider's High.
 
 // insiderCeiling is the highest tier a mutable_dependency path can hold
-// when ActorFor reads its anchor as an insider (GateInsider): closer to
+// when actorFor reads its anchor as an insider (GateInsider): closer to
 // home than an outside dependency, so it never starts a path above
 // Medium on its own, whatever else the anchor's codes say.
 const insiderCeiling = TierMedium
@@ -31,16 +31,18 @@ var siblingOrganizations = [][2]string{
 	{"cloudflare", "cloudflare-studio"},
 }
 
-// Suppressed decides whether an anchor-candidate finding should start
+// suppressed decides whether an anchor-candidate finding should start
 // no path at all, even though the finding itself still stands: a
 // preinstalled-tool guard that actually fires on this job's own runner
 // image, a checksum- or signature-verified download, and an archived
 // action's tag (nobody can retarget it) are all immutable in practice.
 // unknownRunner reports that the anchor should still exist, but with
-// its fact state unknown: the guard is real, but the job's own runner
-// label family is not one Preinstalled can answer for, so whether the
-// guard fires cannot be decided statically.
-func Suppressed(f opaengine.Finding) (suppress, unknownRunner bool) {
+// its fact state unknown: the guard is real, but whether it fires cannot
+// be decided statically, because the job runs its steps inside a
+// container (container:, job.image: the guard checks the container, not
+// the hosted image) or its runner label is not a plain hosted label
+// runners.LabelImages can answer for.
+func suppressed(f opaengine.Finding) (suppress, unknownRunner bool) {
 	data := f.Data
 	if truthy(data["downloadVerified"]) {
 		return true, false
@@ -52,20 +54,31 @@ func Suppressed(f opaengine.Finding) (suppress, unknownRunner bool) {
 	if guard == "" {
 		return false, false
 	}
-	family, known := runnerFamilyFromData(data)
+	if truthy(data["container"]) {
+		return false, true
+	}
+	images, known := runnerImagesFromData(data)
 	if !known {
 		return false, true
 	}
-	preinstalled, _ := runners.Preinstalled(family, guard)
-	return preinstalled, false
+	for _, image := range images {
+		preinstalled, known := runners.Preinstalled(image, guard)
+		if !known {
+			return false, true
+		}
+		if !preinstalled {
+			return false, false
+		}
+	}
+	return true, false
 }
 
-// runnerFamilyFromData reads the job's own runs-on facts (runsOn,
+// runnerImagesFromData reads the job's own runs-on facts (runsOn,
 // runsOnExpression) off a finding's Data, as action_mutable_remote_exec
 // .rego carries them on an ISSUE-714 finding that names a download
-// guard, and resolves them to a hosted OS family the same way
-// runners.LabelFamily does.
-func runnerFamilyFromData(data map[string]any) (family string, known bool) {
+// guard, and resolves them to the hosted images they run
+// (runners.LabelImages).
+func runnerImagesFromData(data map[string]any) (images []string, known bool) {
 	expr, _ := data["runsOnExpression"].(bool)
 	raw, _ := data["runsOn"].([]any)
 	labels := make([]string, 0, len(raw))
@@ -74,10 +87,10 @@ func runnerFamilyFromData(data map[string]any) (family string, known bool) {
 			labels = append(labels, s)
 		}
 	}
-	return runners.LabelFamily(labels, expr)
+	return runners.LabelImages(labels, expr)
 }
 
-// ActorFor decides who an attacker acts as through anchor, and the
+// actorFor decides who an attacker acts as through anchor, and the
 // gate class that caps the tier of the path it starts. GateInsider for
 // a first-party script (the scanned repository's own owner or domain)
 // or a sibling organisation's redirected action; GateOutsider for a
@@ -85,7 +98,7 @@ func runnerFamilyFromData(data map[string]any) (family string, known bool) {
 // unguarded and unverified (the actor names that host directly); ""
 // (no opinion) for everything else, which keeps the existing
 // dependency wording and ceiling unchanged.
-func ActorFor(anchor pathAnchor, own string) (actor string, class ir.GateClass) {
+func actorFor(anchor pathAnchor, own string) (actor string, class ir.GateClass) {
 	if anchor.kind != EntryMutableDependency {
 		return "", ""
 	}
@@ -121,6 +134,32 @@ func downloadHostActor(data map[string]any) string {
 		return ""
 	}
 	return "if " + host + " is compromised"
+}
+
+// downloadClaimSource is the download claim's source (claimsFor,
+// control/pathclaims.go) for a mutable_dependency anchor's own finding
+// data: "verified" when the download is checksum- or signature-verified,
+// "guarded" when a preinstalled-tool check guards it (named whether or
+// not suppressed proved that guard fires: a path reaching here with a
+// named guard either has an unknown-runner fact, in which case the entry
+// claim itself carries the gap, or the guard is simply not one of this
+// anchor's reasons to be suppressed), "unguarded" when the anchor names a
+// run-time fetch host with neither. "" when the finding carries none of
+// the three facts at all (no run-time download to claim anything about).
+func downloadClaimSource(data map[string]any) string {
+	if data == nil {
+		return ""
+	}
+	if truthy(data["downloadVerified"]) {
+		return "verified"
+	}
+	if guard, _ := data["downloadGuard"].(string); guard != "" {
+		return "guarded"
+	}
+	if url, _ := data["fetchUrl"].(string); url != "" {
+		return "unguarded"
+	}
+	return ""
 }
 
 // redirectedSiblingOwner reads a finding's redirectedOwner (the owner

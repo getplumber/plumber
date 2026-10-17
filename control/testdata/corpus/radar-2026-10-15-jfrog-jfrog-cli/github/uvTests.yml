@@ -1,0 +1,55 @@
+name: UV Tests
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  UV-Tests:
+    name: uv ${{ matrix.os.name }} py${{ matrix.python-version }} uv${{ matrix.uv-version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          # TODO(JGC-413): re-add macos once Artifactory bootstrap is fixed
+          - name: ubuntu
+            version: 24.04
+          - name: windows
+            version: 2022
+        python-version: ["3.11.5", "3.x"]
+        uv-version: ["0.6.17", "latest"]
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+          # Safe: this workflow only runs after human approval via the build-gate environment.
+          allow-unsafe-pr-checkout: true
+
+      - name: Setup FastCI
+        uses: jfrog-fastci/fastci@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          fastci_otel_token: ${{ secrets.FASTCI_TOKEN }}
+
+      - name: Setup Python3
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Setup UV
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: ${{ matrix.uv-version }}
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Install local Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: ${{ env.RT_CONNECTION_TIMEOUT_SECONDS || '1200' }}
+
+      - name: Run UV tests
+        run: go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.uv

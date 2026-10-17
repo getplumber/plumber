@@ -1,0 +1,82 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'npm dist-tag to publish under'
+        required: false
+        default: latest
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  # Required for npm provenance (`publishConfig.provenance`) to be attested.
+  id-token: write
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    if: github.repository_owner == 'appwrite'
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/@appwrite.io/cdn-for-astro
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: npm ci
+
+      # A release tag that disagrees with package.json publishes the wrong
+      # version under the right name, which cannot be undone. Fail first.
+      - name: Verify the release tag matches package.json
+        if: github.event_name == 'release'
+        run: |
+          release_tag="${GITHUB_REF_NAME#v}"
+          package_version="$(node -p "require('./package.json').version")"
+          if [ "$release_tag" != "$package_version" ]; then
+            echo "::error::Release tag '${GITHUB_REF_NAME}' does not match package.json version '${package_version}'."
+            exit 1
+          fi
+          echo "Publishing version ${package_version}."
+
+      - name: Determine the dist-tag
+        id: dist_tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          elif [[ "${GITHUB_REF_NAME}" == *-* ]]; then
+            # Any prerelease tag (-rc.1, -beta.0, -next.2) goes out as `next`,
+            # so that `npm install` never resolves to a prerelease.
+            echo "tag=next" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Type check
+        run: npm run build && npm run typecheck
+
+      - name: Run tests
+        run: npm test
+
+      - name: Validate the publishable package
+        run: npm run package:check
+
+      - name: Publish
+        run: npm publish --provenance --tag ${{ steps.dist_tag.outputs.tag }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

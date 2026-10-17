@@ -21,14 +21,28 @@ const (
 )
 
 // gatedNote is the note on a finding whose job no outsider can make run
-// (noOutsiderGate): it stays an individual finding, at Low.
-const gatedNote = "gated to the repository's own branches"
+// (noOutsiderGate): it stays an individual finding, at Low. eventsNote
+// replaces it when the privileged run never executes the job at all
+// (ir.GateNoOutsider: its condition names other events).
+const (
+	gatedNote  = "gated to the repository's own branches"
+	eventsNote = "gated to the repository's own events"
+)
+
+// gateNoteFor is the note markGatedFindings sets for a finding behind g.
+func gateNoteFor(g ir.Gate) string {
+	if g.Class == ir.GateNoOutsider {
+		return eventsNote
+	}
+	return gatedNote
+}
 
 // entryJobGate is the gate that decides who reaches an entry of kind into
 // js: the job's own (JobSituation.Gate) for a privileged checkout, and for
-// an untrusted expression reached through a privileged trigger alone; an
-// outsider's when no gate was decided for it (a privileged trigger the
-// classifier does not read). An untrusted expression a fork pull request
+// an untrusted expression reached through a privileged trigger alone or
+// in a job of a reusable workflow its calls gave a gate; an outsider's
+// when no gate was decided for it (a privileged trigger the classifier
+// does not read). An untrusted expression a fork pull request
 // also reaches is an outsider's whatever the privileged trigger's gate
 // says. ok is false for every other entry: who reaches a dependency, a
 // push or a cache is not a trigger's gate.
@@ -39,7 +53,10 @@ func entryJobGate(kind EntryKind, js JobSituation) (g ir.Gate, ok bool) {
 		if len(js.ForkPR) > 0 {
 			return ir.Gate{Class: ir.GateOutsider}, true
 		}
-		if len(js.PrivilegedTriggers) == 0 {
+		// A job of a reusable workflow has no privileged trigger of its
+		// own, its run is its caller's: the gate its calls give it
+		// (ir.ClassifyGates) decides.
+		if len(js.PrivilegedTriggers) == 0 && js.Gate == nil {
 			return ir.Gate{}, false
 		}
 	default:
@@ -52,7 +69,9 @@ func entryJobGate(kind EntryKind, js JobSituation) (g ir.Gate, ok bool) {
 }
 
 // noOutsiderGate reports whether g lets no outsider in at all: the job
-// only runs for code already in the repository (ir.GateSameRepo), or
+// only runs for code already in the repository (ir.GateSameRepo), never
+// on the privileged run (ir.GateNoOutsider: its condition names other
+// events), or
 // only for pull requests a bot opens: a gate on the pull request's author
 // ("author <login>", github.event.pull_request.user.login) naming a
 // "[bot]" login, which nobody can take, and whose pull requests come from
@@ -62,7 +81,7 @@ func entryJobGate(kind EntryKind, js JobSituation) (g ir.Gate, ok bool) {
 // event on their own fork pull request, so it stays a maintainer's gate.
 func noOutsiderGate(g ir.Gate) bool {
 	switch g.Class {
-	case ir.GateSameRepo:
+	case ir.GateSameRepo, ir.GateNoOutsider:
 		return true
 	case ir.GateMaintainerApproved:
 		login, ok := strings.CutPrefix(g.Reason, "author ")
@@ -150,13 +169,18 @@ func gateCeiling(entry EntryFact, ceiling PathTier, modifiers []string) (PathTie
 	return ceiling, modifiers
 }
 
-// MarkGatedFindings downgrades every entry finding whose job no outsider
+// markGatedFindings downgrades every entry finding whose job no outsider
 // can make run (noOutsiderGate on its entry job's gate): it anchors no
 // path (anchorsFor), so it is priced as an individual finding, at Low
 // (Data "occurrenceSeverity", which IndividualSeverity reads), with the
-// note saying why (Data "gateNote"). The identity of a finding never
-// reads either key.
-func MarkGatedFindings(findings []opaengine.Finding, sit *Situation) {
+// note saying why (Data "gateNote"). A head checkout the policy found
+// behind a same-repository guard of its own (Data "forkGuard") takes the
+// same route when the classifier decided no gate for its job
+// (JobSituation.Gate nil); a classified gate decides alone, so a
+// maintainer's label gate keeps the finding at its own severity, without
+// the note, anchoring its path. The identity of a finding
+// never reads either key.
+func markGatedFindings(findings []opaengine.Finding, sit *Situation) {
 	if sit == nil {
 		return
 	}
@@ -167,14 +191,21 @@ func MarkGatedFindings(findings []opaengine.Finding, sit *Situation) {
 			continue
 		}
 		g, ok := entryJobGate(kind, js)
-		if !ok || !noOutsiderGate(g) {
+		// The policy's own fork guard decides only where the classifier
+		// decided no gate for the job; a classified gate decides alone.
+		forkGuarded := truthy(f.Data["forkGuard"]) && js.Gate == nil
+		if !forkGuarded && (!ok || !noOutsiderGate(g)) {
 			continue
 		}
 		if findings[i].Data == nil {
 			findings[i].Data = map[string]any{}
 		}
 		findings[i].Data["occurrenceSeverity"] = string(SeverityLow)
-		findings[i].Data["gateNote"] = gatedNote
+		note := gatedNote
+		if ok && noOutsiderGate(g) {
+			note = gateNoteFor(g)
+		}
+		findings[i].Data["gateNote"] = note
 	}
 }
 
@@ -190,7 +221,10 @@ func gateWords(reason, labelled string) (nature, actor string) {
 		return ", author " + code(login) + " only", "as " + code(login) + ", and only " + code(login)
 	}
 	if login, ok := strings.CutPrefix(reason, "actor "); ok {
-		return ", actor " + code(login) + " only", "as " + code(login) + ", and only " + code(login)
+		// Whoever makes the login the actor gets in (an outsider can make
+		// a bot the actor of an event on their own pull request), not
+		// that login alone.
+		return ", actor " + code(login) + " only", "as anyone who can make " + code(login) + " the actor"
 	}
 	if env, ok := strings.CutPrefix(reason, "environment "); ok {
 		env = strings.TrimSuffix(env, " requires reviewers")

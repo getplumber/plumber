@@ -1,0 +1,47 @@
+name: Publish the reports to GitHub Pages
+
+# Publishes only the rendered reports (tools/publish_site.sh), with sdlc-report.html as the
+# index page. Requires Pages to be enabled with "GitHub Actions" as the source
+# (Settings → Pages → Build and deployment → Source).
+on:
+  push:
+    branches: [main]
+    paths:
+      - sdlc-report.html
+      - REPORT.html
+      - EXECUTIVE_SUMMARY.html
+      - SLIDES.html
+      - analysis/figures/**
+      - tools/publish_site.sh
+      - .github/workflows/pages.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the committed page matches a fresh render (stdlib only)
+        run: |
+          python3 tools/sdlc_report_html.py
+          git diff --exit-code -- sdlc-report.html
+      - name: Assemble the site
+        run: tools/publish_site.sh _site
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deploy
+        uses: actions/deploy-pages@v4

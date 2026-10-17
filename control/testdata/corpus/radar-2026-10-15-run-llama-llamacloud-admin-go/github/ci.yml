@@ -1,0 +1,45 @@
+name: CI
+on:
+  push:
+    branches:
+      - '**'
+      - '!integrated/**'
+      - '!stl-preview-head/**'
+      - '!stl-preview-base/**'
+      - '!generated'
+      - '!codegen/**'
+      - 'codegen/stl/**'
+  pull_request:
+    branches-ignore:
+      - 'stl-preview-head/**'
+      - 'stl-preview-base/**'
+
+jobs:
+  build:
+    timeout-minutes: 10
+    name: build
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-latest
+    if: |-
+      github.repository == 'run-llama/llamacloud-admin-go' &&
+      (github.event_name == 'push' || github.event.pull_request.head.repo.fork) && (github.event_name != 'push' || github.event.head_commit.message != 'codegen metadata')
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+  lint:
+    timeout-minutes: 10
+    name: lint
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.fork
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: ./go.mod
+
+      - name: Run lints
+        run: ./scripts/lint

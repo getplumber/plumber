@@ -1,0 +1,42 @@
+name: "Frogbot Auto-PR"
+on:
+  workflow_dispatch:
+    inputs:
+      component-name:
+        description: "Dependency to fix."
+        required: true
+      affected-version:
+        description: "Currently installed vulnerable version."
+        required: true
+      fix-version:
+        description: "Version to upgrade to."
+        required: true
+      branch-name:
+        description: "Branch to base the fix PR on. Defaults to the repository default branch."
+        required: false
+      commit-hash:
+        description: "Exact commit the scan ran against."
+        required: false
+permissions:
+  pull-requests: write
+  contents: write
+jobs:
+  auto-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit-hash || inputs.branch-name || github.event.repository.default_branch }}
+
+      - uses: jfrog/frogbot@v3
+        env:
+          JF_URL: ${{ secrets.JF_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.JF_ACCESS_TOKEN }}
+          JF_GIT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          command: auto-pr
+          component-name: ${{ inputs.component-name }}
+          affected-version: ${{ inputs.affected-version }}
+          fix-version: ${{ inputs.fix-version }}
+          branch-name: ${{ inputs.branch-name || github.event.repository.default_branch }}
+          commit-hash: ${{ inputs.commit-hash }}

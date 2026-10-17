@@ -1,0 +1,118 @@
+name: Helm Chart Integration Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      suites: ${{ steps.find.outputs.suites }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Discover test suites
+        id: find
+        run: |
+          SUITES=$(ls -d integration-tests/*/suite.yaml \
+            | xargs -I{} dirname {} \
+            | xargs -I{} basename {} \
+            | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          echo "suites=$SUITES" >> "$GITHUB_OUTPUT"
+          echo "Discovered suites: $SUITES"
+
+  integration-test:
+    needs: discover
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: ${{ fromJson(needs.discover.outputs.suites) }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: "3.12.0"
+
+      - name: Update appVersion for nightly builds
+        if: github.event_name == 'schedule'
+        run: |
+          echo "Updating appVersion to 2-nightly for scheduled builds"
+          sed -i 's/^appVersion:.*/appVersion: 2-nightly/' charts/clickstack/Chart.yaml
+
+      - name: Read suite config
+        id: config
+        run: |
+          NEEDS_NODEJS=$(yq '.needs_nodejs // false' "integration-tests/${{ matrix.suite }}/suite.yaml")
+          echo "needs_nodejs=$NEEDS_NODEJS" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Node.js
+        if: steps.config.outputs.needs_nodejs == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Run integration test suite
+        run: |
+          chmod +x integration-tests/run-suite.sh
+          integration-tests/run-suite.sh "${{ matrix.suite }}"
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          echo "=== Pod Status ==="
+          kubectl get pods -o wide || true
+
+          echo "=== Events ==="
+          kubectl get events --sort-by=.metadata.creationTimestamp || true
+
+          echo "=== All Pod Logs ==="
+          for pod in $(kubectl get pods -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+            echo "--- Logs for $pod ---"
+            kubectl logs "$pod" --all-containers --tail=200 || true
+          done
+
+          echo "=== All Resources ==="
+          kubectl get deployment,svc,hpa,networkpolicy,sa,ingress,secret -o wide || true
+
+          echo "=== Pod Descriptions ==="
+          kubectl describe pods || true
+
+      - name: Cleanup
+        if: always()
+        run: |
+          helm uninstall "test-${{ matrix.suite }}" || true
+          kind delete cluster --name "test-${{ matrix.suite }}" || true
+
+  otel-cicd-action:
+    # Only run when secrets are available. Fork PRs (external contributors) do
+    # not receive repository secrets, so OTLP_ENDPOINT is empty and the export
+    # action fails with "Name resolution failed for target dns:v1". Skip the job
+    # on fork PRs and run it for same-repo events (push, internal PRs, schedule).
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    name: OpenTelemetry Export Trace
+    runs-on: ubuntu-latest
+    needs: [integration-test]
+    env:
+      OTLP_ENDPOINT: ${{ secrets.OTLP_ENDPOINT }}
+    steps:
+      - name: Export workflow
+        # Defense-in-depth: skip if the endpoint secret is unset even on
+        # same-repo runs, so an empty endpoint never reaches the action.
+        if: ${{ env.OTLP_ENDPOINT != '' }}
+        uses: corentinmusard/otel-cicd-action@v4
+        with:
+          otlpEndpoint: ${{ secrets.OTLP_ENDPOINT }}/v1/traces
+          otlpHeaders: ${{ secrets.OTLP_HEADERS }}
+          otelServiceName: "clickstack-helm-chart-integration-test"
+          githubToken: ${{ secrets.GITHUB_TOKEN }}

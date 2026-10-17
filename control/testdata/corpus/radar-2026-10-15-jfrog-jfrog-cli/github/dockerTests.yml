@@ -1,0 +1,71 @@
+name: Docker Tests
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  Docker-tests:
+    name: Docker tests (${{ matrix.os.name }}, containerd-snapshotter=${{ !matrix.disable-containerd-snapshotter }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+        disable-containerd-snapshotter: [true, false]
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+          # Safe: this workflow only runs after human approval via the build-gate environment.
+          allow-unsafe-pr-checkout: true
+
+      - name: Configure Docker with legacy snapshotter
+        if: matrix.disable-containerd-snapshotter == true
+        run: |
+          sudo bash -c 'cat <<EOF > /etc/docker/daemon.json
+          {
+            "insecure-registries": ["localhost:8082"],
+            "features": {
+              "containerd-snapshotter": false
+            }
+          }
+          EOF'
+          sudo systemctl restart docker
+
+      - name: Configure Docker with containerd snapshotter
+        if: matrix.disable-containerd-snapshotter == false
+        run: |
+          sudo bash -c 'cat <<EOF > /etc/docker/daemon.json
+          {
+            "insecure-registries": ["localhost:8082"]
+          }
+          EOF'
+          sudo systemctl restart docker
+
+      - name: Setup FastCI
+        uses: jfrog-fastci/fastci@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          fastci_otel_token: ${{ secrets.FASTCI_TOKEN }}
+          cache_enabled_optimizations: docker_build_trace_optimization
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Containerize Artifactory
+        run: |
+          cd ./testdata/docker/artifactory/
+          ./start.sh
+        env:
+          RTLIC: ${{secrets.RTLIC}}
+          GOPROXY: direct
+
+      - name: Wait for Artifactory (Native)
+        run: |
+          timeout 600s bash -c 'while [[ "$(curl -s -o /dev/null -w ''%{http_code}'' localhost:8082)" != "200" ]]; do sleep 5; done'
+
+      - name: Run Docker tests
+        run: go test -v -timeout 0 --test.docker

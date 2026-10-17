@@ -1,0 +1,42 @@
+name: Build DocC Documentation
+
+on:
+  push:
+    branches:
+      - "main"
+
+jobs:
+  build-docc:
+
+    # https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#choosing-github-hosted-runners
+    # https://github.com/actions/virtual-environments/tree/main/images/macos
+    runs-on: macos-12
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - uses: fwcd/swift-docc-action@v1.0.2
+        with:
+          target: AciSpmSample
+          output: ./docs
+          hosting-base-path: AciSpmSample
+          disable-indexing: "true"
+          transform-for-static-hosting: "true"
+
+      - name: Init new repo in dist folder and commit generated files
+        run: |
+          cd docs
+          git init
+          git add -A
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git commit -m 'deploy'
+
+      - name: Force push to destination branch
+        uses: ad-m/github-push-action@v0.6.0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          branch: docs
+          force: true
+          directory: ./docs

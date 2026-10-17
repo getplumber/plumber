@@ -1,0 +1,21 @@
+{
+  "source": "reconstruction of a reusable cache-warming workflow called on every event",
+  "commit": "",
+  "captured": "2026-10-16",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [{"name": "main", "protected": true}],
+  "note": "The same reusable cache-warming workflow as reusable-cache-warm-push-only, its caller job in ci.yml left without an if: the pull_request_target run of ci.yml runs the call, so an outsider's pull request title reaches the warm job's shell in the base repository's context. The called job takes its caller's gate, an outsider's, so the expression starts a path. The title is set only in the runs of pull_request and pull_request_target (the events carrying github.event.pull_request); the push run of the same job, the one that saves the npm cache for the default branch, has no title. The pull_request_target run only reads the cache (no job declares cache-mode), so the expression writes no cache the tag-triggered publish job restores: no hop into release/publish, and NPM_TOKEN is out of reach. What remains is the warm job alone: code execution on a runner holding no secret and a read token, Low; the job declares a cache save, but no run the title is set in saves for the default branch, so the sentence does not say its cache can be poisoned. ISSUE-705 is silent and no cache path starts from the warm job. Hand count: one Low path 3, one Low other finding (ISSUE-307) 2, so 100 - 5 = 95: A.",
+  "expect": {
+    "maxTier": "low",
+    "letter": "A",
+    "paths": [
+      {"entryKind": "untrusted_expression", "tier": "low", "job": "_warm/warm", "subjectContains": "github.event.pull_request.title", "actor": "outsider", "reachKind": "execution",
+       "sentenceOmits": ["NPM_TOKEN", "release/publish", "poison what it caches"]}
+    ],
+    "ceilings": [
+      {"entryKind": "poisoned_cache", "subjectContains": "", "tier": "none"}
+    ]
+  }
+}

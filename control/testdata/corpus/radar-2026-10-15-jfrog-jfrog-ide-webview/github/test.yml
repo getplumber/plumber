@@ -1,0 +1,44 @@
+name: Webview Tests
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  tests:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macOS-latest]
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Start FastCI Optimization
+        uses: jfrog-fastci/fastci@main
+        with:
+          github_token: ${{secrets.GITHUB_TOKEN}}
+          fastci_otel_token: ${{ secrets.FASTCI_TOKEN }}
+
+      - name: Setup NodeJS
+        uses: actions/setup-node@v3
+        with:
+          node-version: '16'
+          check-latest: true
+
+      - name: Install project
+        run: npm i
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Format
+        run: npm run format
+
+      - name: Run tests
+        env:
+          CI: true
+        run: npm test -- --coverage

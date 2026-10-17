@@ -1,0 +1,29 @@
+name: Create Prerelease
+on:
+  workflow_dispatch:
+  pull_request: {}
+
+jobs:
+  build:
+    if: ${{ github.repository_owner == 'cloudflare' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.x
+          cache: 'npm'
+          registry-url: 'https://registry.npmjs.org'
+      - name: Install modules
+        run: npm ci
+      - name: Run build
+        run: npm run lint && npm run build
+      - name: Run tests
+        run: npm run test
+      - name: Publish to npm
+        run: npx pkg-pr-new publish

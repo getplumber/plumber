@@ -1,0 +1,47 @@
+name: dependency-security
+
+on:
+  pull_request:
+    paths:
+      - crates/quickjs-wasm/Cargo.toml
+      - crates/quickjs-wasm/Cargo.lock
+      - .github/scripts/check_cargo_lock_git_sources.py
+      - .github/workflows/dependency-security.yml
+  push:
+    branches: [main]
+    paths:
+      - crates/quickjs-wasm/Cargo.toml
+      - crates/quickjs-wasm/Cargo.lock
+      - .github/scripts/check_cargo_lock_git_sources.py
+      - .github/workflows/dependency-security.yml
+
+permissions:
+  contents: read
+
+jobs:
+  git-source-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Enforce Cargo.lock git source policy
+        run: python3 .github/scripts/check_cargo_lock_git_sources.py
+
+  cargo-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Run RustSec advisory scan
+        # The guest crate (crates/quickjs-wasm) is the only Rust crate; its
+        # Cargo.lock is what we audit.
+        run: cargo audit --deny warnings --file crates/quickjs-wasm/Cargo.lock

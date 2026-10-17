@@ -1,0 +1,214 @@
+name: Terraform Examples
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'examples/projects/**'
+      - '.github/workflows/tf-examples-command.yml'
+  workflow_dispatch:
+    inputs:
+      project:
+        description: 'Project to run'
+        type: choice
+        options:
+          - all
+          - pre-1.0
+          - "1.0"
+        default: all
+        required: true
+      action:
+        description: 'Terraform action to perform'
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
+        default: plan
+        required: true
+      state_mode:
+        description: 'State management mode'
+        type: choice
+        options:
+          - auto
+          - read-only
+          - read-write
+        default: auto
+        required: true
+      pr:
+        description: 'PR number'
+        type: string
+        required: false
+      comment-id:
+        description: 'Comment ID (for slash command triggers)'
+        type: string
+        required: false
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: write
+
+jobs:
+  # Determine which projects to run based on event type and input
+  setup:
+    name: Setup Matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Set matrix
+        id: set-matrix
+        run: |
+          # Define all projects
+          ALL_PROJECTS='[{"project":"pre-1.0","path":"examples/projects/pre-1.0","artifact":"terraform-state-pre-1.0"},{"project":"1.0","path":"examples/projects/1.0","artifact":"terraform-state-1.0"}]'
+          
+          if [ "${{ github.event_name }}" = "push" ] || [ "${{ github.event.inputs.project }}" = "all" ]; then
+            # Run all projects for push events or when 'all' is selected
+            echo "matrix={\"include\":$ALL_PROJECTS}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event.inputs.project }}" = "pre-1.0" ]; then
+            echo 'matrix={"include":[{"project":"pre-1.0","path":"examples/projects/pre-1.0","artifact":"terraform-state-pre-1.0"}]}' >> $GITHUB_OUTPUT
+          elif [ "${{ github.event.inputs.project }}" = "1.0" ]; then
+            echo 'matrix={"include":[{"project":"1.0","path":"examples/projects/1.0","artifact":"terraform-state-1.0"}]}' >> $GITHUB_OUTPUT
+          else
+            # Fallback to all projects
+            echo "matrix={\"include\":$ALL_PROJECTS}" >> $GITHUB_OUTPUT
+          fi
+
+  terraform:
+    name: Terraform (${{ matrix.project }})
+    needs: setup
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
+    concurrency:
+      group: terraform-${{ matrix.project }}-deploy
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: ${{ matrix.path }}
+    env:
+      TF_STATE_DIR: ${{ github.workspace }}/${{ matrix.path }}/.terraform-state
+    steps:
+      - name: Authenticate as GitHub App
+        if: github.event.inputs.pr
+        uses: actions/create-github-app-token@v3
+        id: get-app-token
+        with:
+          app-id: ${{ secrets.OCTAVIA_BOT_APP_ID }}
+          private-key: ${{ secrets.OCTAVIA_BOT_PRIVATE_KEY }}
+
+      - name: Post or append starting comment
+        if: github.event.inputs.pr
+        id: start-comment
+        uses: peter-evans/create-or-update-comment@v5
+        with:
+          token: ${{ steps.get-app-token.outputs.token }}
+          issue-number: ${{ github.event.inputs.pr }}
+          comment-id: ${{ github.event.inputs.comment-id || '' }}
+          body: |
+            > **Terraform Examples Job Info**
+            >
+            > Running `terraform ${{ github.event.inputs.action }}` on project `${{ github.event.inputs.project }}`.
+
+            > Job started... [Check job output.](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.5.0"
+
+      - name: Download state artifact
+        id: download-state
+        continue-on-error: true
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ env.TF_STATE_DIR }}
+          workflow: tf-examples-command.yml
+          branch: main
+          workflow_conclusion: success
+          search_artifacts: true
+          if_no_artifact_found: warn
+
+      - name: Initialize Terraform with local backend
+        env:
+          TF_VAR_airbyte_api_key: ${{ secrets.AIRBYTE_API_KEY }}
+        run: |
+          mkdir -p "$TF_STATE_DIR"
+          
+          cat > backend_override.tf <<EOF
+          terraform {
+            backend "local" {
+              path = "$TF_STATE_DIR/terraform.tfstate"
+            }
+          }
+          EOF
+          
+          terraform init -reconfigure
+          
+          if [ -f "$TF_STATE_DIR/terraform.tfstate" ]; then
+            echo "State restored from artifact"
+          else
+            echo "No existing state found, starting fresh"
+          fi
+
+      - name: Terraform Plan
+        id: plan
+        env:
+          TF_VAR_airbyte_api_key: ${{ secrets.AIRBYTE_API_KEY }}
+        run: terraform plan -out=tfplan
+
+      - name: Terraform Apply
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'apply')
+        env:
+          TF_VAR_airbyte_api_key: ${{ secrets.AIRBYTE_API_KEY }}
+        run: terraform apply -auto-approve tfplan
+
+      - name: Terraform Destroy
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'destroy'
+        env:
+          TF_VAR_airbyte_api_key: ${{ secrets.AIRBYTE_API_KEY }}
+        run: terraform destroy -auto-approve
+
+      - name: Upload state artifact
+        if: |
+          always() && (
+            github.event.inputs.state_mode == 'read-write' ||
+            (github.event.inputs.state_mode != 'read-only' && (
+              github.event_name == 'push' ||
+              github.event.inputs.action == 'apply' ||
+              github.event.inputs.action == 'destroy'
+            ))
+          )
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ env.TF_STATE_DIR }}
+          retention-days: 90
+          overwrite: true
+
+      - name: Append success comment
+        if: success() && github.event.inputs.pr
+        uses: peter-evans/create-or-update-comment@v5
+        with:
+          token: ${{ steps.get-app-token.outputs.token }}
+          comment-id: ${{ steps.start-comment.outputs.comment-id }}
+          reactions: hooray
+          body: |
+            > Terraform ${{ github.event.inputs.action }} completed successfully.
+
+      - name: Append failure comment
+        if: failure() && github.event.inputs.pr
+        uses: peter-evans/create-or-update-comment@v5
+        with:
+          token: ${{ steps.get-app-token.outputs.token }}
+          comment-id: ${{ steps.start-comment.outputs.comment-id }}
+          reactions: confused
+          body: |
+            > Terraform ${{ github.event.inputs.action }} failed. Check the [job output](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.

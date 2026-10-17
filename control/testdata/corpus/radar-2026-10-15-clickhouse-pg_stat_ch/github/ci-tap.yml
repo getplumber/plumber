@@ -1,0 +1,134 @@
+name: TAP Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CI: true
+  PG_VERSION: REL_18_STABLE
+  PG_TAP_DIR: ${{ github.workspace }}/pg-tap
+
+permissions:
+  contents: read
+
+jobs:
+  tap-tests:
+    name: TAP Tests (PG 18)
+    runs-on: depot-ubuntu-22.04-16
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Checkout clickhouse-c submodule
+        run: git submodule update --init third_party/clickhouse-c
+
+      - name: Install PostgreSQL build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            libreadline-dev \
+            zlib1g-dev \
+            flex \
+            bison \
+            libxml2-dev \
+            libxslt1-dev \
+            libssl-dev \
+            libicu-dev \
+            pkg-config \
+            libipc-run-perl \
+            cmake \
+            ninja-build \
+            curl zip unzip tar
+
+      - uses: ./.github/actions/setup-vcpkg
+
+      - name: Cache PostgreSQL build
+        id: cache-pg
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.PG_TAP_DIR }}
+          key: pg-tap-${{ env.PG_VERSION }}-ubuntu22.04-v3
+
+      - name: Build PostgreSQL with TAP support
+        if: steps.cache-pg.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth=1 --branch=${{ env.PG_VERSION }} https://github.com/postgres/postgres.git postgres-src
+          cd postgres-src
+          ./configure --enable-tap-tests --prefix=${{ env.PG_TAP_DIR }}
+          make -j$(nproc)
+          make install
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: tap-tests
+          max-size: 500M
+
+      - name: Build extension
+        run: |
+          export PATH="${{ env.PG_TAP_DIR }}/bin:$PATH"
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DPG_CONFIG=${{ env.PG_TAP_DIR }}/bin/pg_config \
+            -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake \
+            -DVCPKG_TARGET_TRIPLET=x64-linux-pic \
+            -DVCPKG_OVERLAY_TRIPLETS=${{ github.workspace }}/triplets \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build build --parallel
+          cmake --install build
+
+      - name: Start ClickHouse
+        run: |
+          ./docker/tls/generate-certs.sh
+          docker compose -f docker/docker-compose.test.yml -f docker/docker-compose.tls.yml up -d --wait
+          # Sanity-probe the host-mapped HTTP port the TAP suite uses.
+          for i in {1..30}; do
+            if curl -sf 'http://localhost:18123/' --data 'SELECT 1' >/dev/null 2>&1; then
+              echo "ClickHouse ready"
+              exit 0
+            fi
+            echo "Waiting for ClickHouse... ($i/30)"
+            sleep 1
+          done
+          echo "ClickHouse not ready after 30s"
+          docker compose -f docker/docker-compose.test.yml logs
+          exit 1
+
+      - name: Install goose
+        run: |
+          go install github.com/pressly/goose/v3/cmd/goose@v3.27.1
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Initialize ClickHouse schema
+        run: |
+          docker exec psch-clickhouse clickhouse-client -q "CREATE DATABASE IF NOT EXISTS pg_stat_ch"
+          goose -dir schema/migrations \
+            clickhouse "tcp://localhost:19000?database=pg_stat_ch" up
+
+      - name: Run TAP tests
+        run: |
+          export PATH="${{ env.PG_TAP_DIR }}/bin:$PATH"
+          export PG_REGRESS="${{ env.PG_TAP_DIR }}/lib/postgresql/pgxs/src/test/regress/pg_regress"
+          export PERL_LIB="${{ env.PG_TAP_DIR }}/lib/postgresql/pgxs/src/test/perl"
+          prove -v --timer -I "$PERL_LIB" -I t t/*.pl
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: tap-test-logs
+          path: |
+            tmp_check/
+            log/
+
+      - name: Cleanup ClickHouse
+        if: always()
+        run: |
+          docker compose -f docker/docker-compose.test.yml -f docker/docker-compose.tls.yml down -v

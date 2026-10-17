@@ -1,0 +1,74 @@
+name: Build one
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: PDFium branch
+        required: false
+        default: main
+      version:
+        description: PDFium version
+        required: false
+        default: ""
+      target_os:
+        description: Target OS
+        type: choice
+        options:
+          - android
+          - emscripten
+          - ios
+          - linux
+          - mac
+          - win
+          - wasi
+      target_cpu:
+        description: Target CPU
+        type: choice
+        options:
+          - arm
+          - arm64
+          - ppc64
+          - x64
+          - x86
+          - wasm
+      target_environment:
+        description: Target environment
+        type: choice
+        default: ""
+        options:
+          - ""
+          - device
+          - catalyst
+          - musl
+          - simulator
+      enable_v8:
+        description: Enable V8
+        type: boolean
+        required: false
+        default: false
+      emsdk_version:
+        description: Emscripten SDK
+        type: string
+        required: false
+        default: 3.1.72
+      is_debug:
+        description: Is debug
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  build:
+    name: Build
+    uses: ./.github/workflows/build.yml
+    secrets: inherit
+    with:
+      branch: ${{ github.event.inputs.branch }}
+      version: ${{ github.event.inputs.version }}
+      is_debug: ${{ github.event.inputs.is_debug == 'true' }}
+      target_os: ${{ github.event.inputs.target_os }}
+      target_cpu: ${{ github.event.inputs.target_cpu }}
+      target_environment: ${{ github.event.inputs.target_environment }}
+      enable_v8: ${{ github.event.inputs.enable_v8 == 'true' }}
+      emsdk_version: ${{ github.event.inputs.emsdk_version }}

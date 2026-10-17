@@ -1,0 +1,209 @@
+name: PR Triage
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+
+permissions:
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  label:
+    name: Label PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Apply labels
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const labels = new Set();
+
+            async function tryWrite(description, fn) {
+              try {
+                return await fn();
+              } catch (error) {
+                if (error.status === 403 || error.status === 422) {
+                  core.warning(`${description} skipped: ${error.message}`);
+                  return null;
+                }
+                throw error;
+              }
+            }
+
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              per_page: 100,
+            });
+
+            const linesChanged = files.reduce((sum, file) => sum + file.additions + file.deletions, 0);
+            const sizeLabels = ["size/XS", "size/S", "size/M", "size/L", "size/XL"];
+            const sizeLabel = linesChanged < 10
+              ? "size/XS"
+              : linesChanged < 50
+                ? "size/S"
+                : linesChanged < 200
+                  ? "size/M"
+                  : linesChanged < 500
+                    ? "size/L"
+                    : "size/XL";
+            labels.add(sizeLabel);
+
+            if (["dependabot[bot]", "renovate[bot]"].includes(pr.user.login)) {
+              labels.add("bot");
+            }
+
+            const areaMap = {
+              "area/catalog": (file) => file.startsWith("packages/astro/src/catalog/") || file.includes("CATALOG_ONLY_PLAN"),
+              "area/cli": (file) => file.startsWith("packages/core/src/cli/") || file === "packages/astro/src/cli.ts" || file.startsWith("packages/astro/src/cli/"),
+              "area/config": (file) => file.startsWith("packages/astro/src/config/"),
+              "area/content": (file) => file.startsWith("packages/astro/src/content/"),
+              "area/docs": (file) =>
+                file.startsWith("docs/") ||
+                file === "README.md" ||
+                /^packages\/(astro|core|emdash)\/(README|CHANGELOG)\.md$/.test(file),
+              "area/github": (file) => file.startsWith(".github/"),
+              "area/i18n": (file) => file.startsWith("packages/astro/src/i18n/"),
+              "area/parsing": (file) =>
+                file.startsWith("packages/core/src/adapters/") || file.startsWith("packages/astro/src/parsing/"),
+              "area/routing": (file) => file.startsWith("packages/astro/src/routing/"),
+              "area/runtime": (file) =>
+                file.startsWith("packages/astro/src/runtime/") || file.startsWith("packages/astro/src/react/"),
+              "area/storage": (file) => file.startsWith("packages/astro/src/storage/"),
+              "area/tests": (file) =>
+                /^packages\/(astro|core|adapters|providers|emdash)\/tests\//.test(file) || file.startsWith("tests/"),
+              "area/translation": (file) =>
+                file.startsWith("packages/core/") ||
+                file.startsWith("packages/emdash/") ||
+                file.startsWith("packages/astro/src/translation/") ||
+                file.startsWith("packages/astro/src/glossary/"),
+            };
+
+            for (const file of files) {
+              for (const [label, matches] of Object.entries(areaMap)) {
+                if (matches(file.filename)) labels.add(label);
+              }
+            }
+
+            try {
+              const { data: fullPr } = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pr.number,
+              });
+              if (fullPr.mergeable === false) labels.add("needs-rebase");
+            } catch {
+              // GitHub may not have computed mergeability yet.
+            }
+
+            const labelMetadata = {
+              "bot": { color: "ededed", description: "Opened by automation" },
+              "needs-rebase": { color: "d93f0b", description: "PR has merge conflicts" },
+              "size/XS": { color: "3cbf00", description: "Fewer than 10 changed lines" },
+              "size/S": { color: "5dba3f", description: "10-49 changed lines" },
+              "size/M": { color: "fbca04", description: "50-199 changed lines" },
+              "size/L": { color: "ee9b00", description: "200-499 changed lines" },
+              "size/XL": { color: "d93f0b", description: "500+ changed lines" },
+              "area/catalog": { color: "5319e7", description: "Catalog-only runtime and integration" },
+              "area/cli": { color: "1d76db", description: "CLI" },
+              "area/config": { color: "006b75", description: "Configuration schema and options" },
+              "area/content": { color: "0e8a16", description: "Content collection wiring" },
+              "area/docs": { color: "0075ca", description: "Documentation" },
+              "area/github": { color: "000000", description: "GitHub workflows and repo management" },
+              "area/i18n": { color: "bfd4f2", description: "UI strings and locale catalogs" },
+              "area/parsing": { color: "c2e0c6", description: "File parsing and adapters" },
+              "area/routing": { color: "f9d0c4", description: "Route shims and URL rewriting" },
+              "area/runtime": { color: "d4c5f9", description: "Runtime APIs and middleware" },
+              "area/storage": { color: "fef2c0", description: "R2 cache and local storage" },
+              "area/tests": { color: "c5def5", description: "Tests and fixtures" },
+              "area/translation": { color: "fef2c0", description: "Translation pipeline and providers" },
+            };
+
+            const existingLabels = new Set();
+            for await (const response of github.paginate.iterator(
+              github.rest.issues.listLabelsForRepo,
+              { owner: context.repo.owner, repo: context.repo.repo, per_page: 100 },
+            )) {
+              for (const label of response.data) existingLabels.add(label.name);
+            }
+
+            for (const [name, meta] of Object.entries(labelMetadata)) {
+              if (!existingLabels.has(name)) {
+                await tryWrite(`Create label ${name}`, () =>
+                  github.rest.issues.createLabel({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    name,
+                    color: meta.color,
+                    description: meta.description,
+                  }),
+                );
+              }
+            }
+
+            const currentLabels = new Set((pr.labels || []).map((label) => label.name));
+            const managedLabels = new Set([
+              "bot",
+              "needs-rebase",
+              ...sizeLabels,
+              ...Object.keys(areaMap),
+            ]);
+
+            for (const label of managedLabels) {
+              if (!labels.has(label) && currentLabels.has(label)) {
+                try {
+                  await tryWrite(`Remove label ${label}`, () =>
+                    github.rest.issues.removeLabel({
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      issue_number: pr.number,
+                      name: label,
+                    }),
+                  );
+                } catch (error) {
+                  if (error.status !== 404) throw error;
+                }
+              }
+            }
+
+            const toAdd = [...labels].filter((label) => !currentLabels.has(label));
+            if (toAdd.length > 0) {
+              await tryWrite(`Add labels ${toAdd.join(", ")}`, () =>
+                github.rest.issues.addLabels({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: pr.number,
+                  labels: toAdd,
+                }),
+              );
+            }
+
+            if (context.payload.action === "opened" && (linesChanged > 500 || files.length > 20)) {
+              await tryWrite("Create scope guard comment", () =>
+                github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: pr.number,
+                  body: [
+                    "<!-- polystella-scope-guard -->",
+                    "## Scope check",
+                    "",
+                    `This PR changes **${linesChanged.toLocaleString()} lines** across **${files.length} files**. PolyStella is maintained by a small team, so smaller focused PRs are more likely to be reviewed.`,
+                    "",
+                    "If this scope is intentional, no action is required.",
+                  ].join("\n"),
+                }),
+              );
+            }

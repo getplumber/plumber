@@ -1,0 +1,112 @@
+# This workflow will run pytest.
+#
+# There are two job sets which run in parallel:
+# 1. `pytest-fast`: Run fast tests only, and fail fast so the dev knows asap if they broke something.
+# 2. `pytest`: Run all tests, across multiple Python versions.
+#
+# Note that `pytest-fast` also skips tests that require credentials, allowing it to run on forks.
+name: PyTest Matrix
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "airbyte_cdk/**"
+      - "unit_tests/**"
+      - "poetry.lock"
+      - "pyproject.toml"
+  pull_request:
+
+jobs:
+  pytest:
+    name: Pytest (All, Python ${{ matrix.python-version }}, ${{ matrix.os }})
+    # Don't run on forks. Run on pushes to main, and on PRs that are not from forks.
+    if: >
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    strategy:
+      matrix:
+        python-version: [
+          "3.10",
+          "3.11",
+          "3.12",
+          "3.13",
+          "3.14",
+        ]
+        os: [
+            Ubuntu,
+            # Windows,  # For now, we don't include Windows in the test matrix.
+          ]
+      fail-fast: false
+
+    runs-on: "${{ matrix.os }}-latest"
+    env:
+      # Enforce UTF-8 encoding so Windows runners don't fail inside the connector code.
+      # TODO: See if we can fully enforce this within PyAirbyte itself.
+      PYTHONIOENCODING: utf-8
+    steps:
+      # Common steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - id: changes
+        uses: dorny/paths-filter@v3.0.2
+        with:
+          filters: |
+            src:
+              - 'airbyte_cdk/**'
+              - 'unit_tests/**'
+              - 'bin/**'
+              - 'poetry.lock'
+              - 'pyproject.toml'
+      - name: Set up Poetry
+        uses: snok/install-poetry@v1
+        if: steps.changes.outputs.src == 'true'
+        with:
+          version: "2.0.1"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        if: steps.changes.outputs.src == 'true'
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "poetry"
+      - name: Install dependencies
+        if: steps.changes.outputs.src == 'true'
+        run: poetry install --all-extras
+
+      # Job-specific step(s):
+      - name: Run Pytest
+        timeout-minutes: 60
+        if: steps.changes.outputs.src == 'true'
+        env:
+          GCP_GSM_CREDENTIALS: ${{ secrets.GCP_GSM_CREDENTIALS }}
+        run: >
+          poetry run coverage run -m pytest
+          --durations=10
+          -m "not linting and not super_slow and not flaky"
+
+      - name: Print Coverage Report
+        if: always() && steps.changes.outputs.src == 'true'
+        run: poetry run coverage report
+
+      - name: Create Coverage Artifacts
+        if: always() && steps.changes.outputs.src == 'true'
+        run: |
+          poetry run coverage html -d htmlcov
+          poetry run coverage xml -o htmlcov/coverage.xml
+
+      - name: Publish Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always() && !cancelled() && steps.changes.outputs.src == 'true' && matrix.python-version == '3.11'
+        continue-on-error: true
+        with:
+          check_name: "PyTest Results (Full)"
+          large_files: true
+          files: |
+            build/test-results/**/*.xml
+      - name: Upload coverage to GitHub Artifacts
+        if: always() && steps.changes.outputs.src == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: py${{ matrix.python-version }}-${{ matrix.os }}-test-coverage
+          path: htmlcov/

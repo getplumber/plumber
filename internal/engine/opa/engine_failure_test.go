@@ -48,6 +48,52 @@ func TestEvaluateModules_IsolatesFailingModule(t *testing.T) {
 	}
 }
 
+// unparseableModule fails to compile at all (a parse error), the other
+// way a module can fail: it never reaches evaluation.
+const unparseableModule = "package broken\n\ndeny contains {"
+
+// TestEvaluateModules_IsolatesAModuleThatFailsToCompile is the #489
+// guard for a compile failure rather than a runtime one: the healthy
+// module's findings survive, the broken module is reported by name, the
+// run is not an engine error, and a second evaluation reports it the
+// same way (a failed compile is never cached as a usable query).
+func TestEvaluateModules_IsolatesAModuleThatFailsToCompile(t *testing.T) {
+	engine := New()
+	engine.LoadModule("healthy", healthyModule)
+	engine.LoadModule("broken", unparseableModule)
+	pipeline := &ir.NormalizedPipeline{Jobs: []ir.Job{{Name: "build"}}}
+
+	for run := 1; run <= 2; run++ {
+		findings, failed, err := engine.EvaluateModules(context.Background(), pipeline, nil)
+		if err != nil {
+			t.Fatalf("run %d: a module failure is not an engine error: %v", run, err)
+		}
+		if len(findings) != 1 || findings[0].Code != "ISSUE-101" {
+			t.Fatalf("run %d: the healthy module's findings must survive, got %+v", run, findings)
+		}
+		if len(failed) != 1 || failed[0].Module != "broken" || failed[0].Err == nil {
+			t.Fatalf("run %d: want exactly the broken module reported with its error, got %+v", run, failed)
+		}
+	}
+}
+
+// TestEvaluateSituation_ReportsAModuleThatFailsToCompile pins that the
+// situation module failing to compile comes back as an error, without a
+// panic, on every call.
+func TestEvaluateSituation_ReportsAModuleThatFailsToCompile(t *testing.T) {
+	engine := New()
+	pipeline := &ir.NormalizedPipeline{Jobs: []ir.Job{{Name: "build"}}}
+	for run := 1; run <= 2; run++ {
+		raw, err := engine.EvaluateSituation(context.Background(), "package situation\n\nresult := {", pipeline, nil)
+		if err == nil || raw != nil {
+			t.Fatalf("run %d: want an error and no result, got %s, %v", run, raw, err)
+		}
+		if !strings.Contains(err.Error(), "situation eval") {
+			t.Fatalf("run %d: the error must name the situation evaluation, got %v", run, err)
+		}
+	}
+}
+
 // TestEvaluateStrict_FailsOnAnyModule pins the test suites' own contract:
 // any module failure is an error naming the module, so a suite asserting a
 // clean evaluation keeps catching a broken policy.

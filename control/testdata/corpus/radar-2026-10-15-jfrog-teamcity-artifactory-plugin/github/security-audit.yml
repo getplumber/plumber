@@ -1,0 +1,69 @@
+name: Security Audit
+
+on:
+  # Run on pull requests to master
+  pull_request:
+    branches: [master]
+    types: [labeled]
+  
+  # Run daily at 6 AM UTC
+  schedule:
+    - cron: "0 6 * * *"
+
+jobs:
+  jf-audit:
+    if: github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    name: JFrog Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      - name: Setup JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v4
+        env:
+          JF_URL: ${{ secrets.ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.ARTIFACTORY_ACCESS_TOKEN }}
+
+      - name: Run JFrog Audit
+        run: |
+          echo "Running JFrog security audit..."
+          jf audit --mvn --format=table
+        continue-on-error: true
+
+      - name: Run JFrog Audit (JSON output)
+        id: audit
+        run: |
+          jf audit --watches ecosys-plugins-watch --format=json > audit-results.json 2>&1 || true
+          jf audit --mvn --sast --secrets --format=json >> audit-results.json 2>&1 || true
+          echo "Audit completed. Results saved to audit-results.json"
+
+      - name: Upload Audit Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-audit-results
+          path: audit-results.json
+          retention-days: 30
+
+      - name: Display Audit Summary
+        run: |
+          echo "## Security Audit Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f audit-results.json ]; then
+            # Count vulnerabilities if jq is available
+            if command -v jq &> /dev/null; then
+              VULN_COUNT=$(jq -r '.vulnerabilities | length // 0' audit-results.json 2>/dev/null || echo "N/A")
+              echo "**Vulnerabilities Found:** $VULN_COUNT" >> $GITHUB_STEP_SUMMARY
+            fi
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "See uploaded artifact for full results." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "No audit results file generated." >> $GITHUB_STEP_SUMMARY
+          fi
+

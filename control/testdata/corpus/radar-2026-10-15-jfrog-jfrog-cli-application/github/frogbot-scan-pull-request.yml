@@ -1,0 +1,47 @@
+name: "Frogbot Scan Pull Request"
+on:
+  pull_request_target:
+    types: [ opened, synchronize ]
+permissions:
+  pull-requests: write
+  contents: read
+jobs:
+  scan-pull-request:
+    runs-on: ubuntu-latest
+    # A pull request needs to be approved before Frogbot scans it. Any GitHub user who is associated with the
+    # "frogbot" GitHub environment can approve the pull request to be scanned.
+    environment: frogbot
+    steps:
+      - uses: jfrog/frogbot@v2
+        env:
+          JFROG_CLI_LOG_LEVEL: "DEBUG"
+          # [Mandatory]
+          # JFrog platform URL (This functionality requires version 3.29.0 or above of Xray)
+          JF_URL: ${{ secrets.FROGBOT_URL }}
+
+          # [Mandatory if JF_USER and JF_PASSWORD are not provided]
+          # JFrog access token with 'read' permissions on Xray service
+          JF_ACCESS_TOKEN: ${{ secrets.FROGBOT_ACCESS_TOKEN }}
+
+          # [Mandatory]
+          # The GitHub token is automatically generated for the job
+          JF_GIT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+          # [Optional]
+          # Configure the SMTP server to enable Frogbot to send emails with detected secrets in pull request scans.
+          # SMTP server URL including should the relevant port: (Example: smtp.server.com:8080)
+          # JF_SMTP_SERVER: ${{ secrets.JF_SMTP_SERVER }}
+
+          # [Mandatory if JF_SMTP_SERVER is set]
+          # The username required for authenticating with the SMTP server.
+          #JF_SMTP_USER: ${{ secrets.JF_SMTP_USER }}
+
+          # [Mandatory if JF_SMTP_SERVER is set]
+          # The password associated with the username required for authentication with the SMTP server.
+          # JF_SMTP_PASSWORD: ${{ secrets.JF_SMTP_PASSWORD }}
+
+          # [Optional]
+          # List of comma separated email addresses to receive email notifications about secrets
+          # detected during pull request scanning. The notification is also sent to the email set
+          # in the committer git profile regardless of whether this variable is set or not.
+          JF_EMAIL_RECEIVERS: "eco-system@jfrog.com"

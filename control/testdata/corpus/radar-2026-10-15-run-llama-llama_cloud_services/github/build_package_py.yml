@@ -1,0 +1,53 @@
+name: Build Package - Python
+
+# Build package on its own without additional pip install
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "py/**"
+  pull_request:
+    paths:
+      - "py/**"
+env:
+  UV_VERSION: "0.7.20"
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # You can use PyPy versions in python-version.
+      # For example, pypy-2.7 and pypy-3.8
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.9"]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: ${{ env.UV_VERSION }}
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Display Python version
+        run: python --version
+
+      - name: Build
+        working-directory: py
+        run: uv build
+
+      - name: Test installing built package
+        shell: bash
+        working-directory: py
+        run: |
+          uv venv
+          uv pip install dist/*.whl
+
+      - name: Test import
+        working-directory: py
+        run: uv run -- python -c "import llama_cloud_services"

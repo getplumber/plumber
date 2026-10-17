@@ -1,0 +1,70 @@
+name: Workflow Security
+
+# Static analysis of this repository's own GitHub Actions workflows with zizmor
+# (https://docs.zizmor.sh). It catches the supply-chain and injection classes
+# that CodeQL does not look at: unpinned actions, template injection into run
+# blocks, over-broad permissions, and credential persistence.
+#
+# Two steps, because reporting and gating want different settings:
+#   1. report -- every finding goes to the Security tab. Never fails the job.
+#   2. gate   -- only high-severity findings fail the pull request.
+#
+# The pinning policy and the baseline of findings that already exist on main
+# are in .github/zizmor.yml.
+
+on:
+  pull_request:
+    branches: [main]
+    # Only the files zizmor reads: the workflows, the Dependabot config (it is
+    # audited too), and this audit's own configuration.
+    paths:
+      - ".github/workflows/**"
+      - ".github/dependabot.yml"
+      - ".github/zizmor.yml"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/**"
+      - ".github/dependabot.yml"
+      - ".github/zizmor.yml"
+  # Refresh the Security tab even in weeks where no workflow changed.
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  zizmor:
+    name: zizmor
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      security-events: write # upload SARIF to code scanning
+      contents: read
+      actions: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # Reports at every severity. In SARIF mode zizmor does not use a failing
+      # exit code, so this step surfaces findings without blocking anything.
+      # Unpinned on purpose: new audits ship in new versions, and the Security
+      # tab is where we want to see them first.
+      - name: Report findings to code scanning
+        uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        with:
+          advanced-security: true
+
+      # The gate. Version-pinned so that a zizmor release cannot turn an
+      # unrelated pull request red; bump it deliberately.
+      - name: Fail on high-severity findings
+        uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        with:
+          version: "1.29.0"
+          advanced-security: false
+          annotations: true
+          min-severity: high

@@ -25,20 +25,6 @@ const (
 	Unknown
 )
 
-// String renders a Value for diagnostics and test failure messages.
-func (v Value) String() string {
-	switch v {
-	case False:
-		return "False"
-	case True:
-		return "True"
-	case Unknown:
-		return "Unknown"
-	default:
-		return "Unknown"
-	}
-}
-
 // Facts resolves a dotted reference such as "github.event_name" or
 // "needs.policy.outputs.run" to its string value. known is false when the
 // reference has no value in the facts the caller has available, which is

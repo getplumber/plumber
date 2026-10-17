@@ -1,0 +1,12 @@
+name: Auto-close External Pull Requests
+
+on:
+  pull_request_target:
+    types: [opened, reopened]
+
+jobs:
+  auto_close:
+    if: github.head_ref != 'dev'
+    uses: appwrite/.github/.github/workflows/autoclose.yml@dd94e24bffbb6941e79ce3a26c01db22a774b1a1 # main
+    secrets:
+      GH_AUTO_CLOSE_PR_TOKEN: ${{ secrets.GH_AUTO_CLOSE_PR_TOKEN }}

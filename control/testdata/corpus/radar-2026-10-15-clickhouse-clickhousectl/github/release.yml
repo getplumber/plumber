@@ -1,0 +1,321 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+env:
+  DO_NOT_TRACK: "1"
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            cross: true
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            cross: true
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            cross: false
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            cross: false
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable @ 2026-10-01
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.cross
+        run: cargo install cross --version 0.2.5
+
+      - name: Build
+        run: |
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.target }}
+          else
+            cargo build --release --target ${{ matrix.target }}
+          fi
+
+      - name: Verify static linking
+        if: contains(matrix.target, 'linux-musl')
+        run: |
+          binary="target/${{ matrix.target }}/release/clickhousectl"
+          echo "--- file output ---"
+          file "$binary"
+          file "$binary" | grep -qE "statically linked|static-pie linked"
+          echo "--- ldd output ---"
+          ldd_output=$(ldd "$binary" 2>&1 || true)
+          echo "$ldd_output"
+          echo "$ldd_output" | grep -qE "not a dynamic executable|statically linked"
+          echo "Static linking verified."
+
+      - name: Compute version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Package archive
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          TARGET="${{ matrix.target }}"
+          DIR="clickhousectl-${TARGET}-v${VERSION}"
+          mkdir "$DIR"
+          cp "target/${TARGET}/release/clickhousectl" "$DIR/"
+          tar -czf "${DIR}.tar.gz" "$DIR"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: clickhousectl-${{ matrix.target }}-v${{ steps.version.outputs.version }}
+          path: clickhousectl-${{ matrix.target }}-v${{ steps.version.outputs.version }}.tar.gz
+
+  smoke-test:
+    name: Smoke test (${{ matrix.distro }})
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        distro:
+          - ubuntu:20.04
+          - ubuntu:22.04
+          - ubuntu:24.04
+          - debian:bullseye
+          - debian:bookworm
+          - centos:7
+          - amazonlinux:2
+          - alpine:3.18
+    env:
+      TARGET: x86_64-unknown-linux-musl
+    steps:
+      - name: Compute version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Download artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: clickhousectl-${{ env.TARGET }}-v${{ steps.version.outputs.version }}
+
+      - name: Extract archive
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          DIR="clickhousectl-${TARGET}-v${VERSION}"
+          tar -xzf "${DIR}.tar.gz"
+          chmod +x "${DIR}/clickhousectl"
+          echo "BIN_PATH=${PWD}/${DIR}/clickhousectl" >> "$GITHUB_ENV"
+
+      - name: Run smoke test in ${{ matrix.distro }}
+        run: |
+          docker run --rm \
+            -e DO_NOT_TRACK=1 \
+            -v "${BIN_PATH}:/usr/local/bin/clickhousectl:ro" \
+            ${{ matrix.distro }} \
+            sh -c 'clickhousectl --version && clickhousectl --help'
+
+  release:
+    name: Create Release
+    needs: [build, smoke-test]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: artifacts
+
+      - name: Collect archives
+        run: |
+          mkdir release
+          for dir in artifacts/clickhousectl-*-v*/; do
+            cp "$dir"/*.tar.gz release/
+          done
+          ls -l release/
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" --generate-notes release/*
+
+  publish-crates:
+    name: Publish to crates.io
+    needs: release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    environment: release-publishing
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable @ 2026-10-01
+
+      - name: Publish clickhouse-cloud-api (skip if version already on crates.io)
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          VERSION=$(cargo pkgid -p clickhouse-cloud-api | sed 's/.*[#@]//')
+          if curl -fsSI "https://crates.io/api/v1/crates/clickhouse-cloud-api/${VERSION}" >/dev/null 2>&1; then
+            echo "clickhouse-cloud-api@${VERSION} already published; skipping."
+            echo "SKIP_API_PROPAGATION=1" >> "$GITHUB_ENV"
+          else
+            cargo publish -p clickhouse-cloud-api
+          fi
+
+      - name: Wait for crates.io index propagation
+        if: env.SKIP_API_PROPAGATION != '1'
+        run: sleep 30
+
+      - name: Publish clickhousectl
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish -p clickhousectl
+
+  publish-npm:
+    name: Publish to npm
+    needs: release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    # `id-token: write` is required for npm OIDC trusted publishing. Do NOT
+    # set NODE_AUTH_TOKEN below — per npm docs, even an empty value forces
+    # token-based auth and short-circuits the OIDC flow.
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          # Node 24+ ships npm >= 11.5.1, which is required for npm Trusted
+          # Publishing OIDC. Older npm versions cause the OIDC handshake to
+          # silently fail and the registry returns a misleading 404 on publish.
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Align package version with tag
+        working-directory: npm
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+
+      - name: Publish
+        working-directory: npm
+        run: npm publish --provenance --access public
+
+  build-wheels:
+    name: Build wheel (${{ matrix.target }})
+    needs: release
+    runs-on: ${{ matrix.os }}
+    if: startsWith(github.ref, 'refs/tags/v')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            manylinux: '2_28'
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            manylinux: '2_28'
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            manylinux: musllinux_1_2
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            manylinux: musllinux_1_2
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            manylinux: 'off'
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            manylinux: 'off'
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Align Cargo version with tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # Force the wheel version to match the release tag in case the in-repo
+          # Cargo.toml was not bumped before tagging. Mirrors the npm step above.
+          # awk (not `sed -i`) so this is portable to the BSD sed on macOS
+          # runners, where the GNU-only `0,/re/` range silently no-ops.
+          f=crates/clickhousectl/Cargo.toml
+          awk -v ver="$VERSION" \
+            'done!=1 && /^version = "[^"]*"$/ { print "version = \"" ver "\""; done=1; next } { print }' \
+            "$f" > "$f.tmp"
+          mv "$f.tmp" "$f"
+
+      - name: Build wheel
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        with:
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          working-directory: pypi
+          args: --release --out dist
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wheel-${{ matrix.target }}
+          path: pypi/dist/*.whl
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: build-wheels
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    # PyPI trusted publishing recommends binding the publish job to an
+    # environment so the OIDC subject includes `environment:pypi`, which is
+    # pinned on PyPI's trusted-publisher config for the project.
+    environment: pypi
+    # `id-token: write` is required for PyPI OIDC trusted publishing. The
+    # publisher action picks up OIDC automatically when no token input is
+    # provided.
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Download wheel artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: wheels
+          pattern: wheel-*
+          merge-multiple: true
+
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: wheels

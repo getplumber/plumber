@@ -1,0 +1,29 @@
+name: Semgrep OSS scan
+on:
+  workflow_dispatch: {}
+  pull_request: {}
+  push:
+    branches:
+      - trunk
+  schedule:
+    - cron: "0 0 20 * *"
+concurrency:
+  group: semgrep-${{ github.event_name }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  semgrep:
+    name: semgrep-oss
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+      - uses: geomys/sandboxed-step@v1.2.2
+        with:
+          run: pipx run semgrep==1.160.0 scan --config=auto

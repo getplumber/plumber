@@ -1,0 +1,129 @@
+name: ✅ CI
+on:
+  push:
+    branches: [main, wip/**]
+  pull_request:
+  schedule:
+    - cron: "0 12 10 * *" # Monthly at noon on the tenth
+jobs:
+  matrix:
+    name: 📋 Generate Matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - name: Generate Matrix
+        id: matrix
+        uses: pgxn/matrix-action@v0
+        with:
+          min-version: 15
+          beta: true
+          no-os: windows
+
+  test:
+    name: ${{ matrix.pg.emoji }} ${{ matrix.pg.arch }} 🐘 ${{ matrix.pg.version }} 🏠 ${{ matrix.libchdb }} ${{ matrix.build }}
+    needs: matrix
+    runs-on: ${{ matrix.pg.runner }}
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        pg: ${{ fromJson(needs.matrix.outputs.matrix) }}
+        build: [dynamic, static]
+        libchdb: [v26.9.0, v26.7.0, v26.7.3]
+    env:
+      BUNDLE_LIBCHDB: ${{ case(matrix.pg.os == 'linux' || matrix.build == 'static', '1', '') }}
+      LIBCHDB_BUILD: ${{ matrix.build }}
+      MAX_CONCURRENT_TESTS: 10
+    steps:
+      - name: Checkout the Repository
+        uses: actions/checkout@v7
+        with: { submodules: recursive }
+      - name: Start Postgres ${{ matrix.pg.version }}
+        uses: pgxn/postgres-action@v0
+        with:
+          version: ${{ matrix.pg.version }}
+          packages: ${{ case(matrix.pg.os == 'linux', 'libkrb5-dev libipc-run-perl', 'krb5 cpanminus') }}
+      - name: Install IPC::Run on macOS
+        if: matrix.pg.os == 'macos'
+        run: cpanm --notest IPC::Run
+      - name: Get chDB Version
+        id: chdb
+        run: make LIBCHDB_VERSION=${{ matrix.libchdb }} libchdb-variables BUNDLE_LIBCHDB=1 >> $GITHUB_OUTPUT
+      - name: Cache chDB
+        id: cache-chdb
+        uses: actions/cache@v6
+        with:
+          key: ${{ steps.chdb.outputs.directory }}-${{ matrix.build }}
+          path: |
+            ${{ steps.chdb.outputs.directory }}/lib/libchdb.*
+            ${{ steps.chdb.outputs.directory }}/include/chdb.h
+      # chdb_helper can be shared across PG versions
+      - name: Cache chDB Helper
+        if: matrix.build == 'static'
+        id: cache-helper
+        uses: actions/cache@v6
+        with:
+          key: helper-${{ runner.os }}-${{ matrix.pg.arch }}-${{ steps.chdb.outputs.version }}-${{ hashFiles('src/helper/*.c', 'src/setup.h') }}
+          path: |
+            src/helper/chdb_helper
+            src/helper/chdb_helper.o
+      - name: Freshen chDB Helper
+        if: steps.cache-helper.outputs.cache-hit == 'true'
+        run: touch src/helper/chdb_helper*
+      - name: Install libchdb.so
+        if: matrix.build == 'dynamic' && matrix.pg.os == 'macos'
+        # macOS requires libchdb.so to be code signed in its home. For dynamic
+        # builds on macOS, we use BUNDLE_LIBCHDB=1 only here to download,
+        # install, and sign libchdb.so.
+        run: |
+          set -eu
+          make ${{ steps.chdb.outputs.directory }}/lib/libchdb.so BUNDLE_LIBCHDB=1 LIBCHDB_VERSION=${{ matrix.libchdb }}
+          sudo BUNDLE_LIBCHDB=1 LIBCHDB_VERSION=${{ matrix.libchdb }} make install-libchdb
+          sudo mkdir -p /usr/local/include
+          sudo cp ${{ steps.chdb.outputs.directory }}/include/chdb.* /usr/local/include
+          sudo install_name_tool -id /usr/local/lib/libchdb.so /usr/local/lib/libchdb.so
+          sudo codesign -f -s - /usr/local/lib/libchdb.so
+      - name: Build
+        run: make -j $(nproc)
+      - name: Install
+        run: sudo --preserve-env=BUNDLE_LIBCHDB,LIBCHDB_BUILD make install
+      - name: Configure AWS credentials # for s3.sql round-trip test
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.aws_role_to_assume }}
+          role-session-name: ${{ github.run_id }}
+          aws-region: us-east-2
+      - name: Start kv-rest
+        run: make start-kv-rest KVREST_PORT=9631
+      - name: Test
+        id: test
+        run: make installcheck
+        # https://console.cloud.google.com/storage/settings;tab=interoperability?project=ch-pg-test
+        env:
+          CLOUDSDK_AUTH_HMAC_KEY: ${{ secrets.gcp_hmac_key }}
+          CLOUDSDK_AUTH_HMAC_SECRET: ${{ secrets.gcp_hmac_secret }}
+          PG_CHDB_HTTP_URL: http://localhost:9631
+      - name: Show Diffs
+        if: failure() && steps.test.outcome == 'failure'
+        run: find . -name regression.diffs -exec cat {} +
+      - name: Upload Diffs
+        if: failure() && steps.test.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: regression-${{ matrix.pg.os }}-${{ matrix.pg.arch }}-pg${{ matrix.pg.version }}
+          path: |
+            regression.diffs
+            results
+      - name: Test No File
+        # NO_FILE_SCHEME disables file://; when set, file test should fail
+        # with output that includes "could not open file". This step fails if
+        # the test output does not include that text.
+        run: |
+          (cd src/hook && rm -rf chdb_hook.* hook.o)
+          make -j $(nproc) NO_FILE_SCHEME=1
+          sudo --preserve-env=BUNDLE_LIBCHDB,LIBCHDB_BUILD make install
+          make installcheck TAP_TESTS= TESTS=test/sql/file.sql || true
+          grep -s 'could not open file' regression.diffs

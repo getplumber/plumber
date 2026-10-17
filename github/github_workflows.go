@@ -12,6 +12,7 @@ import (
 	"gopkg.in/yaml.v2"
 
 	"github.com/getplumber/plumber/internal/ir"
+	"github.com/getplumber/plumber/internal/runners"
 	"github.com/getplumber/plumber/utils"
 )
 
@@ -475,10 +476,6 @@ type workflowContext struct {
 	jobLines             map[string]int
 	usesLines            map[string][]int
 	usesComments         map[string]string
-	// secretLines is job name to secret name to the 1-based line of its
-	// first reference, as scanGitHubSecretLines reads it: Job.SecretFirstLine
-	// for the job of that name.
-	secretLines map[string]map[string]int
 }
 
 // mergedEnv combines workflow-level, job-level, and step-level env maps into
@@ -674,36 +671,27 @@ func runnerOSArch(runsOn []string, runsOnExpression bool) (osName, arch string) 
 	label := strings.ToLower(runsOn[0])
 	switch {
 	case strings.HasPrefix(label, "ubuntu-"):
-		return "Linux", labelArch(label, ubuntuPlainLabel)
+		return "Linux", labelArch(label)
 	case strings.HasPrefix(label, "windows-"):
-		return "Windows", labelArch(label, windowsPlainLabel)
+		return "Windows", labelArch(label)
 	case strings.HasPrefix(label, "macos-"):
 		return "macOS", macOSArch(label)
 	}
 	return "", ""
 }
 
-// ubuntuPlainLabel and windowsPlainLabel match only the plain hosted
-// runner labels GitHub documents for each family ("ubuntu-24.04",
-// "ubuntu-latest", "windows-2025", "windows-latest"): any other shape
-// ("-large", "-xlarge", a self-hosted label, anything with an extra
-// suffix) is not one this program asserts an architecture for at all.
-var (
-	ubuntuPlainLabel  = regexp.MustCompile(`^ubuntu-(latest|\d+\.\d+)$`)
-	windowsPlainLabel = regexp.MustCompile(`^windows-(latest|\d+)$`)
-	macosPlainLabel   = regexp.MustCompile(`^macos-(latest|\d+)$`)
-)
-
 // labelArch is ARM64 when the label itself names an ARM runner ("-arm",
 // "arm64": GitHub's Linux and Windows ARM hosted labels, e.g.
-// "ubuntu-24.04-arm"), X64 for a plain hosted label (plain), no arch
-// part at all for every other shape: a "-large"/"-xlarge" variant or
-// anything this program does not recognize as one of the two.
-func labelArch(label string, plain *regexp.Regexp) string {
+// "ubuntu-24.04-arm"), X64 for a plain hosted label
+// (runners.PlainHostedLabel, the same parser the preinstalled-tool guard
+// reads the image with), no arch part at all for every other shape: a
+// "-large"/"-xlarge" variant or anything this program does not
+// recognize as one of the two.
+func labelArch(label string) string {
 	if strings.Contains(label, "arm64") || strings.Contains(label, "-arm") {
 		return "ARM64"
 	}
-	if plain.MatchString(label) {
+	if _, plain := runners.PlainHostedLabel(label); plain {
 		return "X64"
 	}
 	return ""
@@ -711,7 +699,7 @@ func labelArch(label string, plain *regexp.Regexp) string {
 
 // macOSArch is the architecture a macos-* label resolves to: ARM64 when
 // the label names it explicitly ("-arm", "arm64"); for a plain hosted
-// label (macosPlainLabel), by the runner's numbered generation: macos-13
+// label (runners.PlainHostedLabel), by the runner's numbered generation: macos-13
 // and earlier were Intel (X64), macos-14 and later (Apple Silicon) and
 // the unversioned "macos-latest" (which tracks the current default, now
 // past 14) are ARM64; every other shape ("-large", "-xlarge", "-intel",
@@ -723,7 +711,7 @@ func macOSArch(label string) string {
 	if strings.Contains(label, "arm64") || strings.Contains(label, "-arm") {
 		return "ARM64"
 	}
-	if !macosPlainLabel.MatchString(label) {
+	if _, plain := runners.PlainHostedLabel(label); !plain {
 		return ""
 	}
 	if n, err := strconv.Atoi(strings.TrimPrefix(label, "macos-")); err == nil && n <= 13 {
@@ -1056,9 +1044,6 @@ func buildJob(jobName string, section map[string]any, wfCtx workflowContext, nam
 	if job.ReusableWorkflowUses != "" {
 		job.MatrixCombinations = matrixCombinations(section)
 	}
-	if lines := wfCtx.secretLines[jobName]; len(lines) > 0 {
-		job.SecretFirstLine = lines
-	}
 	return job
 }
 
@@ -1118,7 +1103,6 @@ func parseGitHubWorkflowJobs(data []byte, namespace, originFile string) ([]ir.Jo
 		jobLines:             scanGitHubJobLines(data),
 		usesLines:            scanGitHubUsesLines(data),
 		usesComments:         scanGitHubUsesComments(data),
-		secretLines:          scanGitHubSecretLines(data),
 	}
 
 	jobs := make([]ir.Job, 0, len(wf.Jobs))
@@ -1303,179 +1287,6 @@ func scanGitHubJobLines(data []byte) map[string]int {
 			if _, seen := out[m[1]]; !seen {
 				out[m[1]] = i + 1
 			}
-		}
-	}
-	return out
-}
-
-// secretRefPattern matches a GitHub Actions secrets-context reference,
-// `secrets.X` or the bracket form `secrets['X']` / `secrets["X"]`: the
-// same family situation.rego's secret_member_pattern reads, mirrored here
-// so the collector can record where each secret is first referenced, in
-// file order, rather than only which names exist.
-var secretRefPattern = regexp.MustCompile(`\bsecrets(?:\.([A-Za-z_][A-Za-z0-9_-]*)|\[\s*['"]([A-Za-z_][A-Za-z0-9_-]*)['"]\s*\])`)
-
-// secretNamesInLine returns every secret name secretRefPattern finds in
-// text (a line, or a ${{ ... }} span cut from one), name case preserved.
-// GITHUB_TOKEN, in any case, is left out: it is the job token, never a
-// secret.
-func secretNamesInLine(text string) []string {
-	var names []string
-	for _, m := range secretRefPattern.FindAllStringSubmatch(text, -1) {
-		name := m[1]
-		if name == "" {
-			name = m[2]
-		}
-		if strings.EqualFold(name, "github_token") {
-			continue
-		}
-		names = append(names, name)
-	}
-	return names
-}
-
-// secretNamesPerLine scans every line of the file once, top to bottom,
-// and returns, for each 0-based line index, the secret names
-// secretNamesInLine finds strictly inside a ${{ ... }} expression on that
-// line: the same restriction situation.rego's github_expressions applies
-// before secret_member_pattern ever runs, so a bash comment ("# rotate
-// secrets.NPM_TOKEN") or a quoted string literal ("echo \"secrets.X\"")
-// never counts, only a live expression does.
-//
-// A ${{ opened without a closing }} on the same line carries the open
-// expression into the next line, conservatively: everything up to the
-// next }} found (or the rest of that line, if none) counts as inside the
-// expression too, rather than being dropped as unmatched.
-func secretNamesPerLine(lines []string) [][]string {
-	out := make([][]string, len(lines))
-	open := false
-	for i, line := range lines {
-		rest := line
-		var spans []string
-		if open {
-			if j := strings.Index(rest, "}}"); j >= 0 {
-				spans = append(spans, rest[:j+2])
-				rest = rest[j+2:]
-				open = false
-			} else {
-				spans = append(spans, rest)
-				rest = ""
-			}
-		}
-		for {
-			k := strings.Index(rest, "${{")
-			if k < 0 {
-				break
-			}
-			if j := strings.Index(rest[k:], "}}"); j >= 0 {
-				spans = append(spans, rest[k:k+j+2])
-				rest = rest[k+j+2:]
-				continue
-			}
-			spans = append(spans, rest[k:])
-			open = true
-			break
-		}
-		var names []string
-		for _, span := range spans {
-			names = append(names, secretNamesInLine(span)...)
-		}
-		out[i] = names
-	}
-	return out
-}
-
-// jobLevelStepsHeader matches a job's own `steps:` key at the canonical
-// 4-space indent directly under a 2-space job header (the same
-// canonical-indentation assumption scanGitHubJobLines already makes).
-var jobLevelStepsHeader = regexp.MustCompile(`^    steps:\s*(#.*)?$`)
-
-// leadingSpaces counts the leading space characters of a line (tabs are
-// not modeled, matching the rest of this file's indentation scanners).
-func leadingSpaces(line string) int {
-	n := 0
-	for _, c := range line {
-		if c != ' ' {
-			break
-		}
-		n++
-	}
-	return n
-}
-
-// scanGitHubSecretLines walks the raw workflow bytes and returns, for
-// each job name, the secret names secretNamesPerLine finds mapped to the
-// 1-based line of their first reference inside that job's own YAML block
-// (the job's start line, from scanGitHubJobLines, to the line before the
-// next job's start, or the end of the file for the last job).
-//
-// A reference outside the job's own `steps:` key, at any depth (the
-// job's own `env:`, its `container:`'s or a `services:` entry's `env:`,
-// an `if:`, `permissions:`, or any other job-level key), is recorded at
-// line 0: everything the runner resolves before any step starts is
-// available to every step regardless of where it sits in the file, the
-// same as a name the enclosing workflow's own top-level configuration
-// carries (also line 0, for every job). Only a reference actually inside
-// `steps:` keeps its own textual line.
-func scanGitHubSecretLines(data []byte) map[string]map[string]int {
-	jobStarts := scanGitHubJobLines(data)
-	if len(jobStarts) == 0 {
-		return nil
-	}
-	lines := strings.Split(string(data), "\n")
-	namesPerLine := secretNamesPerLine(lines)
-	type jobRange struct {
-		name  string
-		start int
-	}
-	ranges := make([]jobRange, 0, len(jobStarts))
-	for name, start := range jobStarts {
-		ranges = append(ranges, jobRange{name: name, start: start})
-	}
-	sort.Slice(ranges, func(i, j int) bool { return ranges[i].start < ranges[j].start })
-
-	workflowNames := map[string]bool{}
-	for i := 0; i < ranges[0].start-1 && i < len(namesPerLine); i++ {
-		for _, name := range namesPerLine[i] {
-			workflowNames[name] = true
-		}
-	}
-
-	out := map[string]map[string]int{}
-	for i, r := range ranges {
-		end := len(lines)
-		if i+1 < len(ranges) {
-			end = ranges[i+1].start - 1
-		}
-		m := map[string]int{}
-		for name := range workflowNames {
-			m[name] = 0
-		}
-		inSteps := false
-		for ln := r.start; ln <= end && ln-1 < len(lines); ln++ {
-			line := lines[ln-1]
-			trimmed := strings.TrimSpace(line)
-			if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
-				if inSteps && leadingSpaces(line) <= 4 {
-					inSteps = false
-				}
-				if !inSteps && jobLevelStepsHeader.MatchString(line) {
-					inSteps = true
-					continue
-				}
-			}
-			for _, name := range namesPerLine[ln-1] {
-				if inSteps {
-					if _, known := m[name]; !known {
-						m[name] = ln
-					}
-					continue
-				}
-				m[name] = 0
-			}
-		}
-		if len(m) > 0 {
-			out[r.name] = m
 		}
 	}
 	return out

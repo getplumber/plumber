@@ -1,0 +1,204 @@
+name: test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  # Run the same required checks (lint / unit-test / e2e-test / coverage) on the
+  # merge queue's transient ref. Required so a merge queue can be enabled on
+  # `main`: the queue waits on these checks for each merge group, and without a
+  # `merge_group` trigger they would never run and every queued PR would stall.
+  merge_group:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  lint:
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Pin lockfileVersion to 2
+        # See CONTRIBUTING.md "Dependency Pins". Modern npm writes v3
+        # by default; catching drift here prevents silent format upgrades
+        # from sneaking in via `npm install`.
+        run: |
+          actual=$(jq -r '.lockfileVersion' package-lock.json)
+          if [ "$actual" != "2" ]; then
+            echo "::error::package-lock.json lockfileVersion is $actual; expected 2. Regenerate with 'npm install --lockfile-version=2'."
+            exit 1
+          fi
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20
+      - uses: ./.github/actions/setup-jfrog
+      - name: Cache node modules
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        env:
+          cache-name: cache-node-modules
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-build-${{ env.cache-name }}-
+            ${{ runner.os }}-build-
+            ${{ runner.os }}-
+      - name: Check code style
+        run: |
+          npm ci
+          npm run prettier
+          npm run lint
+
+  unit-test:
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # LTS versions: 16/18/20 are the currently-supported floor; 22
+        # is the active LTS and 24 is the new LTS. Node 14 was dropped
+        # because the modern npm ecosystem (e.g. @dabh/diagnostics@2.0.7+
+        # via winston) ships ES2021 syntax (||=) that Node 14's V8 cannot
+        # parse. Node 14 has been EOL upstream since April 2023.
+        node-version: ['20', '22', '24', '26']
+    env:
+      cache-name: cache-node-modules
+      NYC_REPORT_DIR: coverage_unit_node${{ matrix.node-version }}
+
+    steps:
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node-version }}
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: ./.github/actions/setup-jfrog
+      - name: Cache node modules
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-${{ matrix.node-version }}-build-${{ env.cache-name }}-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.node-version }}-build-${{ env.cache-name }}-
+            ${{ runner.os }}-${{ matrix.node-version }}-build-
+            ${{ runner.os }}-${{ matrix.node-version }}-
+      - name: Run unit tests
+        run: |
+          npm ci
+          npm run test
+      - run: tar -cvf ${{ env.NYC_REPORT_DIR }}.tar ${{ env.NYC_REPORT_DIR }}
+      - name: Store coverage report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ env.NYC_REPORT_DIR }}
+          path: ${{ env.NYC_REPORT_DIR }}.tar
+          retention-days: 1
+
+  e2e-test:
+    # Skip on fork PRs (no access to azure-prod secrets); still runs on internal
+    # PRs, push, and in the merge queue, where fork code is e2e-tested before merge.
+    if: ${{ github.event.pull_request.head.repo.fork != true }}
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    environment: azure-prod
+    # Cap job time so a wedged matrix entry doesn't hold a runner +
+    # warehouse session for GitHub's 6-hour default. Tests historically
+    # complete in <15min; 30min leaves room for warehouse cold-start.
+    timeout-minutes: 30
+    strategy:
+      # Run all matrix entries even if one fails so a Node-version-specific
+      # network/TLS regression doesn't hide other versions' results.
+      fail-fast: false
+      matrix:
+        # Matches the unit-test matrix so e2e catches Node-version-specific
+        # behaviors (TLS/cipher defaults, native fetch interaction, lz4 ABI,
+        # OAuth crypto APIs) that unit tests with mocked I/O can't surface.
+        node-version: ['20', '22', '24', '26']
+    env:
+      E2E_HOST: ${{ secrets.DATABRICKS_HOST }}
+      E2E_PATH: ${{ secrets.TEST_PECO_WAREHOUSE_HTTP_PATH }}
+      E2E_ACCESS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+      # Include Node version in the suffix so parallel matrix entries
+      # don't collide on shared E2E table names. Use underscore (not
+      # hyphen) — hyphens aren't valid in SQL unquoted identifiers,
+      # and tests build identifiers as `..._${E2E_TABLE_SUFFIX}`.
+      E2E_TABLE_SUFFIX: ${{ github.sha }}_node${{ matrix.node-version }}
+      E2E_CATALOG: peco
+      E2E_SCHEMA: default
+      E2E_VOLUME: e2etests
+      cache-name: cache-node-modules
+      NYC_REPORT_DIR: coverage_e2e_node${{ matrix.node-version }}
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node-version }}
+      - uses: ./.github/actions/setup-jfrog
+      - name: Cache node modules
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-${{ matrix.node-version }}-build-${{ env.cache-name }}-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.node-version }}-build-${{ env.cache-name }}-
+            ${{ runner.os }}-${{ matrix.node-version }}-build-
+            ${{ runner.os }}-${{ matrix.node-version }}-
+      - name: Run e2e tests
+        run: |
+          npm ci
+          NODE_OPTIONS="--max-old-space-size=4096" npm run e2e
+      - run: tar -cvf ${{ env.NYC_REPORT_DIR }}.tar ${{ env.NYC_REPORT_DIR }}
+      - name: Store coverage report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ env.NYC_REPORT_DIR }}
+          path: ${{ env.NYC_REPORT_DIR }}.tar
+          retention-days: 1
+
+  coverage:
+    needs: [unit-test, e2e-test]
+    # Runs when e2e passed OR was skipped (fork PRs); a real e2e failure still blocks it.
+    if: ${{ needs.unit-test.result == 'success' && (needs.e2e-test.result == 'success' || needs.e2e-test.result == 'skipped') }}
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    env:
+      cache-name: cache-node-modules
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Cache node modules
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-build-${{ env.cache-name }}-
+            ${{ runner.os }}-build-
+            ${{ runner.os }}-
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: coverage_*
+          merge-multiple: true
+      - name: Unpack coverage reports
+        run: |
+          ls -1 coverage_*.tar | xargs -I '{}' -- tar -xvf '{}'
+          rm coverage_*.tar
+      - run: ls -la
+      # Skip the upload on forks — CODECOV_TOKEN is unavailable and
+      # fail_ci_if_error would fail the required coverage check.
+      - name: Coverage
+        if: ${{ github.event.pull_request.head.repo.fork != true }}
+        uses: codecov/codecov-action@ab904c41d6ece82784817410c45d8b8c02684457 # v3
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: true
+          verbose: true

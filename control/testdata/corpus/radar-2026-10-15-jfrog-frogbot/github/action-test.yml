@@ -1,0 +1,70 @@
+name: "GitHub Action Test"
+on:
+  push:
+    tags-ignore:
+      - '**'
+  pull_request:
+    types: [ labeled ]
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: action
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macOS-latest]
+      fail-fast: false
+    steps:
+      # Checkout and install prerequisites
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Setup NodeJS
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24.x"
+
+      # Install and run tests
+      - name: Install
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Unit tests
+        run: npm t
+
+  auto-pr-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Cache fake Frogbot executable
+        shell: bash
+        run: |
+          tool_dir="${RUNNER_TOOL_CACHE}/frogbot/0.0.0-test/x64"
+          mkdir -p "${tool_dir}"
+          cat > "${tool_dir}/frogbot" <<'EOF'
+          #!/usr/bin/env bash
+          test "$1" = "auto-pr"
+          test "${JF_COMPONENT_NAME}" = "example"
+          test "${JF_AFFECTED_VERSION}" = "1.0.0"
+          test "${JF_FIX_VERSION}" = "1.0.1"
+          test "${JF_GIT_BASE_BRANCH}" = "main"
+          EOF
+          chmod +x "${tool_dir}/frogbot"
+          touch "${tool_dir}.complete"
+      - name: Invoke local Auto-PR action
+        uses: ./
+        env:
+          JF_URL: https://example.jfrog.io
+          JF_GIT_TOKEN: smoke-test-token
+        with:
+          command: auto-pr
+          version: 0.0.0-test
+          component-name: example
+          affected-version: 1.0.0
+          fix-version: 1.0.1
+          branch-name: main

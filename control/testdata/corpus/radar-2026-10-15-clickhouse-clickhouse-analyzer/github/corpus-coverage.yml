@@ -1,0 +1,62 @@
+name: Corpus Coverage
+
+on:
+  push:
+    branches: [main, "feature/**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  corpus-coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Sparse checkout ClickHouse test queries
+        run: |
+          git clone \
+            --depth 1 \
+            --filter=blob:none \
+            --sparse \
+            https://github.com/ClickHouse/ClickHouse.git \
+            /tmp/clickhouse-repo
+          cd /tmp/clickhouse-repo
+          git sparse-checkout set tests/queries
+
+      - name: Run corpus coverage test
+        id: corpus
+        run: |
+          output=$(CLICKHOUSE_QUERIES_PATH=/tmp/clickhouse-repo/tests/queries \
+            cargo test --test corpus -- --nocapture 2>&1)
+          echo "$output" >&2
+
+          # Extract metrics from stdout lines
+          file_pct=$(echo "$output" | grep "CORPUS_FILE_PCT=" | cut -d= -f2)
+          clean_files=$(echo "$output" | grep "CORPUS_CLEAN_FILES=" | cut -d= -f2)
+          total_files=$(echo "$output" | grep "CORPUS_TOTAL_FILES=" | cut -d= -f2)
+          stmt_pct=$(echo "$output" | grep "CORPUS_STMT_PCT=" | cut -d= -f2)
+          clean_stmts=$(echo "$output" | grep "CORPUS_CLEAN_STMTS=" | cut -d= -f2)
+          total_stmts=$(echo "$output" | grep "CORPUS_TOTAL_STMTS=" | cut -d= -f2)
+
+          echo "file_pct=$file_pct" >> "$GITHUB_OUTPUT"
+          echo "clean_files=$clean_files" >> "$GITHUB_OUTPUT"
+          echo "total_files=$total_files" >> "$GITHUB_OUTPUT"
+          echo "stmt_pct=$stmt_pct" >> "$GITHUB_OUTPUT"
+          echo "clean_stmts=$clean_stmts" >> "$GITHUB_OUTPUT"
+          echo "total_stmts=$total_stmts" >> "$GITHUB_OUTPUT"
+
+      - name: Post coverage summary
+        run: |
+          echo "## Corpus Parse Coverage" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Metric | Clean | Total | Coverage |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|--------|------:|------:|---------:|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Files | ${{ steps.corpus.outputs.clean_files }} | ${{ steps.corpus.outputs.total_files }} | **${{ steps.corpus.outputs.file_pct }}%** |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Statements | ${{ steps.corpus.outputs.clean_stmts }} | ${{ steps.corpus.outputs.total_stmts }} | **${{ steps.corpus.outputs.stmt_pct }}%** |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Tested against ClickHouse \`tests/queries/\` (latest main)." >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,46 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+env:
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+  NX_PARALLEL: "2"
+
+jobs:
+  release:
+    permissions:
+      id-token: write # Required for trusted publishing
+      contents: write
+      pull-requests: write
+
+    if: ${{ github.repository_owner == 'cloudflare' }}
+    timeout-minutes: 35
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - uses: ./.github/actions/install
+        with:
+          registry-url: "https://registry.npmjs.org"
+
+      - run: pnpm run build
+      - run: pnpm run check
+
+      - id: changesets
+        uses: changesets/action@v1.7.0
+        with:
+          version: pnpm exec tsx .github/changeset-version.ts
+          publish: pnpm exec tsx .github/changeset-publish.ts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true

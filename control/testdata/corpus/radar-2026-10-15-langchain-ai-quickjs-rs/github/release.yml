@@ -1,0 +1,186 @@
+name: release
+
+# Manually-triggered release for the quickjs-rs Python package.
+#
+# Flow: read version from pyproject.toml (the source of truth — no version
+# input) → smoke test → build ONE universal pure-Python wheel + sdist → publish
+# to PyPI via trusted publishing → tag the release commit `v<version>`.
+#
+# The package is pure Python; the engine is a guest WASM module built fresh
+# from source (cargo, wasm32-wasip1) and bundled into the wheel by the
+# hatchling build hook. The `.wasm` is platform-independent and wasmtime-py
+# supplies the platform runtime, so a SINGLE `py3-none-any` wheel covers every
+# OS/arch — no per-platform native-wheel matrix.
+#
+# The git tag is created AFTER PyPI publish succeeds, so a failed publish never
+# leaves a phantom tag.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dangerous-nonmain-release:
+        required: false
+        type: boolean
+        default: false
+        description: "Release from a non-main branch (danger!) - only for hotfixes"
+
+permissions:
+  contents: read
+
+jobs:
+  version-info:
+    if: github.ref == 'refs/heads/main' || inputs.dangerous-nonmain-release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.read-version.outputs.version }}
+      tag: ${{ steps.read-version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Read version from pyproject.toml
+        id: read-version
+        shell: python
+        run: |
+          import os
+          import tomllib
+          with open("pyproject.toml", "rb") as f:
+              version = tomllib.load(f)["project"]["version"]
+          tag = f"v{version}"
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"version={version}\n")
+              f.write(f"tag={tag}\n")
+
+      - name: Fail if tag already exists
+        run: |
+          TAG="${{ steps.read-version.outputs.tag }}"
+          if git rev-parse --verify "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "::error::Tag $TAG already exists. Bump pyproject.toml before re-running."
+            exit 1
+          fi
+          echo "Tag $TAG does not exist — OK to proceed."
+
+  pre-release-checks:
+    # Release-time smoke test on the exact commit being shipped. The full
+    # OS × Python matrix runs on every PR/main push via test.yml — this is the
+    # final-mile sanity check on a single (ubuntu, py3.12) cell.
+    needs: version-info
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.12"
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          targets: wasm32-wasip1
+
+      - name: Cache cargo registry + build
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
+        with:
+          key: release-prechecks
+          workspaces: guest
+
+      - name: Build guest wasm + bundle
+        run: python scripts/build_guest.py
+
+      - name: Install package + dev extras
+        run: python -m pip install --upgrade pip && pip install -e ".[dev]"
+
+      - name: ruff
+        run: ruff check .
+
+      - name: mypy
+        run: mypy quickjs_rs
+
+      - name: pytest
+        run: pytest -v
+
+  build:
+    # ONE universal pure-Python wheel + sdist. The hatchling build hook runs
+    # cargo (wasm32-wasip1) to produce + bundle the guest wasm.
+    needs: version-info
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.12"
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          targets: wasm32-wasip1
+
+      - name: Cache cargo registry + build
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
+        with:
+          key: release-build
+          workspaces: guest
+
+      - name: Build wheel + sdist
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel --sdist --outdir dist
+
+      - name: Verify the wheel bundles the guest wasm
+        run: |
+          python - <<'PY'
+          import glob, zipfile, sys
+          whl = glob.glob("dist/*.whl")[0]
+          names = zipfile.ZipFile(whl).namelist()
+          assert any(n.endswith("_guest.wasm") for n in names), "missing _guest.wasm in wheel"
+          assert not any(n.endswith((".so", ".pyd", ".dylib")) for n in names), "unexpected native ext"
+          print(f"OK: {whl} is pure-Python and bundles the guest wasm")
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dist
+          path: dist
+
+  publish:
+    needs: [version-info, pre-release-checks, build]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write # PyPI trusted publishing
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
+
+  tag-release:
+    # Create the git tag + GitHub Release only after PyPI publish succeeds,
+    # so a failed publish never leaves a phantom tag.
+    needs: [version-info, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # required to create the tag/release
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Create tag and GitHub Release
+        uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1
+        with:
+          tag: ${{ needs.version-info.outputs.tag }}
+          commit: ${{ github.sha }}
+          artifacts: "dist/*"
+          generateReleaseNotes: true
+          token: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,63 @@
+name: Integration Tests CI (Schema Evolution)
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'flink-connector-clickhouse-base/**'
+      - 'flink-connector-clickhouse-1.17/**'
+      - 'flink-connector-clickhouse-2.0.0/**'
+      - 'flink-connector-clickhouse-integration/**'
+      - 'examples/maven/flink-v1.7/map-evolution/**'
+      - 'examples/maven/flink-v2/map-evolution/**'
+      - '.github/workflows/integration-tests-schema-evolution.yaml'
+  pull_request:
+    paths:
+      - 'flink-connector-clickhouse-base/**'
+      - 'flink-connector-clickhouse-1.17/**'
+      - 'flink-connector-clickhouse-2.0.0/**'
+      - 'flink-connector-clickhouse-integration/**'
+      - 'examples/maven/flink-v1.7/map-evolution/**'
+      - 'examples/maven/flink-v2/map-evolution/**'
+      - '.github/workflows/integration-tests-schema-evolution.yaml'
+
+jobs:
+  test-schema-evolution:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # Schema-evolution test exercises connector writer-state migration, not
+        # ClickHouse-version compatibility — a single CH is enough.
+        clickhouse: [ "25.3", "25.8", "25.10", "25.11", "25.12", "latest" ]
+        # The flink-v1.7 example POM pins Flink 1.17.2 and the flink-v2 example
+        # pins 2.0.0. Running them against newer 1.x / 2.x runtimes verifies the
+        # same JARs remain forward-compatible on the runtime side.
+        flink: [ "1.17.2", "1.18.1", "1.19.3", "1.20.2", "2.0.0", "2.1.0", "latest" ]
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'adopt'
+          architecture: x64
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+      - name: Publish locally flink-connector-clickhouse-1.17
+        run: ./gradlew :flink-connector-clickhouse-1.17:publishToMavenLocal
+      - name: Publish locally flink-connector-clickhouse-2.0.0
+        run: ./gradlew :flink-connector-clickhouse-2.0.0:publishToMavenLocal
+      - name: Build map-evolution example (Flink 1.17)
+        working-directory: ./examples/maven/flink-v1.7/map-evolution
+        run: mvn -q clean package
+      - name: Build map-evolution example (Flink 2.0)
+        working-directory: ./examples/maven/flink-v2/map-evolution
+        run: mvn -q clean package
+      - name: Run testSchemaEvolution
+        env:
+          CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
+          FLINK_VERSION: ${{ matrix.flink }}
+        run: ./gradlew :flink-connector-clickhouse-integration:test --tests com.clickhouse.flink.integration.FlinkTests.testSchemaEvolution

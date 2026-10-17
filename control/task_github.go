@@ -174,7 +174,8 @@ func enrichGitHubWorkflowStates(l *logrus.Entry, pipeline *ir.NormalizedPipeline
 // its own, whatever the pipeline parsed off disk: the workflows endpoint
 // only lists what is registered on the default branch, so a workflow
 // added on a feature branch would otherwise misread as Actions being
-// off.
+// off. For the same reason ir.MarkInert reads the flag only for a job
+// whose workflow the listing names: one absent from it keeps running.
 func actionsDisabled(states map[string]string, known bool) bool {
 	if !known || len(states) == 0 {
 		// The workflows-listing endpoint only lists workflows registered

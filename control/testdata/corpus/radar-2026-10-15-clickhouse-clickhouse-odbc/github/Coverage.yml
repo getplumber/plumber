@@ -1,0 +1,226 @@
+name: Code Coverage - json
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * 1'
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ '**' ]
+  release:
+    types:
+      - created
+
+concurrency:
+  group: coverage-${{ github.workflow }}-${{ github.head_ref }}
+  cancel-in-progress: true
+
+env:
+  LLVM_PROFILE_FILE: "profile_%p_%m.profraw"
+
+defaults:
+  run:
+    shell: bash
+    working-directory: run
+
+jobs:
+  build_and_test:
+
+    strategy:
+      fail-fast: false
+
+    runs-on: ubuntu-22.04
+
+    steps:
+
+    - name: Create directories
+      working-directory: ${{ github.workspace }}
+      run: |
+        mkdir -p ${{ github.workspace }}/run
+        mkdir -p ${{ github.workspace }}/build
+        mkdir -p ${{ github.workspace }}/prefix
+        mkdir -p ${{ github.workspace }}/install
+        mkdir -p ${{ github.workspace }}/package
+
+    - name: Clone the repo
+      uses: actions/checkout@v4
+      with:
+        path: source
+        submodules: true
+
+    - name: Install dependencies - Common
+      run: |
+        sudo apt update -q
+        sudo apt remove -y php* node* mysql* mssql-tools
+        sudo apt upgrade -y
+        sudo apt install -y \
+          build-essential git cmake docker perl libdbi-perl libdbd-odbc-perl \
+          python-is-python3 python3 python3-pip python3-setuptools
+        sudo apt install -y unixodbc unixodbc-dev
+        sudo apt install -y clang llvm lldb
+        sudo apt autoremove -y
+
+    - name: Start ClickHouse in Docker
+      uses: hoverkraft-tech/compose-action@v2.0.1
+      with:
+        compose-file: source/test/docker-compose.yml
+        down-flags: --volumes
+
+    - name: Configure
+      run: >
+        CC=clang
+        CXX=clang++
+        cmake -S ${{ github.workspace }}/source -B ${{ github.workspace }}/build
+        -D CMAKE_POLICY_VERSION_MINIMUM=3.5
+        -D CMAKE_BUILD_TYPE=Debug
+        -D ODBC_PROVIDER=UnixODBC
+        -D TEST_DSN_LIST="ClickHouse DSN (ANSI);ClickHouse DSN (Unicode);ClickHouse DSN (ANSI) ZSTD;ClickHouse DSN (Unicode) ZSTD"
+        -D CH_ODBC_ENABLE_CODE_COVERAGE=ON
+        -D BUILD_TESTING=YES
+
+
+    - name: Build
+      run: cmake --build ${{ github.workspace }}/build --config Debug --parallel $(nproc)
+
+    - name: Prepare ODBC ini configs
+      run: |
+        echo "Preparing ODBC ini configs"
+        cat > ${{ github.workspace }}/run/.odbcinst.ini <<-EOF
+        [ODBC]
+        Trace     = 1
+        TraceFile = ${{ github.workspace }}/run/odbc-driver-manager-trace.log
+        Debug     = 1
+        DebugFile = ${{ github.workspace }}/run/odbc-driver-manager-debug.log
+
+        [ODBC Drivers]
+        ClickHouse ODBC Driver (ANSI)    = Installed
+        ClickHouse ODBC Driver (Unicode) = Installed
+
+        [ClickHouse ODBC Driver (ANSI)]
+        Driver     = ${{ github.workspace }}/build/driver/libclickhouseodbc.so
+        Setup      = ${{ github.workspace }}/build/driver/libclickhouseodbc.so
+        UsageCount = 1
+
+        [ClickHouse ODBC Driver (Unicode)]
+        Driver     = ${{ github.workspace }}/build/driver/libclickhouseodbcw.so
+        Setup      = ${{ github.workspace }}/build/driver/libclickhouseodbcw.so
+        UsageCount = 1
+        EOF
+
+        cat > ${{ github.workspace }}/run/.odbc.ini <<-EOF
+        [ODBC]
+        Trace     = 1
+        TraceFile = ${{ github.workspace }}/run/odbc-driver-manager-trace.log
+        Debug     = 1
+        DebugFile = ${{ github.workspace }}/run/odbc-driver-manager-debug.log
+
+        [ODBC Data Sources]
+        ClickHouse DSN (ANSI)         = ClickHouse ODBC Driver (ANSI)
+        ClickHouse DSN (Unicode)      = ClickHouse ODBC Driver (Unicode)
+
+        [ClickHouse DSN (ANSI)]
+        Driver        = ClickHouse ODBC Driver (ANSI)
+        Description   = Test DSN for ClickHouse ODBC Driver (ANSI)
+        Url           = http://${CLICKHOUSE_SERVER_IP}
+        DriverLog     = yes
+        DriverLogFile = ${{ github.workspace }}/run/clickhouse-odbc-driver.log
+
+        [ClickHouse DSN (Unicode)]
+        Driver        = ClickHouse ODBC Driver (Unicode)
+        Description   = Test DSN for ClickHouse ODBC Driver (Unicode)
+        Url           = http://localhost:8123
+        DriverLog     = yes
+        DriverLogFile = ${{ github.workspace }}/run/clickhouse-odbc-driver-w.log
+
+        [ClickHouse DSN (ANSI) ZSTD]
+        Driver        = ClickHouse ODBC Driver (ANSI)
+        Description   = Test DSN for ClickHouse ODBC Driver (ANSI)
+        Url           = http://${CLICKHOUSE_SERVER_IP}
+        DriverLog     = yes
+        DriverLogFile = ${{ github.workspace }}/run/clickhouse-odbc-driver.log
+        Compression   = 1
+
+        [ClickHouse DSN (Unicode) ZSTD]
+        Driver        = ClickHouse ODBC Driver (Unicode)
+        Description   = Test DSN for ClickHouse ODBC Driver (Unicode)
+        Url           = http://localhost:8123
+        DriverLog     = yes
+        DriverLogFile = ${{ github.workspace }}/run/clickhouse-odbc-driver-w.log
+        Compression   = 1
+        EOF
+
+    - name: Test - Run C++ unit tests
+      working-directory: ${{ github.workspace }}/build
+      run: ctest --output-on-failure --build-config Debug -R '.*-ut.*'
+
+    - name: Test - Run C++ integration tests
+      working-directory: ${{ github.workspace }}/build
+      env:
+        DSN: "ClickHouse DSN (ANSI)"
+        ODBCSYSINI: ""  # Must be set for `ODBCINSTINI` and `ODBCINI` to work
+        ODBCINSTINI: ${{ github.workspace }}/run/.odbcinst.ini
+        ODBCINI: ${{ github.workspace }}/run/.odbc.ini
+      run: |
+        ctest --output-on-failure --build-config Debug -E '.*-ut.*'
+
+    - name: Collect Code Coverage
+      working-directory: ${{ github.workspace }}/build
+      run: |
+          ls
+          ls ./driver/test/
+          ls ./driver/test/*.profraw
+
+          llvm-profdata merge -sparse ./driver/test/*.profraw -o ./coverage.profdata
+
+          llvm-cov report ./driver/libclickhouseodbcw.so \
+            -instr-profile=./coverage.profdata \
+            -format=text > ./coverage-report.txt
+
+          llvm-cov show ./driver/libclickhouseodbcw.so \
+            -instr-profile=./coverage.profdata \
+            -Xdemangler=c++filt -format=html \
+            -show-regions \
+            -show-line-counts-or-regions \
+            -show-expansions \
+            -show-branches=count \
+            -ignore-filename-regex='.*test[/\\].*' \
+            -output-dir=./coverage-report
+
+    - name: Convert report to JSON
+      working-directory: source
+      run: |
+        echo $(git describe --no-match --always --abbrev=0 --dirty --broken)
+        echo $(git show --no-patch --format=%ct HEAD)
+        python metrics/coverage.py \
+          ${{ github.workspace }}/build/coverage-report.txt \
+          $(git describe --no-match --always --abbrev=0 --dirty --broken) \
+          $(git show --no-patch --format=%ct HEAD) \
+          > ${{ github.workspace }}/build/coverage-report.json
+
+    - name: Debug Coverage Data
+      run: |
+          ls -lh ${{ github.workspace }}/build/driver/libclickhouseodbcw.so
+          ls -lh ${{ github.workspace }}/build/coverage.profdata
+          ls -lh ${{ github.workspace }}/build/coverage-report.txt
+          ls -lh ${{ github.workspace }}/build/coverage-report
+          tree ${{ github.workspace }}/build/coverage-report
+          cat ${{ github.workspace }}/build/coverage-report.txt
+          cat ${{ github.workspace }}/build/coverage-report.json
+
+    - name: Upload the artifacts
+      uses: actions/upload-artifact@v4
+      with:
+          name: coverage-report
+          path: |
+              ${{ github.workspace }}/build/driver/libclickhouseodbcw.so
+              ${{ github.workspace }}/build/coverage.profdata
+              ${{ github.workspace }}/build/coverage-report.txt
+              ${{ github.workspace }}/build/coverage-report.json
+              ${{ github.workspace }}/build/coverage-report
+
+    - name: Upload the report to the database
+      if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+      run: |
+          curl "${{ secrets.BUILD_METRICS_DB_URL }}?query=INSERT%20INTO%20odbc.code_coverage%20FORMAT%20JSONEachRow" \
+            --data-binary @${{ github.workspace }}/build/coverage-report.json

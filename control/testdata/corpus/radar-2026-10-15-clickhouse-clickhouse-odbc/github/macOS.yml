@@ -1,0 +1,282 @@
+name: Build and Test - macOS
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * 1'
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ '**' ]
+  release:
+    types:
+      - created
+
+concurrency:
+  group: macos-${{ github.head_ref }}
+  cancel-in-progress: true
+
+env:
+  CLICKHOUSE_SERVER_IMAGE: "yandex/clickhouse-server:20.3"
+
+defaults:
+  run:
+    shell: bash
+    working-directory: run
+
+jobs:
+  build_and_test:
+
+    env:
+      CLOUD_TESTS_ENABLED: ${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_HOST_SMT != '' }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest]
+        odbc_provider: [UnixODBC]
+        compiler: [AppleClang]
+        build_type: [Debug, Release]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+
+    - name: Create directories
+      working-directory: ${{ github.workspace }}
+      run: |
+        mkdir -p ${{ github.workspace }}/run
+        mkdir -p ${{ github.workspace }}/build
+        mkdir -p ${{ github.workspace }}/prefix
+        mkdir -p ${{ github.workspace }}/install
+        mkdir -p ${{ github.workspace }}/package
+
+    - name: Clone the repo
+      uses: actions/checkout@v4
+      with:
+        path: source
+        submodules: true
+
+    - name: Install dependencies - Common
+      run: |
+        brew remove -f --ignore-dependencies -q libiodbc unixodbc freetds php node composer
+        brew install git cmake perl python binutils curl
+        pip3 install --break-system-packages --user 'testflows==1.6.56'
+
+    - name: Install dependencies - UnixODBC
+      if: ${{ matrix.odbc_provider == 'UnixODBC' }}
+      run: |
+        brew install unixodbc
+        pip3 install --break-system-packages --user pyodbc
+
+    # Right now folly fails to compile and link against brew's clang & libcpp versions 11-14
+    # Since Clang is removed from list of compilers in matrix, this will not be executed.
+    # - name: Install dependencies - Clang
+    #   if: ${{ matrix.compiler == 'Clang' }}
+    #   run: brew install llvm
+
+    - name: Install dependencies - GCC
+      if: ${{ matrix.compiler == 'GCC' }}
+      run: |
+        brew install gcc gdb
+        export COMPILER_PATH=$(brew prefix gcc)/bin
+
+    - name: Start ClickHouse server in background
+      run: |
+        curl https://clickhouse.com | bash
+        sudo ./clickhouse install
+        sudo ./clickhouse start
+
+    - name: Configure
+      run: |
+        dsn_list=(
+          "ClickHouse DSN (ANSI)"
+          "ClickHouse DSN (Unicode)"
+          "ClickHouse DSN (ANSI) ZSTD"
+          "ClickHouse DSN (Unicode) ZSTD"
+          "ClickHouse AWS ANSI ZSTD"
+          "ClickHouse AWS Unicode ZSTD"
+        )
+        dsn_string=$(IFS=';'; echo "${dsn_list[*]}")
+
+        CC=${{ fromJSON('{"AppleClang": "cc", "Clang": "/usr/local/opt/llvm/bin/clang", "GCC": "$COMPILER_PATH/gcc-11"}')[matrix.compiler] }} \
+        CXX=${{ fromJSON('{"AppleClang": "c++", "Clang": "/usr/local/opt/llvm/bin/clang++", "GCC": "$COMPILER_PATH/g++-11"}')[matrix.compiler] }} \
+        cmake -S ${{ github.workspace }}/source -B ${{ github.workspace }}/build \
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+        -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+        -DODBC_PROVIDER=${{ matrix.odbc_provider }} \
+        -DTEST_DSN_LIST="$dsn_string" \
+        -DBUILD_TESTING=YES
+
+    - name: Build
+      run: cmake --build ${{ github.workspace }}/build --config ${{ matrix.build_type }}
+
+    - name: Package
+      run: cmake --build ${{ github.workspace }}/build --config ${{ matrix.build_type }} --target package
+
+    - name: List artifacts
+      run: |
+        echo REF: ${{ github.ref }}
+        ls -lahR ${{ github.workspace }}/build/
+
+    - name: Upload the artifacts
+      # if:  ${{ matrix.compiler == 'AppleClang' && matrix.odbc_provider == 'iODBC' && matrix.build_type == 'Release' }}
+      uses: actions/upload-artifact@v4
+      with:
+          name: clickhouse-odbc-macos-${{ matrix.compiler }}-${{ matrix.odbc_provider }}-${{ matrix.build_type }}
+          path: ${{ github.workspace }}/build/clickhouse-odbc-*
+
+    - name: Test - Run C++ unit tests
+      working-directory: ${{ github.workspace }}/build
+      run: ctest --output-on-failure --build-config ${{ matrix.build_type }} -R '.*-ut.*'
+
+    - name: Create Test Database
+      if: ${{ env.CLOUD_TESTS_ENABLED == 'true' && matrix.build_type == 'Release' }}
+      run: |
+        timestamp=$(date +%s)
+        database="test${timestamp}000_odbc_macos_${{ matrix.build_type }}"
+        echo "TEST_DATABASE=$database" >> $GITHUB_ENV
+
+        curl --fail-with-body -X POST \
+          "https://${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_HOST_SMT }}:8443/?query=" \
+          -u "default:${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_PASSWORD_SMT }}" \
+          -d "create database $database"
+
+    - name: Prepare ODBC ini configs
+      run: |
+        export ODBCSYSINI=${{ github.workspace }}/run
+        export ODBCINSTINI=.odbcinst.ini
+        export ODBCINI=$ODBCSYSINI/.odbc.ini
+
+        cat > $ODBCSYSINI/.odbcinst.ini <<-EOF
+        [ODBC]
+        Trace     = 1
+        TraceFile = ${{ github.workspace }}/run/odbc-driver-manager-trace.log
+        Debug     = 1
+        DebugFile = ${{ github.workspace }}/run/odbc-driver-manager-debug.log
+
+        [ODBC Drivers]
+        ClickHouse ODBC Driver (ANSI)    = Installed
+        ClickHouse ODBC Driver (Unicode) = Installed
+
+        [ClickHouse ODBC Driver (ANSI)]
+        Driver     = ${{ github.workspace }}/build/driver/libclickhouseodbc.dylib
+        Setup      = ${{ github.workspace }}/build/driver/libclickhouseodbc.dylib
+        UsageCount = 1
+
+        [ClickHouse ODBC Driver (Unicode)]
+        Driver     = ${{ github.workspace }}/build/driver/libclickhouseodbcw.dylib
+        Setup      = ${{ github.workspace }}/build/driver/libclickhouseodbcw.dylib
+        UsageCount = 1
+        EOF
+
+        cat > $ODBCSYSINI/.odbc.ini <<-EOF
+        [ODBC]
+        Trace     = 1
+        TraceFile = ${{ github.workspace }}/run/odbc-driver-manager-trace.log
+        Debug     = 1
+        DebugFile = ${{ github.workspace }}/run/odbc-driver-manager-debug.log
+
+        [ODBC Data Sources]
+        ClickHouse DSN (ANSI)         = ClickHouse ODBC Driver (ANSI)
+        ClickHouse DSN (Unicode)      = ClickHouse ODBC Driver (Unicode)
+
+        [ClickHouse DSN (ANSI)]
+        Driver        = ClickHouse ODBC Driver (ANSI)
+        Description   = Test DSN for ClickHouse ODBC Driver (ANSI)
+        Url           = http://localhost:8123
+        DriverLog     = yes
+        DriverLogFile = ${{ github.workspace }}/run/clickhouse-odbc-driver.log
+        Compression   = 0
+
+        [ClickHouse DSN (Unicode)]
+        Driver        = ClickHouse ODBC Driver (Unicode)
+        Description   = Test DSN for ClickHouse ODBC Driver (Unicode)
+        Url           = http://localhost:8123
+        DriverLog     = yes
+        DriverLogFile = ${{ github.workspace }}/run/clickhouse-odbc-driver-w.log
+        Compression   = 0
+
+        [ClickHouse DSN (ANSI) ZSTD]
+        Driver        = ClickHouse ODBC Driver (ANSI)
+        Description   = Test DSN for ClickHouse ODBC Driver (ANSI)
+        Url           = http://localhost:8123
+        DriverLog     = yes
+        DriverLogFile = ${{ github.workspace }}/run/clickhouse-odbc-driver.log
+        Compression   = 1
+
+        [ClickHouse DSN (Unicode) ZSTD]
+        Driver        = ClickHouse ODBC Driver (Unicode)
+        Description   = Test DSN for ClickHouse ODBC Driver (Unicode)
+        Url           = http://localhost:8123
+        DriverLog     = yes
+        DriverLogFile = ${{ github.workspace }}/run/clickhouse-odbc-driver-w.log
+        Compression   = 1
+
+        [ClickHouse AWS Unicode ZSTD]
+        Driver        = ClickHouse ODBC Driver (Unicode)
+        Description   = Test DSN for ClickHouse ODBC Driver (Unicode)
+        Url           = https://${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_HOST_SMT }}:8443/?database=$TEST_DATABASE
+        Username      = default
+        Password      = ${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_PASSWORD_SMT }}
+        DriverLog     = yes
+        DriverLogFile = ${{ github.workspace }}/run/clickhouse-odbc-driver.log
+        Compression   = 1
+
+        [ClickHouse AWS ANSI ZSTD]
+        Driver        = ClickHouse ODBC Driver (ANSI)
+        Description   = Test DSN for ClickHouse ODBC Driver (ANSI)
+        Url           = https://${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_HOST_SMT }}:8443/?database=$TEST_DATABASE
+        Username      = default
+        Password      = ${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_PASSWORD_SMT }}
+        DriverLog     = yes
+        DriverLogFile = ${{ github.workspace }}/run/clickhouse-odbc-driver-w.log
+        Compression   = 1
+        EOF
+
+    - name: Test - Run C++ integration tests
+      working-directory: ${{ github.workspace }}/build
+      env:
+        DSN: "ClickHouse DSN (ANSI)"
+        ODBCSYSINI: ""  # Must be set for `ODBCINSTINI` and `ODBCINI` to work
+        ODBCINSTINI: ${{ github.workspace }}/run/.odbcinst.ini
+        ODBCINI: ${{ github.workspace }}/run/.odbc.ini
+      run: |
+        if [[ "${{ matrix.odbc_provider }}" == "iODBC" ]]; then
+          export GTEST_FILTER="-PerformanceTest.*"
+        fi
+        ctest --output-on-failure --build-config ${{ matrix.build_type }} -E '(.*-ut.*|-dsn-[45]$)'
+
+    - name: Test - Run C++ integration tests in the Cloud
+      working-directory: ${{ github.workspace }}/build
+      if: ${{ env.CLOUD_TESTS_ENABLED == 'true' && matrix.build_type == 'Release' }}
+      env:
+        DSN: "ClickHouse DSN (ANSI)"
+        ODBCSYSINI: ""  # Must be set for `ODBCINSTINI` and `ODBCINI` to work
+        ODBCINSTINI: ${{ github.workspace }}/run/.odbcinst.ini
+        ODBCINI: ${{ github.workspace }}/run/.odbc.ini
+        GTEST_FILTER: -AuthenticationTest.PasswordEncoding:PerformanceTest*:DateTime*:ScalarFunctionsTest.CONVERT
+      run: |
+        ctest --output-on-failure --build-config ${{ matrix.build_type }} -R '.*-dsn-[45]'
+
+    - name: Upload artifacts as release assets
+      if: ${{ github.event_name == 'release' && matrix.build_type == 'Release' }}
+      uses: svenstaro/upload-release-action@v2
+      with:
+        repo_token: ${{ secrets.GITHUB_TOKEN }}
+        file: ${{ github.workspace }}/build/clickhouse-odbc-*
+        overwrite: true
+        tag: ${{ github.ref }}
+        file_glob: true
+
+    - name: Drop Test Database
+      if: always() && env.CLOUD_TESTS_ENABLED == 'true' && env.TEST_DATABASE != ''
+      run: |
+        curl -X POST \
+          "https://${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_HOST_SMT }}:8443/?query=" \
+          -u "default:${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_PASSWORD_SMT }}" \
+          -d "select name from system.tables where database = '$TEST_DATABASE'"
+        curl -X POST \
+          "https://${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_HOST_SMT }}:8443/?query=" \
+          -u "default:${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_PASSWORD_SMT }}" \
+          -d "drop database if exists $TEST_DATABASE"

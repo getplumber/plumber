@@ -110,14 +110,6 @@ type Privilege struct {
 	Secrets        []string  `json:"secrets"`
 	SecretsState   FactState `json:"secretsState"`
 	SecretsInherit bool      `json:"secretsInherit"`
-	// SecretFirstLine maps a name of Secrets to the 1-based line, inside
-	// the job's own YAML block, of its first reference (GitHub only,
-	// collector-scanned); 0 for a name the workflow's own top-level
-	// configuration carries, reached by every step regardless of order.
-	// A name absent from this map (a GitLab job, or a merge the collector
-	// could not place) carries no line, and reachOver keeps it exactly as
-	// it did before this field existed.
-	SecretFirstLine map[string]int `json:"secretFirstLine,omitempty"`
 	// AllSecrets is true when the job holds every secret of the repository,
 	// proven by the way it reads them (secrets: inherit, or the whole
 	// secrets context), whatever their names.
@@ -200,6 +192,13 @@ type JobSituation struct {
 	// its cache-mode leaves restoring on (not write-only or none): a job a
 	// poisoned cache reaches.
 	RestoresCache bool `json:"restoresCache"`
+	// SaveScopesByEvent is, per event the job runs on (its gated
+	// triggers), the scopes a run of that event saves the cache under,
+	// empty when GitHub keeps that run read-only: CacheScopes split by
+	// event, so an entry that holds only in some runs (an untrusted
+	// expression whose context only some events carry) saves only where
+	// those runs do. Empty when the job carries no trigger (GitLab).
+	SaveScopesByEvent map[string][]string `json:"saveScopesByEvent,omitempty"`
 	// Uploads is true when some job carrying the name produces an
 	// artifact (ir.ArtifactRef Mode "produce": an actions/upload-artifact
 	// or actions/upload-pages-artifact step on GitHub, an artifacts:

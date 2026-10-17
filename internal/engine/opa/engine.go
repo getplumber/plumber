@@ -509,12 +509,11 @@ func (e *Engine) EvaluateSituation(ctx context.Context, source string, pipeline 
 	if err != nil {
 		return nil, fmt.Errorf("situation input: %w", err)
 	}
-	r := rego.New(
-		rego.Query("data.situation.result"),
-		rego.Module("situation.rego", source),
-		rego.Input(input),
-	)
-	rs, err := r.Eval(ctx)
+	pq, err := prepared(ctx, "data.situation.result", "situation", source)
+	if err != nil {
+		return nil, fmt.Errorf("situation eval: %w", err)
+	}
+	rs, err := pq.Eval(ctx, rego.EvalInput(input))
 	if err != nil {
 		return nil, fmt.Errorf("situation eval: %w", err)
 	}
@@ -529,12 +528,11 @@ func (e *Engine) EvaluateSituation(ctx context.Context, source string, pipeline 
 }
 
 func evalModule(ctx context.Context, name, source string, input map[string]any) ([]Finding, error) {
-	r := rego.New(
-		rego.Query(fmt.Sprintf("data.%s.deny", name)),
-		rego.Module(name+".rego", source),
-		rego.Input(input),
-	)
-	rs, err := r.Eval(ctx)
+	pq, err := prepared(ctx, fmt.Sprintf("data.%s.deny", name), name, source)
+	if err != nil {
+		return nil, err
+	}
+	rs, err := pq.Eval(ctx, rego.EvalInput(input))
 	if err != nil {
 		return nil, err
 	}

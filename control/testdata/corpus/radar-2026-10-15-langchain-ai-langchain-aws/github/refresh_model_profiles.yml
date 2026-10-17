@@ -1,0 +1,28 @@
+# Refreshes model profile data by pulling the latest metadata from models.dev
+# via the `langchain-profiles` CLI (hosted in langchain-ai/langchain).
+#
+# Creates a pull request with any changes. Runs daily and can be triggered
+# manually from the Actions UI.
+
+name: "🔄 Refresh Model Profiles"
+
+on:
+  schedule:
+    - cron: "0 8 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  refresh-profiles:
+    uses: langchain-ai/langchain/.github/workflows/_refresh_model_profiles.yml@master
+    with:
+      providers: >-
+        [
+          {"provider":"amazon-bedrock", "data_dir":"libs/aws/langchain_aws/data"}
+        ]
+    secrets:
+      MODEL_PROFILE_BOT_CLIENT_ID: ${{ secrets.MODEL_PROFILE_BOT_CLIENT_ID }}
+      MODEL_PROFILE_BOT_PRIVATE_KEY: ${{ secrets.MODEL_PROFILE_BOT_PRIVATE_KEY }}

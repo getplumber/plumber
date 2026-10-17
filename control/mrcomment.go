@@ -490,6 +490,9 @@ func v4CommentPathDetails(result *AnalysisResult, scorePoint bool) string {
 		}
 		blk := NewPathBlock(p, result.Findings)
 		blk.ShowCap = scorePoint
+		// The MR comment's wording is unchanged by claims: it carries no
+		// Note for what Plumber could not read.
+		blk.ClaimsNote = ""
 		state := ""
 		if blk.Unverified {
 			state = " (unverified)"

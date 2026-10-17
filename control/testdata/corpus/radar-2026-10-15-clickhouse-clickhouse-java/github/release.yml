@@ -1,0 +1,107 @@
+name: Release
+
+on:
+  workflow_dispatch:
+
+env:
+  CH_VERSION: "25.8"
+
+jobs:
+  release:
+    name: "Build and Publish Artifact"
+    runs-on: "ubuntu-latest"
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v4
+      - name: Read release version
+        id: version
+        shell: bash
+        run: echo "version=$(cat VERSION)" >> "$GITHUB_OUTPUT"
+      - name: Install JDK and Maven
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: |
+            8
+            17
+          cache: 'maven'
+          server-id: central
+          server-username: MAVEN_USERNAME
+          server-password: MAVEN_PASSWORD
+          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
+          gpg-passphrase: MAVEN_GPG_PASSPHRASE
+      - name: Setup Toolchain
+        shell: bash
+        run: |
+          mkdir -p $HOME/.m2 \
+          && cat << EOF > $HOME/.m2/toolchains.xml
+          <?xml version="1.0" encoding="UTF8"?>
+          <toolchains>
+            <toolchain>
+              <type>jdk</type>
+              <provides>
+                <version>17</version>
+              </provides>
+              <configuration>
+                <jdkHome>${{ env.JAVA_HOME }}</jdkHome>
+              </configuration>
+            </toolchain>
+          </toolchains>
+          EOF
+      - name: Update Configuration
+        run: |
+          sed -i 's|<revision>.*</revision>|<revision>${{ steps.version.outputs.version }}</revision>|g' pom.xml
+          find . -type f -name "simplelogger.*" -exec rm -fv '{}' \;
+      - name: Release Maven package
+        env:
+          MAVEN_USERNAME: ${{ secrets.SONATYPE_TOKEN_USER }}
+          MAVEN_PASSWORD: ${{ secrets.SONATYPE_TOKEN }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          TEST_CLICKHOUSE_IMAGE_VERSION: ${{ env.CH_VERSION }}
+        run: mvn -q --batch-mode -P release clean deploy
+      - name: Create Pre-release on Github
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v${{ steps.version.outputs.version }}" \
+            --prerelease \
+            --title "Release v${{ steps.version.outputs.version }}" \
+            LICENSE \
+            clickhouse-client/target/clickhouse*.jar \
+            clickhouse-data/target/clickhouse*.jar \
+            clickhouse-http-client/target/clickhouse*.jar \
+            clickhouse-jdbc/target/clickhouse*.jar \
+            clickhouse-jdbc/target/bundle/clickhouse*.jar \
+            clickhouse-r2dbc/target/clickhouse*.jar \
+            client-v2/target/client-v2*.jar \
+            jdbc-v2/target/jdbc-v2*.jar
+  # Mirror Tableau TDVT after release (non-blocking).
+  tdvt:
+    name: "Tableau TDVT"
+    needs: release
+    if: ${{ needs.release.result == 'success' && startsWith(github.repository, 'ClickHouse/') }}
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 150 # the TDVT matrix (latest/head/cloud, single-threaded) runs ~1h; allow for a queue
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v4
+      - name: Mint a token for the TDVT repo (dispatch + read the run)
+        id: tdvt-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.WORKFLOW_AUTH_PUBLIC_APP_ID }}
+          private-key: ${{ secrets.WORKFLOW_AUTH_PUBLIC_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: "clickhouse-tableau-tdvt"
+      - name: Run Tableau TDVT and mirror its result
+        env:
+          GH_TOKEN: ${{ steps.tdvt-token.outputs.token }}
+        run: |
+          python3 .github/scripts/mirror_tdvt.py \
+            --event-type jdbc-release \
+            --version "$(cat VERSION)" \
+            --correlation-id "${{ github.repository }}#${{ github.run_id }}-${{ github.run_attempt }}"

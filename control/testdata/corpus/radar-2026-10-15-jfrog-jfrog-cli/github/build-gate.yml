@@ -1,0 +1,243 @@
+name: Build Gate
+# Single approval gate for fork/PR runs: a maintainer approves the `build-gate`
+# environment deployment once, releasing frogbot and every integration-test suite.
+# Replaces the per-workflow 'safe to test' label mechanism.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+    branches:
+      - "master"
+  push:
+    branches:
+      - "master"
+  workflow_dispatch:
+
+# Ensures that only the latest commit is running for each PR at a time.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  # The single approval point. `build-gate` carries the Required-reviewers rule.
+  # Trusted push & manual dispatch skip approval (empty environment name = no gate).
+  gate:
+    name: Approval gate
+    runs-on: ubuntu-latest
+    environment: ${{ github.event_name == 'pull_request_target' && 'build-gate' || '' }}
+    steps:
+      - run: echo "Approved — releasing frogbot and integration suites."
+
+  # ---- Suites (each fans out behind the single gate) ----------------------
+  frogbot:
+    needs: gate
+    uses: ./.github/workflows/frogbot-scan-pull-request.yml
+    secrets: inherit
+
+  agent-plugins:
+    needs: gate
+    uses: ./.github/workflows/agentPluginsTests.yml
+    secrets: inherit
+  agent-skills:
+    needs: gate
+    uses: ./.github/workflows/agentSkillsTests.yml
+    secrets: inherit
+  agent-apm:
+    needs: gate
+    uses: ./.github/workflows/agentApmTests.yml
+    secrets: inherit
+  access:
+    needs: gate
+    # OIDC suite: caller must grant id-token so the reusable workflow can request it.
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/accessTests.yml
+    secrets: inherit
+  artifactory:
+    needs: gate
+    uses: ./.github/workflows/artifactoryTests.yml
+    secrets: inherit
+  choco:
+    needs: gate
+    uses: ./.github/workflows/chocoTests.yml
+    secrets: inherit
+  conan:
+    needs: gate
+    uses: ./.github/workflows/conanTests.yml
+    secrets: inherit
+  cargo:
+    needs: gate
+    uses: ./.github/workflows/cargoTests.yml
+    secrets: inherit
+  distribution:
+    needs: gate
+    uses: ./.github/workflows/distributionTests.yml
+    secrets: inherit
+  docker:
+    needs: gate
+    uses: ./.github/workflows/dockerTests.yml
+    secrets: inherit
+  evidence:
+    needs: gate
+    uses: ./.github/workflows/evidenceTests.yml
+    secrets: inherit
+  ghost-frog:
+    needs: gate
+    uses: ./.github/workflows/ghostFrogTests.yml
+    secrets: inherit
+  go:
+    needs: gate
+    uses: ./.github/workflows/goTests.yml
+    secrets: inherit
+  gradle:
+    needs: gate
+    uses: ./.github/workflows/gradleTests.yml
+    secrets: inherit
+  helm:
+    needs: gate
+    # OIDC suite: caller must grant id-token so the reusable workflow can request it.
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/helmTests.yml
+    secrets: inherit
+  huggingface:
+    needs: gate
+    # OIDC suite: caller must grant id-token so the reusable workflow can request it.
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/huggingfaceTests.yml
+    secrets: inherit
+  lifecycle:
+    needs: gate
+    uses: ./.github/workflows/lifecycleTests.yml
+    secrets: inherit
+  maven:
+    needs: gate
+    uses: ./.github/workflows/mavenTests.yml
+    secrets: inherit
+  nix:
+    needs: gate
+    uses: ./.github/workflows/nixTests.yml
+    secrets: inherit
+  alpine:
+    needs: gate
+    uses: ./.github/workflows/apkTests.yml
+    secrets: inherit
+  apt:
+    needs: gate
+    uses: ./.github/workflows/aptTests.yml
+    secrets: inherit
+  npm:
+    needs: gate
+    uses: ./.github/workflows/npmTests.yml
+    secrets: inherit
+  nuget:
+    needs: gate
+    uses: ./.github/workflows/nugetTests.yml
+    secrets: inherit
+  psresource:
+    needs: gate
+    uses: ./.github/workflows/psresourceTests.yml
+    secrets: inherit
+  oidc:
+    needs: gate
+    # OIDC suite: caller must grant id-token so the reusable workflow can request it.
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/oidcTests.yml
+    secrets: inherit
+  plugins:
+    needs: gate
+    uses: ./.github/workflows/pluginsTests.yml
+    secrets: inherit
+  pnpm:
+    needs: gate
+    uses: ./.github/workflows/pnpmTests.yml
+    secrets: inherit
+  podman:
+    needs: gate
+    uses: ./.github/workflows/podmanTests.yml
+    secrets: inherit
+  poetry:
+    needs: gate
+    uses: ./.github/workflows/poetryTests.yml
+    secrets: inherit
+  python:
+    needs: gate
+    uses: ./.github/workflows/pythonTests.yml
+    secrets: inherit
+  ruby:
+    needs: gate
+    uses: ./.github/workflows/rubyTests.yml
+    secrets: inherit
+  script:
+    needs: gate
+    uses: ./.github/workflows/scriptTests.yml
+    secrets: inherit
+  transfer:
+    needs: gate
+    uses: ./.github/workflows/transferTests.yml
+    secrets: inherit
+  uv:
+    needs: gate
+    uses: ./.github/workflows/uvTests.yml
+    secrets: inherit
+
+  # Single, stable required status check. Point branch protection at
+  # "Build Gate / build-gate-success" instead of the matrix-expanded suite checks.
+  # Recover a failed suite with "Re-run failed jobs" (re-runs the suite + this job,
+  # not the approval gate) — no re-approval and no new commit needed.
+  build-gate-success:
+    name: build-gate-success
+    if: always()
+    needs:
+      - gate
+      - frogbot
+      - agent-plugins
+      - agent-skills
+      - agent-apm
+      - access
+      - artifactory
+      - conan
+      - cargo
+      - distribution
+      - docker
+      - evidence
+      - ghost-frog
+      - go
+      - gradle
+      - helm
+      - huggingface
+      - lifecycle
+      - maven
+      - nix
+      - alpine
+      - npm
+      - nuget
+      - psresource
+      - oidc
+      - plugins
+      - pnpm
+      - podman
+      - poetry
+      - python
+      - ruby
+      - script
+      - transfer
+      - uv
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify no suite failed or was cancelled
+        run: |
+          if ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}; then
+            echo "::error::One or more suites failed or were cancelled."
+            exit 1
+          fi
+          echo "All suites succeeded (skipped suites are allowed)."

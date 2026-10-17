@@ -1,0 +1,55 @@
+{
+  "source": "https://github.com/workos/workos-rust",
+  "commit": "1b23e53150045b163a1da0a76815ed52ed6c2d2b",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "github-pages",
+      "known": true,
+      "branchPolicy": true
+    },
+    {
+      "name": "release",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/block-generated-edits.yml": "active",
+    ".github/workflows/ci.yml": "active",
+    ".github/workflows/lint-pr-title.yml": "active",
+    ".github/workflows/lint.yml": "active",
+    ".github/workflows/release-please.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "actionMetadata": {
+    "actions-rust-lang/setup-rust-toolchain@2b1f5e9b395427c92ee4e3331786ca3c37afe2d7": {
+      "refKind": "commit",
+      "mutableRemoteExec": {
+        "tier": "exec",
+        "url": "https://sh.rustup.rs",
+        "file": "action.yml",
+        "downloadGuard": "rustup"
+      }
+    }
+  },
+  "note": "The High path through the SHA-pinned `actions-rust-lang/setup-rust-toolchain@2b1f5e9` was judged overstated: the pin is immutable and its `curl https://sh.rustup.rs | sh` sits under `if ! command -v rustup` on `ubuntu-latest`, which ships rustup, so the only download is the Rust toolchain from its own distribution, Low.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "actions-rust-lang/setup-rust-toolchain@2b1f5e9b3954",
+        "tier": "low"
+      }
+    ]
+  }
+}

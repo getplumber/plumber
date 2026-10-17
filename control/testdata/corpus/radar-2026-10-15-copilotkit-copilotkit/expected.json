@@ -1,0 +1,532 @@
+{
+  "source": "https://github.com/CopilotKit/CopilotKit",
+  "commit": "4fabf9fdcf9bcc49912a1080c1f00551c35c8d06",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "actions",
+      "known": true
+    },
+    {
+      "name": "copilot",
+      "known": true
+    },
+    {
+      "name": "copilotkit-slack-bot / production",
+      "known": true
+    },
+    {
+      "name": "daytona-recipe / production",
+      "known": true
+    },
+    {
+      "name": "heartfelt-nature / production",
+      "known": true
+    },
+    {
+      "name": "joyful-gratitude / production",
+      "known": true
+    },
+    {
+      "name": "Kite - Deployed OpenTag / production",
+      "known": true
+    },
+    {
+      "name": "kite-slack-bot / production",
+      "known": true
+    },
+    {
+      "name": "main",
+      "known": true
+    },
+    {
+      "name": "main - open-mcp-client",
+      "known": true
+    },
+    {
+      "name": "microsoft-agent-harness-gen-ui / production",
+      "known": true
+    },
+    {
+      "name": "npm",
+      "known": true
+    },
+    {
+      "name": "nuget",
+      "known": true,
+      "branchPolicy": true
+    },
+    {
+      "name": "Preview",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 ag2-feature-viewer",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 ag2-starter",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 chat-with-your-data",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 coagents-research-canvas-ui",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 coagents-starter-crewai-flows",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 copilot-kit",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 copilot-kit-8aw6",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 copilot-kit-qd8p",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 copilot-kit-wq8x",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 copilot-mastra-starter",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 copilotkit-example-next-openai",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 copilotkit-feature-viewer",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 copilotkit-mastra-feature-viewer",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 copilotkit-testing-app-against-cloud-production",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 copilotkit-testing-app-against-cloud-staging",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 copilotkit-testing-app-self-hosted-runtime",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 copilotkit-v2-storybook",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 crew-flows-starter",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 demo-viewer",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 demo-viewer-1741968585059-NELN",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 docs",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 dynamic-saas-dashboard",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 examples-coagents-ai-researcher-ui",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 examples-coagents-ai-travel-app",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 examples-coagents-qa-native-ui",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 examples-coagents-qa-text-ui",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 examples-coagents-research-canvas-ui",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 examples-coagents-research-canvas-ui-1733788600324-8X0w",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 examples-coagents-research-canvas-ui-backup",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 examples-coagents-research-canvas-ui-backup-1733788887985-fVlP",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 feature-viewer-langgraph",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 form-filling",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 form-filling-copilot",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 new-fumadocs",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 new-fumadocs-1728038503875-Jont",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 registry",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 research-canvas",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 showcase-docs",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 state-machine",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 state-machine-copilot",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 test-agent-on-vercel",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 test-agent-on-vercel-1728642604048-GY5Y",
+      "known": true
+    },
+    {
+      "name": "Preview \u2013 travel",
+      "known": true
+    },
+    {
+      "name": "preview-branch",
+      "known": true
+    },
+    {
+      "name": "Production",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 ag2-feature-viewer",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 ag2-feature-viewer-1747038488531-nldx",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 ag2-starter",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 chat-with-your-data",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 coagents-research-canvas-ui",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 coagents-starter-crewai-flows",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 copilot-kit",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 copilot-kit-8aw6",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 copilot-kit-qd8p",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 copilot-kit-wq8x",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 copilot-mastra-starter",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 copilotkit-crewai-flow",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 copilotkit-example-next-openai",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 copilotkit-feature-viewer",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 copilotkit-mastra-feature-viewer",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 copilotkit-testing-app-against-cloud-production",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 copilotkit-testing-app-against-cloud-staging",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 copilotkit-testing-app-self-hosted-runtime",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 copilotkit-v2-storybook",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 crew-crews-enterprise",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 crew-flows-starter",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 demo-viewer",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 demo-viewer-1741968585059-NELN",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 demo-viewer-old",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 docs",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 dynamic-saas-dashboard",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 examples-coagents-ai-researcher-ui",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 examples-coagents-ai-travel-app",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 examples-coagents-qa-native-ui",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 examples-coagents-qa-text-ui",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 examples-coagents-research-canvas-ui",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 examples-coagents-research-canvas-ui-1733788600324-8X0w",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 examples-coagents-research-canvas-ui-backup-1733788887985-fVlP",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 feature-viewer-langgraph",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 form-filling",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 form-filling-copilot",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 new-fumadocs",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 new-fumadocs-1728038503875-Jont",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 registry",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 research-canvas",
+      "known": true
+    },
+    {
+      "name": "Production \u2013 showcase-docs",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/preview-envs-destroy.yml": "active",
+    ".github/workflows/cleanup-caches-after-pr-close.yml": "active",
+    ".github/workflows/e2e-dojo.yml": "active",
+    ".github/workflows/e2e-preview-deploy.yml": "active",
+    ".github/workflows/static-lint.yml": "active",
+    ".github/workflows/e2e-preview-destroy.yml": "active",
+    ".github/workflows/test_unit.yml": "active",
+    ".github/workflows/e2e_preview-envs-deploy.yml": "active",
+    ".github/workflows/static_quality.yml": "active",
+    ".github/workflows/cleanup_pr-caches.yml": "active",
+    ".github/workflows/static_danger.yml": "active",
+    ".github/workflows/publish-commit.yml": "active",
+    ".github/workflows/deploy_docs_vercel_preview.yml": "active",
+    ".github/workflows/social_copy-generator.yml": "active",
+    ".github/workflows/self-healing-ci.yml": "active",
+    ".github/workflows/static_check-binaries.yml": "active",
+    ".github/workflows/test_unit-python-sdk.yml": "active",
+    ".github/workflows/claude-code-review.yml": "active",
+    ".github/workflows/claude.yml": "active",
+    ".github/workflows/showcase_deploy.yml": "active",
+    ".github/workflows/auto_merge_showcases.yml": "active",
+    ".github/workflows/showcase_capture-previews.yml": "active",
+    ".github/workflows/showcase_validate.yml": "active",
+    ".github/workflows/publish-release.yml": "active",
+    ".github/workflows/stable-release.yml": "active",
+    ".github/workflows/test_integration-runtime.yml": "active",
+    ".github/workflows/test_e2e-legacy-v1.yml": "active",
+    ".github/workflows/test_smoke-starter.yml": "active",
+    ".github/workflows/test_e2e-dojo.yml": "active",
+    ".github/workflows/update-branch.yml": "active",
+    ".github/workflows/test_integration-docs.yml": "active",
+    ".github/workflows/showcase_keep-alive.yml": "active",
+    ".github/workflows/plugin-skills-check.yml": "active",
+    ".github/workflows/test_e2e-showcase-on-demand.yml": "active",
+    ".github/workflows/ghcr_unlinked_packages.yml": "active",
+    ".github/workflows/integrations_parity.yml": "active",
+    ".github/workflows/showcase_eval.yml": "active",
+    ".github/workflows/showcase_build.yml": "active",
+    ".github/workflows/showcase_eval_check.yml": "active",
+    ".github/workflows/showcase_eval-webhook_build.yml": "active",
+    ".github/workflows/security_fork-pr-alert.yml": "active",
+    ".github/workflows/showcase_build_check.yml": "active",
+    ".github/workflows/security_zizmor.yml": "active",
+    ".github/workflows/test-oidc-publish.yml": "active",
+    ".github/workflows/sentinel.yml": "active",
+    ".github/workflows/static_bundle_size.yml": "active",
+    ".github/workflows/static_compat.yml": "active",
+    ".github/workflows/showcase_lint_prod.yml": "active",
+    ".github/workflows/showcase_promote.yml": "active",
+    ".github/workflows/lint-release-workflows.yml": "active",
+    ".github/workflows/test_unit-spring-ai.yml": "active",
+    ".github/workflows/canary.yml": "active",
+    ".github/workflows/showcase_promote_notify.yml": "active",
+    ".github/workflows/debug-slack-token-probe.yml": "active",
+    ".github/workflows/_concurrency-probe.yml": "active",
+    ".github/workflows/showcase_reconcile.yml": "active",
+    ".github/workflows/skill_eval-lift.yml": "active",
+    ".github/workflows/showcase_validate-wiring.yml": "active",
+    ".github/workflows/validate_package-exports.yml": "active",
+    ".github/workflows/showcase_autoupdate_drift.yml": "active",
+    ".github/workflows/test_showcase-frontend-matrix.yml": "active",
+    ".github/workflows/showcase_angular_preview.yml": "active",
+    ".github/workflows/test_showcase-angular-proof.yml": "active",
+    ".github/workflows/test_showcase-angular-audit.yml": "active",
+    ".github/workflows/test_unit-showcase.yml": "active",
+    ".github/workflows/zz_probe_cancelled_semantics.yml": "active",
+    ".github/workflows/telemetry-docs-fragment.yml": "active",
+    ".github/workflows/telemetry-runtime-fragment.yml": "active",
+    ".github/workflows/aeo_synthetics.yml": "active",
+    ".github/workflows/static_intelligence-env-names.yml": "active",
+    ".github/workflows/test_reskinnable-demo.yml": "active",
+    ".github/workflows/static_retired-anthropic-models.yml": "active",
+    ".github/workflows/test_unit-generative-ui.yml": "active",
+    ".github/workflows/test_cloudplot.yml": "active",
+    ".github/workflows/showcase_docs_promote_drift.yml": "active",
+    ".github/workflows/test_e2e-public-examples.yml": "active",
+    ".github/workflows/test_unit-showcase-integrations.yml": "active",
+    ".github/workflows/intelligence-runtimes.yml": "active",
+    ".github/workflows/intelligence-skill-adapters.yml": "active",
+    ".github/workflows/package-licenses.yml": "active",
+    ".github/workflows/publish-nuget.yml": "active",
+    ".github/workflows/publish-rubygems.yml": "active",
+    ".github/workflows/showcase_float_staging.yml": "active",
+    ".github/workflows/test_starter-clean-install.yml": "active",
+    ".github/workflows/static_starter-deps.yml": "active",
+    ".github/workflows/static_doc-deprecated-imports.yml": "active",
+    ".github/workflows/static_channels-zod.yml": "active",
+    ".github/workflows/intelligence-compatibility-monitor.yml": "active",
+    ".github/workflows/docs_open_release_pr.yml": "active",
+    ".github/workflows/docs_promote.yml": "active",
+    ".github/workflows/tmp-pe365-windows-verify.yml": "active",
+    ".github/workflows/test_claude-managed-starter.yml": "active",
+    ".github/workflows/parallel-research.yml": "active",
+    ".github/workflows/test_community.yml": "active",
+    ".github/workflows/intelligence-smoke.yml": "active",
+    ".github/workflows/test_unit-shell-docs.yml": "active",
+    ".github/workflows/test_unit-mastra.yml": "active",
+    ".github/workflows/showcase_mastra_remote_a2ui.yml": "active",
+    ".github/workflows/showcase_compatibility.yml": "active",
+    ".github/workflows/intelligence-rich-threads-build.yml": "active",
+    ".github/workflows/showcase_reconcile_staging.yml": "disabled_manually"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High untrusted-expression path in `publish-release/notify` was judged false: the expression is a ternary whose arms are the literals `true` and `false` (`head.ref` only feeds `startsWith`), and the job runs only for a merged release pull request or a dispatch, so nothing an outsider writes reaches the shell, Low at most.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "untrusted_expression",
+        "subjectContains": "((github.event_name == 'workflow_dispatch' && inputs.mode != 'prerelease') || (github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/publish/'))) && 'true' || 'false'",
+        "tier": "low"
+      }
+    ]
+  }
+}

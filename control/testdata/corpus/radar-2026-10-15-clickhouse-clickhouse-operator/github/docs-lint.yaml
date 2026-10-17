@@ -1,0 +1,87 @@
+name: Documentation Lint
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  vale:
+    name: vale-linter
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: errata-ai/vale-action@518a9136acc6e6668ce7c00d367051e0941e87ff # 3.0.0
+        with:
+          fail_on_error: 'true'
+          filter_mode: nofilter
+
+  doc-links:
+    name: Doc links
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4
+        id: changes
+        with:
+          filters: |
+            docs:
+              - 'docs/**'
+      - if: steps.changes.outputs.docs == 'true'
+        uses: UmbrellaDocs/action-linkspector@568ec8d29fa92b31fd9ea5381e155c51e922af83 # v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          reporter: github-pr-review
+          filter_mode: nofilter
+          fail_level: any
+          config_file: .linkspector.yml
+
+  api-reference-generated:
+    name: API Reference Generated
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Generate API Reference
+        run: make docs-generate-api-ref
+
+      - name: Check API Reference generated
+        run: git diff --exit-code docs/
+
+  ci-success-check:
+    name: All Docs CI checks passed
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [ vale, doc-links, api-reference-generated ]
+    if: always()
+    steps:
+      - name: Determine CI status
+        id: status
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" || "${{ contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "One or more CI jobs failed or were cancelled"
+            exit 1
+          else
+            echo "All required jobs passed successfully"
+          fi

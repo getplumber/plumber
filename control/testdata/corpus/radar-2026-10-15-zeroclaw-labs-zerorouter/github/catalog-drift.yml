@@ -1,0 +1,63 @@
+name: Catalog drift
+
+# `tiers.toml` is a static belief about what upstreams charge. Nothing at
+# runtime checks it, and the expensive direction is silent: when a provider
+# raises a rate, ZeroRouter keeps charging the old price AND keeps recording
+# COGS at the old basis, so the treasury view reports a healthy margin while
+# the real invoice is larger.
+#
+# This runs the reconciliation daily so a lapsed promotional rate or a renamed
+# model surfaces within a day instead of at invoice time. It is read-only —
+# `catalog-drift` never writes a price — so the worst case is a red run.
+
+on:
+  schedule:
+    # 08:00 UTC daily. Sonnet 5's introductory rate lapses 2026-08-31; this is
+    # the thing that catches it.
+    - cron: '0 8 * * *'
+  pull_request:
+    paths:
+      - 'router/config/tiers.toml'
+      # `providers.json` is half of the reconciliation input, not a detail of
+      # it: `source_provider_key` is what joins a candidate's provider to the
+      # upstream pricing source, and `unreconcilable_reason` is what excuses a
+      # provider from the join entirely. Editing either changes what this job
+      # concludes while leaving `tiers.toml` untouched — so before this entry
+      # existed, a pull request that renamed a source key or added an excuse
+      # ran no drift check at all.
+      - 'router/config/providers.json'
+      - 'router/src/drift.rs'
+      # The loader that parses and validates providers.json; a change to how
+      # `source_provider_key` is read is a change to this job's input.
+      - 'router/src/providers.rs'
+      - '.github/workflows/catalog-drift.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    name: Reconcile tiers.toml against upstream pricing
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Cache cargo
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            router/target
+          key: drift-${{ runner.os }}-${{ hashFiles('router/Cargo.lock') }}
+
+      - name: Build the admin binary
+        working-directory: router
+        run: cargo build --locked --bin zerorouter
+
+      # No DATABASE_URL: `catalog-drift` is dispatched before the pool is
+      # opened precisely so this step needs no Postgres.
+      - name: Reconcile
+        working-directory: router
+        run: ./target/debug/zerorouter admin catalog-drift --tiers config/tiers.toml

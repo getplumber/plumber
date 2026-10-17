@@ -1,0 +1,155 @@
+name: Review State
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+  pull_request_review:
+    types:
+      - submitted
+      - dismissed
+  schedule:
+    - cron: "15 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: review-state-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  review-state:
+    name: Update review state labels
+    if: github.event_name != 'pull_request_review' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Apply review state labels
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            async function tryWrite(description, fn) {
+              try {
+                return await fn();
+              } catch (error) {
+                if (error.status === 403 || error.status === 422) {
+                  core.warning(`${description} skipped: ${error.message}`);
+                  return null;
+                }
+                throw error;
+              }
+            }
+
+            const states = {
+              "review/needs-review": { color: "fbca04", description: "No maintainer review yet" },
+              "review/awaiting-author": { color: "c5def5", description: "Reviewed; waiting on author" },
+              "review/needs-rereview": { color: "d93f0b", description: "New commits since last review" },
+              "review/approved": { color: "0e8a16", description: "Approved with no later commits" },
+            };
+            const stateNames = Object.keys(states);
+
+            const existingLabels = new Set();
+            for await (const response of github.paginate.iterator(
+              github.rest.issues.listLabelsForRepo,
+              { owner, repo, per_page: 100 },
+            )) {
+              for (const label of response.data) existingLabels.add(label.name);
+            }
+            for (const [name, meta] of Object.entries(states)) {
+              if (!existingLabels.has(name)) {
+                await tryWrite(`Create label ${name}`, () =>
+                  github.rest.issues.createLabel({ owner, repo, name, color: meta.color, description: meta.description }),
+                );
+              }
+            }
+
+            async function safeRemove(prNumber, label) {
+              try {
+                await tryWrite(`Remove label ${label}`, () =>
+                  github.rest.issues.removeLabel({ owner, repo, issue_number: prNumber, name: label }),
+                );
+              } catch (error) {
+                if (error.status !== 404) throw error;
+              }
+            }
+
+            const prs = context.payload.pull_request
+              ? [context.payload.pull_request]
+              : await github.paginate(github.rest.pulls.list, { owner, repo, state: "open", per_page: 100 });
+
+            for (const pr of prs) {
+              if (!pr || pr.user?.type === "Bot") continue;
+              const currentLabels = new Set((pr.labels || []).map((label) => label.name));
+
+              if (pr.draft) {
+                for (const label of stateNames) {
+                  if (currentLabels.has(label)) await safeRemove(pr.number, label);
+                }
+                continue;
+              }
+
+              const reviews = await github.paginate(github.rest.pulls.listReviews, {
+                owner,
+                repo,
+                pull_number: pr.number,
+                per_page: 100,
+              });
+              const qualifyingReviews = reviews.filter((review) =>
+                review.user
+                && review.user.login !== pr.user.login
+                && (review.user.type === "Bot" || ["OWNER", "MEMBER", "COLLABORATOR"].includes(review.author_association))
+                && ["APPROVED", "CHANGES_REQUESTED", "COMMENTED"].includes(review.state),
+              );
+
+              let lastReview = null;
+              let lastDecisionReview = null;
+              for (const review of qualifyingReviews) {
+                if (!lastReview || new Date(review.submitted_at) > new Date(lastReview.submitted_at)) {
+                  lastReview = review;
+                }
+                if (review.state !== "COMMENTED" && (!lastDecisionReview || new Date(review.submitted_at) > new Date(lastDecisionReview.submitted_at))) {
+                  lastDecisionReview = review;
+                }
+              }
+
+              const commits = await github.paginate(github.rest.pulls.listCommits, {
+                owner,
+                repo,
+                pull_number: pr.number,
+                per_page: 100,
+              });
+              let lastCommitAt = null;
+              for (const commit of commits) {
+                if (commit.parents && commit.parents.length > 1) continue;
+                const committedAt = commit.commit?.committer?.date;
+                if (committedAt && (!lastCommitAt || new Date(committedAt) > new Date(lastCommitAt))) {
+                  lastCommitAt = committedAt;
+                }
+              }
+
+              const desired = !lastReview
+                ? "review/needs-review"
+                : lastCommitAt && new Date(lastCommitAt) > new Date(lastReview.submitted_at)
+                  ? "review/needs-rereview"
+                  : lastDecisionReview?.state === "APPROVED"
+                    ? "review/approved"
+                    : "review/awaiting-author";
+
+              if (!currentLabels.has(desired)) {
+                await tryWrite(`Add label ${desired}`, () =>
+                  github.rest.issues.addLabels({ owner, repo, issue_number: pr.number, labels: [desired] }),
+                );
+              }
+              for (const label of stateNames) {
+                if (label !== desired && currentLabels.has(label)) await safeRemove(pr.number, label);
+              }
+            }

@@ -1,0 +1,52 @@
+{
+  "source": "https://github.com/jfrog/artifactory-maven-plugin",
+  "commit": "b0bfec76fbb81acf3947b4b11f624e15c0cf8c4b",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "master",
+  "branches": [
+    {
+      "name": "master",
+      "protected": false
+    }
+  ],
+  "environments": [
+    {
+      "name": "frogbot",
+      "known": true,
+      "requiredReviewers": true,
+      "reviewers": 1
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/cla.yml": "active",
+    ".github/workflows/credential-validation.yml": "active",
+    ".github/workflows/frogbot.yml": "active",
+    ".github/workflows/monitorIssues.yml": "disabled_inactivity",
+    ".github/workflows/release.yml": "active",
+    ".github/workflows/removeLabel.yml": "active",
+    ".github/workflows/security-scan.yml": "active",
+    ".github/workflows/test.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The Critical pull_request_target path from the Frogbot scan was judged false: the job runs under environment `frogbot`, whose required approvers approve each run before it starts, and it checks out the approved head commit, so the path holds as a maintainer-approved Medium at most.",
+  "expect": {
+    "paths": [
+      {
+        "entryKind": "pr_target",
+        "tier": "medium",
+        "subjectContains": "github.event.pull_request.head.sha",
+        "actor": "maintainer_approved"
+      }
+    ],
+    "ceilings": [
+      {
+        "entryKind": "pr_target",
+        "subjectContains": "github.event.pull_request.head.sha",
+        "tier": "medium"
+      }
+    ]
+  }
+}

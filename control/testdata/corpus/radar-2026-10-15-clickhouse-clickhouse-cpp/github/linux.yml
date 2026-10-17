@@ -1,0 +1,221 @@
+name: Linux
+
+on:
+  schedule:
+    - cron: '0 0 * * 1'
+  push:
+    branches: [ '*' ]
+  pull_request:
+    branches: [ master ]
+
+  release:
+    types:
+      - published
+      - prereleased
+
+env:
+  BUILD_TYPE: Release
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [clang-11, clang-14, clang-18, gcc-9, gcc-12, gcc-14]
+        ssl: [ssl_ON, ssl_OFF]
+        dependencies: [dependencies_BUILT_IN]
+        bignum: [use_abseil, use_custom_bignum]
+
+        include:
+        - compiler: clang-11
+          os: ubuntu-22.04
+          COMPILER_INSTALL: clang-11 libc++-11-dev
+          C_COMPILER: clang-11
+          CXX_COMPILER: clang++-11
+
+        - compiler: clang-14
+          os: ubuntu-24.04
+          COMPILER_INSTALL: clang-14 libc++-14-dev
+          C_COMPILER: clang-14
+          CXX_COMPILER: clang++-14
+
+        - compiler: clang-18
+          os: ubuntu-24.04
+          COMPILER_INSTALL: clang-18 libc++-18-dev
+          C_COMPILER: clang-18
+          CXX_COMPILER: clang++-18
+
+        - compiler: gcc-9
+          os: ubuntu-22.04
+          COMPILER_INSTALL: gcc-9 g++-9
+          C_COMPILER: gcc-9
+          CXX_COMPILER: g++-9
+
+        - compiler: gcc-12
+          os: ubuntu-24.04
+          COMPILER_INSTALL: gcc-12 g++-12
+          C_COMPILER: gcc-12
+          CXX_COMPILER: g++-12
+
+        - compiler: gcc-14
+          os: ubuntu-24.04
+          COMPILER_INSTALL: gcc-14 g++-14
+          C_COMPILER: gcc-14
+          CXX_COMPILER: g++-14
+
+        - ssl: ssl_ON
+          SSL_CMAKE_OPTION: -D WITH_OPENSSL=ON
+
+        - bignum: use_abseil
+          BIGNUM_CMAKE_OPTION: -D CH_USE_ABSEIL_FOR_BIGNUM=ON
+
+        - bignum: use_custom_bignum
+          BIGNUM_CMAKE_OPTION: -D CH_USE_ABSEIL_FOR_BIGNUM=OFF
+
+        - dependencies: dependencies_SYSTEM
+          compiler: compiler_SYSTEM
+          os: ubuntu-24.04
+          COMPILER_INSTALL: gcc g++
+          C_COMPILER: gcc
+          CXX_COMPILER: g++
+          DEPENDENCIES_INSTALL: libabsl-dev liblz4-dev
+          DEPENDENCIES_CMAKE_OPTIONS: >-
+            -D WITH_SYSTEM_LZ4=ON
+            -D WITH_SYSTEM_ABSEIL=ON
+
+    runs-on: ${{matrix.os}}
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 100
+          fetch-tags: true
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake \
+            ${{matrix.COMPILER_INSTALL}} \
+            ${{matrix.DEPENDENCIES_INSTALL}}
+
+      - name: Configure project
+        run: |
+          cmake \
+            -D CMAKE_C_COMPILER=${{matrix.C_COMPILER}} \
+            -D CMAKE_CXX_COMPILER=${{matrix.CXX_COMPILER}} \
+            -D CMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} \
+            -D CH_MAP_BOOL_TO_UINT8=OFF \
+            -D BUILD_TESTS=ON \
+            ${{matrix.BIGNUM_CMAKE_OPTION}} \
+            ${{matrix.SSL_CMAKE_OPTION}} \
+            ${{matrix.DEPENDENCIES_CMAKE_OPTIONS}} \
+            -S ${{github.workspace}} \
+            -B ${{github.workspace}}/build
+
+      - name: Build project
+        run: |
+          cmake \
+            --build ${{github.workspace}}/build \
+            --config ${{env.BUILD_TYPE}} \
+            --target all
+
+      - name: Start ClickHouse in Docker
+        uses: hoverkraft-tech/compose-action@v2.0.1
+        with:
+          compose-file: ci/docker-compose.yml
+          down-flags: --volumes
+
+      - name: Check if ClickHouse is available
+        run: |
+          for i in {1..60}; do
+            if curl -fsS http://localhost:8123/ > /dev/null; then
+              echo "ClickHouse is ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "ClickHouse failed to start"
+          exit 1
+  
+      - name: Test
+        working-directory: ${{github.workspace}}/build/ut
+        run: ./clickhouse-cpp-ut
+
+  # Runs the same test suite against the supported ClickHouse server versions.
+  # The compiler axis is pinned to one canonical configuration here, so that
+  # the server-version axis does not multiply the build matrix above.
+  server-versions:
+    name: clickhouse-server ${{matrix.clickhouse-version}}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        clickhouse-version:
+          - '26.3'  # LTS
+          - '26.7'  # Stable
+          - '26.8'  # LTS
+          - '26.9'  # Stable, latest stable
+          - 'head'  # nightly build of ClickHouse master
+
+    runs-on: ubuntu-24.04
+
+    env:
+      CLICKHOUSE_VERSION: '${{matrix.clickhouse-version}}-alpine'
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 100
+          fetch-tags: true
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake \
+            clang-18 libc++-18-dev
+
+      - name: Configure project
+        run: |
+          cmake \
+            -D CMAKE_C_COMPILER=clang-18 \
+            -D CMAKE_CXX_COMPILER=clang++-18 \
+            -D CMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} \
+            -D CH_MAP_BOOL_TO_UINT8=OFF \
+            -D BUILD_TESTS=ON \
+            -D WITH_OPENSSL=ON \
+            -S ${{github.workspace}} \
+            -B ${{github.workspace}}/build
+
+      - name: Build project
+        run: |
+          cmake \
+            --build ${{github.workspace}}/build \
+            --config ${{env.BUILD_TYPE}} \
+            --target all
+
+      - name: Start ClickHouse in Docker
+        uses: hoverkraft-tech/compose-action@v2.0.1
+        with:
+          compose-file: ci/docker-compose.yml
+          down-flags: --volumes
+
+      - name: Check if ClickHouse is available
+        run: |
+          for i in {1..60}; do
+            if curl -fsS http://localhost:8123/ > /dev/null; then
+              echo "ClickHouse is ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "ClickHouse failed to start"
+          exit 1
+
+      - name: Test
+        working-directory: ${{github.workspace}}/build/ut
+        run: ./clickhouse-cpp-ut

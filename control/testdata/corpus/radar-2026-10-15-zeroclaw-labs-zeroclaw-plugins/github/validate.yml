@@ -1,0 +1,427 @@
+name: Validate plugin repository
+
+on:
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  RUST_TOOLCHAIN: 1.96.1
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rustfmt
+      - name: Check formatting and whitespace
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          event_before="${{ github.event.before }}"
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            base="$(git merge-base origin/main HEAD)"
+          elif [[ "${{ github.event_name }}" == "push" \
+            && -n "$event_before" \
+            && "$event_before" != "0000000000000000000000000000000000000000" ]]; then
+            base="$event_before"
+          else
+            # A manual full sweep has no source delta to which the transitional
+            # baseline policy can assign new formatting debt.
+            base="HEAD"
+          fi
+          git diff --check "$base" HEAD
+
+          fmt_status=0
+          for manifest in plugins/*/Cargo.toml; do
+            [[ -f "$manifest" ]] || continue
+            if cargo fmt --manifest-path "$manifest" --all -- --check; then
+              continue
+            fi
+
+            plugin_dir="${manifest%/Cargo.toml}"
+            mapfile -d '' changed_paths < <(
+              git diff --name-only --diff-filter=ACMRTUXB -z \
+                "$base" HEAD -- "$plugin_dir"
+            )
+            changed_rust=false
+            for path in "${changed_paths[@]}"; do
+              if [[ "$path" == *.rs ]]; then
+                changed_rust=true
+                break
+              fi
+            done
+
+            if [[ "$changed_rust" == true ]]; then
+              echo "::error file=${manifest}::Rust files changed in this plugin, but cargo fmt --check failed"
+              fmt_status=1
+            else
+              # TODO: remove this warning path once immutable baseline plugin
+              # versions can be advanced and reformatted without changing the
+              # bytes behind an already-published name/version identity.
+              echo "::warning file=${manifest}::Untouched plugin has pre-existing rustfmt debt"
+            fi
+          done
+          exit "$fmt_status"
+
+  changes:
+    name: Plan component matrix
+    needs: [fmt]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      mode: ${{ steps.plan.outputs.mode }}
+      count: ${{ steps.plan.outputs.count }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Plan validation shards
+        id: plan
+        env:
+          GITHUB_EVENT_BEFORE: ${{ github.event.before }}
+        run: python3 tools/ci/plan_matrix.py
+
+  registry:
+    name: Registry contract
+    needs: [fmt]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Guard plugin repository structure
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=0
+          for dir in plugins/*/; do
+            [[ -d "$dir" ]] || continue
+            for required in manifest.toml Cargo.toml Cargo.lock; do
+              if [[ ! -f "${dir}${required}" ]]; then
+                echo "::error file=${dir}${required}::Missing required plugin file"
+                status=1
+              fi
+            done
+          done
+          exit "$status"
+      - name: Test immutable registry tooling
+        run: tools/ci/run-packager-python.sh -m unittest discover -s tools/tests -p 'test_*.py'
+      - name: Test CI support tooling
+        run: python3 -m unittest discover -s tools/ci/tests -p 'test_*.py'
+      - name: Check generated registry history
+        shell: bash
+        run: |
+          set -euo pipefail
+          event_before="${{ github.event.before }}"
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            base_commit=$(git merge-base origin/main HEAD)
+          elif [[ "${{ github.event_name }}" == "push" \
+            && "$GITHUB_REF" == "refs/heads/main" \
+            && -n "$event_before" \
+            && "$event_before" != "0000000000000000000000000000000000000000" ]]; then
+            base_commit=$event_before
+          else
+            # Manual validation and initial branch pushes have no meaningful
+            # prior ledger; validating the checked-out ledger still exercises
+            # its complete schema and canonical order.
+            base_commit=HEAD
+          fi
+          git show "${base_commit}:registry.json" > "$RUNNER_TEMP/base-registry.json"
+          tools/ci/run-packager-python.sh tools/build-registry.py \
+            --source-plugins plugins \
+            --check-history "$RUNNER_TEMP/base-registry.json" registry.json
+      - name: Check generated registry metadata
+        run: |
+          tools/ci/run-packager-python.sh tools/build-registry.py \
+            --source-plugins plugins \
+            --check-metadata registry.json
+
+  wit-drift:
+    name: WIT drift
+    needs: [fmt]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Compare vendored WIT with pinned ZeroClaw source
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Require a vendored directory to be byte-identical to ZeroClaw's
+          # wit/v0 at the one commit its pin file names.
+          compare_pinned_wit() {
+            local pin_file=$1
+            local vendored=$2
+            local upstream=$3
+            local pinned_ref
+            pinned_ref=$(python3 tools/ci/manifest_field.py --wit-pin "$pin_file" "$vendored") || return 1
+            local fetched_ref
+            git init --quiet "$upstream"
+            git -C "$upstream" remote add origin \
+              https://github.com/zeroclaw-labs/zeroclaw.git
+            git -C "$upstream" sparse-checkout init --cone
+            git -C "$upstream" sparse-checkout set wit/v0
+            git -C "$upstream" -c protocol.version=2 fetch \
+              --quiet --no-tags --depth=1 --filter=blob:none origin "$pinned_ref"
+            fetched_ref=$(git -C "$upstream" rev-parse FETCH_HEAD)
+            if [[ "$fetched_ref" != "$pinned_ref" ]]; then
+              echo "::error::Fetched WIT commit $fetched_ref does not match pin $pinned_ref"
+              return 1
+            fi
+            git -C "$upstream" checkout --quiet --detach FETCH_HEAD
+            diff -ru "$vendored" "$upstream/wit/v0"
+          }
+
+          # wit/v0 tracks a released host. The optional wit/next tracks an
+          # unreleased host, and its plugins stay registry = false.
+          compare_pinned_wit wit/UPSTREAM_REF wit/v0 "${RUNNER_TEMP}/zeroclaw-upstream"
+          if [[ -e wit/NEXT_REF || -e wit/next ]]; then
+            if [[ ! -f wit/NEXT_REF || ! -d wit/next ]]; then
+              echo "::error file=wit/NEXT_REF::Add and remove wit/NEXT_REF and wit/next together"
+              exit 1
+            fi
+            compare_pinned_wit wit/NEXT_REF wit/next "${RUNNER_TEMP}/zeroclaw-next"
+          fi
+          if [[ -e wit/CURRENT_REF || -e wit/current ]]; then
+            compare_pinned_wit wit/CURRENT_REF wit/current "${RUNNER_TEMP}/zeroclaw-current"
+          fi
+
+  components:
+    name: Components (shard ${{ matrix.id }})
+    needs: [changes]
+    if: needs.changes.outputs.count != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target-shared
+      REPORT_PATH: reports/matrix-shard-${{ matrix.id }}.tsv
+      STAGED_DIR: staged
+      LOG_ROOT: logs
+      REPORT_STACK: ci
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Prepare shard outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports "$STAGED_DIR"
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: clippy
+          targets: wasm32-wasip2
+      - name: Restore component cache
+        id: component-cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target-shared
+          key: components-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-shard${{ matrix.id }}-${{ hashFiles('plugins/*/Cargo.lock') }}
+          restore-keys: |
+            components-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-shard${{ matrix.id }}-
+            components-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-
+      - name: Test, lint, build, and stage components
+        shell: bash
+        env:
+          PLUGINS_JSON: ${{ toJSON(matrix.plugins) }}
+          STRICT_PLUGINS_JSON: ${{ toJSON(matrix.strict_plugins) }}
+        run: |
+          set -euo pipefail
+          mapfile -t plugins < <(jq -r '.[]' <<< "$PLUGINS_JSON")
+          bash tools/ci/validate_components.sh "${plugins[@]}"
+      - name: Save trusted component cache
+        if: github.ref == 'refs/heads/main' && steps.component-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target-shared
+          key: ${{ steps.component-cache.outputs.cache-primary-key }}
+      - name: Ensure shard artifacts exist
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p reports "$STAGED_DIR" "$LOG_ROOT"
+          touch \
+            "$REPORT_PATH" \
+            "$STAGED_DIR/ci-shard-${{ matrix.id }}" \
+            "$LOG_ROOT/ci-shard-${{ matrix.id }}"
+      - name: Upload shard report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: matrix-shard-${{ matrix.id }}
+          path: reports/matrix-shard-${{ matrix.id }}.tsv
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
+      - name: Upload staged component bytes
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: staged-shard-${{ matrix.id }}
+          path: staged/
+          if-no-files-found: error
+          include-hidden-files: true
+          compression-level: 0
+          overwrite: true
+          retention-days: 7
+      - name: Upload component logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: logs-shard-${{ matrix.id }}
+          path: logs/
+          if-no-files-found: error
+          include-hidden-files: true
+          overwrite: true
+          retention-days: 7
+
+  package:
+    name: Package dry run
+    needs: [changes, components]
+    if: needs.changes.outputs.count != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Prepare staging directory
+        run: mkdir -p staged
+      - name: Download staged component bytes
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: staged-shard-*
+          path: staged
+          merge-multiple: true
+      - name: Package and verify registry metadata
+        shell: bash
+        env:
+          PLANNED_MATRIX_JSON: ${{ needs.changes.outputs.matrix }}
+        run: |
+          set -euo pipefail
+          find staged -maxdepth 1 -type f -name 'ci-shard-*' -delete
+          release_tag=$(python3 -c \
+            'from tools.registry_contract import PLUGIN_RELEASE_TAG; print(PLUGIN_RELEASE_TAG)')
+          release_base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${release_tag}"
+          tools/ci/run-packager-python.sh tools/build-registry.py \
+            --staged staged \
+            --release-base "$release_base" \
+            --existing-registry registry.json \
+            --matrix-json "$PLANNED_MATRIX_JSON" \
+            --out dist
+          tools/ci/run-packager-python.sh tools/build-registry.py \
+            --source-plugins staged \
+            --check-metadata dist/registry.json
+          tools/ci/run-packager-python.sh tools/build-registry.py \
+            --check-publication registry.json dist/registry.json dist
+      - name: Upload registry dry run
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: registry-dry-run
+          path: dist/
+          if-no-files-found: error
+          include-hidden-files: true
+          compression-level: 0
+          overwrite: true
+          retention-days: 7
+
+  gate:
+    name: Validate Required Gate
+    if: always()
+    needs: [fmt, changes, registry, wit-drift, components, package]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Download shard reports
+        id: reports
+        if: needs.changes.outputs.count != '0' && needs.components.result != 'skipped'
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: matrix-shard-*
+          path: reports
+          merge-multiple: true
+      - name: Write validation summary
+        id: summary
+        if: always()
+        shell: bash
+        env:
+          PLANNED_MATRIX_JSON: ${{ needs.changes.outputs.matrix }}
+        run: |
+          set -euo pipefail
+          mode="${{ needs.changes.outputs.mode }}"
+          count="${{ needs.changes.outputs.count }}"
+          [[ -n "$mode" ]] || mode="unavailable"
+          [[ -n "$count" ]] || count="0"
+
+          mapfile -d '' reports < <(
+            find reports -type f -name 'matrix-shard-*.tsv' -size +0c -print0 2>/dev/null \
+              | sort -z
+          )
+          python3 tools/ci/summary.py \
+            --aggregate \
+            --sha "$GITHUB_SHA" \
+            --event "${{ github.event_name }}" \
+            --mode "$mode" \
+            --count "$count" \
+            --matrix-json "$PLANNED_MATRIX_JSON" \
+            "${reports[@]}" \
+            | sed -E '/^\*\*Verdict:/d' >> "$GITHUB_STEP_SUMMARY"
+      - name: Check required results
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          core_ok="${{ needs.fmt.result == 'success' && needs.changes.result == 'success' && needs.registry.result == 'success' && needs.wit-drift.result == 'success' }}"
+          count="${{ needs.changes.outputs.count }}"
+          components="${{ needs.components.result }}"
+          package="${{ needs.package.result }}"
+          report_ok="${{ steps.reports.outcome != 'failure' }}"
+          summary_ok="${{ steps.summary.outcome == 'success' }}"
+
+          valid_dynamic_results=false
+          if [[ "$count" == "0" ]]; then
+            [[ "$components" == "skipped" && "$package" == "skipped" ]] \
+              && valid_dynamic_results=true
+          elif [[ "$count" =~ ^[1-9][0-9]*$ ]]; then
+            [[ "$components" == "success" && "$package" == "success" ]] \
+              && valid_dynamic_results=true
+          fi
+
+          if [[ "$core_ok" != "true" \
+            || "$valid_dynamic_results" != "true" \
+            || "$report_ok" != "true" \
+            || "$summary_ok" != "true" ]]; then
+            echo '**Verdict: FAIL — required jobs did not reach their expected terminal states**' >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::Unexpected validation job result (count=$count, components=$components, package=$package)"
+            exit 1
+          fi
+          echo '**Verdict: PASS — all deterministic checks green**' >> "$GITHUB_STEP_SUMMARY"

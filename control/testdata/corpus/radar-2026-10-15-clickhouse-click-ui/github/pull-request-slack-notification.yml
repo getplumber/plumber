@@ -1,0 +1,44 @@
+name: Pull request Slack notification
+
+on:
+  pull_request:
+    types: [opened]
+
+jobs:
+  notify-slack:
+    # Fork PRs can't access repo secrets (SLACK_BOT_TOKEN etc.), so we skip the
+    # Slack notification for forks; external PRs surface via GitHub notifications.
+    # Dependabot runs get no repo secrets either, so skip those as well.
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor != 'dependabot[bot]')
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Prepare PR metadata
+        id: prepare
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          DESC=$(.scripts/bash/pull-request-truncate-body "$PR_BODY")
+          TITLE=$(.scripts/bash/pull-request-json-escape "$PR_TITLE")
+
+          echo "description=$DESC" >> $GITHUB_OUTPUT
+          echo "title=$TITLE" >> $GITHUB_OUTPUT
+
+      - name: Notify Slack about new PR
+        uses: slackapi/slack-github-action@v4.0.0
+        with:
+          method: chat.postMessage
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          payload: >
+            {
+              "channel": "${{ secrets.SLACK_CHANNEL_FOR_PR }}",
+              "text": "===\n🔔 ${{ secrets.SLACK_GROUP_TAG_NAME_FOR_CUI_NOTIFICATIONS }} *New Pull Request Opened*\n\n*Title:* ${{ steps.prepare.outputs.title }}\n*Author:* @${{ github.event.pull_request.user.login }}\n*Branch:* ${{ github.event.pull_request.head.ref }} → ${{ github.event.pull_request.base.ref }}\n\n*Description:*\n${{ steps.prepare.outputs.description }}\n\n<${{ github.event.pull_request.html_url }}|View Pull Request>\n==="
+            }

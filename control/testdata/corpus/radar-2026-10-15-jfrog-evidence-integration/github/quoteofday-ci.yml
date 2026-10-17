@@ -1,0 +1,209 @@
+name: Quote of Day Service CI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'quoteofday/**'
+      - '.github/workflows/quoteofday-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  id-token: write 
+  contents: read
+
+env:
+  DOCKER_REGISTRY: ${{ vars.DOCKER_REGISTRY }}
+
+jobs:
+  build-and-test:
+    name: Build and Test Java
+    # runs-on: self-hosted
+    runs-on: ubuntu-latest
+    env:
+      JFROG_CLI_KEY_ALIAS: ${{ vars.JFROG_CLI_KEY_ALIAS }}
+      JFROG_CLI_SIGNING_KEY: ${{ secrets.JFROG_CLI_SIGNING_KEY }}
+    outputs:
+      build_name: ${{ steps.publish_build.outputs.build_name }}
+      build_number: ${{ steps.publish_build.outputs.build_number }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up JDK 21
+      uses: actions/setup-java@v4
+      with:
+        java-version: '21'
+        distribution: 'temurin'
+        cache: 'maven'
+
+    - name: Cache SonarQube packages
+      uses: actions/cache@v4
+      with:
+        path: ~/.sonar/cache
+        key: ${{ runner.os }}-sonar
+        restore-keys: ${{ runner.os }}-sonar
+
+    - name: Cache Maven packages
+      uses: actions/cache@v4
+      with:
+        path: ~/.m2
+        key: ${{ runner.os }}-m2-${{ hashFiles('quoteofday/pom.xml') }}
+        restore-keys: ${{ runner.os }}-m2
+
+    - name: Setup JFrog CLI
+      uses: jfrog/setup-jfrog-cli@v4
+      with:
+        version: latest
+        custom-server-id: evidence-demo
+      env:
+        JF_URL: ${{ vars.JF_URL }}
+        JF_USER: ${{ vars.JF_USER }}
+        JF_ACCESS_TOKEN: ${{ secrets.JF_ACCESS_TOKEN }}
+
+    - name: Setup Maven
+      run: |
+        jf mvnc --server-id-resolve evidence-demo --server-id-deploy evidence-demo --repo-resolve-releases evidence-demo-libs-release --repo-resolve-snapshots evidence-demo-libs-snapshot --repo-deploy-releases evidence-demo-libs-release --repo-deploy-snapshots evidence-demo-libs-snapshot
+      
+    - name: Build and Deploy to Artifactory
+      env:
+        DEVELOCITY_ACCESS_KEY: ${{ secrets.DEVELOCITY_ACCESS_KEY }}
+      run: |
+        cd quoteofday
+        # Replace SNAPSHOT with GitHub run number for versioning
+        sed -i "s/-SNAPSHOT/-${{ github.run_number }}/g" pom.xml
+        echo "📦 Updated version to 1.0.0-${{ github.run_number }}"
+        
+        # Build and deploy to Artifactory
+        jf mvn deploy -Dscan=true -q --batch-mode --no-transfer-progress --build-name quoteofday --build-number ${{ github.run_number }}
+        
+    - name: Get artifact SHA256
+      id: get_sha256
+      run: |
+        ARTIFACT_PATH="com/example/quote-of-day-service/1.0.0-${{ github.run_number }}/quote-of-day-service-1.0.0-${{ github.run_number }}.jar"
+        JF_URL=${{ vars.JF_URL }}
+        REPO_KEY="evidence-demo-libs-release"
+        API_ENDPOINT="${JF_URL}/artifactory/api/storage/${REPO_KEY}/${ARTIFACT_PATH}"
+        JF_USER=${{ vars.JF_USER }}
+        JF_ACCESS_TOKEN=${{ secrets.JF_ACCESS_TOKEN }}
+
+        echo "Fetching artifact info from: ${API_ENDPOINT}"
+
+        response=$(curl -s -u "${JF_USER}:${JF_ACCESS_TOKEN}" "${API_ENDPOINT}")
+        echo "API Response: ${response}"
+
+        SHA256=$(echo "${response}" | jq -r '.checksums.sha256')
+
+        if [[ -z "$SHA256" || "$SHA256" == "null" ]]; then
+          echo "Error: Could not retrieve SHA256 checksum."
+          exit 1
+        fi
+
+        echo "Retrieved SHA256: ${SHA256}"
+        echo "sha256=${SHA256}" >> $GITHUB_OUTPUT
+
+    - name: Gradle Develociity Scan
+      uses: gradle/develocity-provenance-governor-actions/publish@v0.5.0
+      with:
+        attestation-publisher-url: 'https://develocity-provenance-governor.sdlc-demo.gradle.com'
+        tenant: default
+        build-scan-queries: 'value:"CI run=${{ github.run_id }}"'
+        subject-type: maven
+        subject-namespace: com.example
+        subject-name: quote-of-day-service
+        subject-version: 1.0.0-${{ github.run_number }}
+        subject-digest: ${{ steps.get_sha256.outputs.sha256 }}
+        subject-repository-url: ${{ vars.JF_HOST }}/evidence-demo-libs-release-local 
+
+    - name: Compile java for Sonar scan
+      run: |
+        cd quoteofday
+        mvn test-compile
+      
+    - name: Sonar scan
+      uses: SonarSource/sonarqube-scan-action@v5
+      continue-on-error: true  # Don't fail build on SonarCloud quality gate issues
+      env:
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      with:
+        projectBaseDir: quoteofday/
+        args: >
+          -Dsonar.organization=my-evidence-test-org1
+          -Dsonar.projectKey=my-evidence-test-org1_evidence-integration
+          -Dsonar.java.binaries=target/classes
+          -Dsonar.qualitygate.wait=false
+
+    - name: Create Test Evidence JSON
+      run: |
+        cd quoteofday
+        mkdir -p evidence
+        
+        # Run the conversion script to create evidence file with markdown report
+        ./scripts/convert-test-reports.sh target/surefire-reports 
+      
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: Login to Docker Registry
+      run: |
+        echo "🔐 Logging into JFrog Artifactory Docker registry..."
+        echo "Registry: ${{ env.DOCKER_REGISTRY }}"
+        echo ${{ secrets.JF_ACCESS_TOKEN }} | docker login -u ${{ vars.JF_USER }} --password-stdin ${{ env.DOCKER_REGISTRY }}
+        echo "✅ Successfully logged into Docker registry"
+      
+    - name: Build and Push Docker image
+      run: |
+        cd quoteofday
+        # Build and push to JFrog Artifactory
+        jf docker buildx build --platform linux/amd64,linux/arm64 \
+          --tag ${{ env.DOCKER_REGISTRY }}/quoteofday:${{ github.run_number }} \
+          --metadata-file=build-metadata --output=type=image --push .
+        jf rt build-docker-create quotopia-dev-docker  \
+          --image-file build-metadata --build-name quoteofday --build-number ${{ github.run_number }} 
+
+    - name: Evidence on docker image
+      env:
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      run: |
+        echo "🔍 Creating evidence on docker image..."
+        cd quoteofday
+        jf evd create --subject-repo-path quotopia-dev-docker/quoteofday/${{ github.run_number }}/list.manifest.json  \
+          --predicate ./test-evidence.json --predicate-type https://jfrog.com/evidence/test-results/v1 \
+          --markdown ./test-evidence.md --provider-id junit
+        jf evd create --package-name quoteofday --package-version ${{ github.run_number }} --package-repo-name quotopia-dev-docker --integration sonar
+      
+    - name: Test Docker image
+      run: |
+        cd quoteofday
+        # Pull the image for testing
+        jf docker pull ${{ env.DOCKER_REGISTRY }}/quoteofday:${{ github.run_number }}
+        
+        # Run container with better debugging
+        jf docker run -d --name test-container -p 8001:8001 ${{ env.DOCKER_REGISTRY }}/quoteofday:${{ github.run_number }}
+        
+        # Wait for container to start
+        sleep 5
+        
+        # Test health endpoint
+        curl -f http://localhost:8001/api/quotes/health || {
+          echo "❌ Health check failed"
+          exit 1
+        } 
+
+    - name: Publish buildinfo
+      id: publish_build
+      run: |
+        jf rt build-add-git quoteofday ${{ github.run_number }}
+        jf rt build-publish quoteofday ${{ github.run_number }}
+        echo "build_name=quoteofday" >> $GITHUB_OUTPUT
+        echo "build_number=${{ github.run_number }}" >> $GITHUB_OUTPUT
+
+  create_jira_evidence:
+    needs: build-and-test
+    uses: ./.github/workflows/create-jira-evidence.yml
+    secrets: inherit
+    with: 
+      build_name: ${{ needs.build-and-test.outputs.build_name }}
+      build_number: ${{ needs.build-and-test.outputs.build_number }}

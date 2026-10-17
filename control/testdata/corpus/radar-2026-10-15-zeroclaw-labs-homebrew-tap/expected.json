@@ -1,0 +1,31 @@
+{
+  "source": "https://github.com/zeroclaw-labs/homebrew-tap",
+  "commit": "7f8cbea3db1d6e45942d5cdcc492dc584b8c68e2",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": false
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/publish.yml": "active",
+    ".github/workflows/tests.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High unprotected `main` path was judged overstated: `tests.yml` runs with a read-only token and no secret, and the cache it saves is restored only by the same read-only jobs, so a writer gains nothing, Low.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "unprotected_push",
+        "subjectContains": "main",
+        "tier": "low"
+      }
+    ]
+  }
+}

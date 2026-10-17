@@ -1,0 +1,63 @@
+name: "Test"
+on:
+  push:
+    branches:
+      - '**'
+    tags-ignore:
+      - '**'
+  pull_request:
+jobs:
+  test:
+    name: Test (${{ matrix.os }}) - (CLI ${{ matrix.cli-version || 'default' }})
+    runs-on: ${{ matrix.os }}
+    env:
+      JF_ENV_LOCAL: eyJ2ZXJzaW9uIjoxLCJ1cmwiOiJodHRwOi8vMTI3LjAuMC4xOjgwODEvYXJ0aWZhY3RvcnkvIiwidXNlciI6ImFkbWluIiwicGFzc3dvcmQiOiJBUEI3REVaUlBpSHFIRFRRb2tMa3g5aGh6S1QiLCJzZXJ2ZXJJZCI6ImxvY2FsIn0=
+
+    strategy:
+      matrix:
+        os: [ ubuntu-latest, windows-latest, macos-15 ]
+        cli-version: [ "", "latest", "2.31.0" ]
+      fail-fast: false
+    steps:
+      # Checkout and install prerequisites
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup NodeJS
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24.x"
+
+      # Run action according to the input version
+      - name: Setup JFrog CLI
+        if: matrix.cli-version != ''
+        uses: ./
+        with:
+          version: ${{ matrix.cli-version }}
+      - name: Setup default JFrog CLI
+        if: matrix.cli-version == ''
+        uses: ./
+
+      # Run --version
+      - name: Check versions
+        run: jf --version && jfrog --version
+
+      # Check local server successfully configured
+      - name: Sanity
+        run: jf c show local || jfrog rt config show local
+
+      # Check build URL
+      - name: Check build URL
+        uses: wei/curl@master
+        with:
+          args: -I ${JFROG_CLI_BUILD_URL}
+        if: runner.os == 'Linux'
+
+      # Check environment variables
+      - name: Check action environment
+        run: node scripts/check-env.js
+
+      # Install and run tests
+      - name: Install
+        run: npm i
+      - name: Unit tests
+        run: npm t

@@ -1,0 +1,69 @@
+{
+  "source": "https://github.com/ClickHouse/clickhousectl",
+  "commit": "6749a97c9d8a5926e6c27852d951c2dba5418f80",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "cloud-integration",
+      "known": true
+    },
+    {
+      "name": "copilot",
+      "known": true
+    },
+    {
+      "name": "npm",
+      "known": true,
+      "branchPolicy": true
+    },
+    {
+      "name": "pypi",
+      "known": true,
+      "branchPolicy": true
+    },
+    {
+      "name": "release-publishing",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/audit.yml": "active",
+    ".github/workflows/cloud-integration-decision.yml": "active",
+    ".github/workflows/cloud-integration.yml": "active",
+    ".github/workflows/fmt.yml": "active",
+    ".github/workflows/msrv.yml": "active",
+    ".github/workflows/openapi-drift.yml": "active",
+    ".github/workflows/release.yml": "active",
+    ".github/workflows/test-cli.yml": "active",
+    ".github/workflows/test-cloud-api.yml": "active",
+    ".github/workflows/test-homebrew.yml": "active",
+    ".github/workflows/test-install.yml": "active",
+    ".github/workflows/test-postgres-integration.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "Two High paths through SHA-pinned actions were judged overstated: `PyO3/maturin-action` is immutable and only the maturin release it downloads can move, Medium at most; `dtolnay/rust-toolchain` downloads the Rust toolchain from its own distribution, Low.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "PyO3/maturin-action@e83996d12963",
+        "tier": "medium"
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "dtolnay/rust-toolchain@29eef336d9b2",
+        "tier": "low"
+      }
+    ]
+  }
+}

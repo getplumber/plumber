@@ -1,0 +1,314 @@
+# Publishes @clickhouse/click-ui to npm. Dist-tag comes from the version; checks fail closed.
+#   release: a published GitHub release, or a manual dispatch with a tag
+#   canary:  every push to main, as <next>-canary.g<sha>.0 (.scripts/bash/canary-version)
+# Three jobs keep dependency code away from the credentials: resolve decides from the event,
+# build installs and packs without credentials, publish checks that package and publishes it
+# without installing anything. docs/publish.md
+
+name: Publish to npm
+
+on:
+  release:
+    types: [published]
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish, e.g. v0.12.0 or v0.12.0-rc1. The npm dist-tag is derived from it (see .scripts/bash/npm-dist-tag-for-version).'
+        required: true
+        type: string
+      branch:
+        description: 'Branch to deploy from'
+        required: false
+        default: 'main'
+        type: string
+
+env:
+  HUSKY: 0
+  PUBLISH_MODE: ${{ github.event_name == 'push' && 'canary' || 'release' }}
+
+# One at a time: concurrent runs would both read the same `latest` and race on push.
+# Canaries queue in their own group: GitHub keeps one pending run per group, so a merge
+# would otherwise cancel a release waiting there.
+concurrency:
+  group: publish-npm${{ github.event_name == 'push' && '-canary' || '' }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    # TEMP: safeguard for testing, can be removed after all release flows validated
+    if: ${{ !contains(github.event.release.tag_name, 'storybook-test') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      npm_tag: ${{ steps.resolve.outputs.npm_tag }}
+      sha: ${{ steps.resolve.outputs.sha }}
+    steps:
+      - name: Checkout repository
+        if: env.PUBLISH_MODE == 'release'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || github.event.release.target_commitish }}
+          persist-credentials: false
+
+      # Resolve and guard before the build, so a bad tag fails in seconds. These
+      # steps use the runner's preinstalled node/npm.
+      - name: Resolve the release tag and its npm dist-tag
+        if: env.PUBLISH_MODE == 'release'
+        id: resolve
+        shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }} # empty on release events
+          RELEASE_TAG: ${{ github.event.release.tag_name }} # empty on workflow_dispatch
+        run: |
+          reject() { echo "$1" >&2; printf '## Release rejected\n\n%s\n' "$1" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
+
+          RAW_TAG="${RELEASE_TAG:-$INPUT_TAG}"
+          # Exactly one leading "v"; a bare version is tolerated, "vv0.12.0" is not.
+          GITHUB_TAG="v${RAW_TAG#v}"
+          # X.Y.Z -> latest; -rc/-beta -> rc; -alpha -> alpha; -canary.* -> canary; else exit 1.
+          if ! NPM_TAG=$(.scripts/bash/npm-dist-tag-for-version "$GITHUB_TAG" 2> "$RUNNER_TEMP/reject.txt"); then
+            reject "$(cat "$RUNNER_TEMP/reject.txt")"
+          fi
+          if [[ "$NPM_TAG" == "canary" ]]; then
+            reject "❌ Error: $GITHUB_TAG is a canary version. Canaries are published on every push to main; release a tag like v0.12.0 or v0.12.0-rc1."
+          fi
+          {
+            echo "GITHUB_TAG=$GITHUB_TAG"
+            echo "NPM_TAG=$NPM_TAG"
+          } >> "$GITHUB_ENV"
+          {
+            echo "tag=$GITHUB_TAG"
+            echo "npm_tag=$NPM_TAG"
+            echo "sha=$(git rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
+          echo "📦 Publishing $GITHUB_TAG to npm dist-tag \`$NPM_TAG\`" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Guard - the pre-release checkbox must agree with the version
+        if: github.event_name == 'release'
+        shell: bash
+        env:
+          IS_PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          reject() { echo "$1" >&2; printf '## Release rejected\n\n%s\n' "$1" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
+
+          # GitHub sends `published` once, so fixing a release means delete and re-create.
+          if [[ "$IS_PRERELEASE" == "true" && "$NPM_TAG" == "latest" ]]; then
+            reject "❌ Error: release $GITHUB_TAG is marked as a pre-release but its version has no prerelease suffix. Delete the release and re-create it either unticked, or on a tag like ${GITHUB_TAG}-rc1."
+          fi
+          if [[ "$IS_PRERELEASE" != "true" && "$NPM_TAG" != "latest" ]]; then
+            reject "❌ Error: release $GITHUB_TAG has a prerelease suffix (npm dist-tag '$NPM_TAG') but is not marked as a pre-release. Delete the release and re-create it for the same tag with 'Set as a pre-release' ticked."
+          fi
+
+      - name: Guard - latest must move forward
+        if: env.NPM_TAG == 'latest'
+        shell: bash
+        run: |
+          reject() { echo "$1" >&2; printf '## Release rejected\n\n%s\n' "$1" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
+
+          # npm moves `latest` backwards without complaint; the script refuses unless newer.
+          CURRENT_LATEST=$(npm view "$(node -p "require('./package.json').name")" dist-tags.latest) \
+            || reject "❌ Error: could not read the current npm 'latest' tag (npm view failed). Re-run once the registry is reachable."
+          .scripts/bash/npm-dist-tag-for-version "$GITHUB_TAG" "$CURRENT_LATEST" > /dev/null 2> "$RUNNER_TEMP/reject.txt" \
+            || reject "$(cat "$RUNNER_TEMP/reject.txt")"
+
+  build:
+    needs: resolve
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          # The commit resolve saw. Empty for canaries, which check out the pushed commit.
+          ref: ${{ needs.resolve.outputs.sha }}
+          persist-credentials: false
+      - name: Bump package version
+        if: env.PUBLISH_MODE == 'release'
+        env:
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: npm pkg set version="${TAG#v}"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24.x'
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Install dependencies
+        run: yarn install --immutable
+      - name: Set the canary version
+        if: env.PUBLISH_MODE == 'canary'
+        # Same script and commit as the canary Storybook (storybook-vercel.yml).
+        run: |
+          VERSION=$(.scripts/bash/canary-version "$GITHUB_SHA")
+          npm pkg set version="$VERSION"
+      - run: yarn test
+      - run: yarn build
+      - name: Pack the package
+        # prepare would re-run test, format, lint and circular; test ran above, the rest are CI checks.
+        run: |
+          mkdir -p "$RUNNER_TEMP/package"
+          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/package"
+      - name: Upload the package
+        uses: actions/upload-artifact@v7
+        with:
+          name: package
+          path: ${{ runner.temp }}/package/*.tgz
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+
+  publish:
+    needs: [resolve, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read       # The bump commit and the tag are pushed with PAT_TOKEN
+      id-token: write      # For OIDC trusted publishing to npm
+    steps:
+      - name: Checkout repository (release)
+        if: env.PUBLISH_MODE == 'release'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || github.event.release.target_commitish }}
+          token: ${{ secrets.PAT_TOKEN }}
+          fetch-depth: 0
+      - name: Checkout repository (canary)
+        if: env.PUBLISH_MODE == 'canary'
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          # npm >= 11.5.1 (Node 24.x) supports OIDC; registry-url is required for it.
+          node-version: '24.x'
+          registry-url: 'https://registry.npmjs.org'
+      - name: Download the package
+        uses: actions/download-artifact@v8
+        with:
+          name: package
+          path: ${{ runner.temp }}/package
+
+      # build ran dependency code with root on its runner: only the package comes from
+      # there, and it must match what resolve decided and this run's commit.
+      - name: Guard - publish the package that was built for this run
+        shell: bash
+        env:
+          RESOLVED_TAG: ${{ needs.resolve.outputs.tag }}
+          RESOLVED_NPM_TAG: ${{ needs.resolve.outputs.npm_tag }}
+          RESOLVED_SHA: ${{ needs.resolve.outputs.sha }}
+        run: |
+          reject() { echo "$1" >&2; printf '## Publish rejected\n\n%s\n' "$1" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
+
+          shopt -s nullglob
+          TARBALLS=("$RUNNER_TEMP"/package/*.tgz)
+          if (( ${#TARBALLS[@]} != 1 )); then
+            reject "❌ Error: expected one package tarball from the build job, found ${#TARBALLS[@]}"
+          fi
+          TARBALL="${TARBALLS[0]}"
+
+          # npm's own reader, the one `npm publish` uses: plain tar can be fooled by a second package.json.
+          # publishConfig, tag and dist in the tarball steer the publish (proxy, registry, dist-tag) past every flag.
+          PACKAGE=$(node -e '
+            const pacote = require(require("node:path").join(process.argv[1], "npm/node_modules/pacote"));
+            pacote.manifest(process.argv[2], { fullMetadata: true, fullReadJson: true }).then((m) => {
+              const steering = ["publishConfig", "tag", "dist"].filter((key) => key in m);
+              console.log(m.name, m.version, steering.join(",") || "none");
+            });
+          ' "$(npm root -g)" "$TARBALL")
+          read -r NAME VERSION STEERING <<< "$PACKAGE"
+          if [[ "$STEERING" != "none" ]]; then
+            reject "❌ Error: the built package.json sets $STEERING, which would steer the publish"
+          fi
+          if [[ "$NAME" != "$(node -p "require('./package.json').name")" ]]; then
+            reject "❌ Error: the built package is named '$NAME'"
+          fi
+
+          if [[ "$PUBLISH_MODE" == "release" ]]; then
+            if [[ "$(git rev-parse HEAD)" != "$RESOLVED_SHA" ]]; then
+              reject "❌ Error: the branch moved on from $RESOLVED_SHA since this run started, so nothing was published. Use 'Re-run all jobs'; re-running only this job fails again."
+            fi
+            if [[ "$VERSION" != "${RESOLVED_TAG#v}" ]]; then
+              reject "❌ Error: the built package is $VERSION, not ${RESOLVED_TAG#v}"
+            fi
+            EXPECTED_NPM_TAG="$RESOLVED_NPM_TAG"
+          else
+            if [[ "$VERSION" != *"-canary.g${GITHUB_SHA:0:8}.0" ]]; then
+              reject "❌ Error: the built package is $VERSION, not a canary of ${GITHUB_SHA:0:8}"
+            fi
+            EXPECTED_NPM_TAG="canary"
+          fi
+          if ! NPM_TAG=$(.scripts/bash/npm-dist-tag-for-version "$VERSION" 2> "$RUNNER_TEMP/reject.txt"); then
+            reject "$(cat "$RUNNER_TEMP/reject.txt")"
+          fi
+          if [[ "$NPM_TAG" != "$EXPECTED_NPM_TAG" ]]; then
+            reject "❌ Error: $VERSION would publish to npm dist-tag '$NPM_TAG', not '$EXPECTED_NPM_TAG'"
+          fi
+
+          {
+            echo "GITHUB_TAG=$RESOLVED_TAG"
+            echo "NPM_TAG=$NPM_TAG"
+            echo "VERSION=$VERSION"
+            echo "TARBALL=$TARBALL"
+          } >> "$GITHUB_ENV"
+          if [[ "$PUBLISH_MODE" == "canary" ]]; then
+            echo "📦 Publishing $VERSION to npm dist-tag \`canary\`" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Guard - re-check latest right before publishing
+        if: env.NPM_TAG == 'latest'
+        shell: bash
+        run: |
+          reject() { echo "$1" >&2; printf '## Release rejected\n\n%s\n' "$1" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
+
+          # The first check ran minutes ago. Anonymous read: setup-node's .npmrc is a placeholder.
+          CURRENT_LATEST=$(env -u NPM_CONFIG_USERCONFIG npm view "$(node -p "require('./package.json').name")" dist-tags.latest) \
+            || reject "❌ Error: could not read the current npm 'latest' tag (npm view failed). Re-run once the registry is reachable."
+          .scripts/bash/npm-dist-tag-for-version "$GITHUB_TAG" "$CURRENT_LATEST" > /dev/null 2> "$RUNNER_TEMP/reject.txt" \
+            || reject "$(cat "$RUNNER_TEMP/reject.txt")"
+
+      - name: Skip a stale or already published canary
+        if: env.PUBLISH_MODE == 'canary'
+        id: canary
+        shell: bash
+        run: |
+          # Only the tip of main gets a canary, as in the canary Storybook.
+          MAIN_SHA=$(git ls-remote origin refs/heads/main | cut -f1)
+          if [[ "$MAIN_SHA" != "$GITHUB_SHA" ]]; then
+            echo "⏩ Skipped: main moved on to $MAIN_SHA"
+            echo "⏩ **Canary** skipped: stale commit, main is now \`$MAIN_SHA\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # A re-run. Anonymous read, as above; npm view exits 1 for a version that is not there.
+          if [[ -n "$(env -u NPM_CONFIG_USERCONFIG npm view "$(node -p "require('./package.json').name")@$VERSION" version 2> /dev/null)" ]]; then
+            echo "⏩ Skipped: $VERSION is already on npm"
+            echo "⏩ **Canary** skipped: \`$VERSION\` is already on npm" >> "$GITHUB_STEP_SUMMARY"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish to npm with OIDC
+        if: steps.canary.outputs.skip != 'true'
+        # A second lock: the guard already refuses a tarball that carries publishConfig.
+        run: npm publish "$TARBALL" --access public --tag "$NPM_TAG" --provenance --registry=https://registry.npmjs.org/ --@clickhouse:registry=https://registry.npmjs.org/
+      - name: Set up Git
+        if: env.PUBLISH_MODE == 'release'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+      - name: Commit the version bump
+        if: env.PUBLISH_MODE == 'release'
+        run: |
+          npm pkg set version="${GITHUB_TAG#v}"
+          git add package.json yarn.lock
+          # [skip ci]: a bump-only commit must not publish a canary or redeploy the canary Storybook.
+          git commit -m "bump version to ${GITHUB_TAG#v} [skip ci]"
+          git push
+      - name: Create and push git tag (manual trigger only)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          git tag "$GITHUB_TAG"
+          git push origin "$GITHUB_TAG"

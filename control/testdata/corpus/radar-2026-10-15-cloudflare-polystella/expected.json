@@ -1,0 +1,39 @@
+{
+  "source": "https://github.com/cloudflare/polystella",
+  "commit": "2f7a63c0630814dfbb0566988b08ddfa69a35590",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": false
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/ci.yml": "active",
+    ".github/workflows/docs.yml": "active",
+    ".github/workflows/pr-compliance.yml": "active",
+    ".github/workflows/pr-triage.yml": "active",
+    ".github/workflows/preview-releases.yml": "active",
+    ".github/workflows/release.yml": "active",
+    ".github/workflows/review-state.yml": "active",
+    ".github/workflows/review.yml": "active",
+    ".github/workflows/semgrep.yml": "active",
+    ".github/workflows/zizmor.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High pnpm cache path into the release was judged overstated: the writers the path names are pull_request runs, whose cache lives under the pull request merge ref and is never restored by the release, so only a writer of the default branch reaches it, Medium at most. No job here declares cache-mode, so GitHub keeps the cache of every low-trust run read-only and grants no job cache write: ISSUE-705 is silent and no cache path exists, so the cache ceiling admits none.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "poisoned_cache",
+        "subjectContains": "",
+        "tier": "none"
+      }
+    ]
+  }
+}

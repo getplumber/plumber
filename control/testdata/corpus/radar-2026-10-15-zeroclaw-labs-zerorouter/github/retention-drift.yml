@@ -1,0 +1,72 @@
+name: Retention drift
+
+# `tiers.toml` labels every lane with what its upstream does with a request
+# after answering it, and ZeroRouter publishes those labels to customers. The
+# labels are pinned by a human against a policy page on a stated date; nothing
+# at runtime rechecks them, and the expensive direction is silent: a provider
+# rewrites its retention terms and ZeroRouter keeps publishing the old claim.
+#
+# This re-fetches each pinned page daily and fails when one no longer reads the
+# way it read on `verified`. A changed page does NOT mean the posture flipped —
+# it means a human must re-read it and re-pin. Read-only: `retention-drift`
+# never writes a label, so the worst case is a red run.
+#
+# Separate from `catalog-drift` on purpose. That job reconciles one structured
+# catalog and answers a billing question; this one fetches several vendors'
+# marketing-hosted policy pages and answers a legal-adjacent one. Coupling them
+# would let a marketing CDN outage redden the check that guards prices.
+
+on:
+  schedule:
+    # 08:30 UTC daily, half an hour after catalog drift, so the two jobs do not
+    # report at the same instant and get read as one failure.
+    - cron: '30 8 * * *'
+  pull_request:
+    paths:
+      - 'router/config/tiers.toml'
+      # A retention label is only as good as the attestation that backs it.
+      # `attestation_header` / `attestation_expect` live in providers.json and
+      # are what a response must carry for a zero-retention lane to be served
+      # as one — so changing them changes what this job is re-verifying, while
+      # `tiers.toml` stays byte-identical. Before this entry, such a pull
+      # request ran neither drift job.
+      - 'router/config/providers.json'
+      - 'router/src/retention.rs'
+      # Where the attestation fields are parsed and validated.
+      - 'router/src/providers.rs'
+      - '.github/workflows/retention-drift.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    name: Re-verify the evidence behind every retention label
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Cache cargo
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            router/target
+          key: retention-drift-${{ runner.os }}-${{ hashFiles('router/Cargo.lock') }}
+
+      - name: Build the admin binary
+        working-directory: router
+        run: cargo build --locked --bin zerorouter
+
+      # No DATABASE_URL: `retention-drift` is dispatched before the pool is
+      # opened, precisely so this step needs no Postgres.
+      #
+      # `--corroborate` is deliberately NOT passed. It cannot change the exit
+      # code, and leaving it off keeps a third party's availability out of a job
+      # that answers one question about `tiers.toml`. Run it by hand when
+      # reviewing a posture change.
+      - name: Re-verify retention claims
+        working-directory: router
+        run: ./target/debug/zerorouter admin retention-drift --tiers config/tiers.toml

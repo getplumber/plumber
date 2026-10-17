@@ -1,0 +1,41 @@
+name: Code quality checks
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      # Maintenance branches for stable/rc releases
+      - 'chore/v*'
+  # Runs for fork PRs as well (a `push` event only fires in the fork).
+  pull_request:
+
+env:
+  HUSKY: 0
+
+jobs:
+  code-quality-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24.x'
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Typecheck
+        run: yarn typecheck
+
+      - name: Linter
+        run: yarn lint
+
+      - name: Formatter
+        run: yarn format
+
+      - name: Circular Dependencies
+        run: yarn circular-dependency:check

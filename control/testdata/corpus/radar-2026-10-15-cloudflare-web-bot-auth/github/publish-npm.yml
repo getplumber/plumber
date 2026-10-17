@@ -1,0 +1,45 @@
+name: Publish npm
+
+on:
+  push:
+    tags:
+      - "http-message-sig@*"
+      - "jsonwebkey-thumbprint@*"
+      - "web-bot-auth@*"
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - run: npm ci
+      - run: npm run build
+      - run: npm run test
+
+      - name: Publish http-message-sig
+        if: startsWith(github.ref_name, 'http-message-sig@')
+        run: |
+          test "${GITHUB_REF_NAME#*@}" = "$(node -p "require('./packages/http-message-sig/package.json').version")"
+          npm publish -w http-message-sig --access public
+
+      - name: Publish jsonwebkey-thumbprint
+        if: startsWith(github.ref_name, 'jsonwebkey-thumbprint@')
+        run: |
+          test "${GITHUB_REF_NAME#*@}" = "$(node -p "require('./packages/jsonwebkey-thumbprint/package.json').version")"
+          npm publish -w jsonwebkey-thumbprint --access public
+
+      - name: Publish web-bot-auth
+        if: startsWith(github.ref_name, 'web-bot-auth@')
+        run: |
+          test "${GITHUB_REF_NAME#*@}" = "$(node -p "require('./packages/web-bot-auth/package.json').version")"
+          npm publish -w web-bot-auth --access public

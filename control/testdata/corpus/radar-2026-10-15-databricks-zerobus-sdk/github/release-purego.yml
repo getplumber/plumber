@@ -1,0 +1,111 @@
+name: Build PureGo
+run-name: "Build PureGo SDK ${{ github.ref_name }}"
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and test
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate tag against SDK version
+        if: github.ref_type == 'tag'
+        working-directory: purego
+        shell: bash
+        run: |
+          tag_version="${GITHUB_REF_NAME#purego/v}"
+          # Compare the X.Y.Z core so prerelease tags (purego/v1.2.0-rc1) still pass.
+          tag_core="${tag_version%%-*}"
+          src_version="$(sed -n 's/^const version = "\(.*\)"$/\1/p' zerobus/sdk.go)"
+          if [[ -z "$src_version" ]]; then
+            echo "Could not read the version const from purego/zerobus/sdk.go" >&2
+            exit 1
+          fi
+          if [[ "$tag_core" != "$src_version" ]]; then
+            echo "Tag $GITHUB_REF_NAME implies version $tag_core, but" \
+              "purego/zerobus/sdk.go declares $src_version" >&2
+            exit 1
+          fi
+          echo "Tag $GITHUB_REF_NAME matches SDK version $src_version."
+
+      - name: Get JFrog OIDC token
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/jfrog-oidc-token.sh"
+
+      - name: Configure Go module proxy
+        shell: bash
+        run: |
+          echo "GOPROXY=https://databricks.jfrog.io/artifactory/api/go/db-golang,direct" >> "$GITHUB_ENV"
+          echo "GONOSUMDB=*" >> "$GITHUB_ENV"
+          cat > ~/.netrc << EOF
+          machine databricks.jfrog.io
+          login gha-service-account
+          password ${JFROG_ACCESS_TOKEN}
+          EOF
+          chmod 600 ~/.netrc
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.25"
+
+      - name: Validate module
+        shell: bash
+        run: |
+          module="$(cd purego && go list -m)"
+          if [[ "$module" != "github.com/databricks/zerobus-sdk/purego" ]]; then
+            echo "Unexpected module path: $module" >&2
+            exit 1
+          fi
+
+      - name: Verify module files
+        working-directory: purego
+        shell: bash
+        run: |
+          go mod verify
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
+      - name: Build SDK
+        working-directory: purego
+        run: go build ./...
+
+      - name: Vet SDK
+        working-directory: purego
+        run: go vet ./...
+
+      - name: Test SDK with race detector
+        working-directory: purego
+        run: go test -race ./...
+
+      - name: Test SDK without CGO
+        working-directory: purego
+        env:
+          CGO_ENABLED: "0"
+        run: go test ./...
+
+      - name: Verify examples module
+        working-directory: purego/examples
+        shell: bash
+        run: |
+          go mod verify
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+          go build ./...
+          go test ./...

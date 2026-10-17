@@ -1,0 +1,324 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-release:
+    name: Build Release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            asset_name: claudear-linux-amd64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            asset_name: claudear-macos-arm64
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set version from tag
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          sed -i.bak '/^\[package\]/,/^$/ s/^version = .*/version = "'"${VERSION}"'"/' Cargo.toml && rm -f Cargo.toml.bak
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Build dashboard
+        run: cd dashboard && bun install --frozen-lockfile && bun run build
+        env:
+          SENTRY_RELEASE: "claudear-dashboard@${{ steps.version.outputs.version }}"
+
+      - name: Cache cargo registry
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target }}-cargo-
+
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package binary
+        run: |
+          mkdir -p release
+          cp target/${{ matrix.target }}/release/claudear release/${{ matrix.asset_name }}
+          cd release
+          tar -czvf ${{ matrix.asset_name }}.tar.gz ${{ matrix.asset_name }}
+
+      - name: Upload Release Asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.ref_name }}" release/${{ matrix.asset_name }}.tar.gz --clobber
+
+  publish-docker:
+    name: Publish Docker Image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set version from tag
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          sed -i.bak '/^\[package\]/,/^$/ s/^version = .*/version = "'"${VERSION}"'"/' Cargo.toml && rm -f Cargo.toml.bak
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}},value=${{ github.event.release.tag_name }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ github.event.release.tag_name }}
+            type=semver,pattern={{major}},value=${{ github.event.release.tag_name }}
+            type=raw,value=latest,enable=${{ !github.event.release.prerelease }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            APP_VERSION=${{ steps.version.outputs.version }}
+            SENTRY_DSN=${{ secrets.SENTRY_DSN_DASHBOARD }}
+            SENTRY_ENVIRONMENT=production
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  publish-homebrew:
+    name: Publish to Homebrew
+    needs: build-release
+    runs-on: ubuntu-latest
+    if: ${{ !contains(github.ref_name, '-') }}  # Skip prereleases
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Get version
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: echo "version=${RELEASE_TAG#v}" >> $GITHUB_OUTPUT
+
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p assets
+          gh release download ${{ github.ref_name }} \
+            --pattern "claudear-*.tar.gz" \
+            --dir assets
+
+      - name: Calculate checksums
+        id: checksums
+        run: |
+          echo "sha256_macos_arm64=$(sha256sum assets/claudear-macos-arm64.tar.gz | cut -d ' ' -f 1)" >> $GITHUB_OUTPUT
+          echo "sha256_linux_amd64=$(sha256sum assets/claudear-linux-amd64.tar.gz | cut -d ' ' -f 1)" >> $GITHUB_OUTPUT
+
+      - name: Generate Homebrew formula
+        run: |
+          sed -e "s/{{VERSION}}/${{ steps.version.outputs.version }}/g" \
+              -e "s/{{REPO_OWNER}}/${{ github.repository_owner }}/g" \
+              -e "s/{{SHA256_MACOS_ARM64}}/${{ steps.checksums.outputs.sha256_macos_arm64 }}/g" \
+              -e "s/{{SHA256_LINUX_AMD64}}/${{ steps.checksums.outputs.sha256_linux_amd64 }}/g" \
+              .github/formula/claudear.rb.template > claudear.rb
+
+      - name: Push to Homebrew tap
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          git clone https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/abnegate/homebrew-tap.git
+          mkdir -p homebrew-tap/Formula
+          cp claudear.rb homebrew-tap/Formula/
+          cd homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/claudear.rb
+          git commit -m "Update claudear to ${{ steps.version.outputs.version }}"
+          git push
+
+  build-deb:
+    name: Build Debian Package
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            arch: amd64
+          - target: aarch64-unknown-linux-gnu
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set version from tag
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          sed -i.bak '/^\[package\]/,/^$/ s/^version = .*/version = "'"${VERSION}"'"/' Cargo.toml && rm -f Cargo.toml.bak
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Build dashboard
+        run: cd dashboard && bun install --frozen-lockfile && bun run build
+        env:
+          SENTRY_RELEASE: "claudear-dashboard@${{ steps.version.outputs.version }}"
+
+      - name: Install cargo-deb
+        run: cargo install cargo-deb
+
+      - name: Build binary
+        run: cargo build --release --target ${{ matrix.target }}
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+
+      - name: Build Debian package
+        run: cargo deb --target ${{ matrix.target }} --no-build
+
+      - name: Upload deb to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DEB_FILE=$(find target/${{ matrix.target }}/debian -name "*.deb" | head -1)
+          gh release upload ${{ github.ref_name }} "$DEB_FILE" --clobber
+
+  publish-apt:
+    name: Publish to APT Repository
+    needs: build-deb
+    runs-on: ubuntu-latest
+    if: ${{ !contains(github.ref_name, '-') }}  # Skip prereleases
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install APT repository tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev apt-utils gnupg
+
+      - name: Download deb packages
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p debs
+          gh release download ${{ github.ref_name }} \
+            --pattern "*.deb" \
+            --dir debs
+
+      - name: Import GPG key
+        env:
+          APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+        run: |
+          echo "$APT_GPG_PRIVATE_KEY" | gpg --batch --import
+
+      - name: Clone APT repository
+        env:
+          APT_REPO_TOKEN: ${{ secrets.APT_REPO_TOKEN }}
+        run: |
+          git clone https://x-access-token:${APT_REPO_TOKEN}@github.com/abnegate/apt-repo.git
+
+      - name: Update APT repository
+        env:
+          GPG_KEY_ID: ${{ secrets.APT_GPG_KEY_ID }}
+        run: |
+          # Replace this package's debs rather than adding to them, so the
+          # pool holds one version per package and the Pages site stays small
+          mkdir -p apt-repo/pool/main
+          rm -f apt-repo/pool/main/claudear_*.deb
+          cp debs/*.deb apt-repo/pool/main/
+
+          cd apt-repo
+
+          mkdir -p dists/stable/main/binary-amd64
+          mkdir -p dists/stable/main/binary-arm64
+
+          dpkg-scanpackages --multiversion --arch amd64 pool/ > dists/stable/main/binary-amd64/Packages
+          dpkg-scanpackages --multiversion --arch arm64 pool/ > dists/stable/main/binary-arm64/Packages
+
+          gzip -k -f dists/stable/main/binary-amd64/Packages
+          gzip -k -f dists/stable/main/binary-arm64/Packages
+
+          # Generate Release file
+          cd dists/stable
+          cat > Release << EOF
+          Origin: abnegate
+          Label: abnegate
+          Suite: stable
+          Codename: stable
+          Architectures: amd64 arm64
+          Components: main
+          Description: APT repository for abnegate packages
+          EOF
+
+          # Add checksums
+          apt-ftparchive release . >> Release
+
+          # Sign Release file
+          gpg --batch --yes --default-key "$GPG_KEY_ID" -abs -o Release.gpg Release
+          gpg --batch --yes --default-key "$GPG_KEY_ID" --clearsign -o InRelease Release
+
+          cd ../..
+
+          # Commit and push
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Update packages for ${{ github.ref_name }}"
+          git push

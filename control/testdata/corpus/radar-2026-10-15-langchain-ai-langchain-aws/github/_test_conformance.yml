@@ -1,0 +1,49 @@
+name: conformance-test
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        required: true
+        type: string
+        description: "From which folder this pipeline executes"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    runs-on: ubuntu-latest
+    services:
+      dynamodb-local:
+        image: amazon/dynamodb-local
+        ports:
+          - 8000:8000
+    strategy:
+      matrix:
+        python-version:
+          - "3.12"
+    name: "conformance #${{ matrix.python-version }}"
+    env:
+      DYNAMODB_ENDPOINT: "http://localhost:8000"
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python ${{ matrix.python-version }} + uv
+        uses: "./.github/actions/uv_setup"
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        shell: bash
+        run: uv sync --group test
+
+      - name: Run conformance tests
+        shell: bash
+        run: |
+          uv run --group test pytest tests/integration_tests/checkpoint/dynamodb/test_conformance.py -xvs

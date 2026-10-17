@@ -1,0 +1,132 @@
+name: C++ CI
+
+on:
+  workflow_call:
+
+env:
+  RUST_NIGHTLY_TOOLCHAIN: nightly-2026-07-23
+
+jobs:
+  fmt:
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    defaults:
+      run:
+        working-directory: cpp
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install clang-format
+        run: sudo apt-get update && sudo apt-get install -y clang-format
+      - name: Check formatting
+        run: make fmt-check
+
+  test:
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    defaults:
+      run:
+        working-directory: cpp
+        shell: bash
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Get JFrog OIDC token
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/jfrog-oidc-token.sh"
+      - name: Configure Cargo registry
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/configure-cargo.sh"
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      - name: Build (SDK, tests, examples)
+        run: make build
+
+      - name: Run tests
+        run: make test
+
+  sanitize:
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    defaults:
+      run:
+        working-directory: cpp
+        shell: bash
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Get JFrog OIDC token
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/jfrog-oidc-token.sh"
+      - name: Configure Cargo registry
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/configure-cargo.sh"
+
+      # Nightly + rust-src: the sanitizer build instruments the Rust FFI too
+      # (BuildRustFfi.cmake), which needs -Zsanitizer + -Zbuild-std.
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # nightly
+        with:
+          toolchain: ${{ env.RUST_NIGHTLY_TOOLCHAIN }}
+          components: rust-src
+
+      # clang: the instrumented Rust archive emits LLVM sanitizer runtime calls,
+      # so the C++ side must link with clang (GCC's runtime can't resolve them).
+      # Unpinned; a clang/rustc LLVM mismatch would surface as unresolved
+      # __tsan_*/__asan_* at link, not silent breakage.
+      - name: Install clang
+        run: sudo apt-get update && sudo apt-get install -y clang
+
+      # Build the SDK, tests, and examples with AddressSanitizer and run the
+      # existing suite under it. This catches the memory bugs a thin FFI wrapper
+      # is prone to (use-after-free, double-free, buffer overflow), in both the
+      # C++ wrapper and the instrumented Rust core. Debug build for readable
+      # stack traces.
+      - name: Build + test with AddressSanitizer
+        env:
+          # The Rust core's global tokio runtime is intentionally never torn
+          # down, so the leak detector would flag it as a false positive.
+          # Disable leak detection; keep the use-after-free/double-free checks.
+          ASAN_OPTIONS: detect_leaks=0
+        run: make test SANITIZE=address BUILD_TYPE=Debug CLANG_CC=clang CLANG_CXX=clang++
+
+  sanitize-thread:
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    defaults:
+      run:
+        working-directory: cpp
+        shell: bash
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Get JFrog OIDC token
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/jfrog-oidc-token.sh"
+      - name: Configure Cargo registry
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/configure-cargo.sh"
+
+      # Nightly + rust-src: the sanitizer build instruments the Rust FFI too
+      # (BuildRustFfi.cmake), which needs -Zsanitizer + -Zbuild-std.
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # nightly
+        with:
+          toolchain: ${{ env.RUST_NIGHTLY_TOOLCHAIN }}
+          components: rust-src
+
+      # clang: the instrumented Rust archive emits LLVM sanitizer runtime calls,
+      # so the C++ side must link with clang (GCC's runtime can't resolve them).
+      # Unpinned; a clang/rustc LLVM mismatch would surface as unresolved
+      # __tsan_*/__asan_* at link, not silent breakage.
+      - name: Install clang
+        run: sudo apt-get update && sudo apt-get install -y clang
+
+      # Build + run the suite under ThreadSanitizer over the wrapper's
+      # concurrency contracts (e.g. concurrent readers on a shared ProtoSchema).
+      # The Rust FFI is instrumented too, so races inside the core are visible,
+      # not just on the C++ side. Debug build for readable stack traces.
+      - name: Build + test with ThreadSanitizer
+        env:
+          # Fail the job on the first race rather than merely printing it.
+          TSAN_OPTIONS: halt_on_error=1
+        run: make test SANITIZE=thread BUILD_TYPE=Debug CLANG_CC=clang CLANG_CXX=clang++

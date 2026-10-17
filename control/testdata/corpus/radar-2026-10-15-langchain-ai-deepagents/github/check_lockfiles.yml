@@ -1,0 +1,35 @@
+# Check that all uv.lock files are up-to-date
+#
+# Prevents PRs from being merged when lockfiles are out of sync with pyproject.toml
+
+name: "🔒 Check Lockfiles"
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  check-lockfiles:
+    name: "Verify uv.lock files"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: "📋 Checkout Code"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: "🐍 Set up Python and uv"
+        uses: "./.github/actions/uv_setup"
+        with:
+          python-version: "3.14"
+          # `uv lock --check` never runs `uv sync`, so no cache dir exists,
+          # and setup-uv's post-job save throws on a missing cache path,
+          # failing the job. (`ignore-nothing-to-cache` would fix this too,
+          # but `uv_setup` doesn't forward it.)
+          enable-cache: "false"
+
+      - name: "🔍 Check all lockfiles"
+        run: python3 .github/scripts/checks/check_lockfiles_pre_commit.py

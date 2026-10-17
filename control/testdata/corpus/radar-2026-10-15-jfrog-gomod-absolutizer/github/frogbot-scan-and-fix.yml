@@ -1,0 +1,37 @@
+name: "Frogbot Scan and Fix"
+on:
+  push:
+    # Creating fix pull requests will be triggered by any push to one of the these branches.
+    # You can add or replace to any branch you want to open fix pull requests for.
+    branches:
+      - "dev"
+
+permissions:
+  contents: write
+  pull-requests: write
+  security-events: write
+jobs:
+  create-fix-pull-requests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      # Install prerequisites
+      - name: Setup Go
+        uses: actions/setup-go@v3
+        with:
+          go-version: 1.18.x
+
+      - uses: jfrog/frogbot@v2
+        env:
+          # [Mandatory]
+          # JFrog platform URL (This functionality requires version 3.29.0 or above of Xray)
+          JF_URL: ${{ secrets.FROGBOT_URL }}
+
+          # [Mandatory if JF_USER and JF_PASSWORD are not provided]
+          # JFrog access token with 'read' permissions on Xray service
+          JF_ACCESS_TOKEN: ${{ secrets.FROGBOT_ACCESS_TOKEN }}
+
+          # [Mandatory]
+          # The GitHub token automatically generated for the job
+          JF_GIT_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,48 @@
+{
+  "source": "https://github.com/ClickHouse/ClickBOM",
+  "commit": "7e75e2741462b11b6f6e632b738fab3634fe1f92",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "copilot",
+      "known": true
+    },
+    {
+      "name": "github-pages",
+      "known": true,
+      "branchPolicy": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/docker-security.yml": "active",
+    ".github/workflows/tests.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "defaultTokenWrite": "false",
+  "defaultTokenSource": "log",
+  "note": "The High paths through the docker scout `install.sh` from `main` and `anchore/sbom-action@v0` were judged overstated: the job holds no secret and the repository default token is read-only (the `GITHUB_TOKEN Permissions` block of a recent run log), so a compromised action only runs code on the runner, Medium at most.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "https://raw.githubusercontent.com/docker/scout-cli/main/install.sh",
+        "tier": "medium"
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "anchore/sbom-action@v0",
+        "tier": "medium"
+      }
+    ]
+  }
+}

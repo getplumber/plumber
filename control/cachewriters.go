@@ -71,8 +71,8 @@ func cacheWriters(paths []AttackPath, sit *Situation) map[string]cacheWriter {
 			if js.Dead {
 				continue
 			}
-			scopes := cacheWriterScope(p.EntryKind, js)
-			if !slices.Contains(scopes, "default") && !slices.Contains(scopes, "any") {
+			scopes := cacheWriterScope(p.EntryKind, p.Entry.Subject, js)
+			if !savesShared(scopes) {
 				// The entered run saves nothing (GitHub's read-only
 				// default), or only in a pull request's, a tag's or
 				// another branch's scope, which runs of that same ref
@@ -113,20 +113,33 @@ func cacheWriters(paths []AttackPath, sit *Situation) map[string]cacheWriter {
 // other the low-trust event only reads. Every other entry (a mutable
 // dependency, an unprotected push, an untrusted expression) takes the
 // job's save scopes as they are, since nothing about the entry narrows
-// which of the job's runs holds it: an untrusted expression's value need
-// not come from a fork pull request alone (github.event.head_commit.message
-// is committer-controlled on an ordinary push too). A job carrying no
-// trigger saves under "any" (GitLab), which narrows nothing. Mirrors the
+// which of the job's runs holds it, except an untrusted expression whose
+// context only some events carry (expressionEvents): it holds only in
+// those events' runs, so it saves only where they save
+// (JobSituation.SaveScopesByEvent). A pull request title saves nothing
+// for the default branch: its pull_request run saves in the merge ref's
+// scope and its pull_request_target run only reads, whatever push run
+// the job also has. A context the table does not know takes the job's
+// save scopes. A job carrying no trigger saves under "any" (GitLab),
+// which narrows nothing. Mirrors the
 // rego entry_cache_scope (policies/situation/situation.rego) for the
 // entries a finding builds (pr_target, mutable_dependency,
 // untrusted_expression).
-func cacheWriterScope(kind EntryKind, js JobSituation) []string {
+func cacheWriterScope(kind EntryKind, subject string, js JobSituation) []string {
 	var run string
 	switch kind {
 	case EntryForkPR:
 		run = "pull_request"
 	case EntryPRTarget:
+		if scopes, ok := eventSaveScopes(js.PrivilegedTriggers, js); ok {
+			if savesShared(scopes) {
+				return []string{"default"}
+			}
+			return nil
+		}
 		run = "default"
+	case EntryUntrustedExpression:
+		return expressionSaveScopes(subject, js)
 	default:
 		return js.CacheScopes
 	}
@@ -134,6 +147,14 @@ func cacheWriterScope(kind EntryKind, js JobSituation) []string {
 		return []string{run}
 	}
 	return nil
+}
+
+// savesShared reports whether a run saving under scopes saves what runs
+// of other refs restore: the default branch's scope, or any scope (a job
+// carrying no trigger). A save in a pull request's, a tag's or another
+// branch's scope reaches runs of that same ref only.
+func savesShared(scopes []string) bool {
+	return slices.Contains(scopes, "default") || slices.Contains(scopes, "any")
 }
 
 // savingCaches is the CacheFacts of js that actually save (Mode "save" or
@@ -185,9 +206,10 @@ func unionScopes(a, b []string) []string {
 // restores a cache its cache-mode leaves on (RestoresCache). The key
 // template never decides the edge; it only names the cache
 // (reachThroughCache). Both facts are settled by the situation, so the
-// state is "proven"; a restorer fact the situation could not settle would
-// carry "unknown" and keep the edge, missing data never proving a
-// negative.
+// state is "proven": no fact produces "unknown" today. The unknown state
+// (and weakerCacheWriterState, writersUnknown, the claims reading it) is
+// kept for a restorer fact a later lane or provider cannot settle, which
+// keeps the edge, missing data never proving a negative.
 func cacheWriterReaches(_ cacheWriter, restoreJS JobSituation) (reaches bool, state string) {
 	return restoreJS.RestoresCache && !restoreJS.Dead, "proven"
 }
@@ -231,7 +253,7 @@ func (g *pathGroup) reachThroughCache(w cacheWriter, sit *Situation) bool {
 	}
 	if len(reached) != len(g.jobs)-1 {
 		g.jobs = append([]string{writer}, reached...)
-		g.reach, g.unresolvable, g.cause, g.surviving = reachOver(sit, reached, g.anchor.kind, g.anchor.fact.Line)
+		g.reach, g.unresolvable, g.cause, g.surviving = reachOver(sit, reached, g.anchor.kind, g.anchor.fact.Subject)
 	}
 	g.cacheStates = states
 	g.writersUnknown = !proven

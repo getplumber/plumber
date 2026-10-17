@@ -1,0 +1,88 @@
+name: "Static Analysis"
+on:
+  push:
+    branches:
+      - '**'
+    tags-ignore:
+      - '**'
+  pull_request:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  Go-Lint:
+    name: Lint ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu, windows, macos ]
+    runs-on: ${{ matrix.os }}-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Run Go vet
+        run: go vet -v ./...
+
+  Static-Check:
+    name: Static Check ubuntu-latest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Run golangci linter
+        uses: jfrog/.github/actions/golangci-lint@main
+
+      - name: Check AI help coverage
+        uses: jfrog/.github/actions/ai-help-coverage@main
+        with:
+          # Commands still missing AI-oriented help. Remove each once a
+          # GetAIDescription() is added and wired through ResolveDescription.
+          skip-commands: |
+            agent plugins delete
+            agent plugins install
+            agent plugins list
+            agent plugins publish
+            agent plugins search
+            agent plugins update
+            agent skills delete
+            agent skills install
+            agent skills list
+            agent skills publish
+            agent skills search
+            agent skills update
+            skills delete
+            skills install
+            skills list
+            skills publish
+            skills search
+            skills update
+
+  Go-Sec:
+    name: Go-Sec ubuntu-latest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+        with:
+          go-version-file: 'go.mod'
+        
+      - name: Run Go-Sec scanner
+        uses: jfrog/.github/actions/gosec-scanner@main
+

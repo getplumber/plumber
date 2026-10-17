@@ -1,0 +1,38 @@
+{
+  "source": "https://github.com/run-llama/pdfium-binaries",
+  "commit": "f15f55200f695a13c2ca3aab35f8aa40a596b2f7",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "llamaparse",
+  "branches": [
+    {
+      "name": "llamaparse",
+      "protected": false
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/build-all.yml": "active",
+    ".github/workflows/build-one.yml": "active",
+    ".github/workflows/build.yml": "active",
+    ".github/workflows/mac-univ.yml": "active",
+    ".github/workflows/patch.yml": "active",
+    ".github/workflows/trigger.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "defaultTokenWrite": "true",
+  "defaultTokenSource": "effect",
+  "note": "The High unprotected `llamaparse` path was judged overstated: `patch.yml` runs on a bare `on: push` (any branch) with no secret, so the branch is not what lets it run and nothing beyond the writer's own push is reached, Low. The write default is recorded from the effect the assessment saw: `trigger.yml` dispatches workflows with the default token and succeeds.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "unprotected_push",
+        "subjectContains": "llamaparse",
+        "tier": "low",
+        "pending": "an unprotected-branch path whose walked job proves only the default token's write scope (what a writer already holds: no secret, no publish, no release, no environment) still assembles at High."
+      }
+    ]
+  }
+}

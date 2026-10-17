@@ -1,0 +1,39 @@
+name: "Frogbot Scan Pull Request"
+
+on:
+  pull_request_target:
+    types: [opened, synchronize]
+    branches:
+      - "main"
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  scan-pull-request:
+    if: ${{ github.actor != 'dependabot[bot]' }}
+    runs-on: ubuntu-latest
+    environment: frogbot
+    steps:
+      - name: Checkout the repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+          # Frogbot has to scan the fork's own dependency tree. Gated by the
+          # ``frogbot`` environment: a maintainer approves before fork code is
+          # fetched into this secrets-bearing job.
+          allow-unsafe-pr-checkout: true
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.13"
+
+      - uses: jfrog/frogbot@17efdfdbb49cb4ea05a9ac58bb29483763a0f5b9 # v2.35.1
+        env:
+          JF_URL: ${{ secrets.FROGBOT_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.FROGBOT_ACCESS_TOKEN }}
+          JF_GIT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          JF_FAIL: "TRUE"
+          JF_MIN_SEVERITY: "High"

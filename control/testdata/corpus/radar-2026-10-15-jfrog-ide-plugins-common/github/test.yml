@@ -1,0 +1,76 @@
+name: Test
+
+on:
+  push:
+  # Triggers the workflow on labeled PRs only.
+  pull_request_target:
+    types: [labeled]
+
+# Ensures that only the latest commit is running for each PR at a time.
+# Ignores this rule for push events.
+concurrency:
+  group: ${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+jobs:
+  test:
+    if: contains(github.event.pull_request.labels.*.name, 'safe to test') || github.event_name == 'push'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macOS-latest]
+        node: [18, 20, 22]
+        go: [1.23, 1.24]
+    env:
+      JF_CLI_TEST_PASSWORD: ${{ secrets.JFROG_CLI_TEST_PASSWORD }}
+      JF_CLI_TEST_USER: ${{ secrets.JFROG_CLI_TEST_USER }}
+      JF_CLI_TEST_URL: ${{ secrets.JFROG_CLI_TEST_URL }}
+      JF_CLI_TEST_ACCESS_TOKEN: ${{ secrets.JFROG_CLI_TEST_ACCESS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          
+      - name: Unlabel 'safe to test'
+        uses: actions-ecosystem/action-remove-labels@v1
+        if: ${{ github.event_name != 'push' }}
+        continue-on-error: true
+        with:
+            labels: "safe to test"
+      # Install required tools
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 7.6
+      - name: Setup NodeJS
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          check-latest: true
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+
+      # Run tests
+      - name: Tests on macOS, Linux
+        run: ./gradlew clean test
+        env:
+          JF_CLI_TEST_PASSWORD: ${{ secrets.JFROG_CLI_TEST_PASSWORD }}
+          JF_CLI_TEST_USER: ${{ secrets.JFROG_CLI_TEST_USER }}
+          JF_CLI_TEST_URL: ${{ secrets.JFROG_CLI_TEST_URL }}
+          JF_CLI_TEST_ACCESS_TOKEN: ${{ secrets.JFROG_CLI_TEST_ACCESS_TOKEN }}
+        if: runner.os != 'Windows'
+      - name: Tests on Windows
+        env:
+          JF_CLI_TEST_PASSWORD: ${{ secrets.JFROG_CLI_TEST_PASSWORD }}
+          JF_CLI_TEST_USER: ${{ secrets.JFROG_CLI_TEST_USER }}
+          JF_CLI_TEST_URL: ${{ secrets.JFROG_CLI_TEST_URL }}
+          JF_CLI_TEST_ACCESS_TOKEN: ${{ secrets.JFROG_CLI_TEST_ACCESS_TOKEN }}
+        run: ./gradlew.bat clean test
+        if: runner.os == 'Windows'

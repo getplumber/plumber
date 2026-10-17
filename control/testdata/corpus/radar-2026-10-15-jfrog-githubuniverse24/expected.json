@@ -1,0 +1,39 @@
+{
+  "source": "https://github.com/jfrog/GitHubUniverse24",
+  "commit": "c35e31574f058495e79b34e116d543fb8e239662",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": false
+    }
+  ],
+  "environments": [
+    {
+      "name": "frogbot",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/frogbot-scan-and-fix.yml": "active",
+    ".github/workflows/frogbot-scan-pr.yml": "active",
+    ".github/workflows/jfrog-sast.yml": "disabled_inactivity",
+    ".github/workflows/main.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The Critical pull_request_target path was judged real: the Frogbot scan names environment `frogbot`, which exists with no protection rule, so anyone who opens a pull request runs the package manager on their own manifests with `JF_ACCESS_TOKEN`.",
+  "expect": {
+    "paths": [
+      {
+        "entryKind": "pr_target",
+        "tier": "critical",
+        "subjectContains": "github.event.pull_request.head.sha",
+        "actor": "outsider"
+      }
+    ]
+  }
+}

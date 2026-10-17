@@ -1,0 +1,56 @@
+{
+  "source": "https://github.com/jfrog/evidence-integration",
+  "commit": "8b03af28fe1b6159c67d59002b2e371a7cdc152e",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/quoteofday-ci.yml": "active",
+    ".github/workflows/ai-translate-ci.yml": "active",
+    ".github/workflows/create-application-version.yml": "active",
+    ".github/workflows/promote-application-version.yml": "active",
+    ".github/workflows/develocity-scan.yml": "active",
+    ".github/workflows/quotopia-ui-ci.yml": "active",
+    ".github/workflows/create-jira-evidence.yml": "active",
+    ".github/workflows/end2end-tests.yml": "active",
+    ".github/workflows/release-application-version.yml": "active",
+    ".github/workflows/test-evd.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "actionMetadata": {
+    "SonarSource/sonarqube-scan-action@v5": {
+      "refKind": "tag",
+      "advisories": [
+        "GHSA-5xq9-5g24-4g6f"
+      ],
+      "advisorySeverities": {
+        "GHSA-5xq9-5g24-4g6f": "high"
+      }
+    }
+  },
+  "note": "The Critical path through `SonarSource/sonarqube-scan-action@v5` was judged overstated: its advisory (GHSA-5xq9-5g24-4g6f, rated high) needs user-controlled `args` on a Windows runner while this workflow passes literal `args` on ubuntu-latest on push and dispatch only, so the residual is the High mutable-tag path; the three High cache paths were judged overstated because every writer of the restored caches is a push, dispatch or workflow_call run, no outsider. No job here declares cache-mode, so GitHub keeps the cache of every low-trust run read-only and grants no job cache write: ISSUE-705 is silent and no cache path exists, so the cache ceiling admits none.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "SonarSource/sonarqube-scan-action@v5",
+        "tier": "high",
+        "pending": "the advisory's stated preconditions (user-controlled `args`, a Windows runner) are not read, only its severity caps the path, and a high-rated advisory caps nothing, so the path stays Critical through the known vulnerability."
+      },
+      {
+        "entryKind": "poisoned_cache",
+        "subjectContains": "",
+        "tier": "none"
+      }
+    ]
+  }
+}

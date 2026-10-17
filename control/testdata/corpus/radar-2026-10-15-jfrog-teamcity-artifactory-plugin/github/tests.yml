@@ -1,0 +1,68 @@
+name: Tests
+on: [ push, pull_request ]
+
+jobs:
+  Artifactory-TeamCity-Plugin-Tests:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, macos-latest, windows-2022 ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Install Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: "temurin"
+
+      - name: Run tests
+        run: mvn -V -B -U --no-transfer-progress clean verify
+
+  E2E-Build-Publish:
+    name: E2E build & publish (TeamCity 2025.11 -> Artifactory on JDK 21)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Install Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: "21"
+          distribution: "temurin"
+
+      - name: Build plugin
+        run: mvn -V -B -U --no-transfer-progress -DskipTests -pl assembly -am package
+
+      # Full build-and-publish E2E: the script stands up Artifactory Pro (with
+      # the RTLIC license) + PostgreSQL and a TeamCity 2025.11 server + agent,
+      # runs a real build through the plugin, and verifies the artifact and
+      # build-info actually land in Artifactory. The plugin authenticates with
+      # USER_NAME / PASSWORD. If the RTLIC secret is unavailable (e.g. on fork
+      # PRs), the script falls back to publishing into an existing generic repo.
+      - name: E2E build-and-publish test
+        env:
+          TEAMCITY_IMAGE: "jetbrains/teamcity-server:2025.11"
+          TEAMCITY_AGENT_IMAGE: "jetbrains/teamcity-agent:2025.11"
+          ARTIFACTORY_IMAGE: "releases-docker.jfrog.io/jfrog/artifactory-pro:latest"
+          ARTIFACTORY_LICENSE: ${{ secrets.RTLIC }}
+          # Runtime credentials the plugin uses to authenticate to Artifactory.
+          ARTIFACTORY_USER: ${{ secrets.USER_NAME }}
+          ARTIFACTORY_PASSWORD: ${{ secrets.PASSWORD }}
+          # Bootstrap admin for the freshly spun-up Artifactory container.
+          ART_ADMIN_USER: ${{ secrets.ART_ADMIN_USER }}
+          ART_ADMIN_PW: ${{ secrets.ART_ADMIN_PW }}
+          # TeamCity admin created on the throwaway server (reuses the same secrets).
+          TC_ADMIN_USER: ${{ secrets.USER_NAME }}
+          TC_ADMIN_PASSWORD: ${{ secrets.PASSWORD }}
+          TC_PORT: "8111"
+          STARTUP_TIMEOUT: "900"
+        run: ci/e2e/build-publish-e2e.sh

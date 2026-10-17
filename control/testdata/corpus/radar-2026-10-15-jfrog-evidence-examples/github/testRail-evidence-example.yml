@@ -1,0 +1,90 @@
+name: "TestRail evidence integration example"
+on:
+  workflow_dispatch:
+permissions:
+  id-token: write
+  contents: read
+  actions: read
+jobs:
+  testRail-evidence-example:
+    runs-on: ubuntu-latest
+    env:
+      REGISTRY_URL: ${{ vars.JF_URL }}
+      REPO_NAME: 'docker-testrail-repo'
+      IMAGE_NAME: 'docker-testrail-image'
+      TAG_NAME: ${{ github.run_number }}
+      BUILD_NAME: 'testrail-docker-build'
+      BUILD_NUMBER: ${{ github.run_number }}
+      ATTACH_OPTIONAL_MARKDOWN_TO_EVIDENCE: true
+    steps:
+      - uses: jfrog/setup-jfrog-cli@v4
+        name: jfrog-cli setup
+        env:
+          JF_URL: ${{ vars.ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.JF_ACCESS_TOKEN }}
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            examples/testRail/**
+          sparse-checkout-cone-mode: false
+      - name: Build and publish Docker image
+        run: |
+          docker build . --file ./examples/testRail/Dockerfile --tag $REGISTRY_URL/$REPO_NAME/$IMAGE_NAME:$TAG_NAME
+          jf rt docker-push $REGISTRY_URL/$REPO_NAME/$IMAGE_NAME:$TAG_NAME $REPO_NAME --build-name=$BUILD_NAME --build-number=$BUILD_NUMBER
+          jf rt build-publish $BUILD_NAME $BUILD_NUMBER
+
+      # Steps to run automated tests
+      - name: Automated tests run
+        uses: cypress-io/github-action@v6
+        with:
+          install: true
+          install-command: npm install
+          start: npm run start
+          quiet: true
+          wait-on: 'http://localhost:3000/app.html'
+          wait-on-timeout: 120
+          working-directory: examples/testRail
+        continue-on-error: true
+      - name: Merge test run results
+        run: |
+            npm run merge-json
+            npm run merge-junit
+        working-directory: examples/testRail
+
+        # Upload automated test runs reports to TestRail
+      - name: Upload Results to TestRail UI
+        uses: gurock/trcli-action@main
+        with:
+          host: ${{ secrets.TESTRAIL_HOST }}
+          username: ${{ secrets.TESTRAIL_USERNAME }}
+          password: ${{ secrets.TESTRAIL_API_KEY }}
+          project: 'TestRail Project'
+          report_file_path: './examples/testRail/reports/junit-report.xml'
+          title: 'Automated Test Run Results'
+          run_description: 'GitHub Workflow Run Id: $BUILD_NUMBER'
+          auto_create_cases_yes: 'true'
+          close_run: 'true'
+
+      # This is an optional step to generate a markdown report
+      - name: Generate optional markdown report
+        if: env.ATTACH_OPTIONAL_MARKDOWN_TO_EVIDENCE == 'true'
+        run: npm run generate:md
+        working-directory: examples/testRail
+        env:
+          IMAGE_REF: ${{ env.REGISTRY_URL }}/${{ env.REPO_NAME }}/${{ env.IMAGE_NAME }}:${{ env.TAG_NAME }}
+
+      #Steps to attach evidence to the package
+      - name: Attach evidence to the package
+        working-directory: examples/testRail
+        run: |
+          jf evd create \
+          --package-name $IMAGE_NAME \
+          --package-version $TAG_NAME \
+          --package-repo-name $REPO_NAME \
+          --key "${{ secrets.PRIVATE_KEY }}" \
+          --key-alias "${{ secrets.PRIVATE_KEY_ALIAS }}" \
+          --predicate "reports/overall-report.json" \
+          --predicate-type "http://testrail.com/test-results" \
+          --provider-id "testrail" \
+          ${{ env.ATTACH_OPTIONAL_MARKDOWN_TO_EVIDENCE == 'true' && '--markdown "reports/results.md"' || '' }}

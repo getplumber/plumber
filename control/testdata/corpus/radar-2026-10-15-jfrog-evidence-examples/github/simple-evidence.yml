@@ -1,0 +1,178 @@
+name: simple-evidence-build
+
+on:
+  [workflow_dispatch]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  docker-build-with-evidence:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install jfrog cli
+        id:   setup-cli
+        uses: jfrog/setup-jfrog-cli@v4
+        env:
+          JF_URL: https://${{ vars.ARTIFACTORY_URL }}
+        with:
+         oidc-provider-name: jfrog-github-oidc
+
+      - uses: actions/checkout@v4
+
+      - name: Log in to Artifactory Docker Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ vars.ARTIFACTORY_URL }}
+          username: ${{ steps.setup-cli.outputs.oidc-user }}
+          password: ${{ steps.setup-cli.outputs.oidc-token }}
+          
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build the Docker image
+        uses: docker/build-push-action@v6
+        id: docker-build
+        with:
+         push: true
+         context: .
+         build-args: REMOTE_REPO_URL=${{ vars.ARTIFACTORY_URL }}/my-docker-remote-or-virtual-repo
+         platforms: linux/amd64
+         tags: ${{ vars.ARTIFACTORY_URL }}/${{ vars.DEV_DOCKER_REPO_KEY }}/${{ vars.IMAGE_NAME }}:${{ github.run_number }}
+         provenance: false
+
+      - name: add docker package to build
+        run: |
+           echo "${{ vars.ARTIFACTORY_URL }}/${{ vars.DEV_DOCKER_REPO_KEY }}/${{ vars.IMAGE_NAME }}:${{ github.run_number }}@${{ steps.docker-build.outputs.digest }}" > metadata.json
+           jf rt build-docker-create dev-docker-local --image-file metadata.json --build-name ${{ vars.BUILD_NAME }} --build-number ${{ github.run_number }}
+
+      - name: Set Signing Evidence on Docker
+        run: |
+          # Create signing evidence JSON file
+          SIGNING_ACTOR="${{ github.actor }}"
+          SIGNING_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          echo "{
+          \"actor\": \"${SIGNING_ACTOR}\",
+          \"date\": \"${SIGNING_DATE}\"
+          }" > sign.json
+
+          # Attach evidence using JFrog CLI
+          jf evd create \
+          --package-name ${{ vars.IMAGE_NAME }} \
+          --package-version "${{ github.run_number }}" \
+          --package-repo-name ${{ vars.DEV_DOCKER_REPO_KEY }} \
+          --key "${{ secrets.PRIVATE_KEY }}" \
+          --key-alias SIGNING-KEY \
+          --predicate ./sign.json \
+          --predicate-type https://jfrog.com/evidence/signature/v1 
+
+          # Log the result
+          echo "🔎 Evidence attached: 'signature' 🔏"
+
+           
+      - name: docker scan
+        run: |
+           jf docker pull ${{ vars.ARTIFACTORY_URL }}/${{ vars.DEV_DOCKER_REPO_KEY }}/green-pizza:${{ github.run_number }}
+           jf docker scan ${{ vars.ARTIFACTORY_URL }}/${{ vars.DEV_DOCKER_REPO_KEY }}/green-pizza:${{ github.run_number }} --vuln  --fail=false
+           
+      - name: Publish build info
+        if: ${{ true }}
+        run: |
+          jf rt build-collect-env
+          jf rt build-add-git
+          jf rt build-publish
+      - name: Sign Build Evidence
+        run: |
+          # Define actor and date for the signing evidence
+          ACTOR="${{ github.actor }}"
+          DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          # Create the signing evidence JSON file
+          echo "{
+          \"actor\": \"${ACTOR}\",
+          \"date\": \"${DATE}\"
+          }" > sign.json
+
+          # Sign the build evidence using JFrog CLI
+          jf evd create \
+            --build-name "${{ vars.BUILD_NAME }}" \
+            --build-number "${{ github.run_number }}" \
+            --predicate ./sign.json \
+            --predicate-type https://jfrog.com/evidence/build-signature/v1 \
+            --key "${{ secrets.PRIVATE_KEY }}" \
+            --key-alias SIGNING-KEY
+
+          # Add a summary entry to GitHub Actions
+          echo "🔎 Evidence attached: 'build-signature' 🔏" >> $GITHUB_STEP_SUMMARY
+
+      - name: Create Release Bundle
+        run: |
+          # Create the bundle specification JSON
+          echo "{
+            \"files\": [
+            {
+           \"build\": \"${{ vars.BUILD_NAME }}/${{ github.run_number }}\"
+            }
+          ]
+          }" > bundle-spec.json
+          # Created in the Signing key section in Artifactory - Admin > Security > Keys Management
+          # Create the release bundle
+          jf release-bundle-create \
+          "${{ vars.BUNDLE_NAME }}" \
+          "${{ github.run_number }}" \
+          --signing-key RSA-SIGNING \
+          --spec bundle-spec.json \
+          --sync=true
+
+          # Generate links to the release bundle
+          ARTIFACTORY_UI="${{ vars.ARTIFACTORY_URL }}/ui/artifactory/lifecycle"
+          NAME_LINK="${ARTIFACTORY_UI}/?bundleName=${{ vars.BUNDLE_NAME }}&bundleToFlash=${{ vars.BUNDLE_NAME }}&repositoryKey=release-bundles-v2&activeKanbanTab=promotion"
+          VER_LINK="${ARTIFACTORY_UI}/?bundleName=${{ vars.BUNDLE_NAME }}&bundleToFlash=${{ vars.BUNDLE_NAME }}&releaseBundleVersion=${{ github.run_number }}&repositoryKey=release-bundles-v2&activeVersionTab=Version%20Timeline&activeKanbanTab=promotion"
+
+          # Log the creation of the release bundle
+          echo "📦 Release bundle [${{ vars.BUNDLE_NAME }}](${NAME_LINK}):[${{ github.run_number }}](${VER_LINK}) created" >> $GITHUB_STEP_SUMMARY
+          
+      - name: Promote to DEV
+        run: |
+          jf release-bundle-promote ${{ vars.BUNDLE_NAME }} ${{ github.run_number }} DEV --signing-key RSA-SIGNING --sync=true
+          echo "🚀 Succesfully promote to \`DEV\` environemnt" >> $GITHUB_STEP_SUMMARY
+
+      - name: Promote to QA
+        run: |
+          jf release-bundle-promote ${{ vars.BUNDLE_NAME }} ${{ github.run_number }} QA --signing-key RSA-SIGNING --sync=true
+          echo "🚀 Succesfully promote to \`QA\` environemnt" >> $GITHUB_STEP_SUMMARY
+
+      - name: Attach Test Evidence to Release Bundle
+        run: |
+            ACTOR="${{ github.actor }}"         # Create the test evidence JSON
+            DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+            TEST_NAME="CI test"
+            TEST_RESULT="success"
+            echo "{
+              \"actor\": \"${ACTOR}\",
+              \"date\": \"${DATE}\",
+              \"test\": \"${TEST_NAME}\",
+              \"result\": \"${TEST_RESULT}\"
+            }" > test_evidence.json
+
+            # Generate link to the release bundle
+            ARTIFACTORY_UI="${{ vars.ARTIFACTORY_URL }}/ui/artifactory/lifecycle"
+            JF_LINK="${ARTIFACTORY_UI}/?bundleName=${{ vars.BUNDLE_NAME }}&bundleToFlash=${{ vars.BUNDLE_NAME }}&releaseBundleVersion=${{ github.run_number }}&repositoryKey=release-bundles-v2&activeVersionTab=Version%20Timeline&activeKanbanTab=promotion"
+
+            # Log the test result in GitHub summary
+            echo "Test on Release Bundle [${{ vars.BUNDLE_NAME }}:${{ github.run_number }}](${JF_LINK}) success" >> $GITHUB_STEP_SUMMARY
+
+            # Attach evidence to the release bundle
+            jf evd create \
+            --release-bundle "${{ vars.BUNDLE_NAME }}" \
+            --release-bundle-version "${{ github.run_number }}" \
+            --predicate ./test_evidence.json \
+            --predicate-type https://jfrog.com/evidence/testing-results/v1 \
+            --key "${{ secrets.PRIVATE_KEY }}" \
+            --key-alias SIGNING-KEY
+
+            # Log the evidence attachment
+            echo "🔎 Evidence attached: integration-test 🧪" >> $GITHUB_STEP_SUMMARY
+
+          

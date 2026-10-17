@@ -1,0 +1,116 @@
+name: On-Demand Prerelease
+
+# Minimal permissions for security (addresses GitHub Advanced Security feedback)
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "PR Number"
+        type: string
+        required: false
+      comment-id:
+        description: "Comment ID (Optional)"
+        type: string
+        required: false
+
+jobs:
+  prerelease-on-demand:
+    name: Trigger Prerelease Publish
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Authenticate as GitHub App
+        uses: actions/create-github-app-token@v2
+        id: get-app-token
+        with:
+          owner: "airbytehq"
+          repositories: "airbyte-python-cdk"
+          app-id: ${{ secrets.OCTAVIA_BOT_APP_ID }}
+          private-key: ${{ secrets.OCTAVIA_BOT_PRIVATE_KEY }}
+
+      - name: Create URL to the run output
+        id: vars
+        run: echo "run-url=https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >> $GITHUB_OUTPUT
+
+      - name: Check that PR number is provided
+        if: github.event.inputs.pr == ''
+        run: |
+          echo "Error: /prerelease command must be invoked on a pull request, not an issue."
+          exit 1
+
+      - name: Get PR info
+        id: pr-info
+        run: |
+          PR_JSON=$(gh api repos/${{ github.repository }}/pulls/${{ github.event.inputs.pr }})
+          HEAD_REF=$(echo "$PR_JSON" | jq -r .head.ref)
+          HEAD_REPO=$(echo "$PR_JSON" | jq -r .head.repo.full_name)
+          echo "head-ref=${HEAD_REF}" >> $GITHUB_OUTPUT
+          echo "head-repo=${HEAD_REPO}" >> $GITHUB_OUTPUT
+          echo "PR branch: ${HEAD_REF} from ${HEAD_REPO}"
+        env:
+          GH_TOKEN: ${{ steps.get-app-token.outputs.token }}
+
+      - name: Check that PR is from this repository (not a fork)
+        if: steps.pr-info.outputs.head-repo != github.repository
+        run: |
+          echo "Error: /prerelease only works for branches in this repository, not forks."
+          echo "PR is from: ${{ steps.pr-info.outputs.head-repo }}"
+          echo "Expected: ${{ github.repository }}"
+          exit 1
+
+      - name: Append comment with job run link
+        if: github.event.inputs.comment-id
+        id: first-comment-action
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ github.event.inputs.comment-id }}
+          issue-number: ${{ github.event.inputs.pr }}
+          body: |
+            > **Prerelease Job Info**
+            >
+            > This job triggers the publish workflow with default arguments to create a prerelease.
+            >
+            > Prerelease job started... [Check job output.][1]
+
+            [1]: ${{ steps.vars.outputs.run-url }}
+
+      - name: Trigger publish workflow
+        id: trigger-publish
+        uses: the-actions-org/workflow-dispatch@v4
+        with:
+          workflow: publish.yml
+          token: ${{ steps.get-app-token.outputs.token }}
+          ref: ${{ steps.pr-info.outputs.head-ref }}
+          wait-for-completion: true
+          display-workflow-run-url: false
+          inputs: >-
+            {
+              "publish_to_pypi": "true",
+              "publish_to_dockerhub": "true",
+              "publish_manifest_server": "false",
+              "update_connector_builder": "false"
+            }
+
+      - name: Append success comment
+        if: github.event.inputs.comment-id
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.first-comment-action.outputs.comment-id }}
+          reactions: hooray
+          body: |
+            > ✅ Prerelease workflow triggered successfully.
+            >
+            > View the publish workflow run: ${{ steps.trigger-publish.outputs.workflow-url }}
+
+      - name: Append failure comment
+        if: failure() && github.event.inputs.comment-id
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.first-comment-action.outputs.comment-id }}
+          reactions: confused
+          body: |
+            > ❌ Failed to trigger prerelease workflow.

@@ -36,25 +36,3 @@ func TestRetiredFalseOnALiveLabel(t *testing.T) {
 		}
 	}
 }
-
-// TestKnownMatchesTheHostedFamiliesAndLatest pins which labels Known
-// recognizes as GitHub-hosted runners: the three OS families at any
-// version, and any "*-latest" alias.
-func TestKnownMatchesTheHostedFamiliesAndLatest(t *testing.T) {
-	for _, label := range []string{"ubuntu-24.04", "ubuntu-20.04", "macos-14", "macos-latest", "windows-2022", "windows-latest", "Ubuntu-Latest", "my-custom-latest"} {
-		if !Known(label) {
-			t.Errorf("Known(%q) = false, want true", label)
-		}
-	}
-}
-
-// TestKnownFalseOnASelfHostedOrCustomLabel pins that an arbitrary
-// self-hosted tag, which names no hosted family and no "-latest" alias,
-// is not known.
-func TestKnownFalseOnASelfHostedOrCustomLabel(t *testing.T) {
-	for _, label := range []string{"self-hosted", "gpu-runner", "linux-x64", ""} {
-		if Known(label) {
-			t.Errorf("Known(%q) = true, want false", label)
-		}
-	}
-}

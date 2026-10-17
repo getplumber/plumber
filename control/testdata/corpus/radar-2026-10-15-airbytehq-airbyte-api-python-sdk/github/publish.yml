@@ -1,0 +1,38 @@
+# PyPI Publish Workflow
+#
+# Triggered when a GitHub Release is published (draft → published).
+# Builds the Python package and uploads it to PyPI using PYPI_TOKEN.
+#
+# Prerequisites:
+# - PYPI_TOKEN secret configured in the repository
+
+name: Publish to PyPI
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Build & Publish to PyPI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Build package
+        run: uv run poe build
+
+      - name: Publish to PyPI
+        run: uv publish
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}

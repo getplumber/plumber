@@ -55,10 +55,16 @@ func FetchGitHubWorkflowStates(host, owner, repo string) (map[string]string, boo
 
 	out := map[string]string{}
 	path := fmt.Sprintf("repos/%s/%s/actions/workflows?per_page=%d", owner, repo, workflowStatesPerPage)
-	for path != "" {
+	for pages := 0; path != ""; pages++ {
+		if pages == maxLanePages {
+			// Still a next page after the cap: the states held are
+			// not every workflow's.
+			return nil, false, nil
+		}
 		resp, rerr := rest.Request(http.MethodGet, path, nil)
 		if rerr != nil {
 			if isUnauthorized(rerr) || isNotFound(rerr) || isNetworkFailure(rerr) {
+				logRefusedLane("workflow states", rerr)
 				return nil, false, nil
 			}
 			return nil, false, rerr

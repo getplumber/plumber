@@ -1,0 +1,102 @@
+name: Sync from production
+
+on:
+  # Cadence lives in run-llama/stainless .github/workflows/stlc-dispatch-backsync.yml,
+  # which dispatches this workflow with a CI_BOT App installation token. A `schedule:`
+  # here would fire it a second time and attribute that run to whoever last edited the
+  # cron. Verified 2026-08-07 by running both paths side by side: dispatched runs show
+  # llama-org-ci-bot[bot], scheduled runs showed a maintainer who had left the org.
+  workflow_dispatch: {}
+
+permissions:
+  contents: read # checkout only — the push and the PR use the CI_BOT app token
+
+concurrency:
+  group: stlc-sync-from-production
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    if: github.repository == 'run-llama/llamacloud-prod-cli'
+    env:
+      PRODUCTION_REPO: run-llama/llama-parse-cli
+    steps:
+      - name: Generate production-repo token (CI_BOT GitHub App, read-only)
+        id: prod-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.CI_BOT_APP_ID }}
+          private-key: ${{ secrets.CI_BOT_PRIVATE_KEY }}
+          owner: run-llama
+          repositories: llama-parse-cli
+          permission-contents: read
+
+      - name: Generate staging-repo token (CI_BOT GitHub App)
+        id: staging-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.CI_BOT_APP_ID }}
+          private-key: ${{ secrets.CI_BOT_PRIVATE_KEY }}
+          # owner/repositories omitted: the token scopes to this repository.
+          permission-contents: write
+          permission-pull-requests: write
+          # production/main carries .github/workflows changes; GITHUB_TOKEN can
+          # never push those.
+          permission-workflows: write
+
+      - name: Check out staging
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fetch production main
+        env:
+          PRODUCTION_REPO_TOKEN: ${{ steps.prod-token.outputs.token }}
+        run: |
+          git remote add production \
+            "https://x-access-token:${PRODUCTION_REPO_TOKEN}@github.com/${PRODUCTION_REPO}.git"
+          git fetch production main
+
+      - name: Check whether production has content staging lacks
+        id: diff
+        run: |
+          # Inverse of the promote guard, by content not commit SHA: would
+          # merging production into staging change staging's tree? If not,
+          # staging already has production's content — nothing to pull back.
+          MERGED=$(git merge-tree --write-tree origin/main production/main) || MERGED=conflict
+          STAGING_TREE=$(git rev-parse 'origin/main^{tree}')
+          if [ "$MERGED" = "$STAGING_TREE" ]; then
+            echo "Staging already has production's content. Nothing to pull back."
+            echo "behind=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "behind=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push production main to the back-sync branch on staging
+        if: steps.diff.outputs.behind == 'true'
+        env:
+          STAGING_REPO_TOKEN: ${{ steps.staging-token.outputs.token }}
+        run: |
+          git push \
+            "https://x-access-token:${STAGING_REPO_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            production/main:refs/heads/stlc/from-prod --force
+
+      - name: Open or update the back-sync PR on staging
+        if: steps.diff.outputs.behind == 'true'
+        env:
+          GH_TOKEN: ${{ steps.staging-token.outputs.token }}
+        run: |
+          EXISTING_PR=$(gh pr list --head stlc/from-prod --base main --state open --json number --jq '.[0].number')
+          if [ -z "${EXISTING_PR}" ]; then
+            gh pr create \
+              --base main \
+              --head stlc/from-prod \
+              --title "Sync release changes from production" \
+              --body "Pulls production's release-please commits (and any merged contributions) back onto staging \`main\` so the next \`stlc build\` reseals against the released state. Bot-authored; safe to auto-merge."
+          fi
+          # Auto-merge so the loop is hands-off. If auto-merge isn't enabled on
+          # the repo, the PR is left open for a one-click merge instead.
+          gh pr merge stlc/from-prod --merge --auto \
+            || echo "Auto-merge unavailable — merge the back-sync PR manually."

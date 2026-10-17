@@ -1,0 +1,106 @@
+# This GitHub Action builds and packages the Grafana plugin for release.
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*' # Run workflow on version tags, e.g. v1.0.0.
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    name: Build and Release Plugin
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check types
+        run: npm run typecheck
+      
+      - name: Lint
+        run: npm run lint
+      
+      - name: Unit tests
+        run: npm run test:ci
+      
+      - name: Build frontend
+        run: npm run build
+
+      - name: Check for backend
+        id: check-for-backend
+        run: |
+          if [ -f "Magefile.go" ]
+          then
+            echo "has-backend=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Setup Go environment
+        if: steps.check-for-backend.outputs.has-backend == 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Test backend
+        if: steps.check-for-backend.outputs.has-backend == 'true'
+        uses: magefile/mage-action@v3
+        with:
+          version: latest
+          args: coverage
+
+      - name: Build backend
+        if: steps.check-for-backend.outputs.has-backend == 'true'
+        uses: magefile/mage-action@v3
+        with:
+          version: latest
+          args: buildAllNoLinuxArm
+
+      - name: Get plugin metadata
+        id: metadata
+        run: |
+          sudo apt-get install jq
+
+          export GRAFANA_PLUGIN_ID=$(cat dist/plugin.json | jq -r .id)
+          export GRAFANA_PLUGIN_VERSION=$(cat dist/plugin.json | jq -r .info.version)
+          export GRAFANA_PLUGIN_ARTIFACT=${GRAFANA_PLUGIN_ID}-${GRAFANA_PLUGIN_VERSION}.zip
+
+          echo "plugin-id=${GRAFANA_PLUGIN_ID}" >> $GITHUB_OUTPUT
+          echo "plugin-version=${GRAFANA_PLUGIN_VERSION}" >> $GITHUB_OUTPUT
+          echo "archive=${GRAFANA_PLUGIN_ARTIFACT}" >> $GITHUB_OUTPUT
+
+      - name: Package plugin
+        id: package-plugin
+        run: |
+          mv dist ${{ steps.metadata.outputs.plugin-id }}
+          zip ${{ steps.metadata.outputs.archive }} ${{ steps.metadata.outputs.plugin-id }} -r
+
+      - name: Validate plugin
+        run: |
+          docker run --pull=always \
+            -v $PWD/${{ steps.metadata.outputs.archive }}:/archive.zip \
+            grafana/plugin-validator-cli -analyzer=metadatavalid /archive.zip
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.metadata.outputs.archive }}
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,109 @@
+# E2E Smoke Test — validates CI-built provider binary via terraform plan
+#
+# This workflow validates the provider binary end-to-end by:
+# 1. Downloading the CI-built provider binary
+# 2. Configuring a dev override so Terraform uses it instead of the registry version
+# 3. Running terraform init + plan against test-projects/v1-tf-generic-test/
+#
+# This verifies that the compiled binary can load, parse HCL, resolve data
+# sources (connector registry lookups), and produce a valid execution plan.
+#
+# For full E2E testing (apply, drift check, destroy), use the Devin E2E
+# testing skill defined in .agents/skills/e2e-testing/SKILL.md.
+#
+# Triggers:
+# - workflow_call: invoked by test-full.yml after provider binaries are built
+# - workflow_dispatch: for manual runs (requires run-id of a workflow that produced provider_binaries)
+#
+# Note: run-id is always required. For workflow_call, the caller must pass github.run_id.
+
+name: E2E Smoke Test
+
+on:
+  workflow_call:
+    inputs:
+      run-id:
+        description: 'Workflow run ID to download provider_binaries artifact from'
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      run-id:
+        description: 'Workflow run ID to download provider_binaries artifact from'
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  e2e-smoke-test:
+    name: E2E Smoke Test (v1-tf-generic-test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: test-projects/v1-tf-generic-test
+    env:
+      # Plan-only: credentials are needed for data source resolution
+      # (connector registry lookups) but not for resource creation.
+      TF_VAR_airbyte_client_id: ${{ secrets.AIRBYTE_CLIENT_ID }}
+      TF_VAR_airbyte_client_secret: ${{ secrets.AIRBYTE_CLIENT_SECRET }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Download provider binary artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: provider_binaries
+          path: /tmp/provider-bin
+          run-id: ${{ inputs.run-id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure provider dev override
+        run: |
+          mkdir -p provider-override
+          cp /tmp/provider-bin/terraform-provider-airbyte_linux_amd64 provider-override/terraform-provider-airbyte
+          chmod +x provider-override/terraform-provider-airbyte
+
+          OVERRIDE_DIR="$(pwd)/provider-override"
+          cat > "$HOME/.terraformrc" <<EOF
+          provider_installation {
+            dev_overrides {
+              "airbytehq/airbyte" = "${OVERRIDE_DIR}"
+            }
+            direct {}
+          }
+          EOF
+
+          echo "Provider binary:"
+          ls -lh provider-override/terraform-provider-airbyte
+          echo "Terraform RC:"
+          cat "$HOME/.terraformrc"
+
+      # Note: 'terraform init' is skipped when using dev_overrides — Terraform
+      # prints a warning and proceeds without downloading the provider. We still
+      # run it to initialise the working directory and any backend configuration.
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Plan
+        run: |
+          set +eo pipefail
+          terraform plan 2>&1 | tee plan_output.txt
+          PLAN_EXIT_CODE=${PIPESTATUS[0]}
+          set -eo pipefail
+
+          if [ "$PLAN_EXIT_CODE" -ne 0 ]; then
+            echo "Terraform plan failed with exit code $PLAN_EXIT_CODE"
+            exit 1
+          fi
+
+          echo "Plan succeeded — CI-built binary is valid."

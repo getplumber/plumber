@@ -1,0 +1,143 @@
+name: Build Go (FFI libs)
+run-name: "Build Go SDK FFI libs ${{ github.ref_name }}"
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-ffi:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: { group: databricks-protected-runner-group, labels: linux-ubuntu-latest }
+            target: x86_64-unknown-linux-gnu
+            lib_dir: linux_amd64
+            cross: false
+          - runner: { group: databricks-protected-runner-group, labels: linux-ubuntu-latest }
+            target: aarch64-unknown-linux-gnu
+            lib_dir: linux_arm64
+            cross: true
+          - runner: { group: databricks-protected-runner-group, labels: linux-ubuntu-latest }
+            target: x86_64-apple-darwin
+            lib_dir: darwin_amd64
+            cross: false
+            zigbuild: true
+          - runner: { group: databricks-protected-runner-group, labels: linux-ubuntu-latest }
+            target: aarch64-apple-darwin
+            lib_dir: darwin_arm64
+            cross: false
+            zigbuild: true
+          - runner: { group: databricks-protected-runner-group, labels: windows-server-latest }
+            target: x86_64-pc-windows-gnu
+            lib_dir: windows_amd64
+            cross: false
+
+    name: Build FFI - ${{ matrix.lib_dir }}
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      id-token: write
+
+    defaults:
+      run:
+        working-directory: rust
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Get JFrog OIDC token
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/jfrog-oidc-token.sh"
+
+      - name: Configure cargo for JFrog
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/configure-cargo.sh"
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install cross-compilation toolchain (Linux ARM64)
+        if: matrix.cross
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc-aarch64-linux-gnu
+          mkdir -p .cargo
+          echo '[target.aarch64-unknown-linux-gnu]' > .cargo/config.toml
+          echo 'linker = "aarch64-linux-gnu-gcc"' >> .cargo/config.toml
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Zig (macOS cross-builds)
+        if: matrix.zigbuild
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.13.0
+
+      - name: Install cargo-zigbuild (macOS cross-builds)
+        if: matrix.zigbuild
+        run: cargo install cargo-zigbuild --locked --version 0.23.0
+
+      - name: Build FFI library
+        if: '!matrix.zigbuild'
+        # Thin LTO removes unreachable Rust dependency code before archiving,
+        # keeping the static libraries below GitHub's 100 MiB file limit.
+        env:
+          CARGO_PROFILE_RELEASE_LTO: thin
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "1"
+          CARGO_PROFILE_RELEASE_STRIP: debuginfo
+        run: cargo rustc --release -p zerobus-ffi --target ${{ matrix.target }} --crate-type cdylib --crate-type staticlib
+
+      - name: Build FFI static library (macOS cross-builds)
+        if: matrix.zigbuild
+        env:
+          CARGO_PROFILE_RELEASE_LTO: thin
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "1"
+          CARGO_PROFILE_RELEASE_STRIP: debuginfo
+        run: cargo-zigbuild rustc --release -p zerobus-ffi --target ${{ matrix.target }} --crate-type staticlib
+
+      - name: Prepare artifact
+        shell: bash
+        run: |
+          mkdir -p ../go/lib/${{ matrix.lib_dir }}
+          if [ -f target/${{ matrix.target }}/release/libzerobus_ffi.a ]; then
+            cp target/${{ matrix.target }}/release/libzerobus_ffi.a ../go/lib/${{ matrix.lib_dir }}/
+          else
+            cp target/${{ matrix.target }}/release/zerobus_ffi.lib ../go/lib/${{ matrix.lib_dir }}/libzerobus_ffi.a
+          fi
+
+      - name: Verify artifact
+        shell: bash
+        run: |
+          archive="../go/lib/${{ matrix.lib_dir }}/libzerobus_ffi.a"
+          byte_size=$(wc -c < "$archive")
+          echo "Archive size: $byte_size bytes"
+          if [ "$byte_size" -ge 104857600 ]; then
+            echo "Archive must be smaller than GitHub's 100 MiB file limit" >&2
+            exit 1
+          fi
+
+          for symbol in \
+            zerobus_sdk_builder_new \
+            zerobus_sdk_builder_sdk_identifier \
+            zerobus_sdk_builder_application_name \
+            zerobus_sdk_builder_connection_per_stream \
+            zerobus_sdk_builder_build
+          do
+            if ! LC_ALL=C grep -aFq "$symbol" "$archive"; then
+              echo "Archive is missing required symbol: $symbol" >&2
+              exit 1
+            fi
+          done
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: go-lib-${{ matrix.lib_dir }}
+          path: go/lib/${{ matrix.lib_dir }}/
+          if-no-files-found: error

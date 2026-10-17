@@ -1,0 +1,18 @@
+name: PR title verification
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+      - edited
+
+jobs:
+  pr-title-verification:
+    runs-on: ubuntu-slim
+    permissions:
+      pull-requests: read
+    steps:
+      - uses: amannn/action-semantic-pull-request@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,70 @@
+name: "Semgrep Evidence Integration example"
+on:
+  workflow_dispatch:
+
+jobs:
+  semgrep_scan:
+    name: semgrep/ci
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep
+    env:
+      ATTACH_OPTIONAL_CUSTOM_MARKDOWN_TO_EVIDENCE: true
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+
+    steps:
+      # Install Node.js and npm
+      - name: Install Node.js and npm
+        run: |
+          apk add --no-cache nodejs npm
+          
+      # Build and publish the packages to JFrog Artifactory
+      - name: Setup jfrog cli
+        uses: jfrog/setup-jfrog-cli@v4
+        env:
+          JF_URL: ${{ vars.ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.ARTIFACTORY_ACCESS_TOKEN }}
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            examples/semgrep/**
+          sparse-checkout-cone-mode: false
+      - name: Build and Publish js package
+
+        run: |
+          cd examples/semgrep/js
+          jf npm-config --repo-resolve=javascript-remote --repo-deploy=javascript-local \
+            --server-id-deploy=setup-jfrog-cli-server \
+            --server-id-resolve=setup-jfrog-cli-server
+          jf npm publish --build-name=js-semgrep-sample-build --build-number=${{ github.run_number }}
+          cd -
+        continue-on-error: true
+
+      # Run Semgrep analysis
+      - name: Perform Semgrep Analysis
+        run: |
+          semgrep scan -q --sarif --config auto ./examples/semgrep/js > semgrep-results.sarif
+
+      # This is an optional step to generate a custom markdown report
+      - name: Generate optional custom markdown
+        if: env.ATTACH_OPTIONAL_CUSTOM_MARKDOWN_TO_EVIDENCE == 'true'
+        run: |
+          python examples/semgrep/sarif_to_markdown.py semgrep-results.sarif semgrep-results.md
+
+      # Attaching the evidence to associated package
+      - name: Attach Evidence using JFrog CLI
+        run: |
+            jf evd create \
+            --package-name js-semgrep-sample-build \
+            --package-version "0.0.1" \
+            --package-repo-name javascript-local \
+            --key "${{ secrets.PRIVATE_KEY }}" \
+            --key-alias "${{ vars.EVIDENCE_KEY_ALIAS }}" \
+            --predicate "semgrep-results.sarif" \
+            --predicate-type "http://semgrep.com/security-scan/v1" \
+            ${{ env.ATTACH_OPTIONAL_CUSTOM_MARKDOWN_TO_EVIDENCE == 'true' && '--markdown "semgrep-results.md"' || '' }}
+

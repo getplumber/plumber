@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      goreleaser: ${{ steps.filter.outputs.goreleaser }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            goreleaser:
+              - '.goreleaser.yml'
+
+  lint-goreleaser:
+    name: 'lint / goreleaser'
+    needs: changes
+    if: ${{ needs.changes.outputs.goreleaser == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: 'stable'
+      - name: 'Check .goreleaser.yml'
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          args: check
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: 'stable'
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: latest
+          only-new-issues: true
+
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go: ["1.23", "1.24", "1.25", "1.26"]
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ matrix.go }}
+      - name: Dependencies
+        run: |
+          go mod download
+          go mod tidy -v
+      - name: Build
+        run: go build -v ./...
+      - name: Test
+        run: go test -v ./...
+      - name: Test (race detector)
+        if: matrix.go == '1.26'
+        run: go test -race ./...

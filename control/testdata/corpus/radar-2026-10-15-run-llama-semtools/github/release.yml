@@ -1,0 +1,211 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      release_id: ${{ steps.create_release.outputs.id }}
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Create Release
+      id: create_release
+      uses: ncipollo/release-action@v1
+      with:
+        generateReleaseNotes: true
+        makeLatest: true
+        draft: false
+        prerelease: false
+        token: ${{ secrets.GITHUB_TOKEN }}
+        name: "SemTools ${{ github.ref_name }}"
+
+  build-release:
+    name: Build Release
+    needs: create-release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+          - os: macos-latest
+            target: aarch64-apple-darwin
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ matrix.target }}
+
+    - name: Install toolchain dependencies (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y pkg-config libssl-dev
+        case "${{ matrix.target }}" in
+          aarch64-unknown-linux-gnu)
+            sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+            # Configure cross-compilation environment
+            echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+            echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+            echo "CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++" >> $GITHUB_ENV
+            ;;
+        esac
+
+    - name: Cache cargo registry
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-${{ matrix.target }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Install protoc
+      uses: taiki-e/install-action@protoc
+
+    - name: Build release binaries
+      run: cargo build --release --target ${{ matrix.target }}
+
+    - name: Create archive (Unix)
+      if: runner.os != 'Windows'
+      run: |
+        mkdir -p release
+        cp target/${{ matrix.target }}/release/semtools release/
+        cp README.md release/ 2>/dev/null || echo "README.md not found"
+        cd release
+        tar czf ../semtools-${{ matrix.target }}.tar.gz *
+
+    - name: Create archive (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        mkdir release
+        copy target\${{ matrix.target }}\release\semtools.exe release\
+        copy README.md release\ 2>nul || echo "README.md not found"
+        cd release
+        7z a ..\semtools-${{ matrix.target }}.zip *
+
+    - name: Upload Release Asset (Unix)
+      if: runner.os != 'Windows'
+      uses: ncipollo/release-action@v1
+      with:
+        allowUpdates: true
+        artifacts: semtools-${{ matrix.target }}.tar.gz
+        token: ${{ secrets.GITHUB_TOKEN }}
+        omitBody: true
+        omitName: true
+
+    - name: Upload Release Asset (Windows)
+      if: runner.os == 'Windows'
+      uses: ncipollo/release-action@v1
+      with:
+        allowUpdates: true
+        artifacts: semtools-${{ matrix.target }}.zip
+        token: ${{ secrets.GITHUB_TOKEN }}
+        omitBody: true
+        omitName: true
+
+  publish-crates:
+    name: Publish to crates.io
+    needs: build-release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install protoc
+      uses: taiki-e/install-action@protoc
+
+    - name: Extract version from tag
+      id: get_version
+      run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+    - name: Verify version consistency
+      run: |
+        TAG_VERSION="${{ steps.get_version.outputs.VERSION }}"
+        SEMTOOLS_VERSION=$(cargo metadata --no-deps --format-version=1 | jq -r '.packages[] | select(.name == "semtools") | .version')
+        
+        echo "Tag version: $TAG_VERSION"
+        echo "SemTools crate version: $SEMTOOLS_VERSION"
+        
+        if [ "$TAG_VERSION" != "$SEMTOOLS_VERSION" ]; then
+          echo "❌ Version mismatch detected!"
+          echo "SemTools version must match the git tag"
+          exit 1
+        fi
+        echo "✅ Version is synchronized"
+
+    - name: Login to crates.io
+      run: cargo login ${{ secrets.CRATES_TOKEN }}
+
+    - name: Publish semtools crate
+      run: |
+        echo "Publishing semtools crate..."
+        cargo publish --allow-dirty
+
+    - name: Verify publication
+      run: |
+        echo "✅ SemTools crate published successfully!"
+        echo "Users can now install with: cargo install semtools"
+
+  publish-npm:
+    name: Publish to npm
+    needs: build-release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        registry-url: 'https://registry.npmjs.org'
+
+    - name: Extract version from tag
+      id: get_version
+      run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+    - name: Verify version consistency (npm)
+      run: |
+        TAG_VERSION="${{ steps.get_version.outputs.VERSION }}"
+        PKG_VERSION=$(jq -r '.version' package.json)
+        echo "Tag version: $TAG_VERSION"
+        echo "package.json version: $PKG_VERSION"
+        if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+          echo "❌ Version mismatch detected!"
+          echo "package.json version must match the git tag"
+          exit 1
+        fi
+        echo "✅ Version is synchronized"
+
+    - name: Publish package to npm
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      run: |
+        npm publish --access public

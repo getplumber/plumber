@@ -1,0 +1,52 @@
+{
+  "source": "https://github.com/jfrog/setup-jfrog-cli",
+  "commit": "1e584506871998c267b7c100c02628a5b9c81db6",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "master",
+  "branches": [
+    {
+      "name": "master",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "frogbot",
+      "known": true,
+      "requiredReviewers": true,
+      "reviewers": 3
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/test.yml": "active",
+    ".github/workflows/release.yml": "active",
+    ".github/workflows/cla.yml": "active",
+    ".github/workflows/frogbot-scan-pull-request.yml": "active",
+    ".github/workflows/frogbot-scan-repository.yml": "active",
+    ".github/workflows/remove-label.yml": "active",
+    ".github/workflows/oidc-integration-test.yml": "active",
+    ".github/workflows/auto-build-publish.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The Critical pull_request_target path from the test workflow was judged false: it runs only on `types: [labeled]` when a maintainer applies `safe to test`, at the labelled head commit, so the path holds as a maintainer-approved Medium at most.",
+  "expect": {
+    "paths": [
+      {
+        "entryKind": "pr_target",
+        "tier": "medium",
+        "subjectContains": "github.event.pull_request.head.sha",
+        "actor": "maintainer_approved"
+      }
+    ],
+    "ceilings": [
+      {
+        "entryKind": "pr_target",
+        "subjectContains": "github.event.pull_request.head.sha",
+        "tier": "medium"
+      }
+    ]
+  }
+}

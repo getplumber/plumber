@@ -19,6 +19,25 @@ func TestADeclaredMatchingSaveNamesTheCache(t *testing.T) {
 	}
 }
 
+// A declared rust-cache save matching the restorer's own rust-cache key
+// family names the cache by its key prefix: declaredCacheName reads
+// swatinem/rust-cache through cacheFactName's own arm, and cacheWords
+// renders that name as the key-prefix sentence, not as "the cache of
+// swatinem/rust-cache".
+func TestADeclaredMatchingRustCacheSaveNamesTheCache(t *testing.T) {
+	prefix := "v0-rust-myproject"
+	save := CacheFact{Family: prefix, Mode: "save", Uses: "Swatinem/rust-cache@v2"}
+	restore := CacheFact{Family: prefix, Mode: "restore", Uses: "Swatinem/rust-cache@v2"}
+	w := withCaches(triageWriter, save)
+	release := withCaches(JobSituation{RestoresCache: true}, restore)
+	p := cachePathOf(t, []opaengine.Finding{cacheFinding(), commentInjection()},
+		cacheSituation(map[string]JobSituation{"triage/label": w, "release": release}))
+	want := "Code running in `triage/label` can write the Rust build cache under the key prefix `" + prefix + "` that `release` restores, since `cache-mode: write` lifts"
+	if s := PathSentence(p); !strings.HasPrefix(s, want) {
+		t.Errorf("sentence = %q, want prefix %q", s, want)
+	}
+}
+
 // A writer declaring no save, a save of another key family, or a save it
 // turned off (cache: false records the step as restore only) still writes
 // the cache: code in a run granted write can save any key. The sentence
@@ -82,12 +101,65 @@ func TestCacheWriterScopeIsTheEnteredRunsScope(t *testing.T) {
 	for kind, want := range map[EntryKind][]string{
 		EntryForkPR: {"pull_request"}, EntryPRTarget: {"default"}, EntryMutableDependency: {"default", "pull_request"},
 	} {
-		if got := cacheWriterScope(kind, js); !reflect.DeepEqual(got, want) {
+		if got := cacheWriterScope(kind, "", js); !reflect.DeepEqual(got, want) {
 			t.Errorf("%s: scope %v, want %v", kind, got, want)
 		}
 	}
-	if got := cacheWriterScope(EntryPRTarget, JobSituation{CacheScopes: []string{"pull_request"}}); got != nil {
+	if got := cacheWriterScope(EntryPRTarget, "", JobSituation{CacheScopes: []string{"pull_request"}}); got != nil {
 		t.Errorf("a base-context run of a job saving only in pull requests saves nothing, got %v", got)
+	}
+}
+
+// A pull request head checked out in a pull_request_target run saves
+// only where that run saves, whatever the job's other triggers save: a
+// job on pull_request_target alone and one on [push, pull_request_target]
+// both stay Low with no hop (the push run saves for the default branch,
+// the pull_request_target run only reads); the same job granted
+// cache-mode: write hops into the release.
+func TestABaseContextEntrySavesOnlyWhereItsOwnRunSaves(t *testing.T) {
+	head := entryFinding("ISSUE-804", "pr/preview", "github.event.pull_request.head.sha")
+	for name, c := range map[string]struct {
+		scopes  []string
+		byEvent map[string][]string
+		jobs    int
+	}{
+		"pull_request_target only":     {nil, map[string][]string{"pull_request_target": {}}, 1},
+		"push and pull_request_target": {defaultScope, map[string][]string{"push": {"default"}, "pull_request_target": {}}, 1},
+		"with cache-mode write":        {defaultScope, map[string][]string{"push": {"default"}, "pull_request_target": {"default"}}, 2},
+	} {
+		preview := JobSituation{PrivilegedTriggers: []string{"pull_request_target"}, CacheScopes: c.scopes, SaveScopesByEvent: c.byEvent,
+			Caches: []CacheFact{npmCache}, Feeds: []string{"release"}, FeedsVia: map[string][]string{"release": {FeedCache}}}
+		sit := cacheSituation(map[string]JobSituation{"pr/preview": preview})
+		paths := assemblePaths([]opaengine.Finding{head}, sit)
+		if len(paths) != 1 || len(paths[0].Jobs) != c.jobs {
+			t.Fatalf("%s: want %d walked jobs, got %+v", name, c.jobs, paths)
+		}
+		if c.jobs == 1 && paths[0].Tier != TierLow {
+			t.Errorf("%s: tier %s, want low", name, paths[0].Tier)
+		}
+		so := NewPathBlock(paths[0], nil).So
+		if c.jobs == 1 && strings.Contains(so, "poison what it caches") {
+			t.Errorf("%s: So = %q, the cache half said only for a run that saves for the default branch", name, so)
+		}
+	}
+}
+
+// A pull request head checked out in a pull_request_target run of a job
+// GitHub keeps read-only (no save scope holds the default branch) reaches
+// no job through a cache alone; once the job's runs save there, it does.
+func TestAReadOnlyBaseContextRunReachesNoJobThroughTheCache(t *testing.T) {
+	head := entryFinding("ISSUE-804", "pr/preview", "github.event.pull_request.head.sha")
+	for name, c := range map[string]struct {
+		scopes []string
+		jobs   int
+	}{"read-only": {nil, 1}, "saves for the default branch": {defaultScope, 2}} {
+		preview := JobSituation{PrivilegedTriggers: []string{"pull_request_target"}, CacheScopes: c.scopes,
+			Feeds: []string{"release"}, FeedsVia: map[string][]string{"release": {FeedCache}}}
+		sit := cacheSituation(map[string]JobSituation{"pr/preview": preview})
+		paths := assemblePaths([]opaengine.Finding{head}, sit)
+		if len(paths) != 1 || len(paths[0].Jobs) != c.jobs {
+			t.Errorf("%s: want %d walked jobs, got %+v", name, c.jobs, paths)
+		}
 	}
 }
 
@@ -103,5 +175,25 @@ func TestCacheEdgesCarryTheirState(t *testing.T) {
 	}
 	if got := weakerCacheWriterState("proven", "unknown"); got != "unknown" {
 		t.Errorf("unknown must win, got %q", got)
+	}
+}
+
+// A poisoned cache path claims each edge from the job granted cache write
+// to a job it reaches, with the edge's state.
+func TestACachePathClaimsEachEdge(t *testing.T) {
+	sit := cacheSituation(map[string]JobSituation{"ci/test": {RestoresCache: true}})
+	p := cachePathOf(t, []opaengine.Finding{cacheFinding(), commentInjection()}, sit)
+	var got []Claim
+	for _, c := range p.Claims {
+		if c.Kind == "cache" {
+			got = append(got, c)
+		}
+	}
+	want := []Claim{
+		{Kind: "cache", Subject: "triage/label -> ci/test", State: ClaimProven},
+		{Kind: "cache", Subject: "triage/label -> release", State: ClaimProven},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("cache claims = %+v, want %+v", got, want)
 	}
 }

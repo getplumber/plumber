@@ -1,0 +1,93 @@
+{
+  "source": "https://github.com/langchain-ai/langsmith-sdk",
+  "commit": "9966fd69a631369398d7598d8d725868f9c74339",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "copilot",
+      "known": true
+    },
+    {
+      "name": "Main",
+      "known": true
+    },
+    {
+      "name": "Preview",
+      "known": true
+    },
+    {
+      "name": "Production",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/release.yml": "active",
+    ".github/workflows/release_js.yml": "active",
+    ".github/workflows/link-check.yml": "active",
+    ".github/workflows/py-baseline.yml": "active",
+    ".github/workflows/py-bench.yml": "active",
+    ".github/workflows/test_langsmith_nodejs.yml": "active",
+    ".github/workflows/auto-label-issues.yml": "active",
+    ".github/workflows/ci.yml": "active",
+    ".github/workflows/dependabot.yml": "active",
+    ".github/workflows/js-perf.yml": "active",
+    ".github/workflows/protect-openapi-client.yml": "active",
+    ".github/workflows/py-bench-datadog.yml": "active",
+    ".github/workflows/codspeed.yml": "active",
+    ".github/workflows/py-bench-codspeed.yml": "active",
+    ".github/workflows/codspeed-probe-memory.yml": "active",
+    ".github/workflows/codspeed-probe-paths.yml": "active",
+    ".github/workflows/codspeed-probe-defaults.yml": "active",
+    ".github/workflows/codspeed-probe-push.yml": "active",
+    ".github/workflows/codspeed-probe-exact.yml": "active",
+    ".github/workflows/openwiki-update.yml": "active",
+    ".github/workflows/slack-test.yml": "active",
+    ".github/workflows/freeze-guard.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "actionMetadata": {
+    "CodSpeedHQ/action@373d6868929f444bc08d901fd0eb0ad52a8875ea": {
+      "refKind": "commit",
+      "mutableRemoteExec": {
+        "tier": "exec",
+        "url": "https://github.com/CodSpeedHQ/runner/releases",
+        "file": "action.yml",
+        "downloadVerified": true
+      }
+    },
+    "CodSpeedHQ/action@dfaf2584d705312e4ab4e23a4dd3e2f56b71ef3b": {
+      "refKind": "commit",
+      "mutableRemoteExec": {
+        "tier": "exec",
+        "url": "https://github.com/CodSpeedHQ/runner/releases",
+        "file": "action.yml",
+        "downloadVerified": true
+      }
+    }
+  },
+  "note": "The High path through the SHA-pinned `CodSpeedHQ/action` was judged false: at the pinned commit the action downloads its installer to a temporary file and checks its sha256 against the hash pinned in its own `.codspeed-runner-installer-hashes.json`, failing on a mismatch, and neither workflow sets `runner-version`, so the verified release install is the one that runs. The High pnpm cache path into the JavaScript release was judged overstated: pull_request runs save under their merge ref and the default-branch writers are code landed on the protected main, Medium at most. No job here declares cache-mode, so GitHub keeps the cache of every low-trust run read-only and grants no job cache write: ISSUE-705 is silent and no cache path exists, so the cache ceiling admits none.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "CodSpeedHQ/action@373d6868929f",
+        "tier": "none"
+      },
+      {
+        "entryKind": "poisoned_cache",
+        "subjectContains": "",
+        "tier": "none"
+      }
+    ]
+  }
+}

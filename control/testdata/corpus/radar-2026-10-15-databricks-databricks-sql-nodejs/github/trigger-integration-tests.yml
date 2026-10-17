@@ -1,0 +1,343 @@
+name: Trigger Integration Tests
+
+# Dispatches the proxy-based Node.js integration suite in
+# databricks/databricks-driver-test to run against this PR's commit.
+#
+# Matches the label-gated / merge-queue pattern used by the Python connector:
+# normal PR events get an immediate green check, maintainers can preview with
+# the `integration-test` label, and merge queue runs the real required gate.
+#
+# Required external setup:
+#
+#   1. `integration-test` label exists in this repo.
+#   2. `INTEGRATION_TEST_APP_ID` / `INTEGRATION_TEST_PRIVATE_KEY` repo secrets
+#      are installed in this repo for the dispatcher GitHub App.
+#   3. The app is installed/granted on `databricks-driver-test` so this workflow
+#      can send `repository_dispatch`.
+#   4. The same app is installed/granted on `databricks-sql-nodejs` with
+#      checks:write so driver-test can report the final `Node.js Integration
+#      Tests` check back to this PR/merge-queue commit.
+#   5. Merge queue branch protection lists `Node.js Integration Tests` as a
+#      required status check.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, closed]
+  merge_group:
+
+jobs:
+  remove-label-on-new-commit:
+    if: github.event_name == 'pull_request' && github.event.action == 'synchronize'
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    permissions:
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Check if integration-test label exists
+        id: check-label
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            const labels = context.payload.pull_request.labels.map((label) => label.name);
+            const hasLabel = labels.includes('integration-test');
+            console.log(`integration-test label exists: ${hasLabel}`);
+            return hasLabel;
+
+      - name: Remove integration-test label
+        if: steps.check-label.outputs.result == 'true'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            try {
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                name: 'integration-test'
+              });
+              console.log('Removed integration-test label');
+            } catch (error) {
+              if (error.status === 404) {
+                console.log('Label already removed or does not exist');
+              } else {
+                throw error;
+              }
+            }
+
+      - name: Comment on PR about label removal
+        if: steps.check-label.outputs.result == 'true'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const isFromFork = pr.head.repo.full_name !== pr.base.repo.full_name;
+            const repoType = isFromFork ? '**fork PR**' : 'PR';
+
+            const body = [
+              'Integration test approval reset.',
+              '',
+              `New commits were pushed to this ${repoType}. The \`integration-test\` label has been automatically removed for security.`,
+              '',
+              '**A maintainer must re-review the changes and re-add the label to trigger tests again.**',
+              '',
+              `Latest commit: ${pr.head.sha.substring(0, 7)}`
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body
+            });
+
+  # NOTE: the PR-open "skipped" placeholder for the required
+  # `Node.js Integration Tests` check is NOT posted here anymore. It is posted by
+  # the companion workflow `skip-checks-reporter.yml`, which runs on `workflow_run`
+  # in the base-repo context. That context has a read-write token even for
+  # fork-triggered runs, so it can post the check on EVERY PR head — including fork
+  # PRs, whose own `pull_request` run gets a read-only token and cannot post checks
+  # (the previous inline `github.token` stub 403'd on forks, so fork PRs could never
+  # satisfy the now-required check and were stuck out of the merge queue). See
+  # skip-checks-reporter.yml. The real suite still runs as the required gate on the
+  # merge_group commit and as a label preview.
+
+  trigger-tests-pr:
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.action == 'labeled' &&
+      contains(github.event.pull_request.labels.*.name, 'integration-test')
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+      checks: write
+    steps:
+      # The integration suite gates the GA Thrift backend (plus SEA/kernel), so
+      # virtually any change in this repo can affect it. Run it for every labeled
+      # PR rather than path-gating — path filters previously skipped changes like
+      # KERNEL_REV bumps and native/ binding edits (and any Thrift-affecting file
+      # not on the list).
+      - name: Mark for dispatch (run on every change)
+        id: changed
+        run: echo "nodejs=true" >> "$GITHUB_OUTPUT"
+
+      - name: Generate GitHub App Token (driver-test repo)
+        id: app-token
+        if: steps.changed.outputs.nodejs == 'true'
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        with:
+          app-id: ${{ secrets.INTEGRATION_TEST_APP_ID }}
+          private-key: ${{ secrets.INTEGRATION_TEST_PRIVATE_KEY }}
+          owner: databricks
+          repositories: databricks-driver-test
+
+      - name: Sanitize PR title
+        id: sanitize
+        if: steps.changed.outputs.nodejs == 'true'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          result-encoding: string
+          script: |
+            const title = context.payload.pull_request.title || '';
+            return title.replace(/[\\"\n\r\t]/g, ' ').substring(0, 200);
+
+      - name: Dispatch Node.js tests to driver-test
+        if: steps.changed.outputs.nodejs == 'true'
+        uses: peter-evans/repository-dispatch@ff45666b9427631e3450c54a1bcbee4d9ff4d7c0 # v3.0.0
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          repository: databricks/databricks-driver-test
+          event-type: nodejs-pr-test
+          client-payload: |
+            {
+              "pr_number": "${{ github.event.pull_request.number }}",
+              "commit_sha": "${{ github.event.pull_request.head.sha }}",
+              "pr_repo": "${{ github.repository }}",
+              "pr_url": "${{ github.event.pull_request.html_url }}",
+              "pr_title": "${{ steps.sanitize.outputs.result }}",
+              "pr_author": "${{ github.event.pull_request.user.login }}",
+              "proxy_mode": "replay"
+            }
+
+      - name: Fail check on dispatch error
+        if: failure() && steps.changed.outputs.nodejs == 'true'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'Node.js Integration Tests',
+              head_sha: context.payload.pull_request.head.sha,
+              status: 'completed',
+              conclusion: 'failure',
+              completed_at: new Date().toISOString(),
+              output: {
+                title: 'Failed - error dispatching tests',
+                summary: 'An error occurred while dispatching Node.js integration tests. Check this workflow run for details.'
+              }
+            });
+
+      - name: Comment on PR
+        if: steps.changed.outputs.nodejs == 'true'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: 'Node.js integration tests triggered. [View workflow runs](https://github.com/databricks/databricks-driver-test/actions/workflows/databricks-sql-nodejs-integration-tests.yml). The result posts back here as the "Node.js Integration Tests" check.'
+            });
+
+  merge-queue-nodejs:
+    if: github.event_name == 'merge_group'
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      # The integration suite gates the GA Thrift backend (plus SEA/kernel), so
+      # virtually any change can affect it. Run it on every merge-queue commit
+      # rather than path-gating — path filters previously skipped changes like
+      # KERNEL_REV bumps and native/ binding edits (and any Thrift-affecting file
+      # not on the list).
+      - name: Mark for dispatch (run on every change)
+        id: changed
+        run: echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Extract PR number from merge queue ref
+        if: steps.changed.outputs.changed == 'true'
+        id: extract-pr
+        env:
+          MERGE_QUEUE_REF: ${{ github.event.merge_group.head_ref }}
+        run: |
+          if [[ "$MERGE_QUEUE_REF" =~ pr-([0-9]+) ]]; then
+            echo "pr_number=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          else
+            echo "Error: failed to extract PR number from merge group ref: '$MERGE_QUEUE_REF'" >&2
+            exit 1
+          fi
+
+      - name: Generate GitHub App Token (driver-test repo)
+        if: steps.changed.outputs.changed == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        with:
+          app-id: ${{ secrets.INTEGRATION_TEST_APP_ID }}
+          private-key: ${{ secrets.INTEGRATION_TEST_PRIVATE_KEY }}
+          owner: databricks
+          repositories: databricks-driver-test
+
+      - name: Dispatch Node.js tests
+        if: steps.changed.outputs.changed == 'true'
+        uses: peter-evans/repository-dispatch@ff45666b9427631e3450c54a1bcbee4d9ff4d7c0 # v3.0.0
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          repository: databricks/databricks-driver-test
+          event-type: nodejs-pr-test
+          client-payload: |
+            {
+              "pr_number": "${{ steps.extract-pr.outputs.pr_number }}",
+              "commit_sha": "${{ github.event.merge_group.head_sha }}",
+              "pr_repo": "${{ github.repository }}",
+              "pr_url": "${{ github.server_url }}/${{ github.repository }}/pull/${{ steps.extract-pr.outputs.pr_number }}",
+              "pr_title": "Merge queue validation",
+              "pr_author": "merge-queue",
+              "proxy_mode": "replay"
+            }
+
+      - name: Fail check on dispatch error
+        if: failure() && steps.changed.outputs.changed == 'true'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'Node.js Integration Tests',
+              head_sha: '${{ github.event.merge_group.head_sha }}',
+              status: 'completed',
+              conclusion: 'failure',
+              completed_at: new Date().toISOString(),
+              output: {
+                title: 'Failed - error dispatching tests',
+                summary: 'An error occurred while dispatching Node.js integration tests. Check this workflow run for details.'
+              }
+            });
+
+  # =============================================================================
+  # After merge: trigger the multi-language coverage fan-out.
+  # Fires when a PR lands on main (merge queue or direct merge) and touched
+  # driver source. Dispatches `coverage-fanout` to databricks-driver-test, whose
+  # coverage-fanout-tracker.yml opens a tracking issue and runs the
+  # language-agnostic fan-out (a spec authored from THIS PR's diff, conformed as
+  # tests across every driver) as peco-engineer-bot.
+  # =============================================================================
+  trigger-coverage-fanout:
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.action == 'closed' &&
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.base.ref == 'main'
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Check if driver source changed
+        id: changed
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              per_page: 100,
+            });
+            // The whole repo IS the driver. Count a merge as source-affecting when it changes driver
+            // source: lib/ (JS/TS), native/ (kernel bindings), thrift/ (Thrift defs), or the KERNEL_REV
+            // pin. Docs/CI/test-only merges do not warrant a full multi-language fan-out. (Matches the
+            // source roots called out in the "run on every change" comments above — a merge that only
+            // bumps KERNEL_REV or edits native/ or thrift/ still affects the Thrift/kernel backends.)
+            const isSource = (f) =>
+              f.startsWith('lib/') || f.startsWith('native/') || f.startsWith('thrift/') || f === 'KERNEL_REV';
+            const srcChanged = files.some((f) => isSource(f.filename));
+            console.log(`driver source changed: ${srcChanged}`);
+            core.setOutput('source', srcChanged.toString());
+
+      - name: Generate GitHub App token (databricks-driver-test)
+        if: steps.changed.outputs.source == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        with:
+          app-id: ${{ secrets.INTEGRATION_TEST_APP_ID }}
+          private-key: ${{ secrets.INTEGRATION_TEST_PRIVATE_KEY }}
+          owner: databricks
+          repositories: databricks-driver-test
+          permission-contents: write
+
+      - name: Dispatch coverage-fanout
+        if: steps.changed.outputs.source == 'true'
+        uses: peter-evans/repository-dispatch@ff45666b9427631e3450c54a1bcbee4d9ff4d7c0 # v3.0.0
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          repository: databricks/databricks-driver-test
+          event-type: coverage-fanout
+          client-payload: '{"reference_repo": "${{ github.repository }}", "pr_number": "${{ github.event.pull_request.number }}", "pr_url": "${{ github.event.pull_request.html_url }}"}'

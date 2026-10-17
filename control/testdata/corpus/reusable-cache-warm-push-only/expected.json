@@ -1,0 +1,18 @@
+{
+  "source": "reconstruction of a reusable cache-warming workflow called on push only",
+  "commit": "",
+  "captured": "2026-10-16",
+  "group": "clean",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [{"name": "main", "protected": true}],
+  "note": "A reusable workflow (_warm.yml, on: workflow_call) passes the pull request title to a shell and saves the npm cache the tag-triggered publish job restores. Its only caller, ci.yml on [push, pull_request_target], calls it from the job warm-cache under if: github.event_name == 'push': the pull_request_target run never runs the call, so no outsider makes the warm job run. The called job takes its caller's gate (the repository's own events), so the expression starts no path, the warm job writes no cache an outsider controls, and the cache admits no path either. The expression finding stays an individual one, priced at Low with the gate note. No job declares cache-mode, so ISSUE-705 is silent (it flags only a job granted cache write on an untrusted trigger), and the two Low findings left cost 6: 94, A.",
+  "expect": {
+    "maxTier": "none",
+    "letter": "A",
+    "ceilings": [
+      {"subjectContains": "github.event.pull_request.title", "tier": "none"},
+      {"subjectContains": "", "entryKind": "poisoned_cache", "tier": "none"}
+    ]
+  }
+}

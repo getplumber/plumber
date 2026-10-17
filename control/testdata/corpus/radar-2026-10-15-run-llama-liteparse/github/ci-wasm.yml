@@ -1,0 +1,133 @@
+name: CI - WASM Bindings
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/**'
+      - 'packages/wasm/**'
+      - 'scripts/browser-compat/**'
+      - 'scripts/edge-compat/**'
+      - '.github/workflows/ci-wasm.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'crates/**'
+      - 'packages/wasm/**'
+      - 'scripts/browser-compat/**'
+      - 'scripts/edge-compat/**'
+      - '.github/workflows/ci-wasm.yml'
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    name: Build WASM
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cache/pdfium-rs
+            target
+          key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --locked
+
+      - name: Test WASM OCR stages
+        env:
+          NODE_PATH: ${{ github.workspace }}/scripts/browser-compat/stage-test-support
+        run: wasm-pack test --node crates/liteparse-wasm --test ocr_stages
+
+      - name: Build WASM package
+        working-directory: packages/wasm
+        run: npm run build
+
+      - name: Verify output
+        run: |
+          test -f packages/wasm/pkg/liteparse_wasm_bg.wasm
+          test -f packages/wasm/pkg/liteparse_wasm.js
+          test -f packages/wasm/pkg/liteparse_wasm.d.ts
+          WASM_SIZE=$(stat --format=%s packages/wasm/pkg/liteparse_wasm_bg.wasm)
+          echo "WASM binary size: $(numfmt --to=iec $WASM_SIZE)"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-pkg
+          path: packages/wasm/pkg/
+          if-no-files-found: error
+
+  browser-test:
+    runs-on: ubuntu-latest
+    needs: build
+    name: Browser PDF parse test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Download WASM artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: wasm-pkg
+          path: packages/wasm/pkg/
+
+      - name: Install Playwright
+        run: |
+          npm install playwright@latest
+          npx playwright install --with-deps chromium
+
+      - name: Run browser parse test
+        run: node scripts/browser-compat/wasm-test.mjs
+
+  edge-test:
+    runs-on: ubuntu-latest
+    needs: build
+    name: Edge runtime PDF parse test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Download WASM artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: wasm-pkg
+          path: packages/wasm/pkg/
+
+      - name: Install Miniflare
+        # Pinned, NOT @latest: miniflare@latest currently resolves to a 5.x
+        # alpha whose `new Miniflare()` options schema replaced the 4.x
+        # single-worker form (`modules: [...]`) used by
+        # scripts/edge-compat/wasm-test.mjs with a nested `workers: [...]`
+        # shape. There is no root package.json/lockfile in this repo, so the
+        # version has to live here. Bump deliberately, re-running the test.
+        run: npm install --no-save miniflare@4.20260730.0
+
+      - name: Run edge runtime parse test
+        run: node scripts/edge-compat/wasm-test.mjs

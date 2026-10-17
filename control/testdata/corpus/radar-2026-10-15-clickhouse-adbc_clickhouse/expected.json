@@ -1,0 +1,42 @@
+{
+  "source": "https://github.com/ClickHouse/adbc_clickhouse",
+  "commit": "2c374adbb6cd4c4f4db3e9ee5942e34e987b0076",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "copilot",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/ci.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "defaultTokenWrite": "false",
+  "defaultTokenSource": "log",
+  "note": "The two High paths in `ci.yml` job `test` were judged overstated: the three cloud secrets are real but the default token is read-only (run log), so they hold at High for the secrets alone, with no push or publish.",
+  "expect": {
+    "paths": [
+      {
+        "entryKind": "mutable_dependency",
+        "tier": "high",
+        "subjectContains": "taiki-e/install-action@cargo-llvm-cov"
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "tier": "high",
+        "subjectContains": "hoverkraft-tech/compose-action@v2.2.0"
+      }
+    ]
+  }
+}

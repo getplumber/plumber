@@ -1,0 +1,78 @@
+name: Linters
+
+on:
+  push:
+    branches:
+      - main
+  pull_request: {}
+
+jobs:
+  ruff-lint-check:
+    name: Ruff Lint Check
+    runs-on: ubuntu-24.04
+    steps:
+      # Common steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set up Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: "2.0.1"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "poetry"
+      - name: Install dependencies
+        run: poetry install --all-extras
+
+      # Job-specific step(s):
+      - name: Run lint check
+        run: poetry run ruff check .
+
+  ruff-format-check:
+    name: Ruff Format Check
+    runs-on: ubuntu-24.04
+    steps:
+      # Common steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set up Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: "1.8.4"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "poetry"
+      - name: Install dependencies
+        run: poetry install --all-extras
+
+      # Job-specific step(s):
+      - name: Check code format
+        run: poetry run ruff format --diff .
+
+  mypy-check:
+    name: MyPy Check
+    runs-on: ubuntu-24.04
+    steps:
+      # Common steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set up Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: "1.8.4"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "poetry"
+      - name: Install dependencies
+        run: poetry install --all-extras
+
+      # Job-specific step(s):
+
+      - name: Run mypy
+        run: poetry run mypy --config-file mypy.ini airbyte_cdk

@@ -73,12 +73,16 @@ func pushEscalates(r Reach) bool {
 	return provenPrivileged(r) || len(r.Impacts) > 0
 }
 
-// keepsSomething reports whether code on js's runner can leave something
-// a later run reads: a cache it saves (Mode "save" or "both") or an
-// artifact it uploads. Without either the runner is ephemeral and the
-// "caches or uploads" sentences are not said.
-func keepsSomething(js JobSituation) bool {
-	return js.Uploads || len(savingCaches(js)) > 0
+// keepsSomething reports whether code entering js's runner through an
+// entry of kind on subject can leave something a later run reads: an
+// artifact the job uploads, or a cache it saves (Mode "save" or "both")
+// in a run the entry holds in that saves for the default branch
+// (cacheWriterScope, savesShared): a pull_request_target run GitHub keeps
+// read-only, or a fork pull request's own scope, poisons no cache another
+// run reads. Without either the runner is ephemeral and the "caches or
+// uploads" sentences are not said.
+func keepsSomething(kind EntryKind, subject string, js JobSituation) bool {
+	return js.Uploads || (len(savingCaches(js)) > 0 && savesShared(cacheWriterScope(kind, subject, js)))
 }
 
 // advisorySeverityRank orders the severities the GitHub Advisory Database

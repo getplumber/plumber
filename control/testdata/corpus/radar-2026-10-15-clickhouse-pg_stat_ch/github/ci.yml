@@ -1,0 +1,162 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CI: true  # Enables -Werror
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build & Test (PG ${{ matrix.pg_version }}, ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        pg_version: [16, 17, 18, 19]
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: depot-ubuntu-22.04-16
+            triplet: x64-linux-pic
+          - arch: arm64
+            runner: depot-ubuntu-22.04-arm-16
+            triplet: arm64-linux-pic
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Checkout clickhouse-c submodule
+        run: git submodule update --init third_party/clickhouse-c
+
+      # apt.postgresql.org.sh (shipped with postgresql-common) adds the PGDG
+      # repo, including the per-version component for beta/devel releases, and
+      # with -i installs postgresql-$v + postgresql-server-dev-$v.
+      - name: Install PostgreSQL ${{ matrix.pg_version }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y -v ${{ matrix.pg_version }} -i
+
+      # libkrb5-dev: PGDG packages are built with GSSAPI, so including
+      # libpq/libpq-be.h (for MyProcPort) pulls in gssapi/gssapi.h.
+      - name: Install build dependencies
+        run: sudo apt-get install -y cmake ninja-build g++ libssl-dev libkrb5-dev pkg-config curl zip unzip tar
+
+      - uses: ./.github/actions/setup-vcpkg
+        with:
+          triplet: ${{ matrix.triplet }}
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: pg${{ matrix.pg_version }}-${{ matrix.arch }}
+          max-size: 500M
+
+      - name: Configure
+        run: |
+          cmake --preset default \
+            -DPG_CONFIG=/usr/lib/postgresql/${{ matrix.pg_version }}/bin/pg_config \
+            -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Install extension
+        run: sudo cmake --install build
+
+      - name: Run regression tests
+        run: |
+          /usr/lib/postgresql/${{ matrix.pg_version }}/lib/pgxs/src/test/regress/pg_regress \
+            --bindir=/usr/lib/postgresql/${{ matrix.pg_version }}/bin \
+            --inputdir=test/regression \
+            --outputdir=test/regression/results \
+            --temp-instance=test/regression/tmp_check \
+            --temp-config=test/regression/pg_stat_ch.conf \
+            basic version guc stats utility buffers cmd_type client_info error_capture upgrade
+
+      - name: Run isolation tests
+        run: |
+          mkdir -p specs/results
+          /usr/lib/postgresql/${{ matrix.pg_version }}/lib/pgxs/src/test/isolation/pg_isolation_regress \
+            --bindir=/usr/lib/postgresql/${{ matrix.pg_version }}/bin \
+            --inputdir=specs \
+            --outputdir=specs/results \
+            --temp-instance=specs/tmp_check \
+            --temp-config=test/regression/pg_stat_ch.conf \
+            --load-extension=pg_stat_ch \
+            ring_buffer_concurrent ring_buffer_boundary overflow_race
+
+      - name: Upload test results on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-pg${{ matrix.pg_version }}-${{ matrix.arch }}
+          path: |
+            test/regression/results/
+            test/regression/tmp_check/log/
+            specs/results/
+            specs/tmp_check/log/
+
+  lint:
+    name: Code Style
+    runs-on: depot-ubuntu-22.04-16
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check formatting
+        run: |
+          sudo apt-get update && sudo apt-get install -y clang-format
+          find src include -name '*.c' -o -name '*.cc' -o -name '*.h' | xargs clang-format --dry-run --Werror
+
+  # Clang build: exercises -Werror=global-constructors on the C++ exporter
+  # (Clang-only flag).  GCC has no equivalent, so we run a separate Clang job
+  # to ensure the warning catches regressions before they merge.  One PG
+  # version / one arch is enough — this job exists to surface compile errors,
+  # not to duplicate test coverage.
+  build-clang:
+    name: Build (Clang, PG 18)
+    runs-on: depot-ubuntu-22.04-16
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Checkout clickhouse-c submodule
+        run: git submodule update --init third_party/clickhouse-c
+
+      - name: Install PostgreSQL 18
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y -v 18 -i
+
+      - name: Install Clang + build dependencies
+        run: |
+          sudo apt-get install -y \
+            cmake ninja-build clang libssl-dev libkrb5-dev pkg-config curl zip unzip tar
+
+      - uses: ./.github/actions/setup-vcpkg
+        with:
+          triplet: x64-linux-pic
+
+      - name: Configure (Clang)
+        run: |
+          cmake --preset default \
+            -DPG_CONFIG=/usr/lib/postgresql/18/bin/pg_config \
+            -DVCPKG_TARGET_TRIPLET=x64-linux-pic \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++
+
+      - name: Build
+        run: cmake --build build --parallel

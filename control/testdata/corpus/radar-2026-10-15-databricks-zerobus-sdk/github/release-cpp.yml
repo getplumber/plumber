@@ -1,0 +1,199 @@
+name: Build C++
+run-name: "Build C++ SDK ${{ github.ref_name }}"
+
+# Builds one self-contained artifact per target platform for the C++ SDK. Each
+# artifact bundles:
+#   - the C++ SDK source tree (headers, sources, CMake build) — platform-neutral
+#   - the matching prebuilt Rust C FFI archive (libzerobus_ffi.a / zerobus_ffi.lib)
+#     plus zerobus.h, cross-built for that platform
+#
+# Rationale: the FFI archive is a C ABI (stable across C++ compilers) and is the
+# one piece a consumer can't build without a Rust toolchain, so we ship it
+# prebuilt per platform. The thin C++ wrapper is ABI-fragile across
+# compiler/stdlib, so we ship it as source and let the consumer's own compiler
+# build it, pointing CMake at the bundled FFI archive:
+#
+#   cmake -S <artifact>/cpp -B build \
+#     -DZEROBUS_FFI_LIBRARY=<artifact>/lib/libzerobus_ffi.a \
+#     -DZEROBUS_FFI_HEADER_DIR=<artifact>/lib
+#
+# The FFI build steps mirror release-ffi.yml (cargo-zigbuild for the cross
+# targets); no C++ cross-compilation is performed here.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-cpp:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: { group: databricks-protected-runner-group, labels: linux-ubuntu-latest }
+            target: x86_64-unknown-linux-gnu
+            static_lib: libzerobus_ffi.a
+            artifact_dir: linux-x86_64
+            cross: false
+          - runner: { group: databricks-protected-runner-group, labels: linux-ubuntu-latest }
+            target: aarch64-unknown-linux-gnu
+            static_lib: libzerobus_ffi.a
+            artifact_dir: linux-aarch64
+            cross: true
+          - runner: { group: databricks-protected-runner-group, labels: linux-ubuntu-latest }
+            target: x86_64-unknown-linux-musl
+            static_lib: libzerobus_ffi.a
+            artifact_dir: linux-musl-x86_64
+            cross: false
+            zigbuild: true
+            rustflags: "-C target-feature=-crt-static"
+          - runner: { group: databricks-protected-runner-group, labels: linux-ubuntu-latest }
+            target: aarch64-unknown-linux-musl
+            static_lib: libzerobus_ffi.a
+            artifact_dir: linux-musl-aarch64
+            cross: false
+            zigbuild: true
+            rustflags: "-C target-feature=-crt-static"
+          - runner: { group: databricks-protected-runner-group, labels: linux-ubuntu-latest }
+            target: x86_64-apple-darwin
+            static_lib: libzerobus_ffi.a
+            artifact_dir: darwin-x86_64
+            cross: false
+            zigbuild: true
+            static_only: true
+          - runner: { group: databricks-protected-runner-group, labels: linux-ubuntu-latest }
+            target: aarch64-apple-darwin
+            static_lib: libzerobus_ffi.a
+            artifact_dir: darwin-aarch64
+            cross: false
+            zigbuild: true
+            static_only: true
+          - runner: { group: databricks-protected-runner-group, labels: windows-server-latest }
+            target: x86_64-pc-windows-msvc
+            static_lib: zerobus_ffi.lib
+            artifact_dir: windows-x86_64
+            cross: false
+
+    name: Build C++ - ${{ matrix.artifact_dir }}
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      id-token: write
+
+    defaults:
+      run:
+        working-directory: rust
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Get JFrog OIDC token
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/jfrog-oidc-token.sh"
+
+      - name: Configure cargo for JFrog
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/configure-cargo.sh"
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install cross-compilation toolchain (Linux ARM64)
+        if: matrix.cross
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc-aarch64-linux-gnu
+          mkdir -p .cargo
+          echo '[target.aarch64-unknown-linux-gnu]' > .cargo/config.toml
+          echo 'linker = "aarch64-linux-gnu-gcc"' >> .cargo/config.toml
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Zig (zigbuild targets)
+        if: matrix.zigbuild
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.13.0
+
+      - name: Install cargo-zigbuild (zigbuild targets)
+        if: matrix.zigbuild
+        run: cargo install cargo-zigbuild --locked --version 0.23.0
+
+      - name: Build FFI library
+        if: '!matrix.zigbuild'
+        run: cargo build --release -p zerobus-ffi --target ${{ matrix.target }}
+
+      - name: Build FFI library (zigbuild)
+        if: matrix.zigbuild && !matrix.static_only
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
+        run: cargo zigbuild --release -p zerobus-ffi --target ${{ matrix.target }}
+
+      # Darwin: a plain zigbuild also links the manifest's cdylib, whose link
+      # needs the macOS Security/CoreFoundation frameworks (absent when
+      # cross-compiling from Linux). Emit only the staticlib, which the C++ SDK
+      # consumes. Use the `cargo-zigbuild` binary directly: `cargo zigbuild
+      # rustc` mis-parses `rustc` as a zigbuild arg.
+      - name: Build FFI static library (zigbuild, static only)
+        if: matrix.zigbuild && matrix.static_only
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
+        run: cargo-zigbuild rustc --release -p zerobus-ffi --target ${{ matrix.target }} --crate-type staticlib
+
+      - name: Assemble C++ SDK bundle
+        shell: bash
+        run: |
+          root="$GITHUB_WORKSPACE"
+          out="artifacts/${{ matrix.artifact_dir }}"
+          mkdir -p "$out/cpp" "$out/lib"
+
+          # Platform-neutral C++ SDK source (everything CMake needs to build the
+          # wrapper: headers, sources, the CMake build, and top-level docs).
+          cp -R "$root/cpp/include"        "$out/cpp/"
+          cp -R "$root/cpp/src"            "$out/cpp/"
+          cp -R "$root/cpp/cmake"          "$out/cpp/"
+          cp -R "$root/cpp/examples"       "$out/cpp/"
+          cp "$root/cpp/CMakeLists.txt"    "$out/cpp/"
+          cp "$root/cpp/README.md"         "$out/cpp/"
+          cp "$root/cpp/CHANGELOG.md"      "$out/cpp/"
+          cp "$root/cpp/LICENSE"           "$out/cpp/"
+          cp "$root/cpp/NOTICE"            "$out/cpp/"
+
+          # Prebuilt FFI archive + header for this platform (keep the native
+          # filename: libzerobus_ffi.a on Unix, zerobus_ffi.lib on MSVC).
+          cp "target/${{ matrix.target }}/release/${{ matrix.static_lib }}" "$out/lib/"
+          cp "ffi/zerobus.h" "$out/lib/"
+
+          # Lockfile for the prebuilt FFI archive; gives the release scan a
+          # manifest to build an SBOM from (an empty SBOM fails the scan).
+          cp "Cargo.lock" "$out/lib/"
+
+          # A short pointer so the bundle is self-explanatory.
+          cat > "$out/README.md" <<EOF
+          # Zerobus C++ SDK — prebuilt bundle
+
+          This bundle contains the C++ SDK source under \`cpp/\` and the matching
+          prebuilt Rust C FFI archive under \`lib/\` for this platform. Building the
+          C++ wrapper needs a C++17 compiler and CMake, but NOT a Rust toolchain:
+
+              cmake -S cpp -B build \\
+                -DZEROBUS_FFI_LIBRARY="\$PWD/lib/${{ matrix.static_lib }}" \\
+                -DZEROBUS_FFI_HEADER_DIR="\$PWD/lib"
+              cmake --build build -j
+
+          See \`cpp/README.md\` for usage.
+          EOF
+
+          echo "Bundle contents:"
+          find "$out" -type f | sort
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cpp-${{ matrix.artifact_dir }}
+          path: rust/artifacts/${{ matrix.artifact_dir }}
+          if-no-files-found: error

@@ -1,0 +1,38 @@
+name: Monitor Issues and Pull Requests
+on:
+  workflow_dispatch:
+    inputs:
+      operations-per-run:
+        description: "Number of operations per run"
+        required: false
+        default: "30"
+  schedule:
+    - cron: "0 0 * * *" # Runs once a day at midnight
+jobs:
+  monitor-issues-and-pull-requests:
+    strategy:
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/stale@v10
+        with:
+          # Days of inactivity before marking an issue as stale
+          days-before-stale: 180
+          # Days of inactivity before closing an issue
+          days-before-close: 7
+          # Name of the stale label
+          stale-issue-label: "stale"
+          stale-issue-message: "This issue has been marked as stale due to 6 months of inactivity. As part of our effort to address every issue properly, please feel free to remove the stale label or keep this issue active by leaving a comment. Otherwise, it will be closed in 7 days"
+          close-issue-message: "This issue was closed due to 7 days of inactivity after being marked as stale. Feel free to reopen it if it remains relevant."
+          stale-pr-label: "stale"
+          stale-pr-message: "This pull-request has been marked as stale due to 6 months of inactivity. As part of our effort to address every issue properly, please feel free to remove the stale label or keep this issue active by leaving a comment. Otherwise, it will be closed in 7 days"
+          close-pr-message: "This pull-request was closed due to 7 days of inactivity after being marked as stale. Feel free to reopen it if it remains relevant."
+          ascending: true
+          # Get from input or resolve to default
+          operations-per-run: ${{ github.event.inputs.operations-per-run || '30' }}
+          repo-token: ${{ secrets.GITHUB_TOKEN }}

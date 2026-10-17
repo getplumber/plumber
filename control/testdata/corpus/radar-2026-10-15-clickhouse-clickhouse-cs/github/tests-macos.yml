@@ -1,0 +1,51 @@
+name: macOS Tests
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: false
+        type: string
+
+jobs:
+  macos:
+    name: macOS Tests
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, macos-15-intel]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Setup ClickHouse
+        run: |
+          curl https://clickhouse.com/ | sh
+          sudo ./clickhouse install --noninteractive
+          sudo clickhouse start
+
+      - uses: actions/cache@v6
+        name: Cache NuGet
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Setup .NET Core
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: |
+            10.x
+
+      - name: Test
+        run: dotnet test ClickHouse.Driver.Tests/ClickHouse.Driver.Tests.csproj
+              --framework net10.0 --configuration Release --verbosity normal --logger GitHubActions
+              /clp:ErrorsOnly /p:CollectCoverage=true /p:CoverletOutputFormat=opencover /p:SkipAutoProps=true
+        env:
+          CLICKHOUSE_CONNECTION: Host=localhost;Port=8123;Username=default
+          CLICKHOUSE_TEST_ENVIRONMENT: local_quick_setup

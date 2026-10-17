@@ -1,0 +1,56 @@
+{
+  "source": "https://github.com/ClickHouse/ClickStack-helm-charts",
+  "commit": "e5a3ddf3ebf9a60d97d0e59f6bd01b60dcd3c77e",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "copilot",
+      "known": true
+    },
+    {
+      "name": "github-pages",
+      "known": true,
+      "branchPolicy": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/chart-test.yml": "active",
+    ".github/workflows/deep-review.yml": "active",
+    ".github/workflows/external-contributor-alerts.yml": "active",
+    ".github/workflows/helm-test.yaml": "active",
+    ".github/workflows/helmcov.yaml": "active",
+    ".github/workflows/release.yml": "active",
+    ".github/workflows/test-collaborator-token-check.yml": "active",
+    ".github/workflows/update-app-version.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High `corentinmusard/otel-cicd-action@v4` path was judged overstated (two secrets are real, the push and publish rest on an assumed write default), High at most; a false negative was observed: `deep-review.yml` runs on pull_request_target and checks out the fork head (`allow-unsafe-pr-checkout: true`) before an AI code assistant, so a pull_request_target path must exist; the step after the checkout executes no repository code that was proven, so the assessment left its tier open and the case asks for it at Medium.",
+  "expect": {
+    "paths": [
+      {
+        "entryKind": "pr_target",
+        "tier": "medium",
+        "subjectContains": "github.event.pull_request.head",
+        "actor": "outsider",
+        "pending": "a checkout whose `repository:` and `ref:` come from a step output set from the pull request head (`steps.pr.outputs.head_repo`, `head_ref`) is not read as a checkout of the fork head, so the pull_request_target job starts no path."
+      }
+    ],
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "corentinmusard/otel-cicd-action@v4",
+        "tier": "high"
+      }
+    ]
+  }
+}

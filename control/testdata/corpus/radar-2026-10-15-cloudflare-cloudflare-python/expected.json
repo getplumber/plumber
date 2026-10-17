@@ -1,0 +1,36 @@
+{
+  "source": "https://github.com/cloudflare/cloudflare-python",
+  "commit": "6992be906720834c83357ba99f4704c9f0ad7bd1",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/ci.yml": "active",
+    ".github/workflows/detect-breaking-changes.yml": "active",
+    ".github/workflows/publish-pypi.yml": "active",
+    ".github/workflows/release-doctor.yml": "active",
+    ".github/workflows/semgrep.yml": "active",
+    ".github/workflows/sync-labels.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High `micnncim/action-label-syncer@v1` path was judged overstated: its token is scoped to issues and the job holds no secret, Medium at most.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "micnncim/action-label-syncer@v1",
+        "tier": "medium",
+        "pending": "the spec counts any write scope of the token as a write token, while the assessment argued that a token scoped to issues, pull requests or checks only, in a job with no secret, is a Medium at most."
+      }
+    ]
+  }
+}

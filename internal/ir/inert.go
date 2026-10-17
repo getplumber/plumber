@@ -41,7 +41,7 @@ func WorkflowStateKey(originFile string) string {
 // (workflow state, runs-on, workflow_call, the triggers a workflow
 // declares). Gating the whole function on the pipeline's provider,
 // rather than on WorkflowHasTriggers alone, keeps a GitLab job's always-
-// empty Triggers from misreading as "no trigger" — a GitLab job simply
+// empty Triggers from misreading as "no trigger": a GitLab job simply
 // never carries this field at all, by design (see Job.Triggers).
 func MarkInert(p *NormalizedPipeline) {
 	if p == nil || p.Provider != ProviderGitHub {
@@ -57,8 +57,14 @@ func MarkInert(p *NormalizedPipeline) {
 // job's own workflow disabled, no trigger, a workflow_call job nobody
 // calls, a retired runner label, then a condition that only ever runs
 // in another repository.
+//
+// The repository-wide flag only covers a job whose workflow the listing
+// actually reported: the listing names the default branch's registered
+// workflows only, so a workflow present in the analysed checkout but
+// absent from it (one added on a feature branch) still runs, and keeps
+// whatever reason the rest of this order gives it.
 func inertReason(p *NormalizedPipeline, job Job) string {
-	if p.ActionsDisabled {
+	if p.ActionsDisabled && workflowListed(p, job) {
 		return "actions disabled"
 	}
 	if reason := workflowDisabledReason(p, job); reason != "" {
@@ -97,9 +103,20 @@ func workflowDisabledReason(p *NormalizedPipeline, job Job) string {
 	return "workflow disabled (" + state + ")"
 }
 
+// workflowListed is whether the job's own workflow appears in
+// p.WorkflowStates, matched by the same normalized key
+// workflowDisabledReason reads.
+func workflowListed(p *NormalizedPipeline, job Job) bool {
+	if !p.WorkflowStatesKnown {
+		return false
+	}
+	_, ok := p.WorkflowStates[WorkflowStateKey(job.OriginFile)]
+	return ok
+}
+
 // retiredRunnerReason reads job.RunsOn against runners.Retired: a single
 // label is enough on its own, a list of several is inert only when every
-// one of them is retired (the brief's conservative reading), named by
+// one of them is retired (the conservative reading), named by
 // the first retired label in the list. RunsOnExpression or an empty
 // RunsOn (no literal label the collector could read) sets nothing.
 func retiredRunnerReason(job Job) string {
@@ -139,10 +156,13 @@ func (f repositoryFacts) Resolve(ref string) (string, bool) {
 var githubRepositoryRef = []string{"github.repository"}
 
 // repositoryLiteralReason reports a job whose own `if:` is provably
-// False for the repository actually being scanned and names a different
-// literal for github.repository (`if: github.repository ==
-// 'other/repo'`): such a job can only ever run in that other
-// repository's fork or template use, never here.
+// False for the repository actually being scanned and compares
+// github.repository to a literal. A positive comparison (`if:
+// github.repository == 'other/repo'`) names the one place the job runs:
+// "runs only in other/repo". A negated one (`if: github.repository !=
+// 'me/repo'`, the "everywhere except the template repository" shape)
+// names the one place it never runs: "runs everywhere except me/repo".
+// A positive comparison wins when the condition carries both.
 func repositoryLiteralReason(p *NormalizedPipeline, job Job) string {
 	if job.If == "" || p.ProjectPath == "" {
 		return ""
@@ -150,9 +170,14 @@ func repositoryLiteralReason(p *NormalizedPipeline, job Job) string {
 	if expr.Eval(job.If, repositoryFacts{repository: p.ProjectPath}) != expr.False {
 		return ""
 	}
-	literal, ok := expr.ComparedLiteral(job.If, githubRepositoryRef)
-	if !ok {
-		return ""
+	comparisons := expr.Comparisons(job.If, githubRepositoryRef)
+	for _, c := range comparisons {
+		if !c.Negated {
+			return "runs only in " + c.Literal
+		}
 	}
-	return "runs only in " + literal
+	if len(comparisons) > 0 {
+		return "runs everywhere except " + comparisons[0].Literal
+	}
+	return ""
 }

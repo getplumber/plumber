@@ -1,0 +1,68 @@
+name: Create Release
+run-name: Create Release ${{ inputs.tag_name }} by @${{ github.actor }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag name'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+
+jobs:
+  create-release:
+    name: Build and publish release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate tag
+        run: |
+          if [[ ! "${{ inputs.tag_name }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then 
+              echo "tag is invalid: must be in the form 'v0.0.0'"
+              exit 1
+          fi
+      - name: Create tag
+        uses: actions/github-script@v5
+        with:
+          script: |
+            github.rest.git.createRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: 'refs/tags/${{ inputs.tag_name }}',
+              sha: context.sha
+            })
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+           go-version: 'stable'
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.github_token }}
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+
+      - uses: actions/checkout@v4
+        with:
+          repository: airbytehq/homebrew-tap
+          ssh-key: ${{ secrets.ABCTL_HOMEBREW_KEY }}
+      - name: Replace version
+        run: |
+          sed -i 's/ABCTL_VERSION = ".*"/ABCTL_VERSION = "${{ inputs.tag_name }}"/' Formula/abctl.rb
+      - name: Show diff
+        run: git diff
+      - name: Commit changes
+        run: |
+          git config user.email ${{ secrets.PRODENG_BOT_EMAIL }}
+          git config user.name "airbyte-prodeng"
+          git commit -a -m "chore: update abctl to ${{ inputs.tag_name }}"
+      - name: Push change
+        run: git push

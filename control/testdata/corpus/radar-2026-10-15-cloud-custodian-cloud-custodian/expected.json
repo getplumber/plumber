@@ -1,0 +1,34 @@
+{
+  "source": "https://github.com/cloud-custodian/cloud-custodian",
+  "commit": "8bf784b5debc7aeb590b23899a70ce2c7418f1b6",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/docker.yml": "active",
+    ".github/workflows/functional.yaml": "active",
+    ".github/workflows/ci.yml": "active",
+    ".github/workflows/release.yml": "active",
+    ".github/workflows/plumber.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High path through the `rhysd/actionlint` download script from `main` was judged overstated: the entry is real, but `ci.yml` sets `permissions: {}`, the job holds no secret and its uv cache carries a `-linter` suffix no other job restores, so a compromised script runs code on an unprivileged runner, Medium at most.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash",
+        "tier": "medium"
+      }
+    ]
+  }
+}

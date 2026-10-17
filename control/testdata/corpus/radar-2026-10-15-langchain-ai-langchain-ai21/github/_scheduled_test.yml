@@ -1,0 +1,62 @@
+name: Scheduled tests
+run-name: langchain-ai21 Scheduled tests
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron:  '0 13 * * *'
+
+permissions:
+  contents: read
+
+env:
+  POETRY_VERSION: "1.8.2"
+
+jobs:
+  build:
+    name: Python ${{ matrix.python-version }} - ${{ matrix.working-directory }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - "3.10"
+          - "3.12"
+        working-directory:
+          - "libs/ai21"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python + Poetry ${{ env.POETRY_VERSION }}
+        uses: "./.github/actions/poetry_setup"
+        with:
+          python-version: ${{ matrix.python-version }}
+          poetry-version: ${{ env.POETRY_VERSION }}
+          working-directory: ${{ matrix.working-directory }}
+          cache-key: scheduled
+
+      - name: Install dependencies
+        run: poetry install --with test,test_integration
+        working-directory: ${{ matrix.working-directory }}
+
+      - name: Run unit tests
+        run: make tests
+        working-directory: ${{ matrix.working-directory }}
+
+      - name: Run integration tests
+        env:
+          AI21_API_KEY: ${{ secrets.AI21_API_KEY }}
+        run: make integration_tests
+        working-directory: ${{ matrix.working-directory }}
+
+
+      - name: Ensure the tests did not create any additional files
+        working-directory: ${{ matrix.working-directory }}
+        run: |
+          set -eu
+          STATUS="$(git status)"
+          echo "$STATUS"
+          # grep will exit non-zero if the target message isn't found,
+          # and `set -e` above will cause the step to fail.
+          echo "$STATUS" | grep 'nothing to commit, working tree clean'

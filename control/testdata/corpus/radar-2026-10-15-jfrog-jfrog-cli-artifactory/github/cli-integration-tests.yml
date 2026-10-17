@@ -1,0 +1,1456 @@
+name: CLI Integration Tests
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+  pull_request_target:
+    types: [labeled]
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  Remove-Label:
+    if: contains(github.event.pull_request.labels.*.name, 'safe to test')
+    name: Remove label
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove 'safe to test'
+        uses: actions-ecosystem/action-remove-labels@v1
+        with:
+          labels: "safe to test"
+
+  Detect-Deps:
+    name: Detect Dependencies
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    runs-on: ubuntu-latest
+    outputs:
+      build_info_go_repo: ${{ steps.detect.outputs.build_info_go_repo }}
+      build_info_go_ref: ${{ steps.detect.outputs.build_info_go_ref }}
+      jfrog_client_go_repo: ${{ steps.detect.outputs.jfrog_client_go_repo }}
+      jfrog_client_go_ref: ${{ steps.detect.outputs.jfrog_client_go_ref }}
+      jfrog_cli_core_repo: ${{ steps.detect.outputs.jfrog_cli_core_repo }}
+      jfrog_cli_core_ref: ${{ steps.detect.outputs.jfrog_cli_core_ref }}
+    steps:
+      - name: Checkout jfrog-cli-artifactory
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: false
+
+      - name: Detect dependencies
+        id: detect
+        run: go run .github/tools/detect-deps/main.go
+        env:
+          CURRENT_BRANCH: ${{ github.head_ref || github.ref_name }}
+
+  Artifactory-Tests:
+    name: ${{ matrix.suite }} ${{ matrix.os.name }}
+    needs: Detect-Deps
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [artifactory, artifactoryProject]
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: windows
+            version: 2022
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    env:
+      JFROG_CLI_LOG_LEVEL: DEBUG
+    steps:
+      - name: Checkout jfrog-cli-artifactory
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Checkout all JFrog repositories
+        uses: ./.github/actions/checkout-jfrog-repos
+        with:
+          build_info_go_repo: ${{ needs.Detect-Deps.outputs.build_info_go_repo }}
+          build_info_go_ref: ${{ needs.Detect-Deps.outputs.build_info_go_ref }}
+          jfrog_client_go_repo: ${{ needs.Detect-Deps.outputs.jfrog_client_go_repo }}
+          jfrog_client_go_ref: ${{ needs.Detect-Deps.outputs.jfrog_client_go_ref }}
+          jfrog_cli_core_repo: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_repo }}
+          jfrog_cli_core_ref: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_ref }}
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Setup Go workspace
+        uses: ./.github/actions/setup-go-workspace
+        with:
+          os_name: ${{ matrix.os.name }}
+
+      - name: Install local Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: '1200'
+
+      - name: Run Artifactory tests
+        if: matrix.suite == 'artifactory'
+        working-directory: jfrog-cli
+        run: go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.artifactory --jfrog.url=http://127.0.0.1:8082 --jfrog.adminToken=${{ env.JFROG_TESTS_LOCAL_ACCESS_TOKEN }}
+
+      - name: Run Artifactory Project tests
+        if: matrix.suite == 'artifactoryProject'
+        working-directory: jfrog-cli
+        run: go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.artifactoryProject --ci.runId=${{ runner.os }}-${{ matrix.suite }}
+
+  Go-Tests:
+    name: Go ${{ matrix.os.name }}
+    needs: Detect-Deps
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: windows
+            version: 2022
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    env:
+      JFROG_CLI_LOG_LEVEL: DEBUG
+    steps:
+      - name: Checkout jfrog-cli-artifactory
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Checkout all JFrog repositories
+        uses: ./.github/actions/checkout-jfrog-repos
+        with:
+          build_info_go_repo: ${{ needs.Detect-Deps.outputs.build_info_go_repo }}
+          build_info_go_ref: ${{ needs.Detect-Deps.outputs.build_info_go_ref }}
+          jfrog_client_go_repo: ${{ needs.Detect-Deps.outputs.jfrog_client_go_repo }}
+          jfrog_client_go_ref: ${{ needs.Detect-Deps.outputs.jfrog_client_go_ref }}
+          jfrog_cli_core_repo: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_repo }}
+          jfrog_cli_core_ref: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_ref }}
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Setup Go workspace
+        uses: ./.github/actions/setup-go-workspace
+        with:
+          os_name: ${{ matrix.os.name }}
+
+      - name: Run Go tests
+        working-directory: jfrog-cli
+        env:
+          GOWORK: off
+        run: go test -v -timeout 0 --test.go --jfrog.url=${{ secrets.EPLUS_PLATFORM_URL }} --jfrog.adminToken=${{ secrets.EPLUS_ADMIN_TOKEN }} --ci.runId=${{ runner.os }}-go
+
+  NuGet-Tests:
+    name: NuGet ${{ matrix.os.name }}
+    needs: Detect-Deps
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: windows
+            version: 2022
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    env:
+      JFROG_CLI_LOG_LEVEL: DEBUG
+    steps:
+      - name: Checkout jfrog-cli-artifactory
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Checkout all JFrog repositories
+        uses: ./.github/actions/checkout-jfrog-repos
+        with:
+          build_info_go_repo: ${{ needs.Detect-Deps.outputs.build_info_go_repo }}
+          build_info_go_ref: ${{ needs.Detect-Deps.outputs.build_info_go_ref }}
+          jfrog_client_go_repo: ${{ needs.Detect-Deps.outputs.jfrog_client_go_repo }}
+          jfrog_client_go_ref: ${{ needs.Detect-Deps.outputs.jfrog_client_go_ref }}
+          jfrog_cli_core_repo: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_repo }}
+          jfrog_cli_core_ref: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_ref }}
+
+      - name: Prepare ubuntu
+        if: matrix.os.name == 'ubuntu'
+        run: |
+          # Install Mono
+          sudo apt-get update
+          sudo apt-get install -y apt-transport-https dirmngr gnupg ca-certificates
+          sudo apt-key adv --recv-keys --keyserver hkp://keyserver.ubuntu.com:80 3FA7E0328081BFF6A14DA29AA6A19B38D3D831EF
+          echo "deb https://download.mono-project.com/repo/ubuntu stable-focal main" | sudo tee /etc/apt/sources.list.d/mono-official-stable.list
+          sudo apt-get update
+          sudo apt-get install -y mono-complete
+          # Fixes dotnet installation issues
+          echo "DOTNET_INSTALL_DIR=/usr/share/dotnet" >> $GITHUB_ENV
+          sudo mkdir -p /usr/share/dotnet
+          sudo chmod 777 /usr/share/dotnet
+
+      - name: Install .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "8.x"
+
+      - name: Install NuGet
+        uses: nuget/setup-nuget@v2
+        with:
+          nuget-version: "6.x"
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Setup Go workspace
+        uses: ./.github/actions/setup-go-workspace
+        with:
+          os_name: ${{ matrix.os.name }}
+
+      - name: Install local Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: '1200'
+
+      - name: Run NuGet tests
+        working-directory: jfrog-cli
+        run: go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.nuget
+
+  npm-Tests:
+    name: npm ${{ matrix.os.name }}
+    needs: Detect-Deps
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: windows
+            version: 2022
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    env:
+      JFROG_CLI_LOG_LEVEL: DEBUG
+    steps:
+      - name: Checkout jfrog-cli-artifactory
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Checkout all JFrog repositories
+        uses: ./.github/actions/checkout-jfrog-repos
+        with:
+          build_info_go_repo: ${{ needs.Detect-Deps.outputs.build_info_go_repo }}
+          build_info_go_ref: ${{ needs.Detect-Deps.outputs.build_info_go_ref }}
+          jfrog_client_go_repo: ${{ needs.Detect-Deps.outputs.jfrog_client_go_repo }}
+          jfrog_client_go_ref: ${{ needs.Detect-Deps.outputs.jfrog_client_go_ref }}
+          jfrog_cli_core_repo: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_repo }}
+          jfrog_cli_core_ref: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_ref }}
+
+      - name: Install npm
+        uses: actions/setup-node@v5
+        with:
+          node-version: "16"
+
+      - name: Install yarn
+        run: npm install -g yarn
+        shell: bash
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Setup Go workspace
+        uses: ./.github/actions/setup-go-workspace
+        with:
+          os_name: ${{ matrix.os.name }}
+
+      - name: Install local Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: '1200'
+
+      - name: Run npm tests
+        working-directory: jfrog-cli
+        env:
+          YARN_IGNORE_NODE: 1
+        run: go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.npm
+
+  pnpm-Tests:
+    name: pnpm ${{ matrix.pnpm.version }} ${{ matrix.os.name }}
+    needs: Detect-Deps
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: windows
+            version: 2022
+        pnpm:
+          - version: 10
+            node: "20"
+          - version: 11
+            # pnpm 11 requires Node >=22.13 (pnpm 10 only requires >=18.12).
+            node: "22.13"
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    env:
+      JFROG_CLI_LOG_LEVEL: DEBUG
+    steps:
+      - name: Checkout jfrog-cli-artifactory
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Checkout all JFrog repositories
+        uses: ./.github/actions/checkout-jfrog-repos
+        with:
+          build_info_go_repo: ${{ needs.Detect-Deps.outputs.build_info_go_repo }}
+          build_info_go_ref: ${{ needs.Detect-Deps.outputs.build_info_go_ref }}
+          jfrog_client_go_repo: ${{ needs.Detect-Deps.outputs.jfrog_client_go_repo }}
+          jfrog_client_go_ref: ${{ needs.Detect-Deps.outputs.jfrog_client_go_ref }}
+          jfrog_cli_core_repo: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_repo }}
+          jfrog_cli_core_ref: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_ref }}
+
+      - name: Install Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.pnpm.node }}
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ matrix.pnpm.version }}
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Setup Go workspace
+        uses: ./.github/actions/setup-go-workspace
+        with:
+          os_name: ${{ matrix.os.name }}
+
+      - name: Install local Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: '1200'
+
+      - name: Run pnpm tests
+        working-directory: jfrog-cli
+        env:
+          YARN_IGNORE_NODE: 1
+        run: go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.pnpm
+
+  Maven-Tests:
+    name: Maven ${{ matrix.os.name }}
+    needs: Detect-Deps
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: windows
+            version: 2022
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    env:
+      JFROG_CLI_LOG_LEVEL: DEBUG
+    steps:
+      - name: Checkout jfrog-cli-artifactory
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Checkout all JFrog repositories
+        uses: ./.github/actions/checkout-jfrog-repos
+        with:
+          build_info_go_repo: ${{ needs.Detect-Deps.outputs.build_info_go_repo }}
+          build_info_go_ref: ${{ needs.Detect-Deps.outputs.build_info_go_ref }}
+          jfrog_client_go_repo: ${{ needs.Detect-Deps.outputs.jfrog_client_go_repo }}
+          jfrog_client_go_ref: ${{ needs.Detect-Deps.outputs.jfrog_client_go_ref }}
+          jfrog_cli_core_repo: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_repo }}
+          jfrog_cli_core_ref: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_ref }}
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Setup Maven v3.8.8
+        uses: stCarolas/setup-maven@v5
+        with:
+          maven-version: 3.8.8
+
+      - name: Setup Go workspace
+        uses: ./.github/actions/setup-go-workspace
+        with:
+          os_name: ${{ matrix.os.name }}
+
+      - name: Install local Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: '1200'
+
+      - name: Run Maven tests
+        working-directory: jfrog-cli
+        run: go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.maven
+
+  Gradle-Tests:
+    name: Gradle ${{ matrix.gradle-version }} ${{ matrix.os.name }}
+    needs: Detect-Deps
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: windows
+            version: 2022
+        gradle-version: [5.6.4, 8.3]
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    env:
+      JFROG_CLI_LOG_LEVEL: DEBUG
+      GRADLE_OPTS: -Dorg.gradle.daemon=false
+    steps:
+      - name: Checkout jfrog-cli-artifactory
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Checkout all JFrog repositories
+        uses: ./.github/actions/checkout-jfrog-repos
+        with:
+          build_info_go_repo: ${{ needs.Detect-Deps.outputs.build_info_go_repo }}
+          build_info_go_ref: ${{ needs.Detect-Deps.outputs.build_info_go_ref }}
+          jfrog_client_go_repo: ${{ needs.Detect-Deps.outputs.jfrog_client_go_repo }}
+          jfrog_client_go_ref: ${{ needs.Detect-Deps.outputs.jfrog_client_go_ref }}
+          jfrog_cli_core_repo: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_repo }}
+          jfrog_cli_core_ref: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_ref }}
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: "temurin"
+          java-version: "11"
+
+      - name: Setup Gradle
+        uses: gradle/gradle-build-action@v3
+        with:
+          gradle-version: ${{ matrix.gradle-version }}
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Setup Go workspace
+        uses: ./.github/actions/setup-go-workspace
+        with:
+          os_name: ${{ matrix.os.name }}
+
+      - name: Install local Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: '1200'
+
+      - name: Run Gradle tests
+        working-directory: jfrog-cli
+        run: go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.gradle
+
+  Conan-Tests:
+    name: Conan ${{ matrix.os.name }}
+    needs: Detect-Deps
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: windows
+            version: 2022
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    env:
+      JFROG_CLI_LOG_LEVEL: DEBUG
+    steps:
+      - name: Checkout jfrog-cli-artifactory
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Checkout all JFrog repositories
+        uses: ./.github/actions/checkout-jfrog-repos
+        with:
+          build_info_go_repo: ${{ needs.Detect-Deps.outputs.build_info_go_repo }}
+          build_info_go_ref: ${{ needs.Detect-Deps.outputs.build_info_go_ref }}
+          jfrog_client_go_repo: ${{ needs.Detect-Deps.outputs.jfrog_client_go_repo }}
+          jfrog_client_go_ref: ${{ needs.Detect-Deps.outputs.jfrog_client_go_ref }}
+          jfrog_cli_core_repo: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_repo }}
+          jfrog_cli_core_ref: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_ref }}
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Install Conan
+        uses: turtlebrowser/get-conan@main
+        with:
+          version: '2.10.2'
+
+      - name: Setup Go workspace
+        uses: ./.github/actions/setup-go-workspace
+        with:
+          os_name: ${{ matrix.os.name }}
+
+      - name: Install local Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: '1200'
+
+      - name: Run Conan tests
+        working-directory: jfrog-cli
+        run: go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.conan
+
+  Helm-Tests:
+    name: Helm ${{ matrix.os.name }}
+    needs: Detect-Deps
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: windows
+            version: 2022
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    env:
+      JFROG_CLI_LOG_LEVEL: DEBUG
+    steps:
+      - name: Checkout jfrog-cli-artifactory
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Checkout all JFrog repositories
+        uses: ./.github/actions/checkout-jfrog-repos
+        with:
+          build_info_go_repo: ${{ needs.Detect-Deps.outputs.build_info_go_repo }}
+          build_info_go_ref: ${{ needs.Detect-Deps.outputs.build_info_go_ref }}
+          jfrog_client_go_repo: ${{ needs.Detect-Deps.outputs.jfrog_client_go_repo }}
+          jfrog_client_go_ref: ${{ needs.Detect-Deps.outputs.jfrog_client_go_ref }}
+          jfrog_cli_core_repo: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_repo }}
+          jfrog_cli_core_ref: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_ref }}
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'latest'
+
+      - name: Setup Go workspace
+        uses: ./.github/actions/setup-go-workspace
+        with:
+          os_name: ${{ matrix.os.name }}
+
+      - name: Install local Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: '1200'
+
+      - name: Run Helm tests
+        working-directory: jfrog-cli
+        run: go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.helm
+
+  Docker-Tests:
+    name: Docker ubuntu
+    needs: Detect-Deps
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+        disable-containerd-snapshotter: [ true, false ]
+    runs-on: ubuntu-24.04
+    env:
+      JFROG_CLI_LOG_LEVEL: DEBUG
+    steps:
+      - name: Checkout jfrog-cli-artifactory
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Configure Docker with legacy snapshotter
+        if: matrix.disable-containerd-snapshotter == true
+        run: |
+          sudo bash -c 'cat <<EOF > /etc/docker/daemon.json
+          {
+          "insecure-registries": ["localhost:8082"],
+          "features": {
+           "containerd-snapshotter": false
+          }
+          }
+          EOF'
+          sudo systemctl restart docker
+
+      - name: Configure Docker with containerd snapshotter
+        if: matrix.disable-containerd-snapshotter == false
+        run: |
+          sudo bash -c 'cat <<EOF > /etc/docker/daemon.json
+          {
+            "insecure-registries": ["localhost:8082"]
+          }
+          EOF'
+          sudo systemctl restart docker
+
+      - name: Checkout all JFrog repositories
+        uses: ./.github/actions/checkout-jfrog-repos
+        with:
+          build_info_go_repo: ${{ needs.Detect-Deps.outputs.build_info_go_repo }}
+          build_info_go_ref: ${{ needs.Detect-Deps.outputs.build_info_go_ref }}
+          jfrog_client_go_repo: ${{ needs.Detect-Deps.outputs.jfrog_client_go_repo }}
+          jfrog_client_go_ref: ${{ needs.Detect-Deps.outputs.jfrog_client_go_ref }}
+          jfrog_cli_core_repo: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_repo }}
+          jfrog_cli_core_ref: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_ref }}
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Setup Go workspace
+        uses: ./.github/actions/setup-go-workspace
+        with:
+          os_name: ubuntu
+
+      - name: Containerize Artifactory
+        run: |
+          cd jfrog-cli/testdata/docker/artifactory/
+          ./start.sh
+        env:
+          RTLIC: ${{ secrets.RTLIC }}
+
+      - name: Wait for Artifactory (Native)
+        run: |
+          timeout 600s bash -c 'while [[ "$(curl -s -o /dev/null -w ''%{http_code}'' localhost:8082)" != "200" ]]; do sleep 5; done'
+
+      - name: Run Docker tests
+        working-directory: jfrog-cli
+        run: go test -v -timeout 0 --test.docker --jfrog.url=http://localhost:8082/
+
+  Podman-Tests:
+    name: Podman ubuntu
+    needs: Detect-Deps
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    runs-on: ubuntu-24.04
+    env:
+      JFROG_CLI_LOG_LEVEL: DEBUG
+    steps:
+      - name: Checkout jfrog-cli-artifactory
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Configure Docker 29 for Legacy Support
+        run: |
+          sudo bash -c 'cat <<EOF > /etc/docker/daemon.json
+          {
+            "insecure-registries": ["localhost:8082"],
+            "features": {
+              "containerd-snapshotter": false
+            }
+          }
+          EOF'
+          sudo systemctl restart docker
+
+      - name: Checkout all JFrog repositories
+        uses: ./.github/actions/checkout-jfrog-repos
+        with:
+          build_info_go_repo: ${{ needs.Detect-Deps.outputs.build_info_go_repo }}
+          build_info_go_ref: ${{ needs.Detect-Deps.outputs.build_info_go_ref }}
+          jfrog_client_go_repo: ${{ needs.Detect-Deps.outputs.jfrog_client_go_repo }}
+          jfrog_client_go_ref: ${{ needs.Detect-Deps.outputs.jfrog_client_go_ref }}
+          jfrog_cli_core_repo: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_repo }}
+          jfrog_cli_core_ref: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_ref }}
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Setup Go workspace
+        uses: ./.github/actions/setup-go-workspace
+        with:
+          os_name: ubuntu
+
+      - name: Run Podman tests
+        working-directory: jfrog-cli
+        run: go test -v -timeout 0 --test.podman --jfrog.url=${{ secrets.EPLUS_PLATFORM_URL }} --jfrog.adminToken=${{ secrets.EPLUS_ADMIN_TOKEN }} --test.containerRegistry=${{ secrets.CONTAINER_REGISTRY }}
+
+  Python-Tests:
+    name: ${{ matrix.suite }} ${{ matrix.os.name }}
+    needs: Detect-Deps
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [pip, pipenv, poetry]
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: windows
+            version: 2022
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    env:
+      JFROG_CLI_LOG_LEVEL: DEBUG
+    steps:
+      - name: Checkout jfrog-cli-artifactory
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Checkout all JFrog repositories
+        uses: ./.github/actions/checkout-jfrog-repos
+        with:
+          build_info_go_repo: ${{ needs.Detect-Deps.outputs.build_info_go_repo }}
+          build_info_go_ref: ${{ needs.Detect-Deps.outputs.build_info_go_ref }}
+          jfrog_client_go_repo: ${{ needs.Detect-Deps.outputs.jfrog_client_go_repo }}
+          jfrog_client_go_ref: ${{ needs.Detect-Deps.outputs.jfrog_client_go_ref }}
+          jfrog_cli_core_repo: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_repo }}
+          jfrog_cli_core_ref: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_ref }}
+
+      - name: Setup Python3
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11.5"
+
+      - name: Setup Pipenv
+        if: matrix.suite == 'pipenv'
+        run: python -m pip install pipenv==2026.2.2
+
+      - name: Setup Twine
+        if: matrix.suite == 'pip'
+        run: python -m pip install twine
+
+      - name: Setup Poetry
+        if: matrix.suite == 'poetry'
+        run: python -m pip install poetry==1.8.5
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Setup Go workspace
+        uses: ./.github/actions/setup-go-workspace
+        with:
+          os_name: ${{ matrix.os.name }}
+
+      - name: Install local Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: '1200'
+
+      - name: Run Python tests
+        working-directory: jfrog-cli
+        run: go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.${{ matrix.suite }}
+
+  Lifecycle-Tests:
+    name: Lifecycle ${{ matrix.os.name }}
+    needs: Detect-Deps
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: windows
+            version: 2022
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    env:
+      JFROG_CLI_LOG_LEVEL: DEBUG
+    steps:
+      - name: Checkout jfrog-cli-artifactory
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Checkout all JFrog repositories
+        uses: ./.github/actions/checkout-jfrog-repos
+        with:
+          build_info_go_repo: ${{ needs.Detect-Deps.outputs.build_info_go_repo }}
+          build_info_go_ref: ${{ needs.Detect-Deps.outputs.build_info_go_ref }}
+          jfrog_client_go_repo: ${{ needs.Detect-Deps.outputs.jfrog_client_go_repo }}
+          jfrog_client_go_ref: ${{ needs.Detect-Deps.outputs.jfrog_client_go_ref }}
+          jfrog_cli_core_repo: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_repo }}
+          jfrog_cli_core_ref: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_ref }}
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Setup Go workspace
+        uses: ./.github/actions/setup-go-workspace
+        with:
+          os_name: ${{ matrix.os.name }}
+
+      - name: Install local Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: '1200'
+
+      - name: Run Lifecycle tests
+        working-directory: jfrog-cli
+        run: go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.lifecycle --jfrog.url=http://127.0.0.1:8082 --jfrog.adminToken=${{ env.JFROG_TESTS_LOCAL_ACCESS_TOKEN }} --ci.runId=${{ runner.os }}-lifecycle
+
+  Distribution-Tests:
+    name: Distribution ${{ matrix.os.name }}
+    needs: Detect-Deps
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: windows
+            version: 2022
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    env:
+      JFROG_CLI_LOG_LEVEL: DEBUG
+    steps:
+      - name: Checkout jfrog-cli-artifactory
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Checkout all JFrog repositories
+        uses: ./.github/actions/checkout-jfrog-repos
+        with:
+          build_info_go_repo: ${{ needs.Detect-Deps.outputs.build_info_go_repo }}
+          build_info_go_ref: ${{ needs.Detect-Deps.outputs.build_info_go_ref }}
+          jfrog_client_go_repo: ${{ needs.Detect-Deps.outputs.jfrog_client_go_repo }}
+          jfrog_client_go_ref: ${{ needs.Detect-Deps.outputs.jfrog_client_go_ref }}
+          jfrog_cli_core_repo: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_repo }}
+          jfrog_cli_core_ref: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_ref }}
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Setup Go workspace
+        uses: ./.github/actions/setup-go-workspace
+        with:
+          os_name: ${{ matrix.os.name }}
+
+      - name: Run Distribution tests
+        working-directory: jfrog-cli
+        run: go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.distribution --jfrog.url=${{ secrets.EPLUS_PLATFORM_URL }} --jfrog.adminToken=${{ secrets.EPLUS_ADMIN_TOKEN }} --jfrog.user=${{ secrets.PLATFORM_USER }} --ci.runId=${{ runner.os }}-distribution
+
+  Agent-Plugins-Tests:
+    name: agent-plugins ${{ matrix.os.name }}
+    needs: Detect-Deps
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: windows
+            version: 2022
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    env:
+      JFROG_CLI_LOG_LEVEL: DEBUG
+    steps:
+      - name: Checkout jfrog-cli-artifactory
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Checkout all JFrog repositories
+        uses: ./.github/actions/checkout-jfrog-repos
+        with:
+          build_info_go_repo: ${{ needs.Detect-Deps.outputs.build_info_go_repo }}
+          build_info_go_ref: ${{ needs.Detect-Deps.outputs.build_info_go_ref }}
+          jfrog_client_go_repo: ${{ needs.Detect-Deps.outputs.jfrog_client_go_repo }}
+          jfrog_client_go_ref: ${{ needs.Detect-Deps.outputs.jfrog_client_go_ref }}
+          jfrog_cli_core_repo: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_repo }}
+          jfrog_cli_core_ref: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_ref }}
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Setup Go workspace
+        uses: ./.github/actions/setup-go-workspace
+        with:
+          os_name: ${{ matrix.os.name }}
+
+      - name: Install claude-code (Linux)
+        if: matrix.os.name == 'ubuntu'
+        run: |
+          CLAUDE_VERSION="v2.1.233"
+          OS="linux"
+          ARCH="x64"
+          mkdir -p /tmp/jf-agent-plugins-bins
+          curl -sL "https://github.com/anthropics/claude-code/releases/download/${CLAUDE_VERSION}/claude-${OS}-${ARCH}.tar.gz" -o claude.tar.gz
+          tar -xzf claude.tar.gz -C /tmp/jf-agent-plugins-bins/
+          chmod +x /tmp/jf-agent-plugins-bins/claude
+          echo "/tmp/jf-agent-plugins-bins" >> $GITHUB_PATH
+          rm -f claude.tar.gz
+          /tmp/jf-agent-plugins-bins/claude --version
+
+      - name: Install claude-code (Windows)
+        if: matrix.os.name == 'windows'
+        shell: pwsh
+        run: |
+          $CLAUDE_VERSION = "v2.1.233"
+          $OS = "win32"
+          $ARCH = "x64"
+          $CLAUDE_URL = "https://github.com/anthropics/claude-code/releases/download/${CLAUDE_VERSION}/claude-${OS}-${ARCH}.zip"
+          New-Item -ItemType Directory -Path "C:\temp\jf-agent-plugins-bins" -Force | Out-Null
+          curl.exe -sL "$CLAUDE_URL" -o claude.zip
+          Expand-Archive -Path claude.zip -DestinationPath "C:\temp\jf-agent-plugins-bins\"
+          Add-Content -Path $env:GITHUB_PATH -Value "C:\temp\jf-agent-plugins-bins"
+          Remove-Item -Path claude.zip -Force
+          & "C:\temp\jf-agent-plugins-bins\claude.exe" --version
+
+      - name: Install codex (Linux)
+        if: matrix.os.name == 'ubuntu'
+        run: |
+          CODEX_VERSION="rust-v0.147.0"
+          ARCH="x86_64"
+          OS="unknown-linux-musl"
+          mkdir -p /tmp/jf-agent-plugins-bins
+          curl -sL "https://github.com/openai/codex/releases/download/${CODEX_VERSION}/codex-${ARCH}-${OS}.tar.gz" -o codex.tar.gz
+          tar -xzf codex.tar.gz -C /tmp/jf-agent-plugins-bins/
+          mv "/tmp/jf-agent-plugins-bins/codex-${ARCH}-${OS}" /tmp/jf-agent-plugins-bins/codex
+          chmod +x /tmp/jf-agent-plugins-bins/codex
+          echo "/tmp/jf-agent-plugins-bins" >> $GITHUB_PATH
+          rm -f codex.tar.gz
+          /tmp/jf-agent-plugins-bins/codex --version
+
+      - name: Install codex (Windows)
+        if: matrix.os.name == 'windows'
+        shell: pwsh
+        run: |
+          $CODEX_VERSION = "rust-v0.147.0"
+          $ARCH = "x86_64"
+          $OS = "pc-windows-msvc.exe"
+          $CODEX_URL = "https://github.com/openai/codex/releases/download/${CODEX_VERSION}/codex-${ARCH}-${OS}.zip"
+          New-Item -ItemType Directory -Path "C:\temp\jf-agent-plugins-bins" -Force | Out-Null
+          curl.exe -sL "$CODEX_URL" -o codex.zip
+          Expand-Archive -Path codex.zip -DestinationPath "C:\temp\jf-agent-plugins-bins\"
+          Move-Item -Path "C:\temp\jf-agent-plugins-bins\codex-${ARCH}-${OS}" -Destination "C:\temp\jf-agent-plugins-bins\codex.exe" -Force
+          Add-Content -Path $env:GITHUB_PATH -Value "C:\temp\jf-agent-plugins-bins"
+          Remove-Item -Path codex.zip -Force
+          & "C:\temp\jf-agent-plugins-bins\codex.exe" --version
+
+      - name: Install local Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: '1200'
+
+      - name: Run agent plugins tests
+        working-directory: jfrog-cli
+        run: go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.agentPlugins
+
+  Agent-Skills-Tests:
+    name: agent-skills ${{ matrix.os.name }}
+    needs: Detect-Deps
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: windows
+            version: 2022
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    env:
+      JFROG_CLI_LOG_LEVEL: DEBUG
+    steps:
+      - name: Checkout jfrog-cli-artifactory
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Checkout all JFrog repositories
+        uses: ./.github/actions/checkout-jfrog-repos
+        with:
+          build_info_go_repo: ${{ needs.Detect-Deps.outputs.build_info_go_repo }}
+          build_info_go_ref: ${{ needs.Detect-Deps.outputs.build_info_go_ref }}
+          jfrog_client_go_repo: ${{ needs.Detect-Deps.outputs.jfrog_client_go_repo }}
+          jfrog_client_go_ref: ${{ needs.Detect-Deps.outputs.jfrog_client_go_ref }}
+          jfrog_cli_core_repo: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_repo }}
+          jfrog_cli_core_ref: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_ref }}
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Setup Go workspace
+        uses: ./.github/actions/setup-go-workspace
+        with:
+          os_name: ${{ matrix.os.name }}
+
+      - name: Install local Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: '1200'
+
+      - name: Run agent skills tests
+        working-directory: jfrog-cli
+        run: go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.agentSkills
+
+  UV-Tests:
+    name: UV ${{ matrix.os.name }}
+    needs: Detect-Deps
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: windows
+            version: 2022
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    env:
+      JFROG_CLI_LOG_LEVEL: DEBUG
+    steps:
+      - name: Checkout jfrog-cli-artifactory
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Checkout all JFrog repositories
+        uses: ./.github/actions/checkout-jfrog-repos
+        with:
+          build_info_go_repo: ${{ needs.Detect-Deps.outputs.build_info_go_repo }}
+          build_info_go_ref: ${{ needs.Detect-Deps.outputs.build_info_go_ref }}
+          jfrog_client_go_repo: ${{ needs.Detect-Deps.outputs.jfrog_client_go_repo }}
+          jfrog_client_go_ref: ${{ needs.Detect-Deps.outputs.jfrog_client_go_ref }}
+          jfrog_cli_core_repo: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_repo }}
+          jfrog_cli_core_ref: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_ref }}
+
+      - name: Setup Python3
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11.5"
+
+      - name: Setup UV
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: latest
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Setup Go workspace
+        uses: ./.github/actions/setup-go-workspace
+        with:
+          os_name: ${{ matrix.os.name }}
+
+      - name: Install local Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: '1200'
+
+      - name: Run UV tests
+        working-directory: jfrog-cli
+        run: go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.uv
+
+  Cargo-Tests:
+    name: Cargo ${{ matrix.os.name }}
+    needs: Detect-Deps
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: windows
+            version: 2022
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    env:
+      JFROG_CLI_LOG_LEVEL: DEBUG
+    steps:
+      - name: Checkout jfrog-cli-artifactory
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Checkout all JFrog repositories
+        uses: ./.github/actions/checkout-jfrog-repos
+        with:
+          build_info_go_repo: ${{ needs.Detect-Deps.outputs.build_info_go_repo }}
+          build_info_go_ref: ${{ needs.Detect-Deps.outputs.build_info_go_ref }}
+          jfrog_client_go_repo: ${{ needs.Detect-Deps.outputs.jfrog_client_go_repo }}
+          jfrog_client_go_ref: ${{ needs.Detect-Deps.outputs.jfrog_client_go_ref }}
+          jfrog_cli_core_repo: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_repo }}
+          jfrog_cli_core_ref: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_ref }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Setup Go workspace
+        uses: ./.github/actions/setup-go-workspace
+        with:
+          os_name: ${{ matrix.os.name }}
+
+      - name: Install local Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: '1200'
+
+      - name: Run Cargo tests
+        working-directory: jfrog-cli
+        run: go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.cargo
+
+  Ruby-Tests:
+    name: Ruby ubuntu
+    needs: Detect-Deps
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    runs-on: ubuntu-24.04
+    env:
+      JFROG_CLI_LOG_LEVEL: DEBUG
+    steps:
+      - name: Checkout jfrog-cli-artifactory
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Checkout all JFrog repositories
+        uses: ./.github/actions/checkout-jfrog-repos
+        with:
+          build_info_go_repo: ${{ needs.Detect-Deps.outputs.build_info_go_repo }}
+          build_info_go_ref: ${{ needs.Detect-Deps.outputs.build_info_go_ref }}
+          jfrog_client_go_repo: ${{ needs.Detect-Deps.outputs.jfrog_client_go_repo }}
+          jfrog_client_go_ref: ${{ needs.Detect-Deps.outputs.jfrog_client_go_ref }}
+          jfrog_cli_core_repo: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_repo }}
+          jfrog_cli_core_ref: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_ref }}
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.2"
+          bundler-cache: false
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Setup Go workspace
+        uses: ./.github/actions/setup-go-workspace
+        with:
+          os_name: ubuntu
+
+      - name: Install local Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: '1200'
+
+      - name: Run Ruby tests
+        working-directory: jfrog-cli
+        run: go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.ruby
+
+  HuggingFace-Tests:
+    name: HuggingFace ${{ matrix.os.name }} (huggingface_hub ${{ matrix.hf_version }})
+    needs: Detect-Deps
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: windows
+            version: 2022
+        # 1.19.0: last version before the breaking change. 1.20.0: the version that
+        # introduced it (PR #4324, strict RepoUrl/parse_hf_uri). 1.29.0: current target
+        # version for this fix.
+        hf_version: ['1.19.0', '1.20.0', '1.29.0']
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    env:
+      JFROG_CLI_LOG_LEVEL: DEBUG
+    steps:
+      - name: Checkout jfrog-cli-artifactory
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Checkout all JFrog repositories
+        uses: ./.github/actions/checkout-jfrog-repos
+        with:
+          build_info_go_repo: ${{ needs.Detect-Deps.outputs.build_info_go_repo }}
+          build_info_go_ref: ${{ needs.Detect-Deps.outputs.build_info_go_ref }}
+          jfrog_client_go_repo: ${{ needs.Detect-Deps.outputs.jfrog_client_go_repo }}
+          jfrog_client_go_ref: ${{ needs.Detect-Deps.outputs.jfrog_client_go_ref }}
+          jfrog_cli_core_repo: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_repo }}
+          jfrog_cli_core_ref: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_ref }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install HuggingFace Library
+        shell: bash
+        run: pip install "huggingface_hub==${{ matrix.hf_version }}"
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Setup Go workspace
+        uses: ./.github/actions/setup-go-workspace
+        with:
+          os_name: ${{ matrix.os.name }}
+
+      - name: Install local Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: '1200'
+
+      - name: Run HuggingFace tests
+        working-directory: jfrog-cli
+        run: go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.huggingface --jfrog.url=http://127.0.0.1:8082 --jfrog.adminToken=${{ env.JFROG_TESTS_LOCAL_ACCESS_TOKEN }}
+
+  Nix-Tests:
+    name: Nix ubuntu
+    needs: Detect-Deps
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    runs-on: ubuntu-24.04
+    env:
+      JFROG_CLI_LOG_LEVEL: DEBUG
+    steps:
+      - name: Checkout jfrog-cli-artifactory
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Checkout all JFrog repositories
+        uses: ./.github/actions/checkout-jfrog-repos
+        with:
+          build_info_go_repo: ${{ needs.Detect-Deps.outputs.build_info_go_repo }}
+          build_info_go_ref: ${{ needs.Detect-Deps.outputs.build_info_go_ref }}
+          jfrog_client_go_repo: ${{ needs.Detect-Deps.outputs.jfrog_client_go_repo }}
+          jfrog_client_go_ref: ${{ needs.Detect-Deps.outputs.jfrog_client_go_ref }}
+          jfrog_cli_core_repo: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_repo }}
+          jfrog_cli_core_ref: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_ref }}
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Setup Go workspace
+        uses: ./.github/actions/setup-go-workspace
+        with:
+          os_name: ubuntu
+
+      - name: Install local Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: '1200'
+
+      - name: Run Nix tests
+        working-directory: jfrog-cli
+        run: go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.nix
+
+  Alpine-APK-Tests:
+    name: Alpine APK (${{ matrix.alpine-version }})
+    needs: Detect-Deps
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { alpine-version: v3.18, apk-tools: v2 }
+          - { alpine-version: v3.21, apk-tools: v2 }
+          - { alpine-version: v3.23, apk-tools: v3 }
+    env:
+      JFROG_CLI_LOG_LEVEL: DEBUG
+    steps:
+      - name: Checkout jfrog-cli-artifactory
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Checkout all JFrog repositories
+        uses: ./.github/actions/checkout-jfrog-repos
+        with:
+          build_info_go_repo: ${{ needs.Detect-Deps.outputs.build_info_go_repo }}
+          build_info_go_ref: ${{ needs.Detect-Deps.outputs.build_info_go_ref }}
+          jfrog_client_go_repo: ${{ needs.Detect-Deps.outputs.jfrog_client_go_repo }}
+          jfrog_client_go_ref: ${{ needs.Detect-Deps.outputs.jfrog_client_go_ref }}
+          jfrog_cli_core_repo: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_repo }}
+          jfrog_cli_core_ref: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_ref }}
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Setup Go workspace
+        uses: ./.github/actions/setup-go-workspace
+        with:
+          os_name: ubuntu
+
+      - name: Install local Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: '1200'
+
+      # Cross-compile a static test binary on the host and run it inside the target Alpine container.
+      - name: Build test binary
+        working-directory: jfrog-cli
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -c -o apk.test .
+
+      - name: Run Alpine APK tests (alpine:${{ matrix.alpine-version }})
+        env:
+          ALPINE_VER: ${{ matrix.alpine-version }}
+        run: |
+          docker run --rm \
+            --network host \
+            -v "${{ github.workspace }}/jfrog-cli":/workspace \
+            -w /workspace \
+            "alpine:${ALPINE_VER#v}" \
+            ./apk.test -test.v -test.timeout 0 -test.run "TestApk|TestSetupApk" -test.alpine
+
+  Apt-Tests:
+    name: apt (${{ matrix.distro.name }}, ${{ matrix.user_mode }})
+    needs: Detect-Deps
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        distro:
+          - { image: "ubuntu:22.04", name: ubuntu-jammy, dist: jammy }
+          - { image: "ubuntu:24.04", name: ubuntu-noble, dist: noble }
+          - { image: "debian:12",    name: debian-bookworm, dist: bookworm }
+        user_mode: [root, nonroot]
+    env:
+      JFROG_CLI_LOG_LEVEL: DEBUG
+    steps:
+      - name: Checkout jfrog-cli-artifactory
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Checkout all JFrog repositories
+        uses: ./.github/actions/checkout-jfrog-repos
+        with:
+          build_info_go_repo: ${{ needs.Detect-Deps.outputs.build_info_go_repo }}
+          build_info_go_ref: ${{ needs.Detect-Deps.outputs.build_info_go_ref }}
+          jfrog_client_go_repo: ${{ needs.Detect-Deps.outputs.jfrog_client_go_repo }}
+          jfrog_client_go_ref: ${{ needs.Detect-Deps.outputs.jfrog_client_go_ref }}
+          jfrog_cli_core_repo: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_repo }}
+          jfrog_cli_core_ref: ${{ needs.Detect-Deps.outputs.jfrog_cli_core_ref }}
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Setup Go workspace
+        uses: ./.github/actions/setup-go-workspace
+        with:
+          os_name: ubuntu
+
+      - name: Install local Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: '1200'
+
+      - name: Compile apt test binary
+        working-directory: jfrog-cli
+        env:
+          CGO_ENABLED: "0"
+        run: go test -c -o apt.test .
+
+      - name: Run apt tests (${{ matrix.distro.image }}, ${{ matrix.user_mode }})
+        run: |
+          docker run --rm --network host \
+            -v "${{ github.workspace }}/jfrog-cli:/workspace" \
+            -w /workspace \
+            -e JFROG_TESTS_LOCAL_ACCESS_TOKEN \
+            -e APT_TEST_DIST="${{ matrix.distro.dist }}" \
+            -e USER_MODE="${{ matrix.user_mode }}" \
+            -e CI_RUN_ID="${{ matrix.distro.name }}-${{ matrix.user_mode }}" \
+            "${{ matrix.distro.image }}" \
+            bash -c '
+              set -eu
+              apt-get update -y
+              apt-get install -y --no-install-recommends gnupg sudo
+
+              if [ "$USER_MODE" = "nonroot" ]; then
+                useradd -m -u 1001 -s /bin/bash testuser
+                echo "testuser ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/bin/apt" > /etc/sudoers.d/testuser-apt
+                chmod 0440 /etc/sudoers.d/testuser-apt
+                mkdir -p /etc/apt/keyrings
+                chown -R testuser:testuser \
+                  /etc/apt/sources.list.d /etc/apt/preferences.d /etc/apt/keyrings /workspace
+
+                su -c "/workspace/apt.test -test.v -test.timeout=0 -test.run=TestApt \
+                  --test.apt --ci.runId=$CI_RUN_ID" testuser
+              else
+                /workspace/apt.test -test.v -test.timeout=0 -test.run=TestApt \
+                  --test.apt --ci.runId="$CI_RUN_ID"
+              fi
+            '

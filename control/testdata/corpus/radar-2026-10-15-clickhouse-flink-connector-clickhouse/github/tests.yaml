@@ -1,0 +1,68 @@
+name: Apache Flink ClickHouse Connector Tests CI (Java)
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - 'examples'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - 'examples'
+
+jobs:
+  test-flink-17:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        clickhouse: [ "25.3", "25.8", "25.10", "25.11", "25.12", "latest" ]
+        flink: [ "1.17.2", "1.18.1", "1.19.3", "1.20.2"]
+    name: Apache Flink ${{ matrix.flink }} ClickHouse Connector tests with ClickHouse ${{ matrix.clickhouse }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'adopt'
+          architecture: x64
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+      - name: Execute Gradle 'test' task
+        env:
+          CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
+          FLINK_VERSION: ${{ matrix.flink }}
+        # -base's Flink-free tests gate here; no other merge-gating job runs them.
+        run: ./gradlew :flink-connector-clickhouse-base:test :flink-connector-clickhouse-1.17:test
+  test-flink-2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        clickhouse: [ "25.3", "25.8", "25.10", "25.11", "25.12", "latest" ]
+        # 2.1 adds the DESCRIPTOR and VARIANT roots; ClickHouseTypeMapper registers them by name,
+        # so the exhaustiveness guard holds on both generations.
+        flink: [ "2.0.0", "2.1.0" ]
+    name: Apache Flink ${{ matrix.flink }} ClickHouse Connector tests with ClickHouse ${{ matrix.clickhouse }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'adopt'
+          architecture: x64
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+      - name: Execute Gradle 'test' task
+        env:
+          CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
+          FLINK_2_VERSION: ${{ matrix.flink }}
+        run: ./gradlew :flink-connector-clickhouse-2.0.0:test

@@ -1,3 +1,11 @@
+# The calling workflow should grant these permissions on the token it
+# passes as github-token:
+#
+# permissions:
+#   contents: read
+#   actions: read # lets Plumber read workflow states and one run log to prove the token scope
+#   security-events: write # only if upload-sarif is true
+#   id-token: write # required by score-push
 name: "Plumber Score"
 description: "Plumber detects CI/CD security issues in your GitHub workflows and gives you a score."
 author: "Plumber (getplumber.io)"
@@ -14,7 +22,7 @@ inputs:
     description: "Verify the downloaded binary's build-provenance attestation (sigstore/SLSA) against the getplumber/plumber release workflow, using the gh CLI. This anchors the binary to a trusted build regardless of the mutable release tag. Disable for air-gapped or GHES setups without attestation access."
     default: "true"
   github-token:
-    description: "Token for the GitHub API (branch protection, advisory DB) and SARIF upload. Needs Administration:read for full branchMustBeProtected, and the job needs security-events:write to upload SARIF."
+    description: "Token for the GitHub API (branch protection, advisory DB, workflow states, runs, releases) and SARIF upload. Needs Administration:read for full branchMustBeProtected, actions:read to resolve a job's claims (whether it can run, and the repository default token's real write) from workflow states, the latest runs and one run's job log, and the job needs security-events:write to upload SARIF. A refused read on any of these is never an error: the claim it would have settled stays unknown."
     default: ${{ github.token }}
   metadata-token:
     description: "Optional token (public-repo read is enough) used only to resolve third-party action versions for the known-CVE check. Set it when an action is hosted in an org with an IP allow list that blocks the runner's GITHUB_TOKEN; it also raises the API rate limit. Default: none, Plumber falls back to an anonymous read and, if that fails too, skips the version check rather than guessing."

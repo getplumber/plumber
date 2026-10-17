@@ -986,3 +986,68 @@ func TestScanActionSource_EveryFetchMustQualify(t *testing.T) {
 		t.Fatal("DownloadVerified = true, want false: the second fetch is not verified either")
 	}
 }
+
+// TestScanActionSource_DownloadVerifiedBeforeTheRunOfTheWholeToken pins
+// two limits of the verification reading. A check counts only when it
+// runs between the download and the first run of the downloaded file:
+// a digest checked after the code already ran, or a signature verified
+// before the file even exists, proves nothing about what executed. And
+// the check must name the downloaded file as a whole token: a digest of
+// nodejs.tar.gz is no verification of a file called node.
+func TestScanActionSource_DownloadVerifiedBeforeTheRunOfTheWholeToken(t *testing.T) {
+	const digest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	head := "runs:\n  using: composite\n  steps:\n    - run: |\n"
+	cases := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{
+			"a checksum checked after the file ran never counts",
+			"        curl https://raw.githubusercontent.com/acme/tools/main/payload -o payload\n" +
+				"        bash payload\n" +
+				"        echo \"" + digest + "  payload\" | sha256sum -c\n",
+			false,
+		},
+		{
+			"a signature verified before the download never counts",
+			"        gpg --verify payload.sig payload\n" +
+				"        curl https://raw.githubusercontent.com/acme/tools/main/payload -o payload\n" +
+				"        bash payload\n",
+			false,
+		},
+		{
+			"a signature verified between the download and the run counts",
+			"        curl https://raw.githubusercontent.com/acme/tools/main/payload -o payload\n" +
+				"        gpg --verify payload.sig payload\n" +
+				"        bash payload\n",
+			true,
+		},
+		{
+			"a checksum of another file whose name contains the download never counts",
+			"        curl https://raw.githubusercontent.com/acme/tools/main/node -o node\n" +
+				"        curl -o nodejs.tar.gz https://releases.example.com/nodejs.tar.gz\n" +
+				"        echo \"" + digest + "  nodejs.tar.gz\" | sha256sum -c\n" +
+				"        ./node\n",
+			false,
+		},
+		{
+			"a checksum of the download itself between the download and the run counts",
+			"        curl https://raw.githubusercontent.com/acme/tools/main/node -o node\n" +
+				"        echo \"" + digest + "  node\" | sha256sum -c\n" +
+				"        ./node\n",
+			true,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := ScanActionSource(map[string]string{"action.yml": head + c.body})
+			if got == nil {
+				t.Fatal("expected a mutable-remote-exec signal, got nil")
+			}
+			if got.DownloadVerified != c.want {
+				t.Fatalf("DownloadVerified = %v, want %v", got.DownloadVerified, c.want)
+			}
+		})
+	}
+}

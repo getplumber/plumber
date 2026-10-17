@@ -1,0 +1,154 @@
+name: Windows Sign Binaries
+
+on:
+  workflow_dispatch:
+  release:
+    types:
+      - published
+      - prereleased
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-sign-${{ github.head_ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: powershell
+    working-directory: run
+
+jobs:
+  build_and_test:
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025]
+        odbc_provider: [MDAC]
+        build_type: [Release]
+        architecture: [x64]
+        wsl_distribution: [Ubuntu-24.04]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+
+    - name: Create directories
+      working-directory: ${{ github.workspace }}
+      run: |
+        new-item ${{ github.workspace }}\run -itemtype directory
+        new-item ${{ github.workspace }}\build -itemtype directory
+        new-item ${{ github.workspace }}\prefix -itemtype directory
+        new-item ${{ github.workspace }}\install -itemtype directory
+        new-item ${{ github.workspace }}\package -itemtype directory
+
+    - name: Clone the repo
+      uses: actions/checkout@v4
+      with:
+        path: source
+        submodules: true
+
+    - name: Set up Visual Studio shell
+      uses: egor-tensin/vs-shell@v2
+      with:
+        arch: ${{ matrix.architecture }}
+
+    - name: Configure with CMake
+      run: >
+        cmake -S ${{ github.workspace }}/source -B ${{ github.workspace }}/build
+        -A ${{ fromJSON('{"x86": "Win32", "x64": "x64"}')[matrix.architecture] }}
+        -DCMAKE_POLICY_VERSION_MINIMUM="3.5"
+        -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+        -DODBC_PROVIDER=${{ matrix.odbc_provider }}
+        -DTEST_DSN_LIST="ClickHouse DSN ANSI;ClickHouse DSN Unicode"
+        -DBUILD_TESTING=NO
+
+    - name: Build
+      run: cmake --build ${{ github.workspace }}/build --config ${{ matrix.build_type }}
+
+    - name: Package
+      run: cmake --build ${{ github.workspace }}/build --config ${{ matrix.build_type }} --target package
+
+    - name: Create pkcs11properties.cfg file
+      run: |
+        $content = @"
+        name=signingmanager
+        library="C:\\Program Files\\DigiCert\\DigiCert Keylocker Tools\\smpkcs11.dll"
+        slotListIndex=0
+        "@
+
+        Write-Host "Writing pkcs11properties.cfg file"
+        $content | Out-File -FilePath ${{ github.workspace }}\run\pkcs11properties.cfg -Encoding ASCII
+        Get-Content ${{ github.workspace }}\run\pkcs11properties.cfg
+
+    - name: Create signing certificate
+      run: |
+        [System.IO.File]::WriteAllBytes("${{ github.workspace }}\run\Certificate_pkcs12.p12", [System.Convert]::FromBase64String("${{ secrets.SM_CLIENT_CERT_FILE_B64 }}"))
+
+    - name: Download Keylocker tools
+      env:
+        SM_API_KEY: ${{ secrets.SM_API_KEY }}
+      run: >
+        Invoke-WebRequest
+        https://one.digicert.com/signingmanager/api-ui/v1/releases/Keylockertools-windows-x64.msi/download
+        -H @{"x-api-key" = $env:SM_API_KEY}
+        -o Keylockertools-windows-x64.msi
+
+    - name: Install Keylocker tools
+      run: |
+        Start-Process msiexec.exe -ArgumentList '/i Keylockertools-windows-x64.msi /passive /quiet /norestart' -Wait
+
+    - name: Check Keylocker tools
+      run: |
+        & "C:\Program Files\DigiCert\DigiCert Keylocker Tools\smctl.exe" --version
+
+    - name: Sync the certificates
+      env:
+        SM_API_KEY: ${{ secrets.SM_API_KEY }}
+        PKCS11_CONFIG: "${{ github.workspace }}\\run\\pkcs11properties.cfg"
+        SM_CLIENT_CERT_FILE: "${{ github.workspace }}\\run\\Certificate_pkcs12.p12"
+        SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+        SM_HOST: ${{ secrets.SM_HOST }}
+        SM_TLS_SKIP_VERIFY: false
+        DIGICERT_KEY_ALIAS: ${{ secrets.DIGICERT_KEY_ALIAS }}
+        SM_LOG_LEVEL: TRACE
+      run: >
+        & "C:\Program Files\DigiCert\DigiCert Keylocker Tools\smctl.exe" windows certsync
+
+    - name: Check the installer
+      run: |
+          ls (Get-ChildItem -Path "${{ github.workspace }}/build" -Filter "clickhouse-odbc-*.msi" | Select-Object -First 1).FullName
+
+    - name: Sign the installer
+      env:
+        SM_API_KEY: ${{ secrets.SM_API_KEY }}
+        PKCS11_CONFIG: "${{ github.workspace }}\\run\\pkcs11properties.cfg"
+        SM_CLIENT_CERT_FILE: "${{ github.workspace }}\\run\\Certificate_pkcs12.p12"
+        SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+        SM_HOST: ${{ secrets.SM_HOST }}
+        SM_TLS_SKIP_VERIFY: false
+        DIGICERT_KEY_ALIAS: ${{ secrets.DIGICERT_KEY_ALIAS }}
+        SM_LOG_LEVEL: TRACE
+      run: >
+        & "C:\Program Files\DigiCert\DigiCert Keylocker Tools\smctl.exe" sign
+        --fingerprint ${{ secrets.DIGICERT_FINGERPRINT }}
+        --input (Get-ChildItem -Path "${{ github.workspace }}/build" -Filter "clickhouse-odbc-*.msi" | Select-Object -First 1).FullName
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+          name: clickhouse-odbc-windows-${{ matrix.architecture }}-${{ matrix.build_type }}
+          path: ${{ github.workspace }}/build/clickhouse-odbc-*
+
+    - name: Upload artifacts as release assets
+      if: ${{ github.event_name == 'release' && matrix.build_type == 'Release' }}
+      uses: svenstaro/upload-release-action@v2
+      with:
+        repo_token: ${{ secrets.GITHUB_TOKEN }}
+        file: ${{ github.workspace }}/build/clickhouse-odbc-*.msi
+        overwrite: true
+        tag: ${{ github.ref }}
+        file_glob: true
+

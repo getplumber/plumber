@@ -1,0 +1,56 @@
+{
+  "source": "https://github.com/cloudflare/origin-ca-issuer",
+  "commit": "40ff6b2b6395c626609a8c1efde025a94668e0e5",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "trunk",
+  "branches": [
+    {
+      "name": "trunk",
+      "protected": false
+    }
+  ],
+  "environments": [
+    {
+      "name": "github-pages",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/chart-publish.yaml": "active",
+    ".github/workflows/charts.yaml": "active",
+    ".github/workflows/docker.yaml": "active",
+    ".github/workflows/semgrep.yml": "active",
+    ".github/workflows/tests.yaml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High unprotected `trunk` path was judged overstated: `docker.yaml` runs on every push but its Docker Hub login, signing and push steps carry `if: startsWith(github.ref, 'refs/tags/v')`, so a push to the branch reaches no secret, Low (the tag push is a separate insider entry); the High `geomys/sandboxed-step@v1.2.2` path was judged overstated: a mutable third-party action in a CI job with no secret and no write token (or only an assumed one) gives code execution on a runner, Medium at most. Corrected after reading the workflows: `chart-publish.yaml` publishes the Helm chart with `packages: write` on a push to `trunk`, so the branch entry holds at High; what the label still requires is that the tag-gated Docker Hub secrets are not counted.",
+  "expect": {
+    "paths": [
+      {
+        "entryKind": "unprotected_push",
+        "tier": "high",
+        "subjectContains": "trunk",
+        "sentenceOmits": [
+          "DOCKER_HUB_TOKEN",
+          "DOCKER_HUB_USERNAME"
+        ],
+        "pending": "secrets referenced only in steps under `if: startsWith(github.ref, 'refs/tags/v')` are still counted for a push to the branch, where those steps never run."
+      }
+    ],
+    "ceilings": [
+      {
+        "entryKind": "unprotected_push",
+        "subjectContains": "trunk",
+        "tier": "high"
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "geomys/sandboxed-step@v1.2.2",
+        "tier": "medium"
+      }
+    ]
+  }
+}

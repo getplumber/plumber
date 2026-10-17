@@ -1,0 +1,49 @@
+name: Test CLI
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "crates/clickhousectl/**"
+      - "Cargo.lock"
+      - "scripts/classify-install-integration.py"
+      - "scripts/tests/test_classify_install_integration.py"
+      - ".github/workflows/test-install.yml"
+      - ".github/workflows/test-cli.yml"
+
+permissions:
+  contents: read
+
+env:
+  DO_NOT_TRACK: "1"
+
+jobs:
+  test:
+    name: Test clickhousectl
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable @ 2026-10-01
+
+      - name: Build
+        run: cargo build -p clickhousectl
+
+      - name: Clippy
+        run: cargo clippy -p clickhousectl -- -D warnings
+
+      # Telemetry must compile out entirely for distro packagers.
+      - name: Check without default features (telemetry compiled out)
+        run: cargo check -p clickhousectl --no-default-features
+
+      - name: Clippy without default features
+        run: cargo clippy -p clickhousectl --all-targets --no-default-features -- -D warnings
+
+      - name: Test
+        run: cargo test -p clickhousectl
+
+      - name: Verify install workflow path mapping
+        run: python3 scripts/tests/test_classify_install_integration.py

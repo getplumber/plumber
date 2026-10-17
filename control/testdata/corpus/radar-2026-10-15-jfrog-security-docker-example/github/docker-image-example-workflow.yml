@@ -1,0 +1,50 @@
+name: JFrog Docker Example 
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    env:
+      DOCKER_REPO: 'docker-virtual'
+      IMAGE_NAME: 'jfrog-docker-image-example:${{ github.run_number }}'
+      JF_URL: https://${{ vars.JF_URL }}/
+
+    permissions:
+      actions: read # for detecting the Github Actions environment.
+      id-token: write # for creating OIDC tokens for signing.
+      packages: write # for uploading attestations.
+      contents: read
+
+    steps:
+    - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744
+    
+    - name: Setup JFrog CLI
+      uses: jfrog/setup-jfrog-cli@7c95feb32008765e1b4e626b078dfd897c4340ad
+      id: setup-cli
+      env:
+        JF_URL: ${{ env.JF_URL }}
+      with:
+        oidc-provider-name: ${{ vars.OIDC_PROVIDER }} # Establish trust between GitHub Actions & JFrog, eliminating the need for manual token creation.
+
+    - name: Describe Job Summary 
+      run: echo "### Get full traceability for the artifacts created by this Github Actions workflow, directly inside the JFrog Platform." >> $GITHUB_STEP_SUMMARY
+        
+    - name: Build Tag and push Docker Image
+      env:
+        IMAGE_NAME: ${{ vars.JF_URL }}/${{ env.DOCKER_REPO }}/${{ env.IMAGE_NAME }}
+      run: |
+        jf docker build -t $IMAGE_NAME .
+        jf docker push $IMAGE_NAME
+
+    - name: Publish Build info With JFrog CLI
+      run: |
+        # Export the build name and build number
+        # Collect environment variables for the build
+        jf rt build-collect-env
+        # Collect VCS details from git and add them to the build
+        jf rt build-add-git
+        # Publish build info
+        jf rt build-publish

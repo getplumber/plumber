@@ -1,0 +1,76 @@
+name: Build Gate
+# Single approval gate for fork/PR runs: a maintainer approves the `build-gate`
+# environment deployment once, then acceptance tests receive repo secrets.
+# Workflow YAML always comes from the base branch (pull_request_target), never
+# from the customer fork. Untrusted PR code is checked out only after this gate.
+# Replaces copying customer PRs onto a same-repo branch to obtain secrets.
+#
+# Repo setup (one-time): create environment `build-gate` with Required reviewers.
+# Leave secrets on `development` (or repo/org secrets). Do not also require
+# reviewers on `development` or maintainers will approve twice.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+    branches:
+      - master
+    paths:
+      - '**.go'
+      - '.github/workflows/acceptance-tests.yml'
+      - '.github/workflows/build-gate.yml'
+  workflow_dispatch:
+
+# Ensures that only the latest commit is running for each PR at a time.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  # The single approval point. `build-gate` carries the Required-reviewers rule.
+  # Manual dispatch uses the same environment (write access is not a substitute
+  # for approval) and is refused unless the selected ref is the default branch,
+  # so a modified copy of this workflow on another branch cannot skip the gate.
+  gate:
+    name: Approval gate
+    runs-on: ubuntu-latest
+    environment: build-gate
+    steps:
+      - name: Require default branch for manual dispatch
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && \
+             [ "${GITHUB_REF}" != "refs/heads/${{ github.event.repository.default_branch }}" ]; then
+            echo "::error::Dispatch Build Gate only from the default branch so this workflow YAML stays trusted."
+            exit 1
+          fi
+          echo "Approved — releasing acceptance tests."
+
+  acceptance-tests:
+    needs: gate
+    permissions:
+      contents: write
+      pull-requests: write
+    uses: ./.github/workflows/acceptance-tests.yml
+    secrets: inherit
+
+  # Single, stable required status check. Point branch protection at
+  # "Build Gate / build-gate-success" instead of the matrix-expanded suite checks.
+  # Recover a failed suite with "Re-run failed jobs" (re-runs the suite + this job,
+  # not the approval gate) — no re-approval and no new commit needed.
+  build-gate-success:
+    name: build-gate-success
+    if: always()
+    needs:
+      - gate
+      - acceptance-tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify acceptance tests did not fail or get cancelled
+        run: |
+          if ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}; then
+            echo "::error::Acceptance tests failed or were cancelled."
+            exit 1
+          fi
+          echo "All jobs succeeded (skipped jobs are allowed)."

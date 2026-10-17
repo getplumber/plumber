@@ -1,0 +1,213 @@
+name: Warm Dependency Cache
+
+# Sole writer of the "forkvenv-*" GitHub Actions cache that lets FORK PRs run
+# unit / lint / type CI fully offline (issue #831).
+#
+# Why this exists
+# ---------------
+# Every job in code-quality-checks.yml installs dependencies through
+# .github/actions/setup-poetry -> setup-jfrog, which mints a JFrog PyPI token
+# via GitHub OIDC. GitHub deliberately withholds the OIDC token
+# (ACTIONS_ID_TOKEN_REQUEST_TOKEN) from `pull_request` runs originating in a
+# fork, so setup-jfrog dies with "unbound variable" and EVERY required check is
+# red on every fork PR — regardless of the diff (see #831, reported against the
+# trivial fork PR #671).
+#
+# Public PyPI is not reachable from the protected runners (everything must go
+# through the JFrog proxy), and a fork run can obtain no JFrog credential at
+# all. The fix (Databricks SOP, mirrors databricks/dbt-databricks) is to invert
+# the flow: a TRUSTED workflow here — which does get OIDC — pre-builds the
+# in-project .venv for every matrix leg the PR jobs consume and saves it to the
+# Actions cache. The fork PR then RESTORES that .venv and skips `poetry install`
+# entirely, so it never needs JFrog. Real tests still run; the fork just holds
+# no credentials, so there is no pull_request_target / secret-exposure risk.
+#
+# What it caches
+# --------------
+# The fully-built in-project .venv, one cache entry per
+#   (python-version x dependency-version x extras)
+# leg — the same axes code-quality-checks.yml iterates. The min / pyarrow /
+# kernel variants pip-install overrides ON TOP of `poetry install`, so the venv
+# is saved AFTER those steps to capture the complete resolved environment.
+#
+# Cache key: forkvenv-<os>-<py>-<depset>-<extras>-<lockhash>-<timestamp>
+# GitHub caches are immutable and evict after 7 days of no reads; the timestamp
+# suffix lets a re-warm write a fresh entry (old ones age out), and the daily
+# schedule keeps the cache from expiring. Consumers restore by the
+# "...-<lockhash>-" prefix via restore-keys, so they pick up the newest entry
+# for the current lockfile automatically.
+#
+# Fork dependency changes
+# -----------------------
+# If a fork PR modifies poetry.lock / pyproject.toml, its lockhash won't match
+# any warmed entry and its CI will miss the cache. A maintainer then reviews the
+# dependency change and runs this workflow with `pr_number = N`: it fetches ONLY
+# the fork's lockfiles (git checkout FETCH_HEAD -- <lockfiles>, no source code)
+# and warms a cache entry for the new hash. The contributor re-runs CI.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "poetry.lock"
+      - "pyproject.toml"
+  schedule:
+    # Daily at 06:07 UTC — beats GitHub's 7-day cache eviction. Off the :00
+    # mark to avoid the cron thundering herd.
+    - cron: "7 6 * * *"
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Fork PR number to warm the cache for (reads lockfiles from the fork branch). Leave empty to warm from main."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: read
+
+# Only one warm run at a time per ref — a schedule tick and a push shouldn't
+# race to write overlapping cache entries.
+concurrency:
+  group: warm-deps-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  warm:
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    strategy:
+      # One leg failing (e.g. a transient JFrog hiccup) shouldn't starve the
+      # rest of the cache — warm everything we can.
+      fail-fast: false
+      matrix:
+        # Mirror code-quality-checks.yml exactly so every fork check has a
+        # matching warmed entry. extras: "" is the base unit-test / lint / type
+        # environment; pyarrow and kernel back the two extra unit-test tiers.
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        dependency-version: ["default", "min"]
+        extras: ["", "pyarrow", "kernel"]
+        exclude:
+          # MUST match code-quality-checks.yml's excludes exactly, or a PR leg
+          # with no warmed cache entry misses and falls back to JFrog (which
+          # forks can't reach). The PR matrix excludes ONLY 3.12-min and
+          # 3.13-min — 3.14-min IS a real PR leg, so it must be warmed.
+          - python-version: "3.12"
+            dependency-version: "min"
+          - python-version: "3.13"
+            dependency-version: "min"
+
+    name: "Warm (py ${{ matrix.python-version }}, ${{ matrix.dependency-version }} deps, extras=${{ matrix.extras || 'base' }})"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Overlay fork PR lockfiles
+        if: inputs.pr_number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          # Fetch ONLY the fork's dependency files — never its source or
+          # workflows — so warming a fork's cache can't execute fork-controlled
+          # code in this trusted, OIDC-bearing context.
+          PR_DATA=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")
+          FORK_REPO=$(echo "$PR_DATA" | jq -r '.head.repo.full_name')
+          FORK_REF=$(echo "$PR_DATA" | jq -r '.head.ref')
+          echo "Warming cache for PR #${PR_NUMBER} from ${FORK_REPO}@${FORK_REF}"
+          git remote add fork "https://github.com/${FORK_REPO}.git"
+          git fetch --depth=1 fork "${FORK_REF}"
+          git checkout FETCH_HEAD -- poetry.lock pyproject.toml
+          echo "Overlaid poetry.lock / pyproject.toml from the fork branch."
+
+      # Capture the lock hash from the PRISTINE, committed poetry.lock BEFORE
+      # setup-poetry runs (it calls `poetry lock`, which rewrites poetry.lock
+      # in place and changes hashFiles's result). restore-deps in the PR jobs
+      # hashes the pristine lock, so the warmer MUST hash it at the same point
+      # or the keys never match and every fork restore misses.
+      - name: Capture pristine lock hash
+        id: lockhash
+        run: |
+          set -euo pipefail
+          echo "value=${{ hashFiles('**/poetry.lock') }}" >> "$GITHUB_OUTPUT"
+          echo "Pristine poetry.lock hash: ${{ hashFiles('**/poetry.lock') }}"
+
+      - name: Install Kerberos system dependencies
+        if: matrix.extras == 'pyarrow' || matrix.extras == 'kernel'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libkrb5-dev
+
+      - name: Setup Poetry (builds .venv from JFrog)
+        uses: ./.github/actions/setup-poetry
+        with:
+          python-version: ${{ matrix.python-version }}
+          # extras="" -> base install (no --extras). Otherwise install exactly
+          # the one extra this leg targets, matching the PR job's isolation.
+          # NB: the non-empty branch must come FIRST — GitHub's `A && B || C`
+          # treats an empty-string B as falsy and would fall through to C, so
+          # `extras=='' && '' || format(...)` wrongly yields "--extras " (no
+          # value) for the base leg. Test for non-empty and default to "".
+          install-args: ${{ matrix.extras != '' && format('--extras {0}', matrix.extras) || '' }}
+          # Distinct suffix per leg so setup-poetry's own "venv-*" cache (used by
+          # same-repo PRs) never collides across dependency-version / extras.
+          cache-suffix: "warm-${{ matrix.dependency-version }}-${{ matrix.extras || 'base' }}-"
+
+      - name: Install Python tools for custom versions
+        if: matrix.dependency-version != 'default'
+        run: poetry run pip install toml packaging
+
+      - name: Generate + apply min dependency versions
+        if: matrix.dependency-version != 'default'
+        run: |
+          set -euo pipefail
+          poetry run python scripts/dependency_manager.py ${{ matrix.dependency-version }} \
+            --output requirements-${{ matrix.dependency-version }}.txt
+          echo "Generated requirements for ${{ matrix.dependency-version }} versions:"
+          cat requirements-${{ matrix.dependency-version }}.txt
+          # pip-installs the pinned floor ON TOP of the poetry venv — the venv is
+          # cached AFTER this so the fork restores the complete resolved env.
+          poetry run pip install -r requirements-${{ matrix.dependency-version }}.txt
+
+      - name: Prime mypy stub packages into the venv
+        # check-types runs `mypy --install-types`, which fetches stub packages
+        # from the index at runtime. Bake them into the warmed venv now (on the
+        # default/base leg the type job restores) so the offline fork run has
+        # them and can drop --install-types.
+        if: matrix.extras == '' && matrix.dependency-version == 'default'
+        run: |
+          mkdir -p .mypy_cache
+          poetry run mypy --install-types --non-interactive src || true
+
+      - name: Show installed versions
+        run: |
+          echo "=== py ${{ matrix.python-version }} | ${{ matrix.dependency-version }} deps | extras=${{ matrix.extras || 'base' }} ==="
+          poetry run pip list
+
+      - name: Compute cache key
+        id: key
+        run: |
+          set -euo pipefail
+          TIMESTAMP=$(date -u +%Y%m%d%H%M%S)
+          # Pristine hash captured BEFORE setup-poetry's `poetry lock` mutated
+          # the file — matches what restore-deps computes in the PR jobs.
+          LOCK_HASH="${{ steps.lockhash.outputs.value }}"
+          PY="${{ matrix.python-version }}"
+          DEP="${{ matrix.dependency-version }}"
+          EXTRAS="${{ matrix.extras || 'base' }}"
+          BASE="forkvenv-${RUNNER_OS}-${PY}-${DEP}-${EXTRAS}-${LOCK_HASH}"
+          echo "base=${BASE}" >> "$GITHUB_OUTPUT"
+          echo "full=${BASE}-${TIMESTAMP}" >> "$GITHUB_OUTPUT"
+          echo "Cache key: ${BASE}-${TIMESTAMP}"
+
+      - name: Save .venv to fork cache
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .venv
+          key: ${{ steps.key.outputs.full }}

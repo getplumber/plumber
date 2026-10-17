@@ -1,0 +1,104 @@
+name: "JUnit evidence integration example"
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  package-java-project-with-junit-evidence:
+    runs-on: ubuntu-latest
+    env:
+      REGISTRY_DOMAIN: ${{ vars.JF_URL }}
+      REPO_NAME: 'maven-junit-local'
+      PACKAGE_NAME: 'simple-java-maven'
+      VERSION: ${{ github.run_number }}
+      BUILD_NAME: 'junit-maven-build'
+      ATTACH_OPTIONAL_CUSTOM_MARKDOWN_TO_EVIDENCE: true
+
+    steps:
+      # Setup JFrog CLI
+      - name: Setup jfrog cli
+        uses: jfrog/setup-jfrog-cli@v4
+        env:
+          JF_URL: ${{ vars.ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.ARTIFACTORY_ACCESS_TOKEN }}
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Cache Maven dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2
+          key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+          restore-keys: ${{ runner.os }}-m2
+
+      # Build and publish the Java package to JFrog Artifactory
+      - name: Build and publish Java package to Artifactory
+        run: |
+          cd examples/junit/src
+          mvn clean compile
+          mvn package
+          echo "Deploying package to Artifactory"
+          jf rt upload target/*.jar $REPO_NAME/$PACKAGE_NAME/$VERSION/ --build-name=$BUILD_NAME --build-number=${{ github.run_number }}
+          echo "Publishing build info"
+          jf rt build-publish $BUILD_NAME ${{ github.run_number }}
+
+      # Run JUnit tests and generate test reports
+      - name: Run JUnit tests
+        run: |
+          cd examples/junit/src
+          mvn test
+
+      - name: Generate consolidated test report
+        run: |
+          cd examples/junit/src
+          mvn surefire-report:report-only
+          mvn site:site
+
+      - name: Create unified test summary
+        if: always()
+        run: |
+          cd examples/junit/src
+          chmod +x merge-test-reports.sh
+          chmod +x xml-to-json.sh
+          ./merge-test-reports.sh
+          ./xml-to-json.sh
+
+      # This is an optional step to generate a custom markdown report
+      - name: Generate optional custom markdown report
+        if: env.ATTACH_OPTIONAL_CUSTOM_MARKDOWN_TO_EVIDENCE == 'true'
+        run: |
+          cd examples/junit/src
+          if [ -f "target/consolidated-test-report.json" ]; then
+            python ../junit_json_to_markdown_helper.py target/consolidated-test-report.json
+          else
+            echo "# JUnit Test Results" > junit-results.md
+            echo "No test results found." >> junit-results.md
+          fi
+
+      # Attaching the evidence to associated build
+      - name: Attach evidence using jfrog cli
+        run: |
+          cd examples/junit/src
+          if [ -f "target/consolidated-test-report.json" ]; then
+            jf evd create \
+              --build-name $BUILD_NAME \
+              --build-number ${{ github.run_number }} \
+              --key "${{ secrets.PRIVATE_KEY }}" \
+              --key-alias "${{ vars.EVIDENCE_KEY_ALIAS }}" \
+              --predicate ./target/consolidated-test-report.json \
+              --predicate-type https://jfrog.com/evidence/junit-test-results/v1 \
+              --provider-id "junit" \
+              ${{ env.ATTACH_OPTIONAL_CUSTOM_MARKDOWN_TO_EVIDENCE == 'true' && '--markdown "junit-results.md"' || '' }}
+          else
+            echo "No test results found to attach as evidence"
+          fi

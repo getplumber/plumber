@@ -1,0 +1,43 @@
+{
+  "source": "https://github.com/jfrog/jfrog-registry-operator",
+  "commit": "aa82961f7f1c9fda315f5f0c5c15f0bc0f493822",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "master",
+  "branches": [
+    {
+      "name": "master",
+      "protected": false
+    }
+  ],
+  "environments": [
+    {
+      "name": "jfrog-registry-operator",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/bump-up-pr.yml": "active",
+    ".github/workflows/cla.yml": "active",
+    ".github/workflows/frogbot-scan-pull-request.yml": "active",
+    ".github/workflows/frogbot-scan-repository.yml": "active",
+    ".github/workflows/helm.yml": "active",
+    ".github/workflows/test.yml": "active",
+    ".github/workflows/update-jf-dependencies.yml": "active",
+    ".github/workflows/update-v2-tag.yml": "active",
+    ".github/workflows/validate-pr-target-branch.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High pull_request_target path from `test.yml` was judged false: it runs only on `types: [labeled]` when a maintainer applies `safe to test` (removed again by `Pretest`), so no outsider reaches it and the path holds at Medium at most.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "pr_target",
+        "subjectContains": "github.event.pull_request.head.sha",
+        "tier": "medium"
+      }
+    ]
+  }
+}

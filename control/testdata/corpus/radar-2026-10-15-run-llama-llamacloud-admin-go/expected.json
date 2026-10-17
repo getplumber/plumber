@@ -1,0 +1,31 @@
+{
+  "source": "https://github.com/run-llama/llamacloud-admin-go",
+  "commit": "0b9e90df10f522a8f50663adf0689f65fc146512",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": false
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/ci.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High unprotected `main` path was judged overstated: `ci.yml` runs on every branch, so the branch protection is not what lets it run, and it reaches nothing beyond the writer's own push (no secret), Low.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "unprotected_push",
+        "subjectContains": "main",
+        "tier": "low",
+        "pending": "an unprotected-branch path whose walked job proves only the default token's write scope (what a writer already holds: no secret, no publish, no release, no environment) still assembles at High."
+      }
+    ]
+  }
+}

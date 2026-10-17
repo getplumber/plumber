@@ -1,0 +1,64 @@
+name: Dependabot Regenerate
+on:
+  pull_request:
+    paths:
+      - 'go.mod'
+      - 'go.sum'
+permissions:
+  contents: read
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: github.actor == 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+          cache: false
+
+      - name: Go cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-lint-${{ hashFiles('go.mod', 'go.sum') }}
+          restore-keys: |
+            go-lint-
+
+      - name: Regenerate after dependency bump
+        run: |
+          go mod tidy
+          make generate manifests generate-helmchart-ci docs-generate-api-ref
+
+      - name: Commit and push regenerated files
+        id: push
+        run: |
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "Nothing to regenerate"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "chores: regenerate after dependency bump"
+          git push
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Re-run CI on the regenerated head
+        if: steps.push.outputs.pushed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: gh workflow run ci.yaml --ref "$HEAD_REF"

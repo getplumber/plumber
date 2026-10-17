@@ -1,0 +1,53 @@
+{
+  "source": "https://github.com/cloudflare/sandbox-sdk",
+  "commit": "a080a659c5007b7e99cee6a4195ea164cfdc96e7",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/pullrequest.yml": "active",
+    ".github/workflows/release.yml": "active",
+    ".github/workflows/pkg-pr-new.yml": "active",
+    ".github/workflows/opencode-review.yml": "active",
+    ".github/workflows/opencode.yml": "active",
+    ".github/workflows/pr.yml": "active",
+    ".github/workflows/pr-privileged.yml": "active",
+    ".github/workflows/release-checks-probe.yml": "active",
+    ".github/workflows/templates.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The Critical pull_request_target path from `pr-privileged.yml` was judged false: the smoke job needs a `policy` job whose output lets a fork through only on the `labeled` event with `ok-to-test`, at the labelled head commit, so it holds as a maintainer-approved Medium at most; the Critical npm cache path into the release was judged overstated: the writers the path names are pull_request runs, whose cache lives under the pull request merge ref and is never restored by the release, so only a writer of the default branch reaches it, Medium at most (the only base-context job running fork code sets `package-manager-cache: false` and is label-gated). No job here declares cache-mode, so GitHub keeps the cache of every low-trust run read-only and grants no job cache write: ISSUE-705 is silent and no cache path exists, so the cache ceiling admits none.",
+  "expect": {
+    "paths": [
+      {
+        "entryKind": "pr_target",
+        "tier": "medium",
+        "subjectContains": "github.event.pull_request.head.sha",
+        "actor": "maintainer_approved",
+        "pending": "the gate is computed in a shell step (`printf ... >> \"$GITHUB_OUTPUT\"` under bash conditionals), which the evaluator reads as unknown by design, so the path keeps the outsider mechanics one tier down (High)."
+      }
+    ],
+    "ceilings": [
+      {
+        "entryKind": "pr_target",
+        "subjectContains": "github.event.pull_request.head.sha",
+        "tier": "medium",
+        "pending": "the gate is computed in a shell step (`printf ... >> \"$GITHUB_OUTPUT\"` under bash conditionals), which the evaluator reads as unknown by design, so the path keeps the outsider mechanics one tier down (High)."
+      },
+      {
+        "entryKind": "poisoned_cache",
+        "subjectContains": "",
+        "tier": "none"
+      }
+    ]
+  }
+}

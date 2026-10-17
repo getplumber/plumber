@@ -1,0 +1,109 @@
+name : "Codeql Evidence Integration example"
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  actions: read
+
+jobs:
+  codeql:
+    name: Analyse
+    runs-on: ubuntu-latest
+    env:
+      ATTACH_OPTIONAL_CUSTOM_MARKDOWN_TO_EVIDENCE: true
+    strategy:
+      fail-fast: false
+      matrix:
+        language_details:
+          - name: javascript
+            queries_path: ./examples/github/codeql/queries/js
+          - name: go
+            queries_path: ./examples/github/codeql/queries/go
+
+    steps:
+      # Build and publish the packages to JFrog Artifactory
+      - name: Setup jfrog cli
+        uses: jfrog/setup-jfrog-cli@v4
+        env:
+          JF_URL: ${{ vars.ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.ARTIFACTORY_ACCESS_TOKEN }}
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            examples/github/codeql/**
+          sparse-checkout-cone-mode: false
+      - name: Build and Publish ${{ matrix.language_details.name }} package
+        env:
+          GO_CODE_PATH: examples/github/codeql/go
+          JS_CODE_PATH: examples/github/codeql/js
+        run: |
+          if [ ${{ matrix.language_details.name }} == 'go' ]; then
+            cd $GO_CODE_PATH
+            jf go-config --repo-resolve=go-remote --repo-deploy=go-local \
+              --server-id-deploy=setup-jfrog-cli-server \
+              --server-id-resolve=setup-jfrog-cli-server          
+            jf gp --build-name=my-go-build --build-number=${{ github.run_number }} v0.0.${{ github.run_number }}
+            jf rt bp my-go-build ${{ github.run_number }}
+          elif [ ${{ matrix.language_details.name }} == 'javascript' ]; then
+            cd $JS_CODE_PATH
+            jf npm-config --repo-resolve=javascript-remote --repo-deploy=javascript-local \
+              --server-id-deploy=setup-jfrog-cli-server \
+              --server-id-resolve=setup-jfrog-cli-server
+            jf npm publish --build-name=my-javascript-build --build-number=${{ github.run_number }}
+            jf rt bp my-javascript-build ${{ github.run_number }}
+          fi
+          cd -
+        continue-on-error: true
+
+      # Set up CodeQL and run analysis
+      - name: Set up CodeQL for ${{ matrix.language_details.name }}
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language_details.name }}
+          config-file: examples/github/codeql/codeql-config.yml
+          queries: ${{ matrix.language_details.queries_path }}
+
+      - name: Run CodeQL Analysis for ${{ matrix.language_details.name }}
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "security-and-quality"
+          output: results-${{ matrix.language_details.name }}
+          upload: false
+
+      # This is an optional step to generate a custom markdown report
+      - name: Generate optional custom markdown report
+        if: env.ATTACH_OPTIONAL_CUSTOM_MARKDOWN_TO_EVIDENCE == 'true'
+        run: |
+          python ./examples/github/codeql/sarif_to_markdown.py \
+            results-${{ matrix.language_details.name }}/${{ matrix.language_details.name }}.sarif \
+            results-${{ matrix.language_details.name }}/${{ matrix.language_details.name }}-report.md
+
+      # Attaching the evidence to associated package
+      - name: Attach Evidence using JFrog CLI
+        run: |
+          if [ ${{ matrix.language_details.name }} == 'go' ]; then
+            PACKAGE_VERSION="v0.0.${{ github.run_number }}"
+            jf evd create \
+            --package-name "jfrog.com/mygobuild" \
+            --package-version $PACKAGE_VERSION \
+            --package-repo-name go-local \
+            --key "${{ secrets.PRIVATE_KEY }}" \
+            --key-alias "${{ vars.EVIDENCE_KEY_ALIAS }}" \
+            --predicate "results-go/go.sarif" \
+            --predicate-type "http://github.com/CodeQL/static-analysis" \
+            ${{ env.ATTACH_OPTIONAL_CUSTOM_MARKDOWN_TO_EVIDENCE == 'true' && '--markdown "results-go/go-report.md"' || '' }}
+          elif [ ${{ matrix.language_details.name }} == 'javascript' ]; then
+            PACKAGE_VERSION="0.0.1"
+            jf evd create \
+            --package-name my-javascript-build \
+            --package-version $PACKAGE_VERSION \
+            --package-repo-name javascript-local \
+            --key "${{ secrets.PRIVATE_KEY }}" \
+            --key-alias "${{ vars.EVIDENCE_KEY_ALIAS }}" \
+            --predicate "results-javascript/javascript.sarif" \
+            --predicate-type "http://github.com/CodeQL/static-analysis" \
+            --provider-id "github" \
+            ${{ env.ATTACH_OPTIONAL_CUSTOM_MARKDOWN_TO_EVIDENCE == 'true' && '--markdown "results-javascript/javascript-report.md"' || '' }}
+          fi

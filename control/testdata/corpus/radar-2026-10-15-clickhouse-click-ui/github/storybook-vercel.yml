@@ -1,0 +1,272 @@
+name: Publish storybook to vercel
+
+# NOTE: see .scripts/bash/storybook-deploy-channels for extra info
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    # labeled/unlabeled: for `skip:storybook-preview`.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      deploy_production:
+        description: 'Deploy the release channel (production). Leave off for a build-only dry run.'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  pull-requests: write
+
+# One group per PR (stale preview builds cancel). Non-PR runs group by sha:
+# GitHub keeps only one pending run per group, so a shared group would let an
+# ordinary main push evict a queued release deploy. Parallel main pushes can
+# race; the canary step skips stale commits itself, release accepts the
+# (rare) race.
+concurrency:
+  group: storybook-vercel-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  HUSKY: 0
+  STORYBOOK_BUILD_DIR: .storybook/out
+
+jobs:
+  deploy:
+    # Fork PRs have no repo secrets: skip the preview deploy - forks get a
+    # hosted Storybook via Chromatic instead. Dependabot runs get no repo
+    # secrets either (GitHub withholds them from the dependabot actor), so the
+    # deploy could only fail: skip it. Chromatic still builds their Storybook.
+    # github.actor, not the PR author: a human pushing to a Dependabot branch
+    # triggers a run that does have secrets, and then the preview should run.
+    # Label changes on Dependabot PRs have a human actor: exclude them by author.
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.event.pull_request.state == 'open' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor != 'dependabot[bot]' &&
+      !(github.event.pull_request.user.login == 'dependabot[bot]' &&
+      (github.event.action == 'labeled' || github.event.action == 'unlabeled')) &&
+      !contains(github.event.pull_request.labels.*.name, 'skip:storybook-preview'))
+    runs-on: ubuntu-latest
+    steps:
+      # ======================================================================
+      # DECIDE - which channels does this run deploy, and why
+      # ======================================================================
+
+      - name: Checkout
+        # On release events this lands on the release tag.
+        uses: actions/checkout@v7
+
+      - name: Decide deploy channels
+        id: channels
+        # shell: bash enables pipefail; the implicit default shell does not,
+        # and `tee` would then mask a script failure. Releases on tags that
+        # predate this script fail here - deploy those via workflow_dispatch.
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          IS_PRERELEASE: ${{ github.event.release.prerelease }}
+          DEPLOY_PRODUCTION: ${{ inputs.deploy_production }}
+        run: |
+          COMMIT_MSG=$(git log -1 --format=%s)
+          .scripts/bash/storybook-deploy-channels \
+            "$EVENT_NAME" \
+            "$REF" \
+            "$COMMIT_MSG" \
+            "$IS_PRERELEASE" \
+            "$DEPLOY_PRODUCTION" \
+            | tee -a "$GITHUB_OUTPUT"
+
+      - name: Report deploy decisions
+        # Written before the build so the reasoning survives a build failure.
+        env:
+          SITUATION: ${{ steps.channels.outputs.situation }}
+          DESCRIPTION: ${{ steps.channels.outputs.description }}
+          CHANNELS: ${{ steps.channels.outputs.channels }}
+          DEPLOY_PREVIEW: ${{ steps.channels.outputs.deploy_preview }}
+          DEPLOY_CANARY: ${{ steps.channels.outputs.deploy_canary }}
+          DEPLOY_RELEASE: ${{ steps.channels.outputs.deploy_release }}
+        run: |
+          icon() { [[ "$1" == "true" ]] && echo "✅ yes" || echo "⏭️ no"; }
+
+          {
+            echo "## Storybook deploy channels"
+            echo ""
+            echo "**Situation:** \`$SITUATION\` → deploying **$CHANNELS**"
+            echo ""
+            echo "$DESCRIPTION"
+            echo ""
+            echo "| Channel | Deploying |"
+            echo "| --- | --- |"
+            echo "| Preview | $(icon "$DEPLOY_PREVIEW") |"
+            echo "| Canary | $(icon "$DEPLOY_CANARY") |"
+            echo "| Release | $(icon "$DEPLOY_RELEASE") |"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # ======================================================================
+      # BUILD - produce .vercel/output, identical for every channel
+      # ======================================================================
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24.x'
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Install Vercel CLI
+        # Pinned: newer versions pull a broken @vercel/hono dep
+        run: npm install --global vercel@41.7.3
+
+      - name: Align package version with the tag
+        # The legacy release flow (publish.yml) cuts the tag on main before its
+        # "bump version" commit lands, so package.json on the tag is one version
+        # behind. Same one-liner publish.yml runs before npm publish; build-only.
+        if: github.ref_type == 'tag'
+        run: npm pkg set version="${GITHUB_REF_NAME#v}"
+
+      - name: Set the canary version
+        # A canary-only build shows the version publish.yml gives this commit on npm.
+        if: steps.channels.outputs.deploy_canary == 'true' && steps.channels.outputs.deploy_release != 'true'
+        run: |
+          VERSION=$(.scripts/bash/canary-version "$GITHUB_SHA")
+          npm pkg set version="$VERSION"
+
+      - name: Build Storybook
+        # The version badge in the Storybook UI comes from package.json on the
+        # checked-out ref, corrected to the tag name on tag refs and to the npm
+        # canary version on canary-only builds (see above).
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "📦 Building Storybook for @clickhouse/click-ui v$VERSION (commit $GITHUB_SHA)" | tee -a "$GITHUB_STEP_SUMMARY"
+          yarn storybook:build
+
+      - name: Package Storybook for Vercel
+        # Static Build Output API v3, hand-built: no `vercel pull` / `vercel build`
+        # needed. Project targeting comes from VERCEL_ORG_ID + VERCEL_PROJECT_ID.
+        run: |
+          rm -rf .vercel # a committed .vercel/ must never leak into the deploy
+          mkdir -p .vercel/output/static
+          cp -r "$STORYBOOK_BUILD_DIR"/* .vercel/output/static/
+          cat > .vercel/output/config.json << EOF
+          {
+            "version": 3
+          }
+          EOF
+
+      # ======================================================================
+      # DEPLOY - one step per channel. --prod is the only difference between
+      # a preview deployment and a production one.
+      # ======================================================================
+
+      - name: Deploy preview
+        if: steps.channels.outputs.deploy_preview == 'true'
+        id: preview
+        # Step-scoped on purpose: workflow-level env would expose the token
+        # to install scripts and third-party actions.
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          rm -f .vercel/project.json # a stray link file must not override the env vars
+          DEPLOYMENT_URL=$(vercel deploy \
+            --prebuilt \
+            --yes \
+            --token="$VERCEL_TOKEN")
+          echo "url=$DEPLOYMENT_URL" >> "$GITHUB_OUTPUT"
+          echo "Preview deployed to: $DEPLOYMENT_URL"
+          echo "✅ **Preview** deployed: $DEPLOYMENT_URL" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Generate GitHub workflow token
+        # Only used to post the preview-URL PR comment below.
+        if: steps.channels.outputs.deploy_preview == 'true'
+        id: gh-workflow-token
+        # TODO: bump to v3 once it leaves beta (gh node20 deprecation)
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.WORKFLOW_AUTH_PUBLIC_APP_ID }}
+          private-key: ${{ secrets.WORKFLOW_AUTH_PUBLIC_PRIVATE_KEY }}
+
+      - name: Comment PR with preview URL
+        if: steps.channels.outputs.deploy_preview == 'true'
+        uses: mshick/add-pr-comment@v3
+        with:
+          message: |
+            ## Storybook Preview Deployed
+
+            ✅ Preview URL: ${{ steps.preview.outputs.url }}
+
+            Built from commit: `${{ github.sha }}`
+          message-id: storybook-preview
+          repo-token: ${{ steps.gh-workflow-token.outputs.token }}
+          refresh-message-position: true
+
+      - name: Deploy canary channel
+        if: steps.channels.outputs.deploy_canary == 'true'
+        id: canary
+        # A canary failure must not skip the release deploy when both run;
+        # when canary deploys alone, let it fail the run loudly.
+        continue-on-error: ${{ steps.channels.outputs.deploy_release == 'true' }}
+        # Deploys to the "canary" custom environment of the same project,
+        # isolated from production. Step-scoped credentials - see "Deploy preview".
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          # Parallel main pushes race (see concurrency); deploy canary only
+          # from the current tip of main. Canary only - a release deploy must
+          # never be skipped by a merge landing right after it.
+          MAIN_SHA=$(git ls-remote origin refs/heads/main | cut -f1)
+          if [[ "$MAIN_SHA" != "$GITHUB_SHA" ]]; then
+            echo "Skipping canary: main moved on to $MAIN_SHA"
+            echo "⏩ **Canary channel** skipped: stale commit, main is now \`$MAIN_SHA\`" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          rm -f .vercel/project.json # a stray link file must not override the env vars
+          # DEPLOYMENT_URL is per-deploy; canary serves https://click-ui-canary.vercel.app
+          DEPLOYMENT_URL=$(vercel deploy \
+            --prebuilt \
+            --yes \
+            --target=canary \
+            --token="$VERCEL_TOKEN")
+          echo "Canary channel deployed to: $DEPLOYMENT_URL"
+          echo "✅ **Canary channel** deployed: $DEPLOYMENT_URL" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Warn on tolerated canary failure
+        # continue-on-error above leaves the run green; make the failure visible.
+        if: steps.canary.outcome == 'failure'
+        run: |
+          echo "Canary deploy failed (tolerated so the release deploy still runs). Canary is stale until the next push to main."
+          echo "❌ **Canary channel** deploy failed (run kept green for the release deploy)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Deploy release channel
+        if: steps.channels.outputs.deploy_release == 'true'
+        # Step-scoped credentials - see "Deploy preview".
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          rm -f .vercel/project.json # a stray link file must not override the env vars
+          DEPLOYMENT_URL=$(vercel deploy \
+            --prebuilt \
+            --yes \
+            --prod \
+            --token="$VERCEL_TOKEN")
+          echo "Release channel deployed to: $DEPLOYMENT_URL"
+          echo "✅ **Release channel** deployed: $DEPLOYMENT_URL" >> "$GITHUB_STEP_SUMMARY"

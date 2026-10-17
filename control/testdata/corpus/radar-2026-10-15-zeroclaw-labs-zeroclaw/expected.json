@@ -1,0 +1,169 @@
+{
+  "source": "https://github.com/zeroclaw-labs/zeroclaw",
+  "commit": "329e66f76394b00af9d00b767e00ad298133961e",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "master",
+  "branches": [
+    {
+      "name": "master",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "copilot",
+      "known": true
+    },
+    {
+      "name": "crates-io",
+      "known": true,
+      "requiredReviewers": true,
+      "reviewers": 3
+    },
+    {
+      "name": "docker",
+      "known": true,
+      "requiredReviewers": true,
+      "reviewers": 1
+    },
+    {
+      "name": "github-pages",
+      "known": true,
+      "branchPolicy": true
+    },
+    {
+      "name": "github-releases",
+      "known": true,
+      "requiredReviewers": true,
+      "reviewers": 1
+    },
+    {
+      "name": "release",
+      "known": true,
+      "requiredReviewers": true,
+      "reviewers": 2,
+      "preventSelfReview": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/ci.yml": "active",
+    ".github/workflows/workflow-sanity.yml": "active",
+    ".github/workflows/codeql.yml": "active",
+    ".github/workflows/pr-label-policy-check.yml": "active",
+    ".github/workflows/sec-audit.yml": "active",
+    ".github/workflows/pub-docker-img.yml": "active",
+    ".github/workflows/sec-codeql.yml": "active",
+    ".github/workflows/test-e2e.yml": "active",
+    ".github/workflows/docs-deploy.yml": "active",
+    ".github/workflows/test-coverage.yml": "active",
+    ".github/workflows/cross-platform-build-manual.yml": "active",
+    ".github/workflows/release-stable-manual.yml": "active",
+    ".github/workflows/tweet-release.yml": "active",
+    ".github/workflows/pub-aur.yml": "active",
+    ".github/workflows/pub-scoop.yml": "active",
+    ".github/workflows/pr-path-labeler.yml": "active",
+    ".github/workflows/rust.yml": "active",
+    ".github/workflows/discord-release.yml": "active",
+    ".github/workflows/daily-audit.yml": "active",
+    ".github/workflows/skills-validate.yml": "active",
+    ".github/workflows/pr-title.yaml": "active",
+    ".github/workflows/pr-title.yml": "active",
+    ".github/workflows/pub-docker-standard.yml": "active",
+    ".github/workflows/docker-image-pr.yml": "active",
+    ".github/workflows/docker-publish.yml": "active",
+    ".github/workflows/windows-ci-isolated.yml": "active",
+    ".github/workflows/clawpatch-review.yml": "active",
+    ".github/workflows/cross-platform-clippy.yml": "active",
+    ".github/workflows/ci-code-analysis.yml": "active",
+    ".github/workflows/ci-sbom.yml": "active",
+    ".github/workflows/validate-translations-pin.yml": "active",
+    ".github/workflows/npm-deps-review.yml": "active",
+    ".github/workflows/monthly-outdated.yml": "active",
+    ".github/workflows/daily-npm-audit.yml": "active",
+    ".github/workflows/desktop-check.yml": "active",
+    ".github/workflows/trivy-scheduled.yml": "active",
+    ".github/workflows/project-dashboard-plan.yml": "active",
+    ".github/workflows/validate-pr-9497-windows-grep.yml": "active",
+    ".github/workflows/mandato-ci.yml": "active",
+    ".github/workflows/validate-pr-9636-windows-nul.yml": "active",
+    ".github/workflows/scoop-bucket-canary.yml": "active",
+    ".github/workflows/aur-freshness-check.yml": "active",
+    ".github/workflows/platform-tests.yml": "active",
+    ".github/workflows/sccache-ab-pr.yml": "active",
+    ".github/workflows/android-app.yml": "active",
+    ".github/workflows/pr-risk-policy-review-signal.yml": "active",
+    ".github/workflows/pub-crates.yml": "active",
+    ".github/workflows/pr-size-labeler.yml": "active",
+    ".github/workflows/windows-tests.yml": "active",
+    ".github/workflows/pr-risk-labeler.yml": "active",
+    ".github/workflows/desktop-bundle-check.yml": "active",
+    ".github/workflows/quickstart-cli-evidence-manual.yml": "active",
+    ".github/workflows/qualify-pr11364-arduino-eight-windows.yml": "active",
+    ".github/workflows/ci-reproducible-build.yml": "disabled_manually"
+  },
+  "workflowStatesKnown": true,
+  "actionMetadata": {
+    "dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7": {
+      "refKind": "commit",
+      "mutableRemoteExec": {
+        "tier": "exec",
+        "url": "https://sh.rustup.rs",
+        "file": "action.yml",
+        "downloadGuard": "rustup"
+      }
+    },
+    "dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537": {
+      "refKind": "commit",
+      "mutableRemoteExec": {
+        "tier": "exec",
+        "url": "https://sh.rustup.rs",
+        "file": "action.yml",
+        "downloadGuard": "rustup"
+      }
+    },
+    "dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772": {
+      "refKind": "commit",
+      "mutableRemoteExec": {
+        "tier": "exec",
+        "url": "https://sh.rustup.rs",
+        "file": "action.yml",
+        "downloadGuard": "rustup"
+      }
+    },
+    "dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9": {
+      "refKind": "commit",
+      "mutableRemoteExec": {
+        "tier": "exec",
+        "url": "https://sh.rustup.rs",
+        "file": "action.yml",
+        "downloadGuard": "rustup"
+      }
+    }
+  },
+  "note": "The three High paths through the SHA-pinned `dtolnay/rust-toolchain` revisions were judged overstated: `dtolnay/rust-toolchain` is pinned to a full commit SHA (immutable), and its `curl https://sh.rustup.rs | sh` sits under `if ! command -v rustup`, a guard every hosted image these jobs use satisfies, so the only run-time download is the Rust toolchain from its own distribution: Low at most. Some jobs run on an expression runner (`${{ inputs.runner || 'ubuntu-latest' }}`, `${{ matrix.os }}`) or a third-party label (`blacksmith-*`, whose image the assessment could not read either), where the spec reads the guard as undecidable and the entry as unverified one tier down (section 8.1): once the Windows images are fixed, the case may still wait on that.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "dtolnay/rust-toolchain@67ef31d5b988",
+        "tier": "low",
+        "pending": "the preinstalled-tools list says the Windows hosted images carry no rustup, while the windows-2022 and windows-2025 image notes list Rustup 1.29.1 and Cargo 1.99.0, so the `command -v rustup` guard is read as not firing on `windows-latest` and the SHA-pinned toolchain keeps an outside-download path at High."
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "dtolnay/rust-toolchain@e97e2d8cc328",
+        "tier": "low",
+        "pending": "the preinstalled-tools list says the Windows hosted images carry no rustup, while the windows-2022 and windows-2025 image notes list Rustup 1.29.1 and Cargo 1.99.0, so the `command -v rustup` guard is read as not firing on `windows-latest` and the SHA-pinned toolchain keeps an outside-download path at High."
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "dtolnay/rust-toolchain@631a55b12751",
+        "tier": "low",
+        "pending": "the preinstalled-tools list says the Windows hosted images carry no rustup, while the windows-2022 and windows-2025 image notes list Rustup 1.29.1 and Cargo 1.99.0, so the `command -v rustup` guard is read as not firing on `windows-latest` and the SHA-pinned toolchain keeps an outside-download path at High."
+      }
+    ]
+  }
+}

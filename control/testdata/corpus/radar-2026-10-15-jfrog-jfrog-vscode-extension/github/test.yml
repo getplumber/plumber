@@ -1,0 +1,85 @@
+name: Test
+
+on:
+  push:
+  # Triggers the workflow on labeled PRs only.
+  pull_request_target:
+    types: [ labeled ]
+  schedule:
+    - cron: '0 6 * * *' # Runs every day at 6:00 AM GMT
+
+jobs:
+  test:
+    if: (github.event_name == 'schedule' && github.repository_owner == 'jfrog') || github.event_name == 'push' || (github.event_name == 'pull_request_target' && contains(github.event.pull_request.labels.*.name, 'safe to test'))
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macOS-latest]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          allow-unsafe-pr-checkout: true
+      - name: Setup macOS
+        # Fix 'nvm is not compatible with the npm config "prefix" option' error on macOS
+        run: unset npm_config_prefix
+        if: runner.os == 'macOS'
+      - name: Install Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: 1.22.x
+          cache: false
+      - name: Setup Python3
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Setup NodeJS
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          check-latest: true
+      - name: Setup Pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 8
+
+      - name: Install
+        run: npm i --ignore-scripts
+        
+      # Make sure no new dependencies were installed after running 'npm i'
+      - name: Make sure branch is clean
+        run: git diff --exit-code
+
+      - name: Lint
+        run: npm run lint
+
+      # Same SVG/HTTPS README check as `vsce publish` / `ovsx publish` (ovsx uses vsce to pack).
+      - name: Validate Marketplace and Open VSX packaging
+        if: runner.os == 'Linux'
+        run: npx vsce package --out /tmp/marketplace-pack-check.vsix
+
+      - name: Pack Maven GAV Reader
+        run: mvn clean package -f resources/maven-gav-reader/pom.xml -B
+
+      - name: Install JFrog CLI for connectionManager tests
+        run: curl -fL https://install-cli.jfrog.io | sh && jf -v
+
+      - name: Tests on macOS, Windows
+        env:
+          JFROG_IDE_PLATFORM_URL: ${{ secrets.PLATFORM_URL }}
+          JFROG_IDE_ACCESS_TOKEN: ${{ secrets.PLATFORM_ADMIN_TOKEN }}
+        run: npm t
+        if: runner.os != 'Linux'
+
+      - name: Tests on Linux
+        env:
+          JFROG_IDE_PLATFORM_URL: ${{ secrets.PLATFORM_URL }}
+          JFROG_IDE_ACCESS_TOKEN: ${{ secrets.PLATFORM_ADMIN_TOKEN }}
+        # Run tests with Virtual frame buffer to allow running VS-Code without a display
+        run: xvfb-run npm t
+        if: runner.os == 'Linux'
+        

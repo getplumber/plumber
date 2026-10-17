@@ -1,0 +1,70 @@
+{
+  "source": "https://github.com/jfrog/build-info-go",
+  "commit": "f9d40441f2628e32d7dd78c9226673e71904ba0e",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": false
+    }
+  ],
+  "environments": [
+    {
+      "name": "frogbot",
+      "known": true,
+      "requiredReviewers": true,
+      "reviewers": 1
+    },
+    {
+      "name": "github-pages",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/analysis.yml": "active",
+    ".github/workflows/cla.yml": "active",
+    ".github/workflows/cli-integration-tests.yml": "active",
+    ".github/workflows/frogbot-scan-and-fix.yml": "active",
+    ".github/workflows/frogbot-scan-pr.yml": "active",
+    ".github/workflows/monitorIssues.yml": "active",
+    ".github/workflows/pr-labels.yml": "active",
+    ".github/workflows/test.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "Two Critical pull_request_target paths were judged false: the Frogbot scan runs under the approval-gated environment `frogbot` at the approved head commit, and the label-gated test workflow runs only when a maintainer applies `safe to test`, at the labelled head commit (`head.sha || github.sha`, the fallback never applying under pull_request_target), so both hold as maintainer-approved Medium paths at most.",
+  "expect": {
+    "paths": [
+      {
+        "entryKind": "pr_target",
+        "tier": "medium",
+        "subjectContains": "github.event.pull_request.head.sha",
+        "actor": "maintainer_approved"
+      },
+      {
+        "entryKind": "pr_target",
+        "tier": "medium",
+        "subjectContains": "github.event.pull_request.head.sha || github.sha",
+        "actor": "maintainer_approved",
+        "pending": "a checkout of the pull request head SHA written with a fallback (`head.sha || github.sha`, `head.sha || github.ref`, `event_name == 'pull_request_target' && head.sha || github.ref`) is not read as a pinned head commit, although under pull_request_target it is always the head SHA, so the maintainer-approved path holds at High instead of Medium."
+      }
+    ],
+    "ceilings": [
+      {
+        "entryKind": "pr_target",
+        "subjectContains": "github.event.pull_request.head.sha",
+        "tier": "medium",
+        "pending": "a checkout of the pull request head SHA written with a fallback (`head.sha || github.sha`, `head.sha || github.ref`, `event_name == 'pull_request_target' && head.sha || github.ref`) is not read as a pinned head commit, although under pull_request_target it is always the head SHA, so the maintainer-approved path holds at High instead of Medium."
+      },
+      {
+        "entryKind": "pr_target",
+        "subjectContains": "github.event.pull_request.head.sha || github.sha",
+        "tier": "medium",
+        "pending": "a checkout of the pull request head SHA written with a fallback (`head.sha || github.sha`, `head.sha || github.ref`, `event_name == 'pull_request_target' && head.sha || github.ref`) is not read as a pinned head commit, although under pull_request_target it is always the head SHA, so the maintainer-approved path holds at High instead of Medium."
+      }
+    ]
+  }
+}

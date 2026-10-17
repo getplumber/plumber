@@ -1,0 +1,385 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: build + e2e (pg${{ matrix.pg-major }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    # Supported versions live in docs/limitations.md
+    # Matrix pins the on-PATH PG binaries to one
+    # specific major; tests + fixture-capture scripts pick up whichever
+    # `initdb` / `pg_ctl` / `postgres` lands first.
+    # Merge coverage because PostgreSQL versions take different code paths.
+    strategy:
+      fail-fast: false
+      matrix:
+        pg-major: [16, 17, 18, 19]
+
+    steps:
+      # Coverage files can fill the runner disk.
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          large-packages: false
+          swap-storage: false
+
+      - name: Checkout walshadow
+        uses: actions/checkout@v7
+        with:
+          path: walshadow
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # cargo-llvm-cov uses tools from this component.
+          components: llvm-tools-preview
+
+      # nextest runs one process per test and schedules across test
+      # binaries; `cargo test` runs binaries one at a time.
+      - name: Install cargo-llvm-cov + cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov,cargo-nextest
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: walshadow
+          # Key on PG major so a feature/test-config change for one
+          # major doesn't poison the others' caches.
+          key: cov-pg${{ matrix.pg-major }}
+
+      - name: Install C deps (lz4 + zstd for clickhouse-c-rs)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential liblz4-dev libzstd-dev curl gnupg lsb-release \
+            gcovr
+
+      # The runner's preinstalled postgresql-common ships only one major
+      # at a time; pull the requested major straight from PGDG so the
+      # matrix can pin any of 16 / 17 / 18 / 19 independently of the runner
+      # image's choice. PGDG keeps released majors in `main` and a
+      # pre-release major in its own numbered component, so name both.
+      # `systemctl stop postgresql` parks any auto-started instance so
+      # tests own the unix-socket dirs cleanly.
+      - name: Install PostgreSQL ${{ matrix.pg-major }} (PGDG)
+        run: |
+          sudo systemctl stop postgresql 2>/dev/null || true
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | sudo gpg --dearmor -o /usr/share/keyrings/postgres-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/postgres-archive-keyring.gpg] https://apt.postgresql.org/pub/repos/apt/ $(lsb_release -cs)-pgdg main ${{ matrix.pg-major }}" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            postgresql-${{ matrix.pg-major }} \
+            postgresql-client-${{ matrix.pg-major }} \
+            postgresql-server-dev-${{ matrix.pg-major }} \
+            postgresql-${{ matrix.pg-major }}-pgvector
+          sudo systemctl stop postgresql 2>/dev/null || true
+          PG_BIN=/usr/lib/postgresql/${{ matrix.pg-major }}/bin
+          "$PG_BIN/postgres" -V
+          "$PG_BIN/initdb" --version
+          echo "$PG_BIN" >> "$GITHUB_PATH"
+
+      # Official deb repo gives us both the `clickhouse` multitool (for
+      # `clickhouse local` tests) and `clickhouse-server` (for the
+      # readme_quickstart that connects to localhost:9000).
+      - name: Install ClickHouse (server + client)
+        run: |
+          sudo apt-get install -y apt-transport-https ca-certificates
+          curl -fsSL https://packages.clickhouse.com/rpm/lts/repodata/repomd.xml.key \
+            | sudo gpg --dearmor -o /usr/share/keyrings/clickhouse-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/clickhouse-keyring.gpg] https://packages.clickhouse.com/deb stable main" \
+            | sudo tee /etc/apt/sources.list.d/clickhouse.list
+          sudo apt-get update
+          DEBIAN_FRONTEND=noninteractive sudo -E apt-get install -y \
+            -o Dpkg::Options::="--force-confdef" \
+            -o Dpkg::Options::="--force-confold" \
+            clickhouse-server clickhouse-client clickhouse-common-static
+          clickhouse --version
+
+      - name: Start ClickHouse server
+        run: |
+          sudo service clickhouse-server start
+          # Wait for native protocol on :9000 (readme_quickstart probes it).
+          for i in $(seq 1 60); do
+            if clickhouse-client --query "SELECT 1" >/dev/null 2>&1; then
+              echo "clickhouse-server up after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "clickhouse-server failed to come up" >&2
+          sudo tail -n 200 /var/log/clickhouse-server/clickhouse-server.err.log || true
+          exit 1
+
+      # classify / filter / xlog_switch / vacuum_full_pg_depend tests
+      # fail when no fixture bytes are present. Regenerate
+      # them against the matrix PG major so each job's
+      # filter_round_trip + classify_fixture + wal_stream_chunk_boundary
+      # actually runs against that major's WAL layout.
+      - name: Regenerate WAL fixtures (PG ${{ matrix.pg-major }})
+        working-directory: walshadow
+        env:
+          WALSHADOW_USE_LOCAL: "1"
+        run: |
+          fixtures/wal/classify/capture.sh
+          fixtures/wal/filter/capture.sh
+          fixtures/wal/xlog_switch/capture.sh
+          fixtures/wal/vacuum_full_pg_depend/capture.sh
+
+      # Build walshadow.so before the e2e suite: the bridge tests point
+      # dynamic_library_path at the build tree, so `make` alone is what they
+      # need. `make install` additionally proves the target docker relies on.
+      - name: Build + install walshadow PG module (e2e oracle path)
+        working-directory: walshadow/pgext
+        run: |
+          PG_CONFIG=/usr/lib/postgresql/${{ matrix.pg-major }}/bin/pg_config
+          make PG_CONFIG=$PG_CONFIG coverage-build
+          sudo make PG_CONFIG=$PG_CONFIG COVERAGE=1 CC=gcc install
+
+      # Separate module, never installed: tests load it into their *source*
+      # cluster for primitives SQL cannot express, eg VACUUM's lock lifetime
+      - name: Build walshadow test-only PG module
+        working-directory: walshadow/pgext/test
+        run: make PG_CONFIG=/usr/lib/postgresql/${{ matrix.pg-major }}/bin/pg_config
+
+      # Each e2e test stages a source + shadow PG cluster on disk; the
+      # runner's root fs is small, so point TMPDIR at the larger /mnt volume.
+      - name: Set TMPDIR to /mnt
+        run: |
+          sudo mkdir -p /mnt/tmp && sudo chmod 1777 /mnt/tmp
+          echo "TMPDIR=/mnt/tmp" >> "$GITHUB_ENV"
+
+      # All e2e tests run: shadow_lifecycle, shadow_catalog, catalog_seed,
+      # wal_stream_e2e (need initdb), classify_fixture + filter_round_trip
+      # + wal_stream_chunk_boundary (use the freshly regenerated fixtures),
+      # clickhouse-c-rs clickhouse_local + readme_quickstarts (need
+      # clickhouse binary + server on :9000).
+      #
+      # Concurrency comes from `.config/nextest.toml`: unit tests run
+      # `num-cpus` wide, cluster drills are capped by the `clusters`
+      # test group. No `--no-capture`, it would force one thread.
+      # Run tests once, then generate reports from saved coverage data.
+      - name: Test (workspace, instrumented)
+        working-directory: walshadow
+        env:
+          # Opts tests with `fx::dump_artifacts` into copying their tempdir
+          # here on failure. Empty on success; uploaded as a job artifact
+          # by the next step when present.
+          WALSHADOW_ARTIFACT_DIR: ${{ github.workspace }}/test-artifacts
+          # Missing tool or fixture fails the test instead of skipping it
+          WALSHADOW_REQUIRE_TOOLS: "1"
+        run: |
+          initdb --version | grep -Eq '\) ${{ matrix.pg-major }}([.a-z]|$)' \
+            || { echo "::error::initdb on PATH is not PostgreSQL ${{ matrix.pg-major }}"; exit 1; }
+          cargo llvm-cov clean --workspace
+          cargo llvm-cov nextest --workspace --all-targets --locked \
+            --no-report --no-fail-fast
+
+      - name: PG module coverage
+        if: ${{ !cancelled() }}
+        working-directory: walshadow/pgext
+        run: make coverage-html COVERAGE_MIN_LINE=100
+
+      - name: Upload PG module coverage
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-pgext-pg${{ matrix.pg-major }}
+          path: walshadow/pgext/coverage
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload test artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-artifacts-pg${{ matrix.pg-major }}
+          path: ${{ github.workspace }}/test-artifacts
+          if-no-files-found: ignore
+          retention-days: 7
+
+      # Preserve coverage from failed test runs. Build failures may have none.
+      - name: Coverage summary (job log)
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        working-directory: walshadow
+        run: cargo llvm-cov report --summary-only
+
+      - name: Coverage lcov.info
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        working-directory: walshadow
+        run: cargo llvm-cov report --lcov --output-path lcov.info
+
+      - name: Upload lcov
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-pg${{ matrix.pg-major }}
+          path: walshadow/lcov.info
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: ClickHouse server logs on failure
+        if: failure()
+        run: sudo tail -n 500 /var/log/clickhouse-server/clickhouse-server.err.log || true
+
+  # Combine coverage from every PostgreSQL version.
+  coverage-merge:
+    name: line coverage (merged 16/17/18/19)
+    needs: test
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout walshadow
+        uses: actions/checkout@v7
+        with:
+          path: walshadow
+
+      # Build failures may not produce coverage data.
+      - name: Fetch per-major lcov
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          pattern: coverage-pg[0-9]*
+          path: lcov
+
+      # Version branches only count as covered when every major reports
+      - name: Merge coverage
+        working-directory: walshadow
+        run: |
+          set -euo pipefail
+          inputs=()
+          for m in 16 17 18 19; do
+            f="$GITHUB_WORKSPACE/lcov/coverage-pg$m/lcov.info"
+            [ -s "$f" ] || { echo "::error::missing coverage for pg$m"; exit 1; }
+            inputs+=("$f")
+          done
+          printf 'merging %s\n' "${inputs[@]}"
+          awk -f ci/lcov_merge.awk "${inputs[@]}" >merged.lcov
+
+      # Lower ceiling as tests land, zero means every DA line hit
+      - name: Coverage summary
+        working-directory: walshadow
+        env:
+          MAX_MISSED_LINES: 2950
+        run: |
+          awk -F'[:,]' -v max="$MAX_MISSED_LINES" '
+            /^DA:/ { f++; if ($3 > 0) h++ }
+            END {
+              printf "merged line coverage: %d/%d = %.2f%%, %d missed\n", h, f, 100 * h / f, f - h
+              if (f - h > max) { printf "::error::%d missed lines exceeds ceiling %d\n", f - h, max; exit 1 }
+            }
+          ' merged.lcov
+
+      - name: Fail on any 0%-coverage file (merged)
+        working-directory: walshadow
+        run: |
+          set -euo pipefail
+          zero=$(awk '
+            /^SF:/ { f = substr($0, 4) }
+            /^LF:/ { lf = substr($0, 4) + 0 }
+            /^LH:/ {
+              if (substr($0, 4) + 0 == 0 && lf > 0) {
+                i = index(f, "/src/"); if (i) f = substr(f, i + 1)
+                print f
+              }
+            }
+          ' merged.lcov)
+          if [ -n "$zero" ]; then
+            count=$(printf '%s\n' "$zero" | grep -c .)
+            echo "Files with 0% line coverage (every source file must be exercised by a test):"
+            printf '%s\n' "$zero" | sed 's/^/  /'
+            echo "::error::${count} file(s) have 0% line coverage"
+            exit 1
+          fi
+          echo "OK: all merged files have >0% line coverage."
+
+      - name: Install genhtml
+        run: sudo apt-get update && sudo apt-get install -y lcov
+
+      # Ignore llvm-cov mappings that genhtml cannot render.
+      - name: Coverage HTML (merged)
+        working-directory: walshadow
+        run: |
+          genhtml merged.lcov --output-directory html \
+            --prefix "$GITHUB_WORKSPACE/walshadow" --title 'walshadow merged coverage' \
+            --legend --quiet --ignore-errors inconsistent,unmapped
+
+      - name: Upload merged coverage
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-merged
+          path: |
+            walshadow/merged.lcov
+            walshadow/html
+          if-no-files-found: error
+          retention-days: 30
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout walshadow
+        uses: actions/checkout@v7
+        with:
+          path: walshadow
+          submodules: recursive
+
+      - name: shellcheck
+        working-directory: walshadow
+        run: git ls-files '*.sh' | xargs shellcheck -x
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: walshadow
+          key: lint
+
+      - name: Install C deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential liblz4-dev libzstd-dev
+
+      - name: cargo fmt
+        working-directory: walshadow
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        working-directory: walshadow
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: cargo doc
+        working-directory: walshadow
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --no-deps --lib --bins

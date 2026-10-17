@@ -1,0 +1,32 @@
+name: Chromatic deployment
+
+on:
+  pull_request:
+
+env:
+  HUSKY: 0
+
+jobs:
+  chromatic-deployment:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24.x'
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Publish to Chromatic
+        uses: chromaui/action@v18
+        with:
+          # Chromatic project tokens are write-only, it's safe in plaintext for
+          # open-source forks (https://www.chromatic.com/docs/github-actions/).
+          projectToken: chpt_0dfc604a45b596a

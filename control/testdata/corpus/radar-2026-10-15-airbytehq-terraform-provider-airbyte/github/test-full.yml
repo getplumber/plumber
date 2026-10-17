@@ -1,0 +1,184 @@
+# Validate Speakeasy Generation (Dry Run) + Zero-Diff Check
+#
+# This workflow validates that Speakeasy generation can complete successfully
+# and that the committed generated code matches what the generation pipeline produces.
+#
+# Jobs:
+# 1. validate: Runs the full generation pipeline in dry-run mode (build + compile check)
+# 2. zero-diff: Compares the dry-run artifacts against the committed code to detect drift.
+#    If drift is detected, the check fails and posts a comment telling the author to run /generate.
+# 3. e2e-smoke-test: Validates the CI-built provider binary by running terraform plan
+#    against test-projects/v1-tf-generic-test/ (plan-only, no apply/destroy).
+#
+# This workflow calls the main generation workflow with dry_run=true to ensure
+# both workflows use the same generation logic.
+#
+# Note: paths-ignore is NOT used at the workflow level because GitHub treats a
+# workflow that never runs as "expected" (pending), which blocks required checks.
+# Instead, we filter paths at the job level so skipped jobs report as "skipped"
+# (equivalent to "passed" for required checks).
+
+name: Test (Full)
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+
+jobs:
+  check-paths:
+    name: Check Changed Paths
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Filter changed paths
+        uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            generation:
+              - '**'
+              - '!README.md'
+              - '!docs/**'
+              - '!examples/**'
+    outputs:
+      should_run: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.generation == 'true' }}
+
+  validate:
+    name: Validate Generation (Dry Run)
+    needs: check-paths
+    if: needs.check-paths.outputs.should_run == 'true'
+    uses: ./.github/workflows/generate-command.yml
+    with:
+      dry_run: true
+    secrets: inherit
+
+  zero-diff:
+    name: Zero-Diff Check (Generated Code)
+    needs: [check-paths, validate]
+    if: needs.check-paths.outputs.should_run == 'true' && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+
+      - name: Download generated provider code artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: generated_provider_code
+          path: /tmp/generated/
+
+      - name: Download generated docs artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: generated_docs
+          path: /tmp/generated-docs/
+
+      - name: Compare generated code against committed code
+        id: diff-check
+        run: |
+          DIFF_OUTPUT=""
+
+          echo "=== Comparing generated provider code ==="
+          # upload-artifact strips paths to the least common ancestor (internal/),
+          # so artifacts are at /tmp/generated/provider/ and /tmp/generated/sdk/
+          PROVIDER_DIFF=$(diff -rq internal/provider/ /tmp/generated/provider/ 2>&1 || true)
+          if [ -n "$PROVIDER_DIFF" ]; then
+              DIFF_OUTPUT="${DIFF_OUTPUT}${PROVIDER_DIFF}"$'\n'
+          fi
+
+          # Exclude .gitattributes and .gitignore — these are static repo files, not generated
+          SDK_DIFF=$(diff -rq --exclude='.gitattributes' --exclude='.gitignore' internal/sdk/ /tmp/generated/sdk/ 2>&1 || true)
+          if [ -n "$SDK_DIFF" ]; then
+              DIFF_OUTPUT="${DIFF_OUTPUT}${SDK_DIFF}"$'\n'
+          fi
+
+          echo "=== Comparing generated docs ==="
+          DOCS_DIFF=$(diff -rq docs/ /tmp/generated-docs/ 2>&1 || true)
+          if [ -n "$DOCS_DIFF" ]; then
+              DIFF_OUTPUT="${DIFF_OUTPUT}${DOCS_DIFF}"$'\n'
+          fi
+
+          if [ -n "$DIFF_OUTPUT" ]; then
+              echo "has_diff=true" >> $GITHUB_OUTPUT
+              echo "::warning::Generated code drift detected. The committed code does not match what the generation pipeline produces."
+              echo "$DIFF_OUTPUT" | head -50
+              echo "$DIFF_OUTPUT" | head -20 > /tmp/diff_summary.txt
+          else
+              echo "has_diff=false" >> $GITHUB_OUTPUT
+              echo "Zero-diff check passed. Committed code matches generation output."
+          fi
+
+      - name: Prepare diff summary
+        if: steps.diff-check.outputs.has_diff == 'true'
+        id: diff-summary
+        run: |
+          SUMMARY=$(cat /tmp/diff_summary.txt 2>/dev/null || echo "(see job logs for full details)")
+          # Escape for GitHub Actions output (multiline)
+          EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+          echo "content<<$EOF" >> $GITHUB_OUTPUT
+          echo "$SUMMARY" >> $GITHUB_OUTPUT
+          echo "$EOF" >> $GITHUB_OUTPUT
+
+      - name: Find existing drift comment
+        if: steps.diff-check.outputs.has_diff == 'true'
+        uses: peter-evans/find-comment@v3
+        id: find-drift-comment
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          body-includes: '<!-- zero-diff-check -->'
+
+      - name: Post drift comment on PR
+        if: steps.diff-check.outputs.has_diff == 'true'
+        uses: peter-evans/create-or-update-comment@v5
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-id: ${{ steps.find-drift-comment.outputs.comment-id || '' }}
+          edit-mode: replace
+          body: |
+            <!-- zero-diff-check -->
+            **Generated Code Drift Detected**
+
+            The committed code does not match what the generation pipeline produces. This usually means a generated file was edited by hand or the generation pipeline needs to be re-run.
+
+            **To fix:** Comment `/generate` on this PR to regenerate and push updated code.
+
+            **To debug locally:** Download the generated artifacts and diff them against your committed code:
+            ```bash
+            gh run download ${{ github.run_id }} --name generated_provider_code --dir /tmp/generated_from_ci
+            diff -rq internal/provider/ /tmp/generated_from_ci/provider/
+            diff -rq --exclude=.gitattributes --exclude=.gitignore internal/sdk/ /tmp/generated_from_ci/sdk/
+            ```
+            See [CONTRIBUTING.md — Debugging Generation Drift Failures](https://github.com/${{ github.repository }}/blob/main/CONTRIBUTING.md#debugging-generation-drift-failures) for the full procedure.
+
+            <details>
+            <summary>Diff summary</summary>
+
+            ```
+            ${{ steps.diff-summary.outputs.content }}
+            ```
+
+            </details>
+
+      - name: Fail if drift detected
+        if: steps.diff-check.outputs.has_diff == 'true'
+        run: |
+          echo "::error::Generated code drift detected. Run /generate on this PR to fix, or debug locally with: gh run download ${{ github.run_id }} --name generated_provider_code --dir /tmp/generated_from_ci && diff -rq internal/provider/ /tmp/generated_from_ci/provider/ && diff -rq --exclude=.gitattributes --exclude=.gitignore internal/sdk/ /tmp/generated_from_ci/sdk/ . See CONTRIBUTING.md#debugging-generation-drift-failures for the full procedure."
+          exit 1
+
+  e2e-smoke-test:
+    name: E2E Smoke Test
+    needs: [check-paths, validate]
+    if: needs.check-paths.outputs.should_run == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false)
+    uses: ./.github/workflows/e2e-smoke-test.yml
+    with:
+      run-id: ${{ github.run_id }}
+    secrets: inherit

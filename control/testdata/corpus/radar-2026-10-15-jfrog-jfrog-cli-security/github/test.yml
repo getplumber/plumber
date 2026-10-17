@@ -1,0 +1,390 @@
+name: JFrog CLI Security Tests
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: write
+
+on:
+  push:
+    branches:
+      - '**'
+    tags-ignore:
+      - '**'
+  # Triggers the workflow on labeled PRs only.
+  pull_request_target:
+    types: [ labeled ]
+
+# Ensures that only the latest commit is running for each PR at a time.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Environment variables shared across all jobs.
+env:
+  GOPROXY: https://proxy.golang.org,direct
+  GO_COMMON_TEST_ARGS: "-v github.com/jfrog/jfrog-cli-security --race --timeout 40m --jfrog.url=${{ secrets.PLATFORM_URL }} --jfrog.adminToken=${{ secrets.PLATFORM_ADMIN_TOKEN }} --test.containerRegistry=${{ secrets.CONTAINER_REGISTRY }}"
+  GRADLE_OPTS: -Dorg.gradle.daemon=false
+  CI: true
+  JFROG_CLI_LOG_LEVEL: DEBUG
+  JFROG_SECURITY_CLI_TESTS_JFROG_PLATFORM_PROJECT_KEY: ${{ vars.JFROG_TEST_PROJECT_KEY }}
+  # Repository variable ENABLE_FASTCI_BOOST (default: true). Set to 'false' to skip jfrog/boost@v0.
+  ENABLE_FASTCI_BOOST: ${{ vars.ENABLE_FASTCI_BOOST != 'false' }}
+  
+jobs:
+  Pretest:
+    if: contains(github.event.pull_request.labels.*.name, 'safe to test') || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          allow-unsafe-pr-checkout: true
+
+      - name: Remove 'safe to test' label
+        uses: actions-ecosystem/action-remove-labels@v1
+        if: ${{ github.event_name != 'push' }}
+        with:
+          labels: "safe to test"
+          
+      - name: Start FastCI Optimization
+        if: env.ENABLE_FASTCI_BOOST == 'true'
+        uses: jfrog/boost@v0
+        with:
+          github_token: ${{secrets.GITHUB_TOKEN}}
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+        with:
+          go-version-file: go.mod
+
+      - name: Run Go vet
+        run: go vet -v ./...
+  
+  Unit_Tests:
+    name: "[${{ matrix.os }}] Unit Tests"
+    needs: Pretest
+    runs-on: ${{ matrix.os }}-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu, windows, macos ]
+    steps:
+      # Prepare the environment
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          allow-unsafe-pr-checkout: true
+
+      - name: Start FastCI Optimization
+        if: env.ENABLE_FASTCI_BOOST == 'true'
+        uses: jfrog/boost@v0
+        with:
+          github_token: ${{secrets.GITHUB_TOKEN}}
+
+      - name: Install and Setup Dependencies
+        uses: ./.github/actions/install-and-setup
+        with:
+          install-swift: 'true'
+
+      # Test and generate code coverage
+      - name: Run tests
+        run: go test ${{ env.GO_COMMON_TEST_ARGS }} --ci.runId=${{ runner.os }}-sec-test -covermode atomic -coverprofile=cover-unit-tests --test.unit
+
+  Audit_Command_Integration_Tests:
+    name: "[${{ matrix.os }}] ${{ matrix.suite.name }} Audit Command Integration Tests"
+    needs: Pretest
+    runs-on: ${{ matrix.os }}-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu, windows, macos ]
+        suite:
+          - name: 'General Suite (Detection, MultiTech, NoTech...)'
+            testFlags: '--test.audit'
+          - name: 'JAS Suite'
+            testFlags: '--test.audit.Jas'
+          - name: 'Java Script Suite (Npm, Pnpm, Yarn)'
+            testFlags: '--test.audit.JavaScript'
+          - name: 'Python Suite (Pip, Pipenv, Poetry)'
+            testFlags: '--test.audit.Python'
+          - name: 'Java Suite (Maven, Gradle)'
+            testFlags: '--test.audit.Java'
+          - name: 'Go Suite (Go Modules, Dep, Glide)'
+            testFlags: '--test.audit.Go'
+          - name: 'C/C++/C# Suite (Conan, NuGet, Dotnet)'
+            testFlags: '--test.audit.C'
+          - name: 'Cocoapods Suite'
+            testFlags: '--test.audit.Cocoapods'
+          - name: 'Swift Suite'
+            testFlags: '--test.audit.Swift'
+          - name: 'NewSca Suite'
+            testFlags: '--test.audit.NewSca'
+
+    steps:
+      # Prepare the environment
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          allow-unsafe-pr-checkout: true
+
+      - name: Start FastCI Optimization
+        if: env.ENABLE_FASTCI_BOOST == 'true'
+        uses: jfrog/boost@v0
+        with:
+          github_token: ${{secrets.GITHUB_TOKEN}}
+
+      - name: Install and Setup Dependencies
+        uses: ./.github/actions/install-and-setup
+        with:
+          install-swift: ${{ matrix.suite.testFlags == '--test.audit.Swift' && 'true' || 'false' }}
+
+      # Test
+      - name: Run tests
+        run: go test ${{ env.GO_COMMON_TEST_ARGS }} ${{ matrix.suite.testFlags }} --ci.runId=${{ runner.os }}-sec-test
+
+  Artifactory_Integration_Tests:
+    name: "[${{ matrix.os }}] Artifactory Integration Tests"
+    needs: Pretest
+    runs-on: ${{ matrix.os }}-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu, windows, macos ]
+    steps:
+      # Prepare the environment
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          allow-unsafe-pr-checkout: true
+
+      - name: Start FastCI Optimization
+        if: env.ENABLE_FASTCI_BOOST == 'true'
+        uses: jfrog/boost@v0
+        with:
+          github_token: ${{secrets.GITHUB_TOKEN}}
+          
+      - name: Install and Setup Dependencies
+        uses: ./.github/actions/install-and-setup
+
+      # Test
+      - name: Run tests
+        run: go test ${{ env.GO_COMMON_TEST_ARGS }} --test.artifactory --ci.runId=${{ runner.os }}-sec-test
+    
+  Xray_Commands_Integration_Tests:
+    name: "[${{ matrix.os }}] Xray Commands Integration Tests"
+    needs: Pretest
+    runs-on: ${{ matrix.os }}-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu, windows, macos ]
+    steps:
+      # Prepare the environment
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          allow-unsafe-pr-checkout: true
+
+      - name: Start FastCI Optimization
+        if: env.ENABLE_FASTCI_BOOST == 'true'
+        uses: jfrog/boost@v0
+        with:
+          github_token: ${{secrets.GITHUB_TOKEN}}
+
+      - name: Install and Setup Dependencies
+        uses: ./.github/actions/install-and-setup
+
+      # Test
+      - name: Run tests
+        run: go test ${{ env.GO_COMMON_TEST_ARGS }} --test.xray --ci.runId=${{ runner.os }}-sec-test
+
+  Xsc_Integration_Tests:
+    name: "[${{ matrix.os }}] XSC Integration Tests"
+    needs: Pretest
+    runs-on: ${{ matrix.os }}-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu, windows, macos ]
+    steps:
+      # Prepare the environment
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          allow-unsafe-pr-checkout: true
+
+      - name: Start FastCI Optimization
+        if: env.ENABLE_FASTCI_BOOST == 'true'
+        uses: jfrog/boost@v0
+        with:
+          github_token: ${{secrets.GITHUB_TOKEN}}
+          
+      - name: Install and Setup Dependencies
+        uses: ./.github/actions/install-and-setup
+
+      # Test
+      - name: Run tests
+        run: go test ${{ env.GO_COMMON_TEST_ARGS }} --test.xsc --ci.runId=${{ runner.os }}-sec-test
+  
+  Binary_Scan_Command_Integration_Tests:
+    name: "[${{ matrix.os }}] Binary Scan Command Integration Tests"
+    needs: Pretest
+    runs-on: ${{ matrix.os }}-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu, windows, macos ]
+    steps:
+      # Prepare the environment
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          allow-unsafe-pr-checkout: true
+
+      - name: Start FastCI Optimization
+        if: env.ENABLE_FASTCI_BOOST == 'true'
+        uses: jfrog/boost@v0
+        with:
+          github_token: ${{secrets.GITHUB_TOKEN}}
+
+      - name: Install and Setup Dependencies
+        uses: ./.github/actions/install-and-setup
+
+      # Test
+      - name: Run tests
+        run: go test ${{ env.GO_COMMON_TEST_ARGS }} --test.scan --ci.runId=${{ runner.os }}-sec-test
+
+  Docker_Scan_Commands_Integration_Tests:
+    name: "[${{ matrix.os }}] Docker Scan Commands Integration Tests"
+    needs: Pretest
+    runs-on: ${{ matrix.os }}-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu ]
+    steps:
+      # Prepare the environment
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          allow-unsafe-pr-checkout: true
+
+      - name: Start FastCI Optimization
+        if: env.ENABLE_FASTCI_BOOST == 'true'
+        uses: jfrog/boost@v0
+        with:
+          github_token: ${{secrets.GITHUB_TOKEN}}
+
+      - name: Install and Setup Dependencies
+        uses: ./.github/actions/install-and-setup
+
+      # Test
+      - name: Run tests
+        run: go test ${{ env.GO_COMMON_TEST_ARGS }} --test.dockerScan --ci.runId=${{ runner.os }}-sec-test
+
+  Other_Commands_Integration_Tests:
+    name: "[${{ matrix.os }}] Other Commands Integration Tests"
+    needs: Pretest
+    runs-on: ${{ matrix.os }}-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu, windows, macos ]
+    steps:
+      # Prepare the environment
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          allow-unsafe-pr-checkout: true
+
+      - name: Start FastCI Optimization
+        if: env.ENABLE_FASTCI_BOOST == 'true'
+        uses: jfrog/boost@v0
+        with:
+          github_token: ${{secrets.GITHUB_TOKEN}}
+
+      - name: Install and Setup Dependencies
+        uses: ./.github/actions/install-and-setup
+
+      # Test
+      - name: Run tests
+        run:  go test ${{ env.GO_COMMON_TEST_ARGS }} --test.curation --test.enrich --test.maliciousScan --ci.runId=${{ runner.os }}-sec-test
+ 
+  Git_Commands_Integration_Tests:
+    name: "[${{ matrix.os }}] Git Commands Integration Tests"
+    needs: Pretest
+    runs-on: ${{ matrix.os }}-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu, windows, macos ]
+    steps:
+      # Prepare the environment
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          allow-unsafe-pr-checkout: true
+
+      - name: Start FastCI Optimization
+        if: env.ENABLE_FASTCI_BOOST == 'true'
+        uses: jfrog/boost@v0
+        with:
+          github_token: ${{secrets.GITHUB_TOKEN}}
+
+      - name: Install and Setup Dependencies
+        uses: ./.github/actions/install-and-setup
+
+      # Test
+      - name: Run tests
+        run: go test ${{ env.GO_COMMON_TEST_ARGS }} --test.git --ci.runId=${{ runner.os }}-sec-test
+
+  Remediation_Integration_Tests:
+    name: "[${{ matrix.os }}] Remediation Integration Tests"
+    needs: Pretest
+    runs-on: ${{ matrix.os }}-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu, windows, macos ]
+    steps:
+      # Prepare the environment
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          allow-unsafe-pr-checkout: true
+
+      - name: Start FastCI Optimization
+        if: env.ENABLE_FASTCI_BOOST == 'true'
+        uses: jfrog/boost@v0
+        with:
+          github_token: ${{secrets.GITHUB_TOKEN}}
+
+      - name: Install and Setup Dependencies
+        uses: ./.github/actions/install-and-setup
+
+      # Test
+      - name: Run tests
+        run: go test ${{ env.GO_COMMON_TEST_ARGS }} --test.remediation --ci.runId=${{ runner.os }}-sec-test

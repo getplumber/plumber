@@ -265,7 +265,7 @@ func TestFirstPartyScriptIsInsiderAtMediumCeiling(t *testing.T) {
 // insider redirect (ISSUE-701) must win: the group's actor is the
 // outsider wording and no Medium insider cap applies, in either input
 // order (the actor and the cap are read off every anchor in the
-// group, never just the one trust.ActorFor happened to see first).
+// group, never just the one trust.actorFor happened to see first).
 func TestKnownBadDependencyOverridesInsiderActorAndCap(t *testing.T) {
 	redirect := finding("ISSUE-701", "release", map[string]any{
 		"uses": "ask-bonk/ask-bonk@main", "redirectedOwner": "Cloudflare-Studio",
@@ -1250,52 +1250,6 @@ func TestPRTargetJobKeepsItsSecrets(t *testing.T) {
 	// A contributor entry holding a secret is Critical.
 	if paths[0].Tier != TierCritical || len(paths[0].Reach.Secrets) != 1 {
 		t.Errorf("pull_request_target runs with the base repository's secrets: %+v", paths[0])
-	}
-}
-
-// TestSecretsReachedInStepOrderDropsASecretReferencedBeforeTheEntry pins
-// the step-order rule SecretFirstLine exists for: the entry job holds two
-// secrets, A referenced at line 12 and B at line 30; the path's anchor
-// sits at line 20, inside the same job. A step that walks in at line 20
-// cannot leak A: that reference already happened, and is done, before the
-// walk-in step ever runs. B is still ahead of it, so the path reaches B.
-func TestSecretsReachedInStepOrderDropsASecretReferencedBeforeTheEntry(t *testing.T) {
-	sit := &Situation{Exposure: ir.VisibilityPublic, Jobs: map[string]JobSituation{}}
-	build := JobSituation{}
-	build.Privilege.Secrets = []string{"A", "B"}
-	build.Privilege.SecretsState = "proven"
-	build.Privilege.SecretFirstLine = map[string]int{"A": 12, "B": 30}
-	sit.Jobs["build"] = build
-
-	f := opaengine.Finding{Code: "ISSUE-207", Job: "build", File: ".github/workflows/ci.yml", Line: 20, Subject: "github.event.pull_request.title"}
-	paths := assemblePaths([]opaengine.Finding{f}, sit)
-	if len(paths) != 1 {
-		t.Fatalf("want one path, got %+v", paths)
-	}
-	if got := paths[0].Reach.Secrets; !reflect.DeepEqual(got, []string{"B"}) {
-		t.Fatalf("Reach.Secrets = %v, want [B]: A is referenced at line 12, before the line-20 entry, so it cannot be leaked by it", got)
-	}
-}
-
-// TestSecretsReachedInStepOrderKeepsAWorkflowLevelSecretAtAnyLine pins the
-// line-0 exception: a secret SecretFirstLine records at line 0 (the
-// workflow's own top-level configuration) is reached regardless of the
-// entry's own line, even one well past it.
-func TestSecretsReachedInStepOrderKeepsAWorkflowLevelSecretAtAnyLine(t *testing.T) {
-	sit := &Situation{Exposure: ir.VisibilityPublic, Jobs: map[string]JobSituation{}}
-	build := JobSituation{}
-	build.Privilege.Secrets = []string{"GLOBAL"}
-	build.Privilege.SecretsState = "proven"
-	build.Privilege.SecretFirstLine = map[string]int{"GLOBAL": 0}
-	sit.Jobs["build"] = build
-
-	f := opaengine.Finding{Code: "ISSUE-207", Job: "build", File: ".github/workflows/ci.yml", Line: 20, Subject: "github.event.pull_request.title"}
-	paths := assemblePaths([]opaengine.Finding{f}, sit)
-	if len(paths) != 1 {
-		t.Fatalf("want one path, got %+v", paths)
-	}
-	if got := paths[0].Reach.Secrets; !reflect.DeepEqual(got, []string{"GLOBAL"}) {
-		t.Fatalf("Reach.Secrets = %v, want [GLOBAL]: a workflow-level secret reaches every step", got)
 	}
 }
 
@@ -2506,5 +2460,86 @@ func TestEnvironmentOfFallsBackToProtectionWhenReviewersUnknown(t *testing.T) {
 		if name, got, ok := environmentOf(js); !ok || name != "staging" || got != c.want {
 			t.Errorf("protected=%q: got %q %q %v, want %q", c.protected, name, got, ok, c.want)
 		}
+	}
+}
+
+// The clickhouse-go label-gate shape (control/actor_test.go's gatedJob),
+// with a declared write token added: the path's claims name the entry as
+// proven (maintainer_approved), the secret it reaches as proven, and the
+// write token as proven with source "declared". Every claim here is
+// settled, so no claim of this path is unknown.
+func TestClaimsForTheLabelGateShape(t *testing.T) {
+	j := JobSituation{PrivilegedTriggers: []string{"pull_request_target"}, Gate: &ir.Gate{Class: ir.GateMaintainerApproved, Reason: "label tests:run-cloud", PinnedSha: true}}
+	j.Privilege.Secrets = []string{"CLOUD_TOKEN"}
+	j.Privilege.SecretsState = "proven"
+	j.Privilege.TokenWrite = []string{"contents"}
+	j.Privilege.TokenWriteSource = "declared"
+	j.Privilege.TokenWriteState = "proven"
+	sit := &Situation{Exposure: ir.VisibilityPublic, Provider: "github", Jobs: map[string]JobSituation{"ci/cloud": j}}
+	p := onePath(t, assemblePaths([]opaengine.Finding{headCheckout()}, sit))
+
+	want := []Claim{
+		{Kind: "entry", Subject: p.Entry.Subject, State: ClaimProven},
+		{Kind: "secret", Subject: "CLOUD_TOKEN", State: ClaimProven},
+		{Kind: "token", Subject: "contents", State: ClaimProven, Source: "declared"},
+	}
+	if !reflect.DeepEqual(p.Claims, want) {
+		t.Errorf("claims = %+v, want %+v", p.Claims, want)
+	}
+}
+
+// A secret a job's SecretsState could not settle claims unknown, and a
+// default token whose write could not be read claims assumed, neither
+// proven: the claims list is where the output names exactly what Plumber
+// assumed or could not read, by its own subject.
+func TestClaimsReadUnknownSecretsAndToken(t *testing.T) {
+	j := JobSituation{}
+	j.Privilege.Secrets = []string{"API_KEY"}
+	j.Privilege.SecretsState = FactUnknown
+	j.Privilege.TokenWrite = []string{"contents"}
+	j.Privilege.TokenWriteSource = "unknown"
+	j.Privilege.TokenWriteState = FactUnknown
+	sit := &Situation{Exposure: ir.VisibilityPublic, Jobs: map[string]JobSituation{"build": j}}
+	f := entryFinding("ISSUE-207", "build", "github.event.pull_request.title")
+	p := onePath(t, assemblePaths([]opaengine.Finding{f}, sit))
+
+	var secret, token *Claim
+	for i := range p.Claims {
+		switch p.Claims[i].Kind {
+		case "secret":
+			secret = &p.Claims[i]
+		case "token":
+			token = &p.Claims[i]
+		}
+	}
+	if secret == nil || secret.State != ClaimUnknown {
+		t.Errorf("secret claim = %+v, want unknown", secret)
+	}
+	if token == nil || token.State != ClaimAssumed || token.Source != "unknown" {
+		t.Errorf("token claim = %+v, want assumed/unknown", token)
+	}
+}
+
+// An entry whose gate could not be decided claims unknown, its source
+// the unresolved references, the same ones the path already carries for
+// the Note line (p.unknownRefs, read by control/explain.go).
+func TestClaimsNameTheEntryUnknownWithItsReferences(t *testing.T) {
+	j := JobSituation{PrivilegedTriggers: []string{"pull_request_target"}, Gate: &ir.Gate{Class: ir.GateUnknown, Unknown: []string{"inputs.mode"}}}
+	j.Privilege.Secrets = []string{"CLOUD_TOKEN"}
+	j.Privilege.SecretsState = "proven"
+	sit := &Situation{Exposure: ir.VisibilityPublic, Provider: "github", Jobs: map[string]JobSituation{"ci/cloud": j}}
+	f := entryFinding("ISSUE-804", "ci/cloud", "github.event.pull_request.head.sha")
+	p := onePath(t, assemblePaths([]opaengine.Finding{f}, sit))
+	if p.Entry.Actor != "unknown" {
+		t.Fatalf("want an unknown gate, got entry = %+v", p.Entry)
+	}
+	var entry *Claim
+	for i := range p.Claims {
+		if p.Claims[i].Kind == "entry" {
+			entry = &p.Claims[i]
+		}
+	}
+	if entry == nil || entry.State != ClaimUnknown || entry.Source != strings.Join(p.unknownRefs, ", ") {
+		t.Errorf("entry claim = %+v, want unknown with source %q", entry, strings.Join(p.unknownRefs, ", "))
 	}
 }

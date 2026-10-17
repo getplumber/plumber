@@ -1,0 +1,228 @@
+name: 'Build and Publish Release'
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_type:
+        description: Publish Type
+        type: choice
+        default: test
+        options:
+          - test
+          - release
+          - build
+
+env:
+  # Keep wheel selection aligned with setup.py's Python support range.
+  CIBW_PROJECT_REQUIRES_PYTHON: '>=3.10,<3.15'
+
+jobs:
+  build_x86_manylinux_wheels:
+    name: Build x86 manylinux wheels on Linux
+    runs-on: ubuntu-26.04
+    env:
+      CIBW_SKIP: '*-musllinux* pp39-* pp311-* cp39-*'
+      CIBW_ENABLE: 'pypy pypy-eol'
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v4.2.1
+      - uses: actions/upload-artifact@v7
+        with:
+          name: build-x86-manylinux
+          path: ./wheelhouse/*.whl
+
+  build_x86_musllinux_wheels:
+    name: Build x86 musllinux wheels on Linux
+    runs-on: ubuntu-26.04
+    env:
+      CIBW_SKIP: '*-manylinux* pp39-* pp311-* cp39-*'
+      CIBW_ENABLE: 'pypy pypy-eol'
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v4.2.1
+      - uses: actions/upload-artifact@v7
+        with:
+          name: build-x86-musllinux
+          path: ./wheelhouse/*.whl
+
+  build_aarch64_manylinux_wheels:
+    name: Build aarch64 manylinux wheels
+    runs-on: ubuntu-26.04-arm
+    env:
+      CIBW_ARCHS_LINUX: aarch64
+      CIBW_SKIP: '*-musllinux* cp39-*'
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v4.2.1
+      - uses: actions/upload-artifact@v7
+        with:
+          name: build-aarch64-manylinux
+          path: ./wheelhouse/*.whl
+
+  build_aarch64_musllinux_wheels:
+    name: Build aarch64 musllinux wheels
+    runs-on: ubuntu-26.04-arm
+    env:
+      CIBW_ARCHS_LINUX: aarch64
+      CIBW_SKIP: '*-manylinux* cp39-*'
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v4.2.1
+      - uses: actions/upload-artifact@v7
+        with:
+          name: build-aarch64-musllinux
+          path: ./wheelhouse/*.whl
+
+  build_aarch64_pypy_wheels:
+    name: Build aarch64 PyPy wheels
+    runs-on: ubuntu-26.04-arm
+    env:
+      CIBW_ARCHS_LINUX: aarch64
+      CIBW_BUILD: 'pp310-*'
+      CIBW_ENABLE: 'pypy pypy-eol'
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v4.2.1
+      - uses: actions/upload-artifact@v7
+        with:
+          name: build-aarch64-pypy
+          path: ./wheelhouse/*.whl
+
+  build_macos_wheels:
+    name: Build wheels on macos
+    runs-on: macos-15
+    env:
+      CIBW_ARCHS_MACOS: x86_64 arm64
+      CIBW_ENABLE: 'pypy pypy-eol'
+      CIBW_SKIP: 'pp39-* pp311-* cp39-*'
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v4.2.1
+        env:
+          CIBW_ARCHS_MACOS: x86_64 arm64
+      - uses: actions/upload-artifact@v7
+        with:
+          name: build-macos
+          path: ./wheelhouse/*.whl
+
+  build_windows_wheels:
+    name: Build wheels on Windows
+    runs-on: windows-latest
+    env:
+      CIBW_BUILD_VERBOSITY: 2
+      CIBW_ENABLE: 'pypy pypy-eol'
+      CIBW_SKIP: 'pp39-* pp311-* cp39-*'
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v4.2.1
+      - uses: actions/upload-artifact@v7
+        with:
+          name: build-windows
+          path: ./wheelhouse/*.whl
+
+  build_windows_arm64_wheels:
+    name: Build ARM64 wheels on Windows
+    runs-on: windows-11-vs2026-arm
+    env:
+      CIBW_ARCHS_WINDOWS: ARM64
+      CIBW_BUILD_VERBOSITY: 2
+      CIBW_SKIP: 'cp39-*'
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v4.2.1
+      - uses: actions/upload-artifact@v7
+        with:
+          name: build-windows-arm64
+          path: ./wheelhouse/*.whl
+
+  assemble_dist:
+    needs:
+      - build_macos_wheels
+      - build_windows_wheels
+      - build_windows_arm64_wheels
+      - build_x86_musllinux_wheels
+      - build_x86_manylinux_wheels
+      - build_aarch64_musllinux_wheels
+      - build_aarch64_manylinux_wheels
+      - build_aarch64_pypy_wheels
+    name: Assemble sdist and wheels
+    runs-on: ubuntu-26.04
+    if: ${{ inputs.publish_type != 'build' }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Python (3.12)
+        uses: actions/setup-python@v7
+        with:
+          python-version: 3.12
+      - name: Install Dependencies
+        run: pip install -U build
+      - name: Build source distribution
+        env:
+          # Keep the sdist pure source, shipping .pyx files without generated .c files
+          CLICKHOUSE_CONNECT_SKIP_CYTHON: '1'
+        run: |
+          rm -rf dist
+          python -m build --sdist
+      - name: Retrieve wheels
+        uses: actions/download-artifact@v8
+        with:
+          pattern: build-*
+          merge-multiple: true
+          path: wheelhouse
+      - name: move and list artifacts
+        run: |
+          cp -R wheelhouse/*.whl dist
+          ls -R dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/*
+
+  publish_test:
+    needs: assemble_dist
+    name: Publish to TestPyPI
+    runs-on: ubuntu-26.04
+    if: ${{ inputs.publish_type == 'test' }}
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/clickhouse-connect
+    permissions:
+      id-token: write
+    steps:
+      - name: Retrieve dist
+        uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist
+      - name: Publish (Test)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
+
+  publish_release:
+    needs: assemble_dist
+    name: Publish to PyPI
+    runs-on: ubuntu-26.04
+    if: ${{ inputs.publish_type == 'release' }}
+    environment:
+      name: pypi
+      url: https://pypi.org/p/clickhouse-connect
+    permissions:
+      id-token: write
+    steps:
+      - name: Retrieve dist
+        uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist
+      - name: Publish (Release)
+        uses: pypa/gh-action-pypi-publish@release/v1

@@ -1,0 +1,950 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Nightly at 03:17 UTC. A scheduled run behaves like a dispatch with
+    # integration-environment=all: every job runs against every environment,
+    # path filters are ignored, and a failure is posted to Slack.
+    - cron: "17 3 * * *"
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  workflow_dispatch:
+    inputs:
+      run-python-integration:
+        description: "Run Python integration tests"
+        default: "true"
+        required: false
+      run-js-integration:
+        description: "Run JS integration tests"
+        default: "true"
+        required: false
+      integration-environment:
+        description: "Environment to run the Python and JS integration tests and evals against"
+        type: choice
+        default: "beta"
+        required: false
+        options:
+          - beta
+          - v16-ch-only
+          - v16-dual
+          - v16-smithdb-only
+          - all
+      python-integration-exit-first:
+        description: "Stop each Python integration shard at its first failure (-x)"
+        type: choice
+        default: "true"
+        required: false
+        options:
+          - "true"
+          - "false"
+      js-integration-exit-first:
+        description: "Stop the JS integration and eval runs at their first failure (--bail)"
+        type: choice
+        default: "false"
+        required: false
+        options:
+          - "false"
+          - "true"
+
+concurrency:
+  # The event name is part of the group so a push to main can't cancel the
+  # nightly run (and vice versa), since both share github.ref.
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "24.x"
+
+jobs:
+  # ============================================================================
+  # Path Detection
+  # ============================================================================
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      # A scheduled run has no diff to filter on, so it opts everything in.
+      python: ${{ github.event_name == 'schedule' || steps.filter.outputs.python == 'true' }}
+      js: ${{ github.event_name == 'schedule' || steps.filter.outputs.js == 'true' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4
+        id: filter
+        with:
+          filters: |
+            python:
+              - 'python/**'
+              - '.github/**'
+            js:
+              - 'js/**'
+              - '.github/**'
+
+  # ============================================================================
+  # Freeze Guard
+  # ============================================================================
+  # Fails a PR touching a language folder once that SDK moved to its own repo.
+  # FROZEN lists the moved folders: "js" since the js switch, "js python" on
+  # the python switch day. Required through the CI Success gate.
+  # Add the `skip-freeze-guard` label to a PR to bypass it (a revert, a hotfix
+  # that has to ship from here). The job is skipped, which the gate accepts.
+  freeze-guard:
+    name: Freeze Guard
+    if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'skip-freeze-guard')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      FROZEN: "js"
+      GH_TOKEN: ${{ github.token }}
+      PR: ${{ github.event.pull_request.number }}
+    steps:
+      - name: Fail if the PR touches a frozen folder
+        run: |
+          if [ -z "$FROZEN" ]; then
+            echo "No folder frozen."
+            exit 0
+          fi
+          # Paginated files API: no size limit like `gh pr diff`, and a rename
+          # lists both its old and new path so moving files out of a frozen
+          # folder is caught too.
+          files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files?per_page=100" \
+            --jq '.[] | .filename, (.previous_filename // empty)')
+          status=0
+          for dir in $FROZEN; do
+            case "$dir" in
+              js) repo=langsmith-javascript ;;
+              python) repo=langsmith-python ;;
+              *) repo="langsmith-$dir" ;;
+            esac
+            hits=$(printf '%s\n' "$files" | grep -E "^$dir/" || true)
+            if [ -n "$hits" ]; then
+              msg="$dir/ moved out of this repo. Internal: open this PR on https://github.com/langchain-ai/$repo-staging instead. External contributors: open it on https://github.com/langchain-ai/$repo instead. Maintainers only: add the skip-freeze-guard label for a revert or a hotfix that has to ship from here."
+              echo "::error::$msg"
+              printf '%s\n' "$hits"
+              # The job summary shows on the checks page, no need to open the logs.
+              {
+                echo "### $dir/ is frozen"
+                echo "$msg"
+                echo
+                echo "Files:"
+                printf '%s\n' "$hits" | sed 's/.*/- `&`/'
+              } >> "$GITHUB_STEP_SUMMARY"
+              status=1
+            fi
+          done
+          exit $status
+
+  # ============================================================================
+  # Python CI
+  # ============================================================================
+  python-lint:
+    name: "Python Lint"
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: "python"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --group dev --group lint
+      - name: Check formatting
+        run: uv run ruff format --check
+      - name: Lint
+        run: make lint
+
+  python-test:
+    name: "Python Test ${{ matrix.python-version }}"
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        python-version:
+          - "3.10"
+          - "3.11"
+          - "3.12"
+          - "3.13"
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+      - name: Install dependencies
+        run: |
+          uv sync --group dev --group lint
+          uv pip install langchain
+      - name: Build ${{ matrix.python-version }}
+        run: uv build
+      - name: Run Unit tests ${{ matrix.python-version }}
+        run: make tests
+        shell: bash
+
+  python-wheel-test:
+    name: "Python Wheel Test (strict deps)"
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.11"
+          enable-cache: true
+      - name: Check declared runtime deps are sufficient
+        run: make test-wheel-imports
+
+  # ============================================================================
+  # JS CI
+  # ============================================================================
+  js-format:
+    name: "JS Check formatting"
+    needs: changes
+    if: needs.changes.outputs.js == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: "js"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 10
+      - name: Use Node.js 24.x
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: 24.x
+          cache: pnpm
+          cache-dependency-path: js/pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Check formatting
+        run: pnpm run format:check
+
+  js-lint:
+    name: "JS Check linting"
+    needs: changes
+    if: needs.changes.outputs.js == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: "js"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 10
+      - name: Use Node.js 24.x
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: 24.x
+          cache: pnpm
+          cache-dependency-path: js/pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Check linting
+        run: pnpm run lint
+
+  js-build:
+    name: "JS Build and check types"
+    needs: changes
+    if: needs.changes.outputs.js == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: "js"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 10
+      - name: Use Node.js 24.x
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: 24.x
+          cache: pnpm
+          cache-dependency-path: js/pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build and check types
+        run: pnpm run build
+
+  js-test:
+    name: "JS Unit Tests (${{ matrix.os }}, ${{ matrix.node-version }})"
+    needs: changes
+    if: needs.changes.outputs.js == 'true'
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        node-version: ["22.x", "24.x"]
+        include:
+          - os: windows-latest
+            node-version: 24.x
+          - os: macos-latest
+            node-version: 24.x
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: "js"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 10
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: pnpm
+          cache-dependency-path: js/pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build
+        run: pnpm run build
+      - name: Check version
+        run: pnpm run check-version
+      - name: Test
+        run: pnpm run test
+      - name: Test Vitest
+        run: pnpm run test:vitest
+
+  # ============================================================================
+  # JS Environment Tests
+  # ============================================================================
+  js-exports-esm:
+    name: "JS Exports ESM"
+    needs: changes
+    if: needs.changes.outputs.js == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 10
+      - name: Use Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: js/pnpm-lock.yaml
+      - name: Install dependencies
+        working-directory: js
+        run: pnpm install --frozen-lockfile
+      - name: Build
+        working-directory: js
+        run: pnpm build
+      - name: Test ESM exports
+        run: docker compose -f js/internal/environment_tests/docker-compose.yml run test-exports-esm
+
+  js-exports-cjs:
+    name: "JS Exports CJS"
+    needs: changes
+    if: needs.changes.outputs.js == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 10
+      - name: Use Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: js/pnpm-lock.yaml
+      - name: Install dependencies
+        working-directory: js
+        run: pnpm install --frozen-lockfile
+      - name: Build
+        working-directory: js
+        run: pnpm build
+      - name: Test CJS exports
+        run: docker compose -f js/internal/environment_tests/docker-compose.yml run test-exports-cjs
+
+  js-exports-cf:
+    name: "JS Exports Cloudflare"
+    needs: changes
+    if: needs.changes.outputs.js == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 10
+      - name: Use Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: js/pnpm-lock.yaml
+      - name: Install dependencies
+        working-directory: js
+        run: pnpm install --frozen-lockfile
+      - name: Build
+        working-directory: js
+        run: pnpm build
+      - name: Test Cloudflare exports
+        run: docker compose -f js/internal/environment_tests/docker-compose.yml run test-exports-cf
+
+  js-exports-vite:
+    name: "JS Exports Vite"
+    needs: changes
+    if: needs.changes.outputs.js == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 10
+      - name: Use Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: js/pnpm-lock.yaml
+      - name: Install dependencies
+        working-directory: js
+        run: pnpm install --frozen-lockfile
+      - name: Build
+        working-directory: js
+        run: pnpm build
+      - name: Test Vite exports
+        run: docker compose -f js/internal/environment_tests/docker-compose.yml run test-exports-vite
+
+  js-exports-webpack:
+    name: "JS Exports Webpack"
+    needs: changes
+    if: needs.changes.outputs.js == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 10
+      - name: Use Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: js/pnpm-lock.yaml
+      - name: Install dependencies
+        working-directory: js
+        run: pnpm install --frozen-lockfile
+      - name: Build
+        working-directory: js
+        run: pnpm build
+      - name: Test Webpack exports
+        run: docker compose -f js/internal/environment_tests/docker-compose.yml run test-exports-webpack
+
+  js-exports-esbuild:
+    name: "JS Exports esbuild"
+    needs: changes
+    if: needs.changes.outputs.js == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 10
+      - name: Use Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: js/pnpm-lock.yaml
+      - name: Install dependencies
+        working-directory: js
+        run: pnpm install --frozen-lockfile
+      - name: Build
+        working-directory: js
+        run: pnpm build
+      - name: Test esbuild exports
+        run: docker compose -f js/internal/environment_tests/docker-compose.yml run test-exports-esbuild
+
+  js-exports-metro:
+    name: "JS Exports Metro"
+    needs: changes
+    if: needs.changes.outputs.js == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 10
+      - name: Use Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: js/pnpm-lock.yaml
+      - name: Install dependencies
+        working-directory: js
+        run: pnpm install --frozen-lockfile
+      - name: Build
+        working-directory: js
+        run: pnpm build
+      - name: Test Metro exports
+        run: docker compose -f js/internal/environment_tests/docker-compose.yml run test-exports-metro
+
+  js-deepagent-compat:
+    name: "JS deepagent compat"
+    needs: changes
+    if: needs.changes.outputs.js == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 10
+      - name: Use Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: js/pnpm-lock.yaml
+      - name: Install dependencies
+        working-directory: js
+        run: pnpm install --frozen-lockfile
+      - name: Build
+        working-directory: js
+        run: pnpm build
+      - name: Test deepagent compat
+        run: docker compose -f js/internal/environment_tests/docker-compose.yml run test-deepagent-compat
+
+  python-deepagent-compat:
+    name: "Python deepagent compat"
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.11"
+      - name: Create venv and install local langsmith
+        run: |
+          uv venv
+          uv pip install -e .
+      - name: Install deepagents
+        # pytest is installed here rather than coming from the dev group, because
+        # the smoke test runs with --no-sync: otherwise `uv run` resyncs .venv from
+        # uv.lock and downgrades langchain-core underneath deepagents.
+        run: uv pip install deepagents pytest
+      - name: Run smoke test
+        run: uv run --no-sync python -m pytest tests/external/test_deepagent_compat.py -v --noconftest
+
+  # ============================================================================
+  # Integration Tests
+  # ============================================================================
+  integration-changes:
+    name: "Integration Test Changes"
+    runs-on: ubuntu-latest
+    outputs:
+      python_changed: ${{ steps.check-changes.outputs.python_changed }}
+      js_changed: ${{ steps.check-changes.outputs.js_changed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Check for file changes
+        id: check-changes
+        env:
+          # A scheduled run sits on main with nothing to diff, so it opts in to
+          # both suites instead of filtering.
+          RUN_EVERYTHING: ${{ github.event_name == 'schedule' }}
+        run: |
+          if [ "$RUN_EVERYTHING" = "true" ]; then
+            echo "python_changed=true" >> $GITHUB_OUTPUT
+            echo "js_changed=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          if git diff --name-only origin/main HEAD | grep -E "^python/.*\.py$"; then
+            echo "python_changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "python_changed=false" >> $GITHUB_OUTPUT
+          fi
+          if git diff --name-only origin/main HEAD | grep -E "^js/.*\.(js|ts|jsx|tsx)$"; then
+            echo "js_changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "js_changed=false" >> $GITHUB_OUTPUT
+          fi
+
+  # Builds the Python and JS integration matrices so a workflow_dispatch or
+  # scheduled run can target one (or all) of the LangSmith environments.
+  # Anything else keeps the previous behavior: beta only.
+  integration-matrix:
+    name: "Integration Matrix"
+    needs: integration-changes
+    if: >
+      (github.event_name == 'push') ||
+      (github.event_name == 'schedule') ||
+      (github.event_name == 'pull_request' && (
+        contains(github.event.pull_request.labels.*.name, 'release') ||
+        needs.integration-changes.outputs.python_changed == 'true' ||
+        needs.integration-changes.outputs.js_changed == 'true'
+      )) ||
+      (github.event_name == 'workflow_dispatch' && (
+        github.event.inputs.run-python-integration == 'true' ||
+        github.event.inputs.run-js-integration == 'true'
+      ))
+    runs-on: ubuntu-latest
+    outputs:
+      python_matrix: ${{ steps.build-matrix.outputs.python_matrix }}
+      js_matrix: ${{ steps.build-matrix.outputs.js_matrix }}
+    steps:
+      - name: Build matrix
+        id: build-matrix
+        env:
+          # Nightly covers every environment; a dispatch picks one (or all).
+          SELECTED_ENVIRONMENT: >-
+            ${{ github.event_name == 'schedule' && 'all'
+             || (github.event_name == 'workflow_dispatch' && github.event.inputs.integration-environment)
+             || 'beta' }}
+        run: |
+          python3 <<'EOF' >> "$GITHUB_OUTPUT"
+          import json
+          import os
+
+          # Allowlist: anything unrecognized falls back to beta.
+          ENDPOINTS = {
+              "beta": "https://beta.api.smith.langchain.com",
+              "v16-ch-only": "https://aks.smith.langchain.dev/api",
+              "v16-dual": "https://stable-dual.eks.smith.langchain.dev/api",
+              "v16-smithdb-only": "https://stable-smithdb.eks.smith.langchain.dev/api",
+          }
+          SHARD_TOTAL = 6
+          # Markers to deselect per environment: SmithDB-only backends don't serve
+          # the legacy ClickHouse-backed endpoints, and ClickHouse-only doesn't serve
+          # the v2 ones.
+          EXCLUDED_MARKERS = {
+              "v16-ch-only": ["require_v2"],
+              "v16-smithdb-only": ["require_clickhouse"],
+          }
+          # The JS suite carries the same two markers plus require_beta_dataset for
+          # the tests pinned to a share token that only the beta tenant resolves.
+          JS_EXCLUDED_MARKERS = {
+              environment: markers + ["require_beta_dataset"]
+              for environment, markers in
+              [(e, EXCLUDED_MARKERS.get(e, [])) for e in ENDPOINTS if e != "beta"]
+          }
+
+          selected = os.environ.get("SELECTED_ENVIRONMENT", "").strip()
+          if selected == "all":
+              environments = list(ENDPOINTS)
+          elif selected in ENDPOINTS:
+              environments = [selected]
+          else:
+              environments = ["beta"]
+
+          python_include = []
+          js_include = []
+          for environment in environments:
+              excluded = EXCLUDED_MARKERS.get(environment, [])
+              marker_expr = " and ".join(f"not {m}" for m in excluded)
+              # Keep the beta job names untouched so required checks still match.
+              name_suffix = "" if environment == "beta" else f" [{environment}]"
+              base = {
+                  "environment": environment,
+                  "endpoint": ENDPOINTS[environment],
+                  "name_suffix": name_suffix,
+              }
+              python_base = {**base, "pytest_addopts": f'-m "{marker_expr}"' if marker_expr else ""}
+              for shard_index in range(SHARD_TOTAL):
+                  python_include.append(
+                      {**python_base, "test-type": "integration", "shard_total": SHARD_TOTAL, "shard_index": shard_index}
+                  )
+              python_include.append({**python_base, "test-type": "evals", "shard_total": "", "shard_index": ""})
+              # Doctests don't exercise the backend, so run them once against beta.
+              if environment == "beta":
+                  python_include.append({**python_base, "test-type": "doctest", "shard_total": "", "shard_index": ""})
+              # Jest has no marker expression, so the exclusions travel as an env
+              # var that src/tests/utils/markers.ts reads. No shards on the JS side.
+              js_include.append(
+                  {**base, "exclude_markers": ",".join(JS_EXCLUDED_MARKERS.get(environment, []))}
+              )
+
+          print("python_matrix=" + json.dumps({"include": python_include}))
+          print("js_matrix=" + json.dumps({"include": js_include}))
+          EOF
+
+  python-integration:
+    name: "Python ${{ matrix.test-type }} Test ${{ matrix.shard_index }}${{ matrix.name_suffix }}"
+    needs: [integration-changes, integration-matrix]
+    # The matrix job is shared with JS, so it no longer skips on a JS-only
+    # change: gate the Python shards on the Python conditions here instead.
+    if: >
+      (github.event_name == 'push') ||
+      (github.event_name == 'pull_request' && (
+        contains(github.event.pull_request.labels.*.name, 'release') ||
+        needs.integration-changes.outputs.python_changed == 'true'
+      )) ||
+      (github.event_name == 'schedule') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.run-python-integration == 'true')
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.integration-matrix.outputs.python_matrix) }}
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Run Python ${{ matrix.test-type }}-${{ matrix.shard_index }}
+        uses: ./.github/actions/python-integration-tests
+        with:
+          python-version: 3.11
+          langsmith-endpoint: ${{ matrix.endpoint }}
+          langsmith-api-key: >-
+            ${{ (matrix.environment == 'v16-ch-only' && secrets.LANGSMITH_API_KEY_AKS_V15)
+             || (matrix.environment == 'v16-dual' && secrets.LANGSMITH_API_KEY_STABLE_DUAL)
+             || (matrix.environment == 'v16-smithdb-only' && secrets.LANGSMITH_API_KEY_STABLE_SMITHDB)
+             || (matrix.environment == 'beta' && secrets.LANGSMITH_API_KEY_BETA)
+             || '' }}
+          pytest-addopts: ${{ matrix.pytest_addopts }}
+          # Push/PR runs keep -x; a dispatch can clear it to see every failure,
+          # and the nightly always clears it so one bad test doesn't mask the rest.
+          exit-first: >-
+            ${{ github.event_name != 'schedule'
+             && (github.event_name != 'workflow_dispatch' || github.event.inputs.python-integration-exit-first == 'true') }}
+          langchain-api-key-prod: ${{ secrets.LANGSMITH_API_KEY_PROD }}
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          gemini-api-key: ${{ secrets.GEMINI_API_KEY }}
+          test-type: ${{ matrix.test-type }}
+          shard-total: ${{ matrix.shard_total }}
+          shard-index: ${{ matrix.shard_index }}
+
+  js-integration:
+    name: "JS Integration Test${{ matrix.name_suffix }}"
+    needs: [integration-changes, integration-matrix]
+    if: >
+      (github.event_name == 'push') ||
+      (github.event_name == 'pull_request' && (
+        contains(github.event.pull_request.labels.*.name, 'release') ||
+        needs.integration-changes.outputs.js_changed == 'true'
+      )) ||
+      (github.event_name == 'schedule') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.run-js-integration == 'true')
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.integration-matrix.outputs.js_matrix) }}
+    defaults:
+      run:
+        working-directory: js
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 10
+      - name: Use Node.js 24.x
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: 24.x
+          cache: pnpm
+          cache-dependency-path: js/pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Run JS integration tests
+        uses: ./.github/actions/js-integration-tests
+        with:
+          node-version: 24.x
+          # Push/PR runs report every failure; a dispatch can ask for --bail.
+          exit-first: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.js-integration-exit-first == 'true' }}
+          langsmith-endpoint: ${{ matrix.endpoint }}
+          langsmith-api-key: >-
+            ${{ (matrix.environment == 'v16-ch-only' && secrets.LANGSMITH_API_KEY_AKS_V15)
+             || (matrix.environment == 'v16-dual' && secrets.LANGSMITH_API_KEY_STABLE_DUAL)
+             || (matrix.environment == 'v16-smithdb-only' && secrets.LANGSMITH_API_KEY_STABLE_SMITHDB)
+             || (matrix.environment == 'beta' && secrets.LANGSMITH_API_KEY_BETA)
+             || '' }}
+          exclude-markers: ${{ matrix.exclude_markers }}
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          gemini-api-key: ${{ secrets.GEMINI_API_KEY }}
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+
+  js-vitest-eval:
+    name: "JS Vitest Runner Test${{ matrix.name_suffix }}"
+    needs: [integration-changes, integration-matrix]
+    if: >
+      (github.event_name == 'push') ||
+      (github.event_name == 'pull_request' && (
+        contains(github.event.pull_request.labels.*.name, 'release') ||
+        needs.integration-changes.outputs.js_changed == 'true'
+      )) ||
+      (github.event_name == 'schedule') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.run-js-integration == 'true')
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.integration-matrix.outputs.js_matrix) }}
+    defaults:
+      run:
+        working-directory: js
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 10
+      - name: Use Node.js 24.x
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: 24.x
+          cache: pnpm
+          cache-dependency-path: js/pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Run JS Vitest eval runner test
+        uses: ./.github/actions/js-vitest-eval-test
+        with:
+          node-version: 24.x
+          exit-first: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.js-integration-exit-first == 'true' }}
+          langsmith-endpoint: ${{ matrix.endpoint }}
+          langsmith-api-key: >-
+            ${{ (matrix.environment == 'v16-ch-only' && secrets.LANGSMITH_API_KEY_AKS_V15)
+             || (matrix.environment == 'v16-dual' && secrets.LANGSMITH_API_KEY_STABLE_DUAL)
+             || (matrix.environment == 'v16-smithdb-only' && secrets.LANGSMITH_API_KEY_STABLE_SMITHDB)
+             || (matrix.environment == 'beta' && secrets.LANGSMITH_API_KEY_BETA)
+             || '' }}
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+
+  bun-test:
+    name: "Bun Integration Tests"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: "js"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: latest
+      - name: Install dependencies
+        run: bun install
+      - name: Run Bun tests
+        run: bun test ./src/tests/bun/traceable.test.bun.ts
+        env:
+          LANGSMITH_TRACING: "true"
+          LANGSMITH_ENDPOINT: https://beta.api.smith.langchain.com
+          LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY_BETA }}
+
+  # ============================================================================
+  # CI Success Gate
+  # ============================================================================
+  ci-success:
+    name: "CI Success"
+    needs:
+      - changes
+      - freeze-guard
+      # Python
+      - python-lint
+      - python-test
+      - python-wheel-test
+      # JS
+      - js-format
+      - js-lint
+      - js-build
+      - js-test
+      # JS Environment
+      - js-exports-esm
+      - js-exports-cjs
+      - js-exports-cf
+      - js-exports-vite
+      - js-exports-webpack
+      - js-exports-esbuild
+      - js-exports-metro
+      - js-deepagent-compat
+      # Compatibility
+      - python-deepagent-compat
+      # Integration
+      - integration-changes
+      - integration-matrix
+      - python-integration
+      - js-integration
+      - js-vitest-eval
+      - bun-test
+    if: always()
+    runs-on: ubuntu-latest
+    env:
+      JOBS_JSON: ${{ toJSON(needs) }}
+      RESULTS_JSON: ${{ toJSON(needs.*.result) }}
+    steps:
+      - name: "CI Success"
+        run: |
+          echo "$JOBS_JSON"
+          echo "$RESULTS_JSON"
+          if echo "$RESULTS_JSON" | grep -qE '"(failure|cancelled)"'; then
+            echo "CI failed - one or more jobs failed or were cancelled"
+            exit 1
+          fi
+          echo "CI passed - all jobs succeeded or were skipped"
+
+  # ============================================================================
+  # Nightly Failure Notification
+  # ============================================================================
+  # Only the scheduled run notifies: push and PR failures are already visible to
+  # whoever pushed them, so posting those would just be noise in the channel.
+  notify-slack-on-failure:
+    name: "Notify Slack on nightly failure"
+    needs: [ci-success]
+    if: ${{ always() && github.event_name == 'schedule' && needs.ci-success.result != 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Post failure to Slack
+        uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
+        with:
+          method: chat.postMessage
+          token: ${{ secrets.INGESTION_CI_BOT_TOKEN }}
+          errors: true
+          payload: |
+            channel: ${{ toJSON(vars.INGESTION_TEAM_SLACK_CHANNEL_ID) }}
+            text: |
+              *Nightly SDK integration tests failed*
+
+              *Workflow:* ${{ github.workflow }}
+              *Run:* ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+              *Environments:* beta, v16-ch-only, v16-dual, v16-smithdb-only
+
+              <@U0AKDLKCV3J> please investigate the issue and explain simply what happens, add a TLDR at the end of your answer where you go straight to the point to explain to a non-focused reader with ADHD. If the root cause is flaky tests, mention it. Open a fix PR when confidence is high. Tag <@U0BSQM2BQJ3> in your answer.

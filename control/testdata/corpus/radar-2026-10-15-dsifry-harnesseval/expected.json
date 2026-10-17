@@ -1,0 +1,40 @@
+{
+  "source": "https://github.com/dsifry/harnesseval",
+  "commit": "8f634b68664751527a9ad0123d1a082dd70a0931",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": false
+    }
+  ],
+  "environments": [
+    {
+      "name": "github-pages",
+      "known": true,
+      "branchPolicy": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/pages.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High unprotected `main` path was judged overstated in its wording only: a writer pushing to main deploys the pages site with `pages: write` and an OIDC token (High), but nothing in the job publishes a package or a release.",
+  "expect": {
+    "paths": [
+      {
+        "entryKind": "unprotected_push",
+        "tier": "high",
+        "subjectContains": "main",
+        "sentenceOmits": [
+          "publishes the package"
+        ],
+        "pending": "a run step calling `tools/publish_site.sh` (a copy into `_site`) is read as publishing a package, so the pages deploy path claims a publication it does not make."
+      }
+    ]
+  }
+}

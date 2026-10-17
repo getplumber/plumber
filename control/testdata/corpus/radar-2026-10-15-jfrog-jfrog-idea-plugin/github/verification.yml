@@ -1,0 +1,30 @@
+name: "Compatibility verification"
+
+on: [ push, pull_request ]
+
+jobs:
+  test:
+    runs-on: macOS-latest
+    name: Compatibility verification
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: jfrog-fastci/fastci@main  # Use the FastCI optimization action
+        with:
+          github_token: ${{secrets.GITHUB_TOKEN}}
+          fastci_otel_token: ${{ secrets.FASTCI_TOKEN }}
+
+      # Install required tools
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      - name: Setup Gradle
+        uses: gradle/gradle-build-action@v2
+        with:
+          gradle-version: 7.6
+
+      # Run compatibility verification
+      - name: Compatibility verification
+        run: ./gradlew clean verifyPlugin runPluginVerifier

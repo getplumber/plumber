@@ -1,0 +1,225 @@
+name: CI - Node Bindings
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "packages/node/**"
+      - ".github/workflows/ci-node.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "packages/node/**"
+      - ".github/workflows/ci-node.yml"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            node-arch: darwin-arm64
+            pdfium-dylib: libpdfium.dylib
+
+          - os: macos-26-intel
+            target: x86_64-apple-darwin
+            node-arch: darwin-x64
+            pdfium-dylib: libpdfium.dylib
+
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            node-arch: linux-x64-gnu
+            pdfium-dylib: libpdfium.so
+
+          - os: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            node-arch: linux-arm64-gnu
+            pdfium-dylib: libpdfium.so
+
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-musl
+            node-arch: linux-x64-musl
+            pdfium-dylib: libpdfium.so
+            use-container: true
+
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            node-arch: win32-x64-msvc
+            pdfium-dylib: pdfium.dll
+
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            node-arch: win32-arm64-msvc
+            pdfium-dylib: pdfium.dll
+
+    runs-on: ${{ matrix.os }}
+    name: Build ${{ matrix.node-arch }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install system dependencies (Linux glibc)
+        if: runner.os == 'Linux' && !matrix.use-container
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libtesseract-dev libleptonica-dev
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cache/pdfium-rs
+            ~/Library/Caches/pdfium-rs
+            target
+          key: ${{ matrix.os }}-${{ matrix.target }}-cargo-node-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Force Ninja generator (Windows)
+        if: runner.os == 'Windows'
+        run: echo "CMAKE_GENERATOR=Ninja" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Install dependencies
+        working-directory: packages/node
+        run: npm install --ignore-scripts
+
+      - name: Build native module
+        if: ${{ !matrix.use-container }}
+        working-directory: packages/node
+        shell: bash
+        run: npx napi build --cargo-cwd ../../crates/liteparse-napi --platform --release --js false --dts native.d.ts --target ${{ matrix.target }} .
+
+      - name: Build native module (musl container)
+        if: ${{ matrix.use-container }}
+        run: |
+          chmod +x scripts/build-musl-node.sh
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE":/work \
+            -v "$HOME/.cargo/registry":/root/.cargo/registry \
+            -v "$HOME/.cargo/git":/root/.cargo/git \
+            -v "$HOME/.cache/pdfium-rs":/root/.cache/pdfium-rs \
+            -w /work/packages/node \
+            node:20-alpine \
+            /work/scripts/build-musl-node.sh
+
+      - name: Copy pdfium dylib (Unix)
+        if: runner.os != 'Windows'
+        working-directory: packages/node
+        run: bash scripts/copy-pdfium.sh .
+
+      - name: Copy pdfium dylib (Windows)
+        if: runner.os == 'Windows'
+        working-directory: packages/node
+        shell: pwsh
+        run: |
+          $cacheBase = "$env:LOCALAPPDATA\pdfium-rs"
+          if (-not (Test-Path $cacheBase)) {
+            $cacheBase = "$env:USERPROFILE\.cache\pdfium-rs"
+          }
+          $dll = Get-ChildItem -Path $cacheBase -Recurse -Filter "pdfium.dll" | Select-Object -First 1
+          if ($dll) {
+            Copy-Item $dll.FullName -Destination ".\pdfium.dll"
+            Write-Host "Copied $($dll.FullName) -> .\pdfium.dll"
+          } else {
+            Write-Error "Could not find pdfium.dll in cache"
+            exit 1
+          }
+
+      - name: Build TypeScript
+        working-directory: packages/node
+        run: npm run build:ts
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bindings-${{ matrix.node-arch }}
+          path: |
+            packages/node/*.node
+            packages/node/${{ matrix.pdfium-dylib }}
+            packages/node/libc++.so.1
+            packages/node/libc++abi.so.1
+            packages/node/libunwind.so.1
+            packages/node/libgcc_s.so.1
+          if-no-files-found: warn
+
+  test:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            node-arch: darwin-arm64
+          - os: macos-26-intel
+            node-arch: darwin-x64
+          - os: ubuntu-22.04
+            node-arch: linux-x64-gnu
+          - os: ubuntu-22.04
+            node-arch: linux-x64-musl
+            use-container: true
+          - os: windows-latest
+            node-arch: win32-x64-msvc
+          - os: windows-11-arm
+            node-arch: win32-arm64-msvc
+    runs-on: ${{ matrix.os }}
+    name: Test ${{ matrix.node-arch }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        working-directory: packages/node
+        shell: bash
+        # Drop the published @llamaindex/liteparse-<platform> optional deps: the
+        # loader prefers them over a local .node, so tests would otherwise run
+        # against the last release instead of the binary built from this commit.
+        run: |
+          npm install --ignore-scripts
+          rm -rf node_modules/@llamaindex/liteparse-*
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: bindings-${{ matrix.node-arch }}
+          path: packages/node
+
+      - name: Build TypeScript
+        working-directory: packages/node
+        run: npm run build:ts
+
+      - name: Test ESM + CJS entry points
+        if: ${{ !matrix.use-container }}
+        working-directory: packages/node
+        run: npm test
+
+      - name: Smoke test (musl container)
+        if: ${{ matrix.use-container }}
+        run: |
+          chmod +x scripts/smoke-test-musl-node.sh
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE":/work \
+            -w /work/packages/node \
+            node:20-alpine \
+            /work/scripts/smoke-test-musl-node.sh

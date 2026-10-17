@@ -52,6 +52,20 @@ func TestClassifyGatesReadsTheJobEnvironment(t *testing.T) {
 	}
 }
 
+// TestClassifyGatesMatchesTheEnvironmentNameInAnyCase pins that GitHub
+// environment names are case-insensitive: a job naming `Frogbot` runs
+// behind the repository's `frogbot` environment and its reviewers.
+func TestClassifyGatesMatchesTheEnvironmentNameInAnyCase(t *testing.T) {
+	job := Job{Name: "frogbot/scan", Triggers: []string{"pull_request_target"}, Environment: "Frogbot", Uses: []Action{checkoutHeadSha}}
+	p := githubPipeline(job)
+	p.Environments = []Environment{{Name: "frogbot", Known: true, RequiredReviewers: true}}
+	p.EnvironmentsKnown = true
+	ClassifyGates(p)
+	if g := p.Jobs[0].Gate; g == nil || g.Class != GateMaintainerApproved {
+		t.Errorf("gate = %+v, want maintainer_approved", g)
+	}
+}
+
 // TestClassifyGatesTakesTheWeakestTrigger pins that a job carrying several
 // privileged triggers holds the weakest gate among them: one trigger an
 // outsider fires on their own makes the job an outsider's.
@@ -83,14 +97,16 @@ func TestClassifyGatesLeavesUnprivilegedAndGitLabJobsAlone(t *testing.T) {
 }
 
 // TestWeakerGate orders the classes from the outsider's side: outsider,
-// unknown, maintainer approved, same repository.
+// unknown, maintainer approved, then the two strong classes (same
+// repository, no outsider) at one rank, a tie keeping the first.
 func TestWeakerGate(t *testing.T) {
-	order := []GateClass{GateOutsider, GateUnknown, GateMaintainerApproved, GateSameRepo}
+	order := []GateClass{GateOutsider, GateUnknown, GateMaintainerApproved, GateSameRepo, GateNoOutsider}
+	rank := func(i int) int { return min(i, 3) }
 	for i, a := range order {
 		for j, b := range order {
 			got := weakerGate(Gate{Class: a}, Gate{Class: b}).Class
 			want := a
-			if j < i {
+			if rank(j) < rank(i) {
 				want = b
 			}
 			if got != want {
@@ -209,12 +225,12 @@ func TestClassifiedTriggersAreTheUnion(t *testing.T) {
 // the literal its own comparison reads, never one of another clause:
 // 'issues' belongs to the event-name test.
 func TestLabelReasonIsTheLabelsOwnLiteral(t *testing.T) {
-	g := ClassifyGate(issuesOrLabel(), nil, "pull_request_target", []string{"labeled"}, Environment{}, false)
+	g := ClassifyGate(issuesOrLabel(), nil, "pull_request_target", []string{"labeled"}, Environment{}, false, "")
 	if g.Class != GateMaintainerApproved || g.Reason != "label ok" {
 		t.Errorf("gate = %+v", g)
 	}
 	other := Job{Name: "x", If: "github.event.label.name == github.event.inputs.wanted"}
-	if g := ClassifyGate(other, nil, "pull_request_target", []string{"labeled"}, Environment{}, false); g.Reason != "label" && g.Reason != "types labeled" {
+	if g := ClassifyGate(other, nil, "pull_request_target", []string{"labeled"}, Environment{}, false, ""); g.Reason != "label" && g.Reason != "types labeled" {
 		t.Errorf("label compared to a reference: %+v", g)
 	}
 }

@@ -1,0 +1,86 @@
+name: lint
+
+on:
+  workflow_call:
+    inputs:
+      uv-version:
+        required: true
+        type: string
+        description: "uv version to install"
+      python-versions:
+        required: true
+        type: string
+        description: "JSON array of Python versions to run"
+      working-directory:
+        required: true
+        type: string
+        description: "From which folder this pipeline executes"
+
+permissions:
+  contents: read
+
+env:
+  WORKDIR: ${{ inputs.working-directory == '' && '.' || inputs.working-directory }}
+
+  # This env var allows us to get inline annotations when ruff has complaints.
+  RUFF_OUTPUT_FORMAT: github
+
+jobs:
+  build:
+    name: "make lint #${{ matrix.python-version }}"
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # Only lint on the min and max supported Python versions.
+        # It's extremely unlikely that there's a lint issue on any version in between
+        # that doesn't show up on the min or max versions.
+        #
+        # GitHub rate-limits how many jobs can be running at any one time.
+        # Starting new jobs is also relatively slow,
+        # so linting on fewer versions makes CI faster.
+        python-version: ${{ fromJson(inputs.python-versions) }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python ${{ matrix.python-version }} + uv ${{ inputs.uv-version }}
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          version: ${{ inputs.uv-version }}
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          cache-dependency-glob: "${{ inputs.working-directory }}/uv.lock"
+
+      - name: Check lock file is up to date
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          uv lock --check
+
+      - name: Get UTC cache date
+        id: cache-date
+        shell: bash
+        run: |
+          echo "value=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache ruff and mypy
+        uses: actions/cache@v6
+        env:
+          SEGMENT_DOWNLOAD_TIMEOUT_MINS: "3"
+        with:
+          path: |
+            ${{ env.WORKDIR }}/.ruff_cache
+            ${{ env.WORKDIR }}/.mypy_cache
+            ${{ env.WORKDIR }}/.mypy_cache_test
+          key: ruff-mypy-${{ runner.os }}-${{ runner.arch }}-py${{ matrix.python-version }}-${{ inputs.working-directory }}-${{ hashFiles(format('{0}/uv.lock', inputs.working-directory)) }}-${{ steps.cache-date.outputs.value }}
+          restore-keys: |
+            ruff-mypy-${{ runner.os }}-${{ runner.arch }}-py${{ matrix.python-version }}-${{ inputs.working-directory }}-${{ hashFiles(format('{0}/uv.lock', inputs.working-directory)) }}-
+
+      - name: Analysing the code with our lint
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          make lint_package
+
+      - name: Analysing the code with our lint
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          make lint_tests

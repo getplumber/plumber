@@ -1,0 +1,48 @@
+{
+  "source": "https://github.com/airbytehq/airbyte-api-python-sdk",
+  "commit": "9d97170e6b623f7e405563fb5ffe0612ec14fc99",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "copilot",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/generate-command.yml": "active",
+    ".github/workflows/pre-release-command.yml": "active",
+    ".github/workflows/publish.yml": "active",
+    ".github/workflows/release-drafter.yml": "active",
+    ".github/workflows/semantic-pr-title.yml": "active",
+    ".github/workflows/slash-command-dispatch.yml": "active",
+    ".github/workflows/test-full.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "Two High paths were judged overstated: `dorny/paths-filter@v4` is an output-only action (it computes changed paths or a branch status) in a job with no secret and a token whose write scope is assumed or scoped, and `amannn/action-semantic-pull-request@v6` reaches a pull-requests token on same-repository runs, Medium at most.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "dorny/paths-filter@v4",
+        "tier": "medium",
+        "pending": "a `needs` output the dependent job only compares in its `if:` (the edge is recorded as `output_compared`) still carries the dependent's write token and its push into the reach of the entry job."
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "amannn/action-semantic-pull-request@v6",
+        "tier": "medium",
+        "pending": "the spec counts any write scope of the token as a write token, while the assessment argued that a token scoped to issues, pull requests or checks only, in a job with no secret, is a Medium at most."
+      }
+    ]
+  }
+}

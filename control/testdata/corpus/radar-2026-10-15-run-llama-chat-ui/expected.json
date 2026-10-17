@@ -1,0 +1,42 @@
+{
+  "source": "https://github.com/run-llama/chat-ui",
+  "commit": "a514498830d514a880e9f9a9abbebbd3880a4c4a",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": false
+    }
+  ],
+  "environments": [
+    {
+      "name": "Preview",
+      "known": true
+    },
+    {
+      "name": "Production",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/ci.yml": "active",
+    ".github/workflows/release.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "defaultTokenWrite": "true",
+  "defaultTokenSource": "effect",
+  "note": "The High pnpm cache path into `release/release` was judged false: the only job that writes the restored key is the release job itself in the default-branch scope, and pull_request runs write their own merge-ref scope, so there is no second writer, trusted or not (`ci.yml` runs setup-node without a cache). The write default is recorded from the effect the assessment saw: its release workflow pushes with the default token and succeeds. No job here declares cache-mode, so GitHub keeps the cache of every low-trust run read-only and grants no job cache write: ISSUE-705 is silent and no cache path exists, so the cache ceiling admits none.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "poisoned_cache",
+        "subjectContains": "",
+        "tier": "none"
+      }
+    ]
+  }
+}

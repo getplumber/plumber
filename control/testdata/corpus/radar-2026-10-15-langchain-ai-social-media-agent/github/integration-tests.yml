@@ -1,0 +1,43 @@
+# This workflow will run integration tests for the current project once per day
+
+name: Integration Tests
+
+on:
+  schedule:
+    - cron: "37 14 * * *" # Run at 7:37 AM Pacific Time (14:37 UTC) every day
+  workflow_dispatch: # Allows triggering the workflow manually in GitHub UI
+
+# If another scheduled run starts while this workflow is still running,
+# cancel the earlier run in favor of the next run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  integration-tests:
+    name: Integration Tests
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        node-version: [22.x]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "yarn"
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Build project
+        run: yarn build
+
+      - name: Run integration tests
+        run: yarn test:int

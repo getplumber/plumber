@@ -21,15 +21,14 @@ type entry struct {
 	CacheScopes                          []string `json:"cacheScopes"`
 }
 type privilege struct {
-	Secrets              []string       `json:"secrets"`
-	SecretsState         string         `json:"secretsState"`
-	SecretsInherit       bool           `json:"secretsInherit"`
-	AllSecrets           bool           `json:"allSecrets"`
-	ProtectedSecrets     []string       `json:"protectedSecrets"`
-	TokenWrite           []string       `json:"tokenWrite"`
-	TokenWriteSource     string         `json:"tokenWriteSource"`
-	PersistedCredentials string         `json:"persistedCredentials"`
-	SecretFirstLine      map[string]int `json:"secretFirstLine"`
+	Secrets              []string `json:"secrets"`
+	SecretsState         string   `json:"secretsState"`
+	SecretsInherit       bool     `json:"secretsInherit"`
+	AllSecrets           bool     `json:"allSecrets"`
+	ProtectedSecrets     []string `json:"protectedSecrets"`
+	TokenWrite           []string `json:"tokenWrite"`
+	TokenWriteSource     string   `json:"tokenWriteSource"`
+	PersistedCredentials string   `json:"persistedCredentials"`
 	Environment          struct {
 		Name              string   `json:"name"`
 		Protected         string   `json:"protected"`
@@ -1527,87 +1526,6 @@ func TestSameNamedJobsPrivilegeIsMerged(t *testing.T) {
 	}
 }
 
-// TestMergedSecretFirstLineRequiresTheSameFileAndAgreement pins the
-// group-wide secretFirstLine merge: a line recorded against one workflow
-// file is not a position in another, so a group whose jobs come from
-// different files, or whose jobs disagree on a name they both record,
-// carries no secretFirstLine at all once merged (every secret stays kept
-// downstream, never dropped on an untrustworthy line). A single-job
-// group, and a multi-job group from the same file that never disagrees,
-// still merge normally.
-func TestMergedSecretFirstLineRequiresTheSameFileAndAgreement(t *testing.T) {
-	cases := []struct {
-		name string
-		jobs []ir.Job
-		want map[string]int
-	}{
-		{
-			name: "a single job passes its own map through unchanged",
-			jobs: []ir.Job{{
-				Name: "ci/build", OriginFile: ".github/workflows/ci.yml",
-				SecretFirstLine: map[string]int{"A": 12},
-			}},
-			want: map[string]int{"A": 12},
-		},
-		{
-			name: "same file, no shared name in common, merges the union",
-			jobs: []ir.Job{
-				{Name: "ci/build", OriginFile: ".github/workflows/ci.yml", SecretFirstLine: map[string]int{"A": 12}},
-				{Name: "ci/build", OriginFile: ".github/workflows/ci.yml", SecretFirstLine: map[string]int{"B": 30}},
-			},
-			want: map[string]int{"A": 12, "B": 30},
-		},
-		{
-			name: "same file, agreeing on a name both record, merges the union",
-			jobs: []ir.Job{
-				{Name: "ci/build", OriginFile: ".github/workflows/ci.yml", SecretFirstLine: map[string]int{"A": 12, "B": 30}},
-				{Name: "ci/build", OriginFile: ".github/workflows/ci.yml", SecretFirstLine: map[string]int{"A": 12}},
-			},
-			want: map[string]int{"A": 12, "B": 30},
-		},
-		{
-			name: "different files carry no line at all, whatever they record",
-			jobs: []ir.Job{
-				{Name: "ci/build", OriginFile: ".github/workflows/ci.yml", SecretFirstLine: map[string]int{"A": 12}},
-				{Name: "ci/build", OriginFile: ".github/workflows/ci.yaml", SecretFirstLine: map[string]int{"B": 30}},
-			},
-			want: nil,
-		},
-		{
-			name: "same file, disagreeing on a name both record, carries no line at all",
-			jobs: []ir.Job{
-				{Name: "ci/build", OriginFile: ".github/workflows/ci.yml", SecretFirstLine: map[string]int{"A": 12}},
-				{Name: "ci/build", OriginFile: ".github/workflows/ci.yml", SecretFirstLine: map[string]int{"A": 40}},
-			},
-			want: nil,
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			for _, order := range [][]ir.Job{tc.jobs, reversedJobs(tc.jobs)} {
-				p := &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: order}
-				got := evaluate(t, p, nil).Jobs["ci/build"].Privilege.SecretFirstLine
-				if len(got) == 0 && len(tc.want) == 0 {
-					continue
-				}
-				if !reflect.DeepEqual(got, tc.want) {
-					t.Errorf("secretFirstLine = %v, want %v", got, tc.want)
-				}
-			}
-		})
-	}
-}
-
-// reversedJobs returns a copy of jobs in reverse order, so a merge test
-// can confirm its result does not depend on input order.
-func reversedJobs(jobs []ir.Job) []ir.Job {
-	out := make([]ir.Job, len(jobs))
-	for i, j := range jobs {
-		out[len(jobs)-1-i] = j
-	}
-	return out
-}
-
 // TestYAMLStringBooleansAndExpressions pins that a quoted "false" reads like
 // false (persist-credentials: "false" persists nothing), and that a
 // docker/build-push-action push: decided by an expression is unknown,
@@ -1850,6 +1768,24 @@ func TestEnvironmentReviewersProvenFromKnownEnvironments(t *testing.T) {
 	}
 	if !reflect.DeepEqual(env.Rules, []string{"required_reviewers", "wait_timer", "branch_policy"}) {
 		t.Fatalf("rules = %v", env.Rules)
+	}
+}
+
+// TestEnvironmentNamesMatchInAnyCase pins that GitHub environment names
+// are case-insensitive: a job naming `Production` runs behind the
+// repository's `production` environment, its reviewers and its rules.
+func TestEnvironmentNamesMatchInAnyCase(t *testing.T) {
+	p := &ir.NormalizedPipeline{
+		Provider:          ir.ProviderGitHub,
+		EnvironmentsKnown: true,
+		Environments: []ir.Environment{
+			{Name: "production", Known: true, RequiredReviewers: true, WaitTimer: 30},
+		},
+		Jobs: []ir.Job{{Name: "deploy", OriginFile: ".github/workflows/ci.yml", Triggers: []string{"push"}, Environment: "Production"}},
+	}
+	env := evaluate(t, p, nil).Jobs["deploy"].Privilege.Environment
+	if !env.RequiredReviewers || !reflect.DeepEqual(env.Rules, []string{"required_reviewers", "wait_timer"}) {
+		t.Fatalf("environment = %+v", env)
 	}
 }
 

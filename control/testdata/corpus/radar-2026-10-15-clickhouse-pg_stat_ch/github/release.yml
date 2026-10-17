@@ -1,0 +1,166 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build PG${{ matrix.pg }} ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        pg: [16, 17, 18]
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: depot-ubuntu-22.04-16
+            triplet: x64-linux-pic
+          - arch: arm64
+            runner: depot-ubuntu-22.04-arm-16
+            triplet: arm64-linux-pic
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Checkout clickhouse-c submodule
+        run: git submodule update --init third_party/clickhouse-c
+
+      - name: Add PostgreSQL APT repository
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl ca-certificates gnupg
+          curl https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/apt.postgresql.org.gpg >/dev/null
+          echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get install -y \
+            postgresql-${{ matrix.pg }} \
+            postgresql-server-dev-${{ matrix.pg }} \
+            cmake ninja-build g++ \
+            binutils libssl-dev libkrb5-dev \
+            pkg-config curl zip unzip tar
+
+      - uses: ./.github/actions/setup-vcpkg
+        with:
+          triplet: ${{ matrix.triplet }}
+
+      - name: Get version from git
+        id: version
+        run: |
+          # Uses same logic as cmake/GitVersion.cmake
+          VERSION=$(git describe --tags --always --dirty)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building version: $VERSION (matches PG_STAT_CH_VERSION)"
+
+      - name: Configure
+        run: |
+          cmake --preset release \
+            -DPG_CONFIG=/usr/lib/postgresql/${{ matrix.pg }}/bin/pg_config \
+            -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Extract debug symbols
+        run: |
+          # Extract debug symbols to separate file
+          objcopy --only-keep-debug build/pg_stat_ch.so build/pg_stat_ch.so.debug
+
+          # Strip debug symbols from the binary
+          strip --strip-debug build/pg_stat_ch.so
+
+          # Add debug link to stripped binary (helps debuggers find symbols)
+          objcopy --add-gnu-debuglink=build/pg_stat_ch.so.debug build/pg_stat_ch.so
+
+      - name: Package
+        id: package
+        run: |
+          DESTDIR=$(pwd)/pkg cmake --install build
+
+          # Find installed files
+          PKGLIB=$(find pkg -name "pg_stat_ch.so" -printf "%h\n")
+          SHAREDIR=$(find pkg -name "pg_stat_ch.control" -printf "%h\n")
+
+          # Create release tarball structure (version matches PG_STAT_CH_VERSION)
+          VERSION="${{ steps.version.outputs.version }}"
+          RELEASE_NAME="pg_stat_ch-${VERSION}-pg${{ matrix.pg }}-linux-${{ matrix.arch }}"
+          mkdir -p "$RELEASE_NAME"
+          cp "$PKGLIB/pg_stat_ch.so" "$RELEASE_NAME/"
+          cp "$SHAREDIR/pg_stat_ch.control" "$RELEASE_NAME/"
+          cp "$SHAREDIR"/pg_stat_ch--*.sql "$RELEASE_NAME/"
+
+          cp INSTALL.md "$RELEASE_NAME/"
+
+          tar -czvf "$RELEASE_NAME.tar.gz" "$RELEASE_NAME"
+          echo "artifact=$RELEASE_NAME.tar.gz" >> "$GITHUB_OUTPUT"
+
+          # Create debug symbols tarball
+          DEBUG_NAME="pg_stat_ch-${VERSION}-pg${{ matrix.pg }}-linux-${{ matrix.arch }}-debuginfo"
+          mkdir -p "$DEBUG_NAME"
+          cp build/pg_stat_ch.so.debug "$DEBUG_NAME/"
+          tar -czvf "$DEBUG_NAME.tar.gz" "$DEBUG_NAME"
+          echo "debug_artifact=$DEBUG_NAME.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: pg_stat_ch-pg${{ matrix.pg }}-${{ matrix.arch }}
+          path: pg_stat_ch-*-pg${{ matrix.pg }}-linux-${{ matrix.arch }}.tar.gz
+
+      - name: Upload debug symbols artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: pg_stat_ch-pg${{ matrix.pg }}-${{ matrix.arch }}-debuginfo
+          path: pg_stat_ch-*-pg${{ matrix.pg }}-linux-${{ matrix.arch }}-debuginfo.tar.gz
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: depot-ubuntu-22.04-16
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: artifacts/*.tar.gz
+          generate_release_notes: true
+          body: |
+            ## Installation
+
+            Download the tarball for your PostgreSQL version and architecture, then:
+
+            ```bash
+            tar -xzf pg_stat_ch-*.tar.gz
+            cd pg_stat_ch-*/
+            sudo cp pg_stat_ch.so $(pg_config --pkglibdir)/
+            sudo cp pg_stat_ch.control pg_stat_ch--*.sql $(pg_config --sharedir)/extension/
+            ```
+
+            See INSTALL.md in the tarball for full instructions.
+
+            ## Debug Symbols
+
+            Debug symbol packages (`*-debuginfo.tar.gz`) are provided for crash analysis.
+            To use them with a core dump:
+
+            ```bash
+            tar -xzf pg_stat_ch-*-debuginfo.tar.gz
+            gdb -ex "set debug-file-directory $(pwd)" -ex "bt" pg_stat_ch.so core
+            ```

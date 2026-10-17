@@ -828,6 +828,30 @@ When adding new fields to `.plumber.yaml`:
 3. Update `cmd/config.go` if the field needs special display handling in `config view`
 4. Update the README control documentation
 
+### Dated lists
+
+A few small tables are deliberately not computed from anywhere: they are a
+dated snapshot of an outside fact, checked by hand against the vendor's own
+docs, and never silently stale because each one carries the date it was last
+checked.
+
+- `internal/runners/retired.go`'s `retiredLabels`, dated by `RetiredAsOf`:
+  the GitHub-hosted runner labels GitHub stopped scheduling jobs on.
+- `internal/runners/preinstalled.go`'s `preinstalledTools`, dated by
+  `PreinstalledAsOf`: the command-line tools each hosted runner image ships
+  by default, per OS family.
+- `control/trust.go`'s `siblingOrganizations`: the tiny, documented list of
+  owner pairs treated as one organisation family for a redirected action's
+  sibling check. Keep this list short: only a documented, deliberate split
+  belongs here, never a guess.
+
+To update one: change the data, bump its `*AsOf` constant (the two runner
+tables) to today, run that package's tests (`go test ./internal/runners/...`
+or `go test ./control/...`), and re-run the corpus comparison (see
+[docs/scoring-v4-migration.md](docs/scoring-v4-migration.md)) so a shift in
+what a path's ceiling or state resolves to across real repositories is seen
+before it ships, not after.
+
 ## Commit Conventions
 
 We use [Conventional Commits](https://www.conventionalcommits.org/) with scopes. This enables automated releases via semantic-release.

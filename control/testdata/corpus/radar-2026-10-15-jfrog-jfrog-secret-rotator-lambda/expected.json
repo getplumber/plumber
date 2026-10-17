@@ -1,0 +1,34 @@
+{
+  "source": "https://github.com/jfrog/jfrog-secret-rotator-lambda",
+  "commit": "af437818c5198255e2b022c4bae72e0c18151201",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/cla.yml": "active",
+    ".github/workflows/frogbot-scan-pull-request.yml": "active",
+    ".github/workflows/removeLabel.yml": "active",
+    ".github/workflows/test.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The Critical pull_request_target path was judged real: the Frogbot scan names environment `frogbot`, which does not exist (the API lists none), so it gates nothing and anyone who opens a pull request runs the resolver on their own manifests with the two Frogbot secrets.",
+  "expect": {
+    "paths": [
+      {
+        "entryKind": "pr_target",
+        "tier": "critical",
+        "subjectContains": "github.event.pull_request.head.sha || github.ref",
+        "actor": "outsider"
+      }
+    ]
+  }
+}

@@ -1,0 +1,119 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Pre-release Checks
+    if: ${{ github.repository_owner == 'cloudflare' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: Install dependencies (skip postinstall)
+        run: npm ci --ignore-scripts
+
+      - name: Build telescope
+        run: npm run build -w packages/telescope
+
+      - name: Lint telescope
+        run: npm run lint -w packages/telescope
+
+      - name: Build waterfall
+        run: npm run build -w packages/waterfall
+
+  release:
+    name: Release
+    needs: check
+    if: ${{ github.repository_owner == 'cloudflare' }}
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: "npm"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies (skip postinstall)
+        run: npm ci --ignore-scripts
+
+      - name: Build telescope
+        run: npm run build -w packages/telescope
+
+      - name: Build waterfall
+        run: npm run build -w packages/waterfall
+
+      # Compute the next versions that `changeset version` would produce for
+      # each published package. Used to inject versions into the PR title and
+      # commit message below. Falls back to "next" when no pending changesets
+      # exist for any package.
+      - name: Compute next versions
+        id: next_version
+        run: |
+          npx changeset status --output=release-status.json || true
+          if [ -f release-status.json ]; then
+            TELESCOPE_VERSION=$(node -e "const r=require('./release-status.json').releases||[]; const t=r.find(x=>x.name==='@cloudflare/telescope'); console.log(t?t.newVersion:'')")
+            WATERFALL_VERSION=$(node -e "const r=require('./release-status.json').releases||[]; const t=r.find(x=>x.name==='@cloudflare/waterfall'); console.log(t?t.newVersion:'')")
+          else
+            TELESCOPE_VERSION=""
+            WATERFALL_VERSION=""
+          fi
+
+          PARTS=()
+          if [ -n "$TELESCOPE_VERSION" ]; then
+            PARTS+=("telescope@$TELESCOPE_VERSION")
+          fi
+          if [ -n "$WATERFALL_VERSION" ]; then
+            PARTS+=("waterfall@$WATERFALL_VERSION")
+          fi
+          if [ ${#PARTS[@]} -eq 0 ]; then
+            TITLE="next"
+          else
+            # Join array elements with ", ". Note: "${PARTS[*]}" with IFS=', '
+            # would only use the first IFS character as the separator, so we
+            # use printf and strip the trailing separator instead.
+            TITLE=$(printf '%s, ' "${PARTS[@]}")
+            TITLE=${TITLE%, }
+          fi
+
+          echo "title=$TITLE" >> "$GITHUB_OUTPUT"
+          echo "Next release: $TITLE"
+
+      - name: Create Release Pull Request or Publish to npm
+        id: changesets
+        uses: changesets/action@v1.7.0
+        with:
+          version: npm run version-packages
+          publish: npx changeset publish
+          title: "Publish ${{ steps.next_version.outputs.title }}"
+          commit: "Publish ${{ steps.next_version.outputs.title }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: "true"

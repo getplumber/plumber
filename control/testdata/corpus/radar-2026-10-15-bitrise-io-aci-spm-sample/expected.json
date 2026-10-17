@@ -1,0 +1,42 @@
+{
+  "source": "https://github.com/bitrise-io/aci-spm-sample",
+  "commit": "9c3af8046b29dc6ccf3667e7b2d09330c12da4a1",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": false
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/BuildAndTest.yml": "active",
+    ".github/workflows/BuildDocumentation.yml": "active",
+    ".github/workflows/SwiftLint.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The two High paths into `BuildDocumentation/build-docc` were judged false: the job runs on `macos-12`, a hosted label GitHub retired in December 2024, so it can never run and starts no path; the High unprotected `main` path was judged overstated: its push-triggered jobs cannot be scheduled either, Low at most.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "fwcd/swift-docc-action@v1.0.2",
+        "tier": "none"
+      },
+      {
+        "entryKind": "unprotected_push",
+        "subjectContains": "main",
+        "tier": "low"
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "ad-m/github-push-action@v0.6.0",
+        "tier": "none"
+      }
+    ]
+  }
+}

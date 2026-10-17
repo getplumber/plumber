@@ -1,0 +1,72 @@
+name: Report Integration Test Skip
+
+# Posts the PR-open "skipped" placeholder for the required `Go Integration Tests`
+# check, as the driver-test GitHub App.
+#
+# Why a separate workflow (and not an inline job in trigger-integration-tests.yml):
+#   - The branch ruleset pins the required `Go Integration Tests` check to the
+#     driver-test app's integration id. Only a check posted BY that app satisfies the
+#     gate — a `github.token` (github-actions) check of the same name does not.
+#   - A PR from a fork runs its `pull_request` workflows with a READ-ONLY GITHUB_TOKEN
+#     and no access to secrets, so it cannot mint the app token and cannot post any
+#     check on its own head. That would leave fork PRs unable to enter the merge queue
+#     without a maintainer label.
+#   - `workflow_run` workflows always execute in THIS (base) repo's context using the
+#     workflow definition from the default branch, with full secret access — even when
+#     the run that triggered them came from a fork. That lets us post the app-attributed
+#     placeholder on any PR head, fork or not, so every PR can auto-enqueue.
+#
+# SECURITY: this workflow runs with secrets in a privileged context. It MUST NOT check
+# out or execute any PR/fork-controlled content. It only calls checks.create with a
+# static body; the sole fork-controlled input is `workflow_run.head_sha`, an opaque
+# commit SHA passed to the API. Do not add `actions/checkout` or a `run:` step that
+# executes repo content here.
+#
+# The real integration suite is unaffected: it runs as the required gate on the
+# `merge_group` commit (and as a label preview on internal PRs), dispatched by
+# trigger-integration-tests.yml. This workflow only posts the pre-merge placeholder.
+
+on:
+  workflow_run:
+    workflows: ["Trigger Integration Tests"]
+    types: [requested]
+
+jobs:
+  report-skip:
+    # Only for PR-triggered runs; the merge_group run posts the real required check.
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    permissions:
+      checks: write
+    steps:
+      - name: Generate GitHub App token (this repo)
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.INTEGRATION_TEST_APP_ID }}
+          private-key: ${{ secrets.INTEGRATION_TEST_PRIVATE_KEY }}
+          owner: databricks
+          repositories: databricks-sql-go
+
+      - name: Post skipped Go Integration Tests check
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'Go Integration Tests',
+              head_sha: process.env.HEAD_SHA,
+              status: 'completed',
+              conclusion: 'success',
+              completed_at: new Date().toISOString(),
+              output: {
+                title: 'Skipped on PR - runs in merge queue',
+                summary: 'Go integration tests are skipped on ordinary PR events and run as the required gate in the merge queue. Preview on an internal PR by adding a label: `integration-test` (Thrift, replay) or `integration-test-full` (Thrift, passthrough); `integration-test-kernel` runs the SEA-via-kernel backend against the real warehouse (passthrough). (Label previews cannot run on fork PRs, which lack secret access; fork PRs are exercised by the required merge-queue run.)',
+              },
+            });

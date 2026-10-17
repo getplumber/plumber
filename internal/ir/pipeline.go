@@ -42,7 +42,9 @@ type NormalizedPipeline struct {
 	// known but empty listing is never read as disabled: the workflows
 	// endpoint only lists workflows registered on the default branch, so
 	// a workflow added on a feature branch would otherwise read as
-	// Actions being off.
+	// Actions being off. For the same reason MarkInert applies it only
+	// to a job whose workflow the listing names: one absent from it
+	// keeps running.
 	ActionsDisabled bool `json:"actionsDisabled,omitempty"`
 
 	// DefaultTokenWrite is whether the repository's actual default
@@ -302,21 +304,10 @@ type Job struct {
 	// declared none. Set only when at least one run step in the job is
 	// conditional, so the field stays absent in the common unconditional
 	// case. Read by the situation facts alongside the job's texts.
-	ScriptIfs []string `json:"scriptIfs,omitempty"`
-	// SecretFirstLine maps the name of a secret this job references
-	// (GitHub Actions `secrets.X` / `secrets['X']` / `secrets["X"]`, name
-	// case preserved, GITHUB_TOKEN excluded in any case: it is the job
-	// token, never a secret) to the 1-based line of its first reference
-	// inside this job's own YAML block (a job-level `env:` value counts,
-	// at its real line). A name the enclosing workflow's own top-level
-	// configuration carries (its `env:`, read before any job's block
-	// starts) is recorded here at line 0 instead, for every job of the
-	// workflow: it reaches every step regardless of where that job's own
-	// references sit. GitHub only; empty for a GitLab job.
-	SecretFirstLine map[string]int    `json:"secretFirstLine,omitempty"`
-	AllowFailure    bool              `json:"allowFailure,omitempty"`
-	When            string            `json:"when,omitempty"`
-	Variables       map[string]string `json:"variables,omitempty"`
+	ScriptIfs    []string          `json:"scriptIfs,omitempty"`
+	AllowFailure bool              `json:"allowFailure,omitempty"`
+	When         string            `json:"when,omitempty"`
+	Variables    map[string]string `json:"variables,omitempty"`
 	// LocalVariables is the raw `variables:` map authored by the
 	// project itself (root .gitlab-ci.yml or workflow file), before any
 	// merge with upstream component/template definitions. Empty when
@@ -578,6 +569,10 @@ type ReusableCaller struct {
 	// With is the call's inputs, an input passed through from a caller up
 	// the chain (`${{ inputs.x }}`) replaced by what that caller passes.
 	With map[string]any `json:"with,omitempty"`
+	// If is the calling job's own job-level `if:`, verbatim, "" when the
+	// call is unconditional: the called workflow runs only on the events
+	// it lets through (ClassifyGates reads it through the calling job).
+	If string `json:"if,omitempty"`
 }
 
 // Action is a single invocation of a reusable third-party action.

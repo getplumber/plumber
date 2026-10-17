@@ -1,0 +1,62 @@
+name: 🚀 Release
+permissions:
+  contents: write
+on:
+  push:
+    branches: [main, wip/**]
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+  pull_request:
+jobs:
+  release:
+    name: Release on GitHub and PGXN
+    runs-on: ubuntu-latest
+    env: { pg: 19, BUNDLE_LIBCHDB: 1 }
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v7
+        with: { submodules: recursive }
+      - name: Start Postgres ${{ env.pg }}
+        uses: pgxn/postgres-action@v0
+        with:
+          version: ${{ env.pg }}
+      # make BUNDLE_LIBCHDB=1 installs libchdb if missing.
+      - name: Get chDB Version
+        id: chdb
+        run: make libchdb-variables >> $GITHUB_OUTPUT
+      - name: Cache chDB
+        id: cache-chdb
+        uses: actions/cache@v6
+        with:
+          key: ${{ steps.chdb.outputs.directory }}-${{ steps.chdb.outputs.version }}
+          path: |
+            ${{ steps.chdb.outputs.directory }}/lib/libchdb.*
+            ${{ steps.chdb.outputs.directory }}/include/chdb.h
+      - name: Build Release Archive
+        uses: pgxn/release-action@v0
+        with:
+          submodules: true
+          dry-run: true
+      - name: Test the Release
+        env:
+          TAP_TESTS: ""
+          DIST_TEST_SUDO: "sudo --preserve-env=BUNDLE_LIBCHDB,LIBCHDB_BUILD"
+        run: make dist-test
+      - name: Release on PGXN
+        uses: pgxn/release-action@v0
+        id: pgxn
+        with:
+          submodules: true
+          username: ${{ secrets.PGXN_USERNAME }}
+          password: ${{ secrets.PGXN_PASSWORD }}
+          dry-run: ${{ !startsWith( github.ref, 'refs/tags/v' ) }}
+      - name: Generate Release Notes
+        id: notes
+        uses: theory/changelog-version-notes-action@v0
+        if: startsWith( github.ref, 'refs/tags/v' )
+      - name: Create GitHub Release
+        if: startsWith( github.ref, 'refs/tags/v' )
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Release ${{ github.ref_name }}"
+          body_path: "${{ steps.notes.outputs.file }}"
+          files: ${{ steps.pgxn.outputs.archive }}

@@ -1,0 +1,97 @@
+name: Quotopia UI Service CI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'quotopia-ui/**'
+      - '.github/workflows/quotopia-ui-ci.yml'
+  workflow_dispatch:
+
+env:
+  DOCKER_REGISTRY: ${{ vars.DOCKER_REGISTRY }}
+
+jobs:
+  build-and-deploy:
+    name: Build and Deploy UI
+    runs-on: ubuntu-latest
+    env:
+      JFROG_CLI_KEY_ALIAS: ${{ vars.JFROG_CLI_KEY_ALIAS }}
+      JFROG_CLI_SIGNING_KEY: ${{ secrets.JFROG_CLI_SIGNING_KEY }}
+    outputs:
+      build_name: ${{ steps.publish_build.outputs.build_name }}
+      build_number: ${{ steps.publish_build.outputs.build_number }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup JFrog CLI
+      uses: jfrog/setup-jfrog-cli@v4
+      with:
+        version: 2.78.9
+      env:
+        JF_URL: ${{ vars.JF_URL }}
+        JF_USER: ${{ vars.JF_USER }}
+        JF_ACCESS_TOKEN: ${{ secrets.JF_ACCESS_TOKEN }}
+      
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: Login to Docker Registry
+      run: |
+        echo "🔐 Logging into JFrog Artifactory Docker registry..."
+        echo "Registry: ${{ env.DOCKER_REGISTRY }}"
+        echo ${{ secrets.JF_ACCESS_TOKEN }} | docker login -u ${{ vars.JF_USER }} --password-stdin ${{ env.DOCKER_REGISTRY }}
+        echo "✅ Successfully logged into Docker registry"
+      
+    - name: Build and Push Docker image
+      run: |
+        cd quotopia-ui
+        # Build and push to JFrog Artifactory
+        jf docker buildx build --platform linux/amd64,linux/arm64 \
+          --tag ${{ env.DOCKER_REGISTRY }}/quotopia-ui:${{ github.run_number }} \
+          --metadata-file=build-metadata --output=type=image --push .
+        jf rt build-docker-create quotopia-dev-docker  \
+          --image-file build-metadata --build-name quotopia-ui --build-number ${{ github.run_number }} 
+
+    - name: Test Docker image
+      run: |
+        cd quotopia-ui
+        # Pull the image for testing
+        jf docker pull ${{ env.DOCKER_REGISTRY }}/quotopia-ui:${{ github.run_number }}
+        
+        # Run container with better debugging
+        jf docker run -d --name test-ui-container -p 8080:80 ${{ env.DOCKER_REGISTRY }}/quotopia-ui:${{ github.run_number }}
+        
+        # Wait for container to start
+        sleep 5
+        
+        # Test the web server
+        curl -f http://localhost:8080 || {
+          echo "❌ Web server check failed"
+          exit 1
+        } 
+        
+        # Test that index.html is served
+        curl -f http://localhost:8080/index.html || {
+          echo "❌ Index.html check failed"
+          exit 1
+        }
+
+    - name: Publish buildinfo
+      id: publish_build
+      run: |
+        jf rt build-add-git quotopia-ui ${{ github.run_number }}
+        jf rt build-publish quotopia-ui ${{ github.run_number }}
+        echo "build_name=quotopia-ui" >> $GITHUB_OUTPUT
+        echo "build_number=${{ github.run_number }}" >> $GITHUB_OUTPUT
+
+  create_jira_evidence:
+    needs: build-and-deploy
+    uses: ./.github/workflows/create-jira-evidence.yml
+    secrets: inherit
+    with: 
+      build_name: ${{ needs.build-and-deploy.outputs.build_name }}
+      build_number: ${{ needs.build-and-deploy.outputs.build_number }}

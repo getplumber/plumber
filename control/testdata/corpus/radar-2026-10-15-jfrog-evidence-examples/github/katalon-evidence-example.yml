@@ -1,0 +1,175 @@
+name: "Katalon Studio evidence integration example"
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  actions: read
+
+jobs:
+  package-docker-image-with-katalon-evidence:
+    runs-on: windows-latest
+    env:
+      REGISTRY_URL: ${{ vars.JF_URL}}
+      REPO_NAME: 'docker-katalon-repo'
+      IMAGE_NAME: 'docker-katalon-image'
+      TAG_NAME: ${{ github.run_number }}
+      BUILD_NAME: 'katalon-docker-build'
+      BUILD_NUMBER: ${{ github.run_number }}
+      ATTACH_OPTIONAL_MARKDOWN_TO_EVIDENCE: true
+      KATALON_VERSION: '9.5.0'
+    steps:
+      - uses: jfrog/setup-jfrog-cli@v4
+        name: jfrog-cli setup
+        env:
+          JF_URL: ${{ vars.ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.JF_ACCESS_TOKEN }}
+      
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            examples/katalon/**
+          sparse-checkout-cone-mode: false
+      
+      - name: Build and publish Docker image
+        shell: pwsh
+        run: | 
+          docker build --file ./examples/katalon/app/Dockerfile ./examples/katalon/app --tag ${{ env.REGISTRY_URL }}/${{ env.REPO_NAME }}/${{ env.IMAGE_NAME }}:${{ env.TAG_NAME }}
+          jf rt docker-push ${{ env.REGISTRY_URL }}/${{ env.REPO_NAME }}/${{ env.IMAGE_NAME }}:${{ env.TAG_NAME }} ${{ env.REPO_NAME }} --build-name=${{ env.BUILD_NAME }} --build-number=${{ env.BUILD_NUMBER }}
+      - name: Deploy Docker container for testing
+        shell: pwsh
+        run: |
+          docker pull ${{ env.REGISTRY_URL }}/${{ env.REPO_NAME }}/${{ env.IMAGE_NAME }}:${{ env.TAG_NAME }}
+          docker stop katalon-test-app 2>$null; docker rm katalon-test-app 2>$null
+          
+          docker run -d --name katalon-test-app -p 8080:8080 ${{ env.REGISTRY_URL }}/${{ env.REPO_NAME }}/${{ env.IMAGE_NAME }}:${{ env.TAG_NAME }}
+          
+          Write-Host "Container status:"
+          docker ps -a
+
+          # Wait for the application to be ready
+          Start-Sleep -Seconds 10
+          
+          # Test if the application is responding
+          $maxRetries = 5
+          $retryCount = 0
+          $success = $false
+          
+          while ($retryCount -lt $maxRetries -and -not $success) {
+              try {
+                  Write-Host "Attempting to connect to http://localhost:8080 (attempt $($retryCount + 1)/$maxRetries)"
+                  $response = Invoke-WebRequest -Uri "http://localhost:8080" -TimeoutSec 5 -UseBasicParsing
+                  if ($response.StatusCode -eq 200) {
+                      Write-Host "Application is ready on port 8080!"
+                      $success = $true
+                  }
+              } catch {
+                  Write-Host "Application not ready yet, retrying... ($($retryCount + 1)/$maxRetries)"
+                  Write-Host "Error: $($_.Exception.Message)"
+                  # Check container logs again
+                  Write-Host "Container logs:"
+                  docker logs katalon-test-app
+                  Start-Sleep -Seconds 2
+              }
+              $retryCount++
+          }
+          
+          if (-not $success) {
+              Write-Error "Application failed to start within expected time"
+              exit 1
+          }
+
+      # Run Katalon Studio tests against deployed application
+      - name: Katalon Studio Test Execution
+        uses: katalon-studio/katalon-studio-github-action@v4.0
+        env:
+          APP_URL: 'http://localhost:8080'
+        with:
+          version: ${{ env.KATALON_VERSION }}
+          projectPath: '${{ github.workspace }}/examples/katalon'
+          args: '-noSplash -retry=0 -testSuiteCollectionPath="Test Suites/Simple Test Suite Collection" -apiKey=${{ secrets.KATALON_API_KEY }} --config -webui.autoUpdateDrivers=true -reportFolder=reports'
+        continue-on-error: true
+
+      - name: Process Test Results
+        working-directory: examples/katalon
+        shell: pwsh
+        run: |
+          Get-ChildItem
+          if (Test-Path "Reports") {
+            Get-ChildItem -Path "Reports"
+            Get-ChildItem -Path "Reports" -Directory | ForEach-Object {              
+              if (Test-Path "Reports\$($_.Name)\Simple Test Suite") {
+                $timestampDir = $_.Name
+                Get-ChildItem -Path "Reports\$($_.Name)\Simple Test Suite" -Directory | ForEach-Object {
+                  $testSuiteDir = $_.Name
+
+                  # Set GitHub Actions environment variables
+                  "REPORT_TIMESTAMP_DIR=$timestampDir" | Out-File -FilePath $env:GITHUB_ENV -Append
+                  "TEST_SUITE_DIR=$testSuiteDir" | Out-File -FilePath $env:GITHUB_ENV -Append
+                  "REPORT_PATH=Reports\$timestampDir\Simple Test Suite\$testSuiteDir" | Out-File -FilePath $env:GITHUB_ENV -Append
+                }
+              }
+            }
+          } else {
+            Write-Host "Reports directory not found"
+          }
+      - name: Install Python dependencies
+        working-directory: examples/katalon
+        run: python -m pip install -r reports_scripts\requirements.txt
+      - name: Convert JUnit XML to JSON
+        working-directory: examples/katalon
+        shell: pwsh
+        run: python reports_scripts\xml_to_json.py "${{ env.REPORT_PATH }}\JUnit_Report.xml" reports\katalon-results.json
+
+      # This is an optional step to generate a markdown report
+      - name: Generate optional markdown report
+        if: env.ATTACH_OPTIONAL_MARKDOWN_TO_EVIDENCE == 'true'
+        working-directory: examples/katalon
+        shell: pwsh
+        run: |
+          if (Test-Path "reports\katalon-results.json") {
+            python reports_scripts\generate-markdown-report.py reports\katalon-results.json reports\katalon-results.md ${{ env.REGISTRY_URL }}/${{ env.REPO_NAME }}/${{ env.IMAGE_NAME }}:${{ env.TAG_NAME }}
+          } else {
+            Write-Host "JSON file not found. Cannot generate markdown report."
+          }
+        continue-on-error: true
+
+      #Steps to attach evidence to the package
+      - name: Attach evidence to the package
+        working-directory: examples/katalon
+        shell: pwsh
+        run: |
+          $packageName = "${{ env.IMAGE_NAME }}"
+          $packageVersion = "${{ env.TAG_NAME }}"
+          $packageRepoName = "${{ env.REPO_NAME }}"
+          $predicatePath = "reports\katalon-results.json"
+          $providerId = "katalon"
+          $predicateType = "http://katalon.com/test-results/v1"
+          $privateKey = "${{ secrets.PRIVATE_KEY }}"
+          $privateKeyAlias = "${{ secrets.PRIVATE_KEY_ALIAS }}"
+          $commandArgs = @(
+              "evd", "create",
+              "--package-name", $packageName,
+              "--package-version", $packageVersion,
+              "--package-repo-name", $packageRepoName,
+              "--key", $privateKey, 
+              "--key-alias", $privateKeyAlias,
+              "--provider-id", $providerId,
+              "--predicate", $predicatePath,
+              "--predicate-type", $predicateType
+          )
+          if ("${{ env.ATTACH_OPTIONAL_MARKDOWN_TO_EVIDENCE }}" -eq "true") {
+            $commandArgs += @("--markdown", "reports\katalon-results.md")
+          }
+          jf $commandArgs
+
+      # Cleanup - Stop and remove the test container
+      - name: Cleanup test container
+        if: always()
+        shell: pwsh
+        run: |
+          docker stop katalon-test-app 2>$null
+          docker rm katalon-test-app 2>$null

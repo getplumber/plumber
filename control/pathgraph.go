@@ -187,6 +187,13 @@ func blockBranches(p AttackPath, findings []opaengine.Finding) []PathBlockBranch
 // when nothing actually crossed).
 var outputFeedKinds = []string{FeedOutput, FeedOutputCompared, FeedOutputExecuted}
 
+// outputFeedFallbackOrder is outputFeedKinds in the order shownFeedKinds
+// falls back over: a full or executed kind first, since strengthOfFeed in
+// control/paths.go prices either as a full feed, the compared kind last,
+// so an edge naming both a full and the compared kind never reads as
+// compared-only.
+var outputFeedFallbackOrder = []string{FeedOutputExecuted, FeedOutput, FeedOutputCompared}
+
 // shownFeedKinds is what a fed job's line names the entry job hands it:
 // its artifact and cache kinds, and the job outputs of a needs dependency
 // only when nothing else links the two, a needs being how an artifact
@@ -199,7 +206,7 @@ func shownFeedKinds(kinds []string) []string {
 		}
 	}
 	if len(shown) == 0 {
-		for _, k := range outputFeedKinds {
+		for _, k := range outputFeedFallbackOrder {
 			if slices.Contains(kinds, k) {
 				return []string{k}
 			}
@@ -285,7 +292,7 @@ func foldBranches(branches []PathBlockBranch) (kept []PathBlockBranch, folded []
 // renderer strips what its output must never carry (an escape sequence on
 // a terminal) before laying the block out.
 func (b PathBlock) Clean(clean func(string) string) PathBlock {
-	for _, s := range []*string{&b.Entry, &b.EntrySubject, &b.EntryUnverified, &b.RunsIn, &b.ReachesShort, &b.ReachUnverified, &b.So, &b.Cap, &b.Fix} {
+	for _, s := range []*string{&b.Entry, &b.EntrySubject, &b.EntryUnverified, &b.RunsIn, &b.ReachesShort, &b.ReachUnverified, &b.So, &b.Cap, &b.Fix, &b.ClaimsNote} {
 		*s = clean(*s)
 	}
 	env := make([]string, len(b.Environment))
@@ -317,16 +324,28 @@ func (b PathBlock) Clean(clean func(string) string) PathBlock {
 // Notes is what the block says under its consequence: what could not be
 // checked about the entry, what could not be checked about the reach, the
 // environment the job runs in, then, only when ShowCap is set (the points
-// are printed), why the path stops at its cap.
+// are printed), why the path stops at its cap. ClaimsNote (what Plumber
+// could not read, named by the unknown claims' own subjects) folds onto
+// the cap note, after a period, when ShowCap prints one; every other
+// existing note (the entry, the reach, the environment) is its own line,
+// untouched, so ClaimsNote opens a line of its own instead.
 func (b PathBlock) Notes() []string {
 	notes := append([]string{b.EntryUnverified, b.ReachUnverified}, b.Environment...)
-	if b.ShowCap {
+	capShown := b.ShowCap && b.Cap != ""
+	if capShown {
 		notes = append(notes, b.Cap)
 	}
 	var out []string
 	for _, n := range notes {
 		if n != "" {
 			out = append(out, n)
+		}
+	}
+	if b.ClaimsNote != "" {
+		if capShown && len(out) > 0 && out[len(out)-1] == b.Cap {
+			out[len(out)-1] += ". " + b.ClaimsNote
+		} else {
+			out = append(out, b.ClaimsNote)
 		}
 	}
 	return out

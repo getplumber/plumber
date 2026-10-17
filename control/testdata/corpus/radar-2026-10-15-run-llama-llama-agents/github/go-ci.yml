@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "operator/**"
+      - "docker/operator.Dockerfile"
+      - "scripts/process_manifests.py"
+
+jobs:
+  operator-lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache-dependency-path: ./operator/go.sum
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.11.4
+          working-directory: ./operator
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Verify generated manifests are up to date
+        run: make -C operator operator-manifests-check
+
+      - name: Clean controller-gen cache
+        run: rm -rf ./operator/bin/controller-gen
+
+      - name: Run Go tests
+        run: make -C operator operator-test
+        env:
+          GOOS: linux
+          GOARCH: amd64
+
+  operator-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build operator image (no push)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/operator.Dockerfile
+          platforms: linux/amd64
+          push: false
+          tags: llamaindex/llama-agents-operator:dev
+          cache-from: type=gha,scope=operator-amd64
+          cache-to: type=gha,mode=min,scope=operator-amd64

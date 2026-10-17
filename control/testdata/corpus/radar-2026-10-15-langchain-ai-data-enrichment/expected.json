@@ -1,0 +1,36 @@
+{
+  "source": "https://github.com/langchain-ai/data-enrichment",
+  "commit": "5ddc778ebaf298a517b4c948bc29261dc15e7b73",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": false
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/integration-tests.yml": "active",
+    ".github/workflows/unit-tests.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High unprotected `main` path into `unit-tests` was judged overstated (a writer gets code execution with a read-only token, Low), and the High `codespell-project/actions-codespell@v2` path reaches a job with no secret, no write token and no cache, Low.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "unprotected_push",
+        "subjectContains": "main",
+        "tier": "low"
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "codespell-project/actions-codespell@v2",
+        "tier": "low"
+      }
+    ]
+  }
+}

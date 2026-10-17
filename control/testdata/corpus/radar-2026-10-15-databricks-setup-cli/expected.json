@@ -1,0 +1,33 @@
+{
+  "source": "https://github.com/databricks/setup-cli",
+  "commit": "2bf4520fd10723ed5a22eca62a8c8a63714a7ba9",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/conftest.yml": "active",
+    ".github/workflows/release-pr.yml": "active",
+    ".github/workflows/tag.yml": "active",
+    ".github/workflows/test.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High path through `raw.githubusercontent.com/databricks/setup-cli/${{ github.sha }}/install.sh` was judged false: the URL is the repository's own script at the commit under test, an immutable self-reference, in jobs that hold no secret, Low at most.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "https://raw.githubusercontent.com/databricks/setup-cli/${{",
+        "tier": "low"
+      }
+    ]
+  }
+}

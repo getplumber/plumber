@@ -1,0 +1,55 @@
+name: Update App Version
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to update appVersion to'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-app-version:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update appVersion in Chart.yaml
+        run: |
+          sed -i "s/^appVersion: .*/appVersion: ${{ github.event.inputs.tag }}/" charts/clickstack/Chart.yaml
+
+      - name: Update otel-collector image tag in values.yaml
+        run: |
+          sed -i '/clickstack-otel-collector/{n;s/tag: "[^"]*"/tag: "${{ github.event.inputs.tag }}"/}' charts/clickstack/values.yaml
+
+      - name: Create changeset
+        run: |
+          mkdir -p .changeset
+          cat > .changeset/update-app-version-${{ github.event.inputs.tag }}.md << 'EOF'
+          ---
+          "helm-charts": patch
+          ---
+
+          chore: update appVersion to ${{ github.event.inputs.tag }}
+          EOF
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "chore: Update appVersion to ${{ github.event.inputs.tag }}"
+          title: "Update appVersion to ${{ github.event.inputs.tag }}"
+          body: |
+            This PR updates the appVersion in Chart.yaml to `${{ github.event.inputs.tag }}` and aligns the otel-collector image tag in values.yaml.
+            
+            - Updated `charts/clickstack/Chart.yaml`
+            - Updated `otel-collector.image.tag` in `charts/clickstack/values.yaml`
+          branch: update-app-version-${{ github.event.inputs.tag }}
+          delete-branch: true

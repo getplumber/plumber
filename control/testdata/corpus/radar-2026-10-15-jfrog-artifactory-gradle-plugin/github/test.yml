@@ -1,0 +1,83 @@
+name: Test
+
+on:
+  push:
+  # Triggers the workflow on labeled PRs only.
+  pull_request_target:
+    types: [ labeled ]
+
+jobs:
+  test:
+    if: github.event_name == 'push' || (github.event_name == 'pull_request_target' && contains(github.event.pull_request.labels.*.name, 'safe to test'))
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, windows-latest ]
+        java-version: [ "17" ]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      # Install required tools
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: "zulu"
+          java-version: ${{ matrix.java-version }}
+
+      # Install Go for the Artifactory setup in the next step
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.22.x
+          cache: false
+
+      - name: Install local Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+
+      # Wait until Artifactory storage and repo services are fully ready.
+      # install-local-artifactory waits for /api/system/ping (HTTP layer only).
+      # The storage backend and repo services may still initialize after ping returns 200,
+      # causing 503 on actual API calls. Poll /api/repositories until it responds 200.
+      - name: Wait for Artifactory to be fully ready
+        if: runner.os == 'Linux'
+        run: |
+          echo "Waiting for Artifactory repo API to be ready..."
+          for i in $(seq 1 40); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" -u admin:password http://localhost:8081/artifactory/api/repositories)
+            echo "Attempt $i: /api/repositories returned $STATUS"
+            if [ "$STATUS" = "200" ]; then
+              echo "Artifactory is fully ready."
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "Timed out waiting for Artifactory to be ready."
+          exit 1
+
+      # Run tests
+      - name: Tests on Linux
+        if: runner.os == 'Linux'
+        run: ./gradlew clean validatePlugins check
+      - name: Tests on Windows
+        if: runner.os == 'Windows'
+        run: ./gradlew.bat clean check
+
+      # Stop Gradle daemon
+      - name: Stop Gradle
+        run: ./gradlew --stop
+
+  test-macos:
+    # Always skip macOS tests - Artifactory local installation not supported on macOS-latest
+    if: false
+    runs-on: macOS-latest
+    strategy:
+      matrix:
+        java-version: [ "17" ]
+    name: test (macOS-latest, ${{ matrix.java-version }})
+    steps:
+      - name: Skip macOS tests
+        run: echo "Tests skipped - Artifactory local installation not supported on macOS-latest"

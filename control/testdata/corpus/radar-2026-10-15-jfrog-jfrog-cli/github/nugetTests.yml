@@ -1,0 +1,100 @@
+name: NuGet Tests
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  NuGet-Tests:
+    name: NuGet tests (${{ matrix.os.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: windows
+            version: 2022
+          - name: macos
+            version: 14
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    steps:
+      - name: Skip macOS - JGC-413
+        if: matrix.os.name == 'macos'
+        run: |
+          echo "::warning::JGC-413 - Skip until artifactory bootstrap in osx is fixed"
+          exit 0
+
+      - name: Checkout code
+        if: matrix.os.name != 'macos'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+          # Safe: this workflow only runs after human approval via the build-gate environment.
+          allow-unsafe-pr-checkout: true
+
+      - name: Setup FastCI
+        if: matrix.os.name != 'macos'
+        uses: jfrog-fastci/fastci@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          fastci_otel_token: ${{ secrets.FASTCI_TOKEN }}
+
+      # Prepare ubuntu by installing Mono and handle dotnet installation issues.
+      - name: Prepare ubuntu
+        if: matrix.os.name == 'ubuntu'
+        run: |
+          # Install Mono
+          sudo apt-get update
+          sudo apt-get install -y apt-transport-https dirmngr gnupg ca-certificates
+          sudo apt-key adv --recv-keys --keyserver hkp://keyserver.ubuntu.com:80 3FA7E0328081BFF6A14DA29AA6A19B38D3D831EF
+          echo "deb https://download.mono-project.com/repo/ubuntu stable-focal main" | sudo tee /etc/apt/sources.list.d/mono-official-stable.list
+          sudo apt-get update
+          sudo apt-get install -y mono-complete
+          # Fixes dotnet installation issues, see https://github.com/jfrog/jfrog-cli/pull/2808 for more details.
+          echo "DOTNET_INSTALL_DIR=/usr/share/dotnet" >> $GITHUB_ENV
+          sudo mkdir -p /usr/share/dotnet
+          sudo chmod 777 /usr/share/dotnet
+
+      - name: Install .NET
+        if: matrix.os.name != 'macos'
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: "8.x"
+
+      - name: Install NuGet
+        if: matrix.os.name != 'macos'
+        uses: nuget/setup-nuget@v4
+        with:
+          nuget-version: "6.x"
+
+      - name: Setup Go with cache
+        if: matrix.os.name != 'macos'
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Debug macOS Environment and Set Timeout
+        if: runner.os == 'macOS'
+        run: |
+          echo "=== macOS Debug Information ==="
+          echo "Architecture: $(uname -m)"
+          echo "macOS Version: $(sw_vers -productVersion)"
+          echo "macOS Build: $(sw_vers -buildVersion)"
+          echo "Available memory: $(system_profiler SPHardwareDataType | grep Memory || echo 'Memory info not available')"
+          echo "Available disk space: $(df -h)"
+          echo "Java version: $(java -version 2>&1 || echo 'Java not found')"
+          echo "Go version: $(go version)"
+          echo "Setting RT_CONNECTION_TIMEOUT_SECONDS to 2400 for macOS"
+          echo "RT_CONNECTION_TIMEOUT_SECONDS=2400" >> $GITHUB_ENV
+
+      - name: Install local Artifactory
+        if: matrix.os.name != 'macos'
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: ${{ env.RT_CONNECTION_TIMEOUT_SECONDS || '1200' }}
+
+      - name: Run NuGet tests
+        if: matrix.os.name != 'macos'
+        run: >-
+          go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.nuget
+          ${{ env.JFROG_TESTS_IS_EXTERNAL == 'true' && format('--jfrog.url={0} --jfrog.adminToken={1}', env.JFROG_TESTS_URL, env.JFROG_TESTS_LOCAL_ACCESS_TOKEN) || '' }}

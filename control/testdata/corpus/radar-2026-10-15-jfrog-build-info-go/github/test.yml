@@ -1,0 +1,104 @@
+name: Tests
+on:
+  push:
+    branches:
+      - '**'
+    tags-ignore:
+      - '**'
+  pull_request:
+# Ensures that only the latest commit is running for each PR at a time.
+# Ignores this rule for push events.
+concurrency:
+  group: ${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+jobs:
+  unit-test:
+    name: ${{ matrix.os }}, node ${{ matrix.node }}, python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # macos-latest = arm64, macos-14-large = amd64
+        os: [ ubuntu-latest, windows-latest, macos-latest, macos-14-large ]
+        node: [ 14, 16, 16.9 ]
+        include:
+          - node: "14"
+            python: "3.8"
+          - node: "16"
+            python: "3.9"
+          - node: "16.9"
+            python: "3.x"
+        exclude:
+          # MacOS with ARM does not support node 14
+          - os: macos-latest
+            node: 14
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python3
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Setup Pipenv
+        run: pip3 install pipenv
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          check-latest: true
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Install NuGet
+        uses: nuget/setup-nuget@v2
+        with:
+          nuget-version: 6.x
+
+      - name: Install dotnet
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '6.x'
+
+      # Pin Maven to 3.9.11 to avoid regression in 3.9.12 (https://github.com/apache/maven/issues/11574)
+      - name: Setup Maven
+        uses: stCarolas/setup-maven@v5
+        with:
+          maven-version: 3.9.11
+
+      # Install Mono on Ubuntu to run nuget.exe (due to this issue on Ubuntu 24 that hasn't been fixed yet - https://github.com/NuGet/setup-nuget/issues/168)
+      - name: Install Mono on Ubuntu
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y apt-transport-https dirmngr gnupg ca-certificates
+          sudo apt-key adv --recv-keys --keyserver hkp://keyserver.ubuntu.com:80 3FA7E0328081BFF6A14DA29AA6A19B38D3D831EF
+          echo "deb https://download.mono-project.com/repo/ubuntu stable-focal main" | sudo tee /etc/apt/sources.list.d/mono-official-stable.list
+          sudo apt-get update
+          sudo apt-get install -y mono-complete
+
+      # Install Mono on macOS to run nuget.exe
+      - name: Install Mono on macOS
+        if: startsWith(matrix.os, 'macos')
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+        run: |
+          set -e
+          brew install mono || brew install --cask mono-mdk
+          if [ -x "/Library/Frameworks/Mono.framework/Versions/Current/Commands/mono" ]; then
+            echo "/Library/Frameworks/Mono.framework/Versions/Current/Commands" >> "$GITHUB_PATH"
+          fi
+          mono --version
+
+      - name: Lint
+        run: go vet ./...
+
+      - name: Tests
+        env:
+          GOTOOLCHAIN: 'go1.26.3'
+        run: |
+          go env
+          go test -v -race -timeout 0 -cover ./...

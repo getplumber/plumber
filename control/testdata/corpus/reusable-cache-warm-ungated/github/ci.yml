@@ -1,0 +1,7 @@
+name: ci
+on: [push, pull_request_target]
+permissions:
+  contents: read
+jobs:
+  warm-cache:
+    uses: ./.github/workflows/_warm.yml

@@ -1,0 +1,41 @@
+name: Evidence Tests
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  Evidence-Tests:
+    name: Evidence tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu, windows, macos]
+    runs-on: ${{ matrix.os }}-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+          # Safe: this workflow only runs after human approval via the build-gate environment.
+          allow-unsafe-pr-checkout: true
+
+      - name: Setup FastCI
+        uses: jfrog-fastci/fastci@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          fastci_otel_token: ${{ secrets.FASTCI_TOKEN }}
+
+          
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Setup JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v5
+        with:
+          version: latest
+        env:
+          JF_URL: ${{ secrets.EPLUS_PLATFORM_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.EPLUS_ADMIN_TOKEN }}
+
+      - name: Run Evidence tests
+        run: go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.evidence --jfrog.url=${{ secrets.EPLUS_PLATFORM_URL }} --jfrog.adminToken=${{ secrets.EPLUS_ADMIN_TOKEN }} --jfrog.evidenceToken=${{ secrets.EVIDENCE_USER_TOKEN }} --jfrog.projectKey=${{ secrets.EVIDENCE_PROJECT_KEY }} --jfrog.projectToken=${{ secrets.EVIDENCE_PROJECT_TOKEN }} --ci.runId=${{ runner.os }}-evidence

@@ -1,0 +1,85 @@
+name: pnpm Tests
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  pnpm-Tests:
+    name: "pnpm ${{ matrix.pnpm-version }} tests (${{ matrix.os.name }})"
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: ubuntu
+            version: 24.04
+          - name: windows
+            version: 2022
+          - name: macos
+            version: 14
+        pnpm-version: [10, 11, 12]
+    runs-on: ${{ matrix.os.name }}-${{ matrix.os.version }}
+    steps:
+      - name: Skip macOS - JGC-413
+        if: matrix.os.name == 'macos'
+        run: |
+          echo "::warning::JGC-413 - Skip until artifactory bootstrap in osx is fixed"
+          exit 0
+
+      - name: Checkout code
+        if: matrix.os.name != 'macos'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+          # Safe: this workflow only runs after human approval via the build-gate environment.
+          allow-unsafe-pr-checkout: true
+
+      - name: Setup FastCI
+        if: matrix.os.name != 'macos'
+        uses: jfrog-fastci/fastci@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          fastci_otel_token: ${{ secrets.FASTCI_TOKEN }}
+
+      - name: Install Node.js
+        if: matrix.os.name != 'macos'
+        uses: actions/setup-node@v7
+        with:
+          # pnpm 11+ requires Node >=22.13 (pnpm 10 only requires >=18.12, so 22.13 covers all
+          # three tested legs - no evidence pnpm 12 raised this floor further).
+          node-version: "22.13"
+
+      - name: Install pnpm ${{ matrix.pnpm-version }}
+        if: matrix.os.name != 'macos'
+        run: npm install -g pnpm@${{ matrix.pnpm-version }}
+
+      - name: Validate pnpm version is ${{ matrix.pnpm-version }}
+        if: matrix.os.name != 'macos'
+        shell: bash
+        run: |
+          PNPM_VER=$(pnpm --version)
+          PNPM_MAJOR=$(echo "$PNPM_VER" | cut -d. -f1)
+          echo "pnpm version: ${PNPM_VER}"
+          if [ "$PNPM_MAJOR" -ne "${{ matrix.pnpm-version }}" ]; then
+            echo "::error::Expected pnpm ${{ matrix.pnpm-version }}.x but got ${PNPM_VER}"
+            exit 1
+          fi
+          echo "pnpm ${PNPM_VER} OK"
+
+      - name: Setup Go with cache
+        if: matrix.os.name != 'macos'
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Install local Artifactory
+        if: matrix.os.name != 'macos'
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: ${{ env.RT_CONNECTION_TIMEOUT_SECONDS || '1200' }}
+
+      - name: Run pnpm tests
+        if: matrix.os.name != 'macos'
+        env:
+          YARN_IGNORE_NODE: 1
+        run: >-
+          go test -v github.com/jfrog/jfrog-cli --timeout 0 --test.pnpm
+          ${{ env.JFROG_TESTS_IS_EXTERNAL == 'true' && format('--jfrog.url={0} --jfrog.adminToken={1}', env.JFROG_TESTS_URL, env.JFROG_TESTS_LOCAL_ACCESS_TOKEN) || '' }}

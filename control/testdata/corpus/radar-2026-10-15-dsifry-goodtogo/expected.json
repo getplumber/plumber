@@ -1,0 +1,47 @@
+{
+  "source": "https://github.com/dsifry/goodtogo",
+  "commit": "08bc6ad7290ae603615e77e5b7b918489b07529e",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "github-pages",
+      "known": true,
+      "branchPolicy": true
+    },
+    {
+      "name": "pypi",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/claude-code-review.yml": "active",
+    ".github/workflows/claude.yml": "active",
+    ".github/workflows/gtg-rerun.yml": "active",
+    ".github/workflows/pr-check.yml": "active",
+    ".github/workflows/publish.yml": "active",
+    ".github/workflows/tests.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The Critical workflow_run path was judged real: `pr-check.yml` runs for every completed pull_request run of `tests.yml`, forks included, checks out `workflow_run.head_sha` and runs `pip install .` with a `statuses: write` token, so a fork marks its own commit green on a required check. A doubt on fork reachability stays open: the job's first step reads `.pull_requests[0].number` from the triggering run and exits when it is empty or null, which is typical of runs whose head is a fork (GitHub leaves `pull_requests` empty for them), so a fork may never reach the checkout; the label keeps the verdict, which judged the path real.",
+  "expect": {
+    "paths": [
+      {
+        "entryKind": "pr_target",
+        "tier": "critical",
+        "subjectContains": "github.event.workflow_run.head_sha",
+        "actor": "outsider",
+        "pending": "`github.event.workflow_run.event` is not modelled for an outsider (a fork pull request makes it `pull_request`), so the gate of the workflow_run job reads unknown and the real Critical drops to an unverified High."
+      }
+    ]
+  }
+}

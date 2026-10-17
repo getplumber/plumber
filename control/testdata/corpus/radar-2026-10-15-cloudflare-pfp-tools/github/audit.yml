@@ -1,0 +1,44 @@
+# Copyright (c) 2024 Cloudflare, Inc.
+# Licensed under the Apache 2.0 license found in the LICENSE file or at:
+#     https://opensource.org/licenses/Apache-2.0
+
+name: Security Audit
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - ".github/workflows/audit.yml"
+  pull_request:
+    paths:
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - ".github/workflows/audit.yml"
+  schedule:
+    - cron: "0 2 * * *" # daily at 02:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  security-audit:
+    permissions:
+      checks: write   # rustsec/audit-check creates a check
+      contents: read  # actions/checkout reads code
+      issues: write   # rustsec/audit-check files issues on new advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure Cargo.lock exists
+        # https://github.com/rustsec/audit-check/issues/27
+        run: cargo generate-lockfile --locked || cargo generate-lockfile
+
+      - name: Run cargo audit
+        uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}

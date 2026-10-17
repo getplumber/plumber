@@ -1,0 +1,125 @@
+# Reviewer Bot — initial PR review.
+#
+# Own-job workflow. We do NOT use the engine's cross-repo actions/reusable
+# workflows (`uses: databricks/databricks-bot-engine/...`): an external repo
+# can't resolve the internal engine's Actions artifacts ("not found"). Instead
+# the engine is pip-installed via the LOCAL ./.github/actions/bot-prelude ->
+# install-bot-engine composites (local `./` refs always resolve). This file owns
+# checkout, Setup Python, and the run; bot-prelude mints tokens + Node + installs
+# the engine.
+#
+# Engine pin: the engine commit installed is bot-prelude's `engine-ref` default
+# (single source of truth for all four bots); bump it there, never @main.
+#
+# Auth: PAT-free — bot-prelude mints a short-lived, engine-scoped App token for
+# the install (no stored BOT_ENGINE_PAT).
+name: Reviewer Bot
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to review'
+        required: true
+        type: string
+      dry_run:
+        description: 'Print what would be posted instead of posting'
+        required: false
+        default: 'true'
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write   # JFrog OIDC exchange for the engine/SDK/CLI install
+
+jobs:
+  review:
+    # SECURITY FLOOR (was the reusable's job `if:`): manual dispatch, OR a
+    # non-draft, non-fork PR. fork == false keeps the App + model tokens off
+    # untrusted code.
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || (github.event.pull_request.draft == false
+          && github.event.pull_request.head.repo.fork == false)
+    # Collapse redundant reviews: this triggers on every `synchronize` (push to a
+    # PR), so rapid pushes would otherwise spawn overlapping runs against the same
+    # PR. cancel-in-progress: true — a review of a superseded head is wasted work
+    # (unlike the followups, which use cancel-in-progress: false to avoid dropping
+    # a reconcile mid-thread). Matches the sibling workflows' concurrency pattern.
+    concurrency:
+      group: reviewer-bot-pr-${{ github.event.pull_request.number || inputs.pr_number }}
+      cancel-in-progress: true
+    environment: azure-prod   # DATABRICKS_HOST / DATABRICKS_TOKEN live here
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: [linux-ubuntu-latest]
+    timeout-minutes: 30
+    steps:
+      # Checkout FIRST. Default ref = the PR merge ref on pull_request, the
+      # default branch on dispatch. persist-credentials:false — the reviewer
+      # reads this tree via read_paths/grep, so no token may sit in .git/config.
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The reviewer reads code, it doesn't run the connector — so it needs only
+      # a Python interpreter (to run the engine), NOT the connector's deps.
+      - name: Setup Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          python-version: '3.11'
+
+      # Shared prelude: mint the review-bot token (posts findings) + the
+      # engine-scoped token, set up Node, install the pinned engine (PAT-free).
+      - name: Bot prelude (tokens + Node + engine install)
+        id: prelude
+        uses: ./.github/actions/bot-prelude
+        with:
+          app-id: ${{ secrets.REVIEW_BOT_APP_ID }}
+          private-key: ${{ secrets.REVIEW_BOT_APP_PRIVATE_KEY }}
+          # Engine pin lives in ONE place: bot-prelude's `engine-ref` default.
+          # Bump it there to move all four bots in lockstep; override here only
+          # to run this workflow against a different engine commit.
+
+      - name: Resolve trigger inputs
+        id: inputs
+        # SECURITY: dispatcher-supplied values pass via env, never interpolated
+        # into the script body (an inline expression would inject at assignment,
+        # before the digits-only check). Env values expand without re-parsing.
+        env:
+          GH_TOKEN: ${{ steps.prelude.outputs.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_PR: ${{ inputs.pr_number }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          EVENT_PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            RAW_PR="$INPUT_PR"; DRY_RUN="$INPUT_DRY_RUN"
+          else
+            RAW_PR="$EVENT_PR"; DRY_RUN="false"
+          fi
+          [[ "$RAW_PR" =~ ^[0-9]+$ ]] || { echo "::error::Invalid pr_number '$RAW_PR'"; exit 1; }
+          case "$DRY_RUN" in true|false) ;; *) DRY_RUN="true" ;; esac  # fail safe
+          HEAD_SHA=$(gh pr view "$RAW_PR" --repo "$REPO" --json headRefOid -q .headRefOid)
+          { echo "pr_number=$RAW_PR"; echo "head_sha=$HEAD_SHA"; echo "dry_run=$DRY_RUN"; } >> "$GITHUB_OUTPUT"
+
+      - name: Run reviewer
+        env:
+          GH_TOKEN: ${{ steps.prelude.outputs.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.inputs.outputs.pr_number }}
+          HEAD_SHA: ${{ steps.inputs.outputs.head_sha }}
+          DRY_RUN: ${{ steps.inputs.outputs.dry_run }}
+          MODEL_ENDPOINT: https://${{ secrets.DATABRICKS_HOST }}/serving-endpoints/databricks-claude-opus-4-8/invocations
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+          RUNNER_TEMP: ${{ runner.temp }}
+          # The reviewer's repo-specific ADDITIVE guidance, read from the TRUSTED
+          # checkout (run_review enforces containment). Engine owns the base prompt.
+          REVIEW_SYSTEM_PROMPT: .bot/prompts/review/system.md
+        run: python -m databricks_bot_engine.reviewer_bot.run_review

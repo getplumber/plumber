@@ -1,0 +1,102 @@
+name: Alpine APK Tests
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  Apk-Tests:
+    name: Alpine APK tests (${{ matrix.alpine-version }}, apk-tools ${{ matrix.apk-tools }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # Cover both apk-tools major versions:
+        #   - v2.x: Alpine 3.18–3.21 (apk-tools 2.14.x)
+        #   - v3.x: Alpine 3.23 is the first stable release shipping apk-tools 3.x.
+        include:
+          - { alpine-version: v3.18, apk-tools: v2 }
+          - { alpine-version: v3.19, apk-tools: v2 }
+          - { alpine-version: v3.20, apk-tools: v2 }
+          - { alpine-version: v3.21, apk-tools: v2 }
+          - { alpine-version: v3.23, apk-tools: v3 }
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+          # Safe: this workflow only runs after human approval via the build-gate environment.
+          allow-unsafe-pr-checkout: true
+
+      - name: Setup FastCI
+        uses: jfrog-fastci/fastci@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          fastci_otel_token: ${{ secrets.FASTCI_TOKEN }}
+
+      - name: Setup Go with cache
+        uses: jfrog/.github/actions/install-go-with-cache@main
+
+      - name: Install local Artifactory
+        uses: jfrog/.github/actions/install-local-artifactory@main
+        with:
+          RTLIC: ${{ secrets.RTLIC }}
+          RT_CONNECTION_TIMEOUT_SECONDS: '1200'
+
+      # Step 1: Compile the test binary on the host runner using Go 1.26+.
+      # Alpine's packaged Go does not yet reach 1.26, so we cross-compile a
+      # static Linux/amd64 binary here and run it inside the Alpine container.
+      - name: Build test binary
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -c -o apk.test .
+
+      # Step 2: Run the pre-built binary inside the target Alpine container, retrying
+      # ONLY the tests that fail (up to MAX_ATTEMPTS). The shared JFrog platform's WAF
+      # occasionally returns a transient 403 on config-add/build-publish; a selective
+      # rerun absorbs those blips without masking a genuinely broken test.
+      # --network host lets the test binary reach Artifactory on localhost.
+      - name: Run Alpine APK tests (alpine:${{ matrix.alpine-version }})
+        env:
+          ALPINE_VER: ${{ matrix.alpine-version }}
+          MAX_ATTEMPTS: "3"
+          RETRY_DELAY: "10"
+        run: |
+          set +e
+          set -uo pipefail
+
+          run_regex="TestApk|TestSetupApk"
+          fails=""
+          for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
+            echo ">> Attempt $attempt/$MAX_ATTEMPTS: -test.run=$run_regex"
+            docker run --rm \
+              --network host \
+              -v "${{ github.workspace }}":/workspace \
+              -w /workspace \
+              "alpine:${ALPINE_VER#v}" \
+              ./apk.test \
+                -test.v -test.timeout 0 \
+                -test.run "$run_regex" \
+                -test.alpine 2>&1 | tee /tmp/apk-out.log
+            docker_exit=${PIPESTATUS[0]}
+
+            # Collect the top-level names of tests that failed this attempt.
+            fails=$(grep -Eo '^--- FAIL: [A-Za-z0-9_]+' /tmp/apk-out.log | awk '{print $3}' | sort -u | tr '\n' '|' | sed 's/|$//')
+            if [ -z "$fails" ] && [ "$docker_exit" -eq 0 ]; then
+              echo ">> All Alpine tests passed on attempt $attempt."
+              exit 0
+            fi
+            if [ -z "$fails" ]; then
+              echo ">> Container exited with status $docker_exit and no '--- FAIL:' lines — treating as failure."
+              next_regex="TestApk|TestSetupApk"
+              fails="<docker exit $docker_exit, no test-level failures reported>"
+            else
+              echo ">> Failed on attempt $attempt: $fails"
+              next_regex="^($fails)$"
+            fi
+            if [ "$attempt" -lt "$MAX_ATTEMPTS" ]; then
+              echo ">> Retrying failed tests in ${RETRY_DELAY}s..."
+              sleep "$RETRY_DELAY"
+              run_regex="$next_regex"
+            fi
+          done
+          echo ">> STILL FAILING after $MAX_ATTEMPTS attempts: $fails" >&2
+          exit 1

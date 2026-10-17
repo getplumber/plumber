@@ -1,0 +1,129 @@
+name: Test PRs
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "packages/telescope-web/**"
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - "packages/telescope-web/**"
+
+jobs:
+  # Detect which package directories changed so we can skip unaffected test jobs.
+  # On `push` to main we force all flags to true to ensure full coverage of merged
+  # changes regardless of which files the push touched.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      telescope: ${{ steps.filter.outputs.telescope }}
+      waterfall: ${{ steps.filter.outputs.waterfall }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Detect changed packages
+        id: filter
+        uses: dorny/paths-filter@v4
+        with:
+          # A package is "changed" when files within it are touched OR when
+          # shared root-level files that affect every package change (workspace
+          # config, lockfiles, or this workflow itself).
+          filters: |
+            telescope:
+              - 'package.json'
+              - 'package-lock.json'
+              - '.github/workflows/test.yml'
+              - 'packages/telescope/**'
+            waterfall:
+              - 'package.json'
+              - 'package-lock.json'
+              - '.github/workflows/test.yml'
+              - 'packages/waterfall/**'
+
+  test-telescope:
+    needs: changes
+    # Run when telescope changed, or unconditionally on push to main so the
+    # merged tip is always exercised.
+    if: ${{ needs.changes.outputs.telescope == 'true' || github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    env:
+      HOME: /root
+    container:
+      # make sure to match this version with the one in package.json
+      image: mcr.microsoft.com/playwright:v1.61.1-noble
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: "./package-lock.json"
+
+      - name: Install xz-utils
+        run: apt-get update && apt-get install -y xz-utils
+
+      - name: Set up FFmpeg
+        uses: FedericoCarboni/setup-ffmpeg@v3.1
+
+      # Install from the repo root: this is an npm workspaces monorepo with a
+      # single lockfile at the root, so `npm ci` cannot run inside a package.
+      - name: Install dependencies
+        # don't install the browsers since we're using the pre-built container
+        run: npm ci --ignore-scripts
+
+      - name: Build TypeScript
+        run: npm run build -w packages/telescope
+
+      - name: Lint
+        run: npm run lint -w packages/telescope
+
+      - name: Run tests
+        run: npm test -w packages/telescope
+
+      # Diagnostic only: never fail the job here, or a missing results
+      # directory masks the real failure from an earlier step.
+      - name: List all results
+        if: ${{ always() }}
+        run: find packages/telescope/results || echo "No results directory was produced."
+
+  test-waterfall:
+    needs: changes
+    # Run when waterfall changed, or unconditionally on push to main.
+    if: ${{ needs.changes.outputs.waterfall == 'true' || github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    env:
+      HOME: /root
+    container:
+      # Pre-installed chromium matches the waterfall package's playwright version.
+      image: mcr.microsoft.com/playwright:v1.61.1-noble
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: "./package-lock.json"
+
+      # Install from the repo root: this is an npm workspaces monorepo with a
+      # single lockfile at the root, so `npm ci` cannot run inside a package.
+      - name: Install dependencies
+        # Don't run lifecycle scripts (the pre-built container already has browsers).
+        run: npm ci --ignore-scripts
+
+      - name: Build
+        run: npm run build -w packages/waterfall
+
+      - name: Run tests
+        run: npm test -w packages/waterfall

@@ -1,0 +1,46 @@
+name: Test Cloud API Library
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "crates/clickhouse-cloud-api/**"
+      - "crates/clickhouse-openapi-analyzer/**"
+      - "scripts/check-openapi-drift.py"
+      - "scripts/classify-cloud-integration.py"
+      - "scripts/cloud-integration-decision.py"
+      - "scripts/tests/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/test-cloud-api.yml"
+      - ".github/workflows/cloud-integration-decision.yml"
+
+permissions:
+  contents: read
+
+env:
+  DO_NOT_TRACK: "1"
+
+jobs:
+  test:
+    name: Test clickhouse-cloud-api
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable @ 2026-10-01
+
+      - name: Build
+        run: cargo build -p clickhouse-cloud-api -p clickhouse-openapi-analyzer
+
+      - name: Clippy
+        run: cargo clippy -p clickhouse-cloud-api -p clickhouse-openapi-analyzer --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test -p clickhouse-cloud-api -p clickhouse-openapi-analyzer
+
+      - name: Test drift report rendering
+        run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'

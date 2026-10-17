@@ -1,0 +1,89 @@
+name: E2E Tests (SaaS)
+
+on:
+  push:
+    branches: [ '**' ]  # Run on all branches
+  pull_request:
+    branches: [ '**' ]  # Run on internal PRs (skipped for fork PRs - see job `if`)
+  pull_request_target:
+    # Used to run E2E on fork PRs after a maintainer applies the `safe to test` label.
+    types: [ labeled, synchronize ]
+  workflow_dispatch:  # Allow manual trigger
+
+permissions:
+  contents: read
+  pull-requests: write  # only used by reset-trust-on-sync to remove the label
+
+jobs:
+  # When new commits arrive on a PR that already carries `safe to test`, drop the
+  # label so a maintainer must re-review the diff before E2E runs again with secrets.
+  reset-trust-on-sync:
+    name: Reset trust label on new commits
+    if: >
+      github.event_name == 'pull_request_target' &&
+      github.event.action == 'synchronize' &&
+      contains(github.event.pull_request.labels.*.name, 'safe to test')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove "safe to test" label
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api -X DELETE \
+            "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels/safe%20to%20test" \
+            || true
+
+  e2e-tests-saas:
+    name: E2E Tests on SaaS Environment
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Run on:
+    #   - push to any branch (except Dependabot)
+    #   - manual workflow_dispatch
+    #   - pull_request from the same repo (internal PR; Dependabot skipped —
+    #     use the `safe to test` label instead)
+    #   - pull_request_target only when the `safe to test` label is being applied
+    if: >
+      (github.event_name == 'push' && github.actor != 'dependabot[bot]') ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        github.actor != 'dependabot[bot]') ||
+      (github.event_name == 'pull_request_target' &&
+        github.event.action == 'labeled' &&
+        github.event.label.name == 'safe to test')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          # For pull_request_target the default ref is the base branch; we must
+          # explicitly check out the PR head SHA so we actually test the PR's code.
+          # For all other events the default ref is correct.
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.ref }}
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Setup JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v4
+        with:
+          version: latest
+        env:
+          JF_URL: ${{ secrets.PLATFORM_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.PLATFORM_ADMIN_TOKEN }}
+
+      - name: Run E2E tests against SaaS
+        run: |
+          go test -v -timeout 30m -p 1 ./tests/e2e/... \
+            --jfrog.url=${{ secrets.PLATFORM_URL }} \
+            --jfrog.adminToken=${{ secrets.PLATFORM_ADMIN_TOKEN }} \
+            --jfrog.evidenceToken=${{ secrets.EVIDENCE_USER_TOKEN }} \
+            --jfrog.projectToken=${{ secrets.EVIDENCE_PROJECT_TOKEN }} \
+            --jfrog.projectKey=${{ secrets.EVIDENCE_PROJECT_KEY }}
+        env:
+          CI: true

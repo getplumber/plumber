@@ -1,0 +1,73 @@
+name: py-bench
+
+on:
+  pull_request:
+    paths:
+      - "python/langsmith/**"
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: files
+        name: Get changed files
+        uses: Ana06/get-changed-files@25f79e676e7ea1868813e21465014798211fad8c # v2.3.0
+        with:
+          format: json
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: 3.11
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Download baseline
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
+        with:
+          key: ${{ runner.os }}-benchmark-baseline
+          restore-keys: |
+            ${{ runner.os }}-benchmark-baseline-
+          fail-on-cache-miss: true
+          path: |
+            python/out/benchmark-baseline.json
+      - name: Run benchmarks
+        id: benchmark
+        run: |
+          {
+            echo 'OUTPUT<<EOF'
+            make -s benchmark-fast
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+      - name: Compare benchmarks
+        id: compare
+        run: |
+          {
+            echo 'OUTPUT<<EOF'
+            mv out/benchmark-baseline.json out/main.json
+            mv out/benchmark.json out/changes.json
+            uv run pyperf compare_to out/main.json out/changes.json --table --group-by-speed
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+      - name: Annotation
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            const file = JSON.parse(`${{ steps.files.outputs.added_modified_renamed }}`)[0]
+            core.notice(`${{ steps.benchmark.outputs.OUTPUT }}`, {
+              title: 'Benchmark results',
+              file,
+            })
+            core.notice(`${{ steps.compare.outputs.OUTPUT }}`, {
+              title: 'Comparison against main',
+              file,
+            })

@@ -10,7 +10,7 @@ import (
 )
 
 // TestGatedFindingPrintsItsNoteAfterTheLocation pins that a finding whose
-// job no outsider can make run (control.MarkGatedFindings, Data
+// job no outsider can make run (control.markGatedFindings, Data
 // "gateNote") carries the note onto its item and prints it right after
 // the location line, so a reader sees why it anchors no path.
 func TestGatedFindingPrintsItsNoteAfterTheLocation(t *testing.T) {

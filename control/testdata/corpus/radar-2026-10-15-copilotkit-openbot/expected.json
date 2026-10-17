@@ -1,0 +1,59 @@
+{
+  "source": "https://github.com/CopilotKit/OpenBot",
+  "commit": "8c9ad4c841e794294ce2b2f2a8700909d1bfdeb2",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "copilot",
+      "known": true
+    },
+    {
+      "name": "windows-signing",
+      "known": true,
+      "requiredReviewers": true,
+      "reviewers": 5
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/ci.yml": "active",
+    ".github/workflows/desktop-signing.yml": "active",
+    ".github/workflows/desktop.yml": "active",
+    ".github/workflows/publish-release.yml": "active",
+    ".github/workflows/release.yml": "active",
+    ".github/workflows/security_zizmor.yml": "active",
+    ".github/workflows/subscription-gateway.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "actionMetadata": {
+    "dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f": {
+      "refKind": "commit",
+      "mutableRemoteExec": {
+        "tier": "exec",
+        "url": "https://sh.rustup.rs",
+        "file": "action.yml",
+        "downloadGuard": "rustup"
+      }
+    }
+  },
+  "note": "The High path through the SHA-pinned `dtolnay/rust-toolchain@e2a55d2` was judged false: the pin is immutable and the `curl https://sh.rustup.rs | sh` sits under `if ! command -v rustup` on hosted ubuntu, windows and macOS images that all ship rustup; the one job with an OIDC token also waits on the approval-gated environment `windows-signing`, Low at most.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "dtolnay/rust-toolchain@e2a55d2ffb04",
+        "tier": "low",
+        "pending": "the preinstalled-tools list says the Windows hosted images carry no rustup, while the windows-2022 and windows-2025 image notes list Rustup 1.29.1 and Cargo 1.99.0, so the `command -v rustup` guard is read as not firing on `windows-latest` and the SHA-pinned toolchain keeps an outside-download path at High."
+      }
+    ]
+  }
+}

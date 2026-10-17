@@ -1,0 +1,144 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24.x
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Audit production dependencies
+        run: pnpm audit:prod
+      - name: Test reusable packages under Node
+        run: pnpm test:packages
+      - name: Test Astro package under Node
+        run: pnpm test:node
+      - name: Test reusable packages under workerd
+        run: pnpm test:workerd
+      - name: Check package boundaries
+        run: pnpm test:boundaries
+      - name: Typecheck all public packages
+        run: pnpm typecheck
+
+  format:
+    name: Prettier check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24.x
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec prettier --check .
+
+  changeset-validate:
+    name: Changeset validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24.x
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Validate pending changesets
+        run: |
+          shopt -s extglob
+          if compgen -G ".changeset/!(README).md" > /dev/null; then
+            pnpm changeset status --since=origin/main
+          else
+            echo "No pending changesets; skipping validation."
+          fi
+
+  build:
+    name: Topological package build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24.x
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build all public packages in dependency order
+        run: pnpm build
+      - name: Check packed packages in a clean consumer
+        run: pnpm check:packages
+      - name: Verify dist tree
+        # Smoke-check every exports entry resolves to an emitted file.
+        run: |
+          test -f packages/astro/dist/cli.js
+          test -x packages/astro/dist/cli.js
+          test -f packages/astro/dist/index.js
+          test -f packages/astro/dist/index.d.ts
+          test -f packages/astro/dist/runtime/index.js
+          test -f packages/astro/dist/runtime/middleware.js
+          test -f packages/astro/dist/runtime/locals.d.ts
+          test -f packages/astro/dist/content/index.js
+          test -f packages/astro/dist/i18n/index.js
+          test -f packages/astro/dist/react/index.js
+          test -f packages/core/dist/cli/index.js
+          test -f packages/core/dist/cli/index.d.ts
+          test -f packages/core/dist/cli/run-command.js
+          test -f packages/core/dist/cli/run-command.d.ts
+          test -f packages/emdash/dist/index.js
+          test -f packages/emdash/dist/index.d.ts
+          test -f packages/emdash/dist/admin.js
+          test -f packages/emdash/dist/admin.d.ts
+          test -f packages/emdash/dist/astro.js
+          test -f packages/emdash/dist/astro.d.ts
+          test -f packages/emdash/dist/cli.js
+          test -x packages/emdash/dist/cli.js
+          test -f packages/emdash/dist/config.js
+          test -f packages/emdash/dist/config.d.ts
+          test -f packages/emdash/client.d.ts
+          test -f packages/polystella/dist/cli.js
+          test -x packages/polystella/dist/cli.js
+          test -f packages/polystella/dist/index.js
+          test -f packages/polystella/dist/index.d.ts
+      - name: Smoke-test the CLI bundle under bare Node
+        # No tsx, no Vite — exactly the environment a downstream
+        # consumer's standalone `polystella <subcommand>` invocation
+        # uses. Regression guard for the Node 24
+        # `ERR_UNSUPPORTED_NODE_MODULES_TYPESCRIPT` class of bug.
+        run: |
+          node packages/astro/dist/cli.js --version
+          node packages/emdash/dist/cli.js --help
+          node packages/polystella/dist/cli.js --version

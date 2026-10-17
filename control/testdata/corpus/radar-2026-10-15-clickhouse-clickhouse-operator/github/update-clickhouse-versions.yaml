@@ -1,0 +1,68 @@
+name: Update ClickHouse versions
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.repository == 'ClickHouse/clickhouse-operator' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      BRANCH: ci/update-clickhouse-versions
+      TITLE: "ci: bump supported ClickHouse versions"
+      BOT_EMAIL: "41898282+github-actions[bot]@users.noreply.github.com"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Update supported ClickHouse versions
+        run: go run ./tools/update-clickhouse-versions
+
+      - name: Open or update pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git diff --quiet; then
+            echo "Supported ClickHouse versions are up to date"
+            exit 0
+          fi
+
+          pr=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[].number')
+          if [ -n "$pr" ]; then
+            git fetch --depth=1 origin "$BRANCH"
+            if git diff --quiet FETCH_HEAD -- test/supported/versions.json; then
+              echo "Update #$pr is up to date"
+              exit 0
+            fi
+
+            authors=$(gh pr view "$pr" --json commits --jq '[.commits[].authors[].email] | unique | join(",")')
+            if [ "$authors" != "$BOT_EMAIL" ]; then
+              echo "Update #$pr has manual commits, leaving it as is"
+              exit 0
+            fi
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "$BOT_EMAIL"
+          git switch -C "$BRANCH"
+          git commit -am "$TITLE"
+          git push --force origin "$BRANCH"
+
+          if [ -z "$pr" ]; then
+            gh pr create --head "$BRANCH" --title "$TITLE" --body "Updates \`test/supported/versions.json\` to the currently supported ClickHouse releases."
+          fi

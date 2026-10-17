@@ -1,0 +1,27 @@
+name: Test
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macOS-latest]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up JDK
+        uses: actions/setup-java@v2
+        with:
+          java-version: '8'          # Use the correct version identifier for Java 8
+          distribution: 'temurin'    # Use Temurin or any other distribution, as appropriate
+
+      - name: Install dependencies
+        run: mvn install -B -DskipTests
+
+      - name: Test
+        run: mvn verify -B -DskipITs=false

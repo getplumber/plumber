@@ -1,0 +1,62 @@
+name: Update Connector Version and Create GH Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  update-version-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Configure git user
+        run: |
+          git config --global user.email "actions@github.com"
+          git config --global user.name "GitHub Action"
+          git config --global --add --bool push.autoSetupRemote true
+
+      - name: Change version in all relevant files
+        run: |
+          NEW_VERSION=$(cat version.txt)
+          find .. -name 'pom.xml' -type f -exec perl -pi -e 's#<clickhouse.sink.version>[0-9\.]+</clickhouse.sink.version>#<clickhouse.sink.version>'"$NEW_VERSION"'</clickhouse.sink.version>#' {} \;
+          find .. -name 'README.md' -type f -exec perl -pi -e 's#<version>[0-9\.]+</version>#<version>'"$NEW_VERSION"'</version>#' {} \;
+          find .. -name 'build.sbt' -type f -exec perl -pi -e 's#val clickHouseConnectorVersion = "[0-9\.]+"#val clickHouseConnectorVersion = "'$NEW_VERSION'"#' {} \;
+
+      - name: Detect changes
+        id: detect_changes
+        run: |
+          echo "num_lines_changed=$(git diff --stat | wc -l | awk '{$1=$1;print}')" >> $GITHUB_OUTPUT
+
+      - name: Get new version
+        id: get_new_version
+        if: ${{ steps.detect_changes.outputs.num_lines_changed != '0' }}
+        run: |
+          echo "new_version=$(cat version.txt | awk '{$1=$1;print}')" >> $GITHUB_OUTPUT
+
+      - name: Commit changes
+        if: ${{ steps.detect_changes.outputs.num_lines_changed != '0' }}
+        run: |
+          git checkout -b automation-update-version-to-${{ steps.get_new_version.outputs.new_version }}
+          git add .
+          git commit -m "[AUTOMATION] Update version references to v${{ steps.get_new_version.outputs.new_version }}"
+          git push
+          gh pr create --title "[AUTOMATION] Update Clickhouse connector version references to ${{ steps.get_new_version.outputs.new_version }}" --body "This is an automated PR to update all references to the connector version in the project."
+
+      - name: Create GitHub Release
+        if: ${{ steps.detect_changes.outputs.num_lines_changed != '0' }}
+        uses: actions/create-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          release_name: ${{ steps.get_new_version.outputs.new_version }}
+          draft: true
+          prerelease: false

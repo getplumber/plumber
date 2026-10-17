@@ -1,0 +1,42 @@
+{
+  "source": "https://github.com/jfrog/jfrog-credentials-provider",
+  "commit": "3737dc32a26b9e0094ff193ff5cbd8c8b5a5ce10",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "production",
+      "known": true,
+      "branchPolicy": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/build.yml": "active",
+    ".github/workflows/cla.yml": "active",
+    ".github/workflows/go.yml": "active",
+    ".github/workflows/helm.test.yml": "active",
+    ".github/workflows/poc-unit-tests.yml": "active",
+    ".github/workflows/release.yml": "active",
+    ".github/workflows/test.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High setup-go cache path into `build` and `release` was judged overstated: no pull_request_target job writes a cache here, every default-branch writer is a push or tag run by someone with write access, so the path holds at High at most. No job here declares cache-mode, so GitHub keeps the cache of every low-trust run read-only and grants no job cache write: ISSUE-705 is silent and no cache path exists, so the cache ceiling admits none.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "poisoned_cache",
+        "subjectContains": "",
+        "tier": "none"
+      }
+    ]
+  }
+}

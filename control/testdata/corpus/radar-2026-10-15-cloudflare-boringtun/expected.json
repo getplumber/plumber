@@ -1,0 +1,36 @@
+{
+  "source": "https://github.com/cloudflare/boringtun",
+  "commit": "6dcc889a95ad82400932f785d874421d70308195",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "master",
+  "branches": [
+    {
+      "name": "master",
+      "protected": true
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/on-push.yaml": "active",
+    ".github/workflows/semgrep.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High `actions-rs/toolchain@v1` and `taiki-e/install-action@cargo-hack` paths were judged overstated: a mutable third-party action in a CI job with no secret and no write token (or only an assumed one) gives code execution on a runner, Medium at most.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "actions-rs/toolchain@v1",
+        "tier": "medium"
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "taiki-e/install-action@cargo-hack",
+        "tier": "medium"
+      }
+    ]
+  }
+}

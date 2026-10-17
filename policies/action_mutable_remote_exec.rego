@@ -44,6 +44,7 @@ _signals contains sig if {
 		"verified": object.get(mre, "downloadVerified", false),
 		"runsOn": object.get(job, "runsOn", []),
 		"runsOnExpression": object.get(job, "runsOnExpression", false),
+		"container": object.get(job, "image", null) != null,
 	}
 }
 
@@ -60,6 +61,7 @@ _signals contains sig if {
 		"verified": object.get(mre, "downloadVerified", false),
 		"runsOn": [],
 		"runsOnExpression": false,
+		"container": false,
 	}
 }
 
@@ -83,11 +85,22 @@ deny contains finding if {
 # party the workflow merely names).
 default _guard_fields(_) := {}
 
-_guard_fields(sig) := {
-	"downloadGuard": sig.guard,
-	"runsOn": sig.runsOn,
-	"runsOnExpression": sig.runsOnExpression,
-} if sig.guard != ""
+_guard_fields(sig) := object.union(
+	{
+		"downloadGuard": sig.guard,
+		"runsOn": sig.runsOn,
+		"runsOnExpression": sig.runsOnExpression,
+	},
+	_container_fields(sig),
+) if sig.guard != ""
+
+# _container_fields carries `container: true` when the job runs its steps
+# inside a container (container:, job.image): the guard then checks the
+# container, not the hosted runner image, so the runner label proves
+# nothing about it (control/trust.go reads the anchor as unknown).
+default _container_fields(_) := {}
+
+_container_fields(sig) := {"container": true} if sig.container
 
 default _verified_fields(_) := {}
 

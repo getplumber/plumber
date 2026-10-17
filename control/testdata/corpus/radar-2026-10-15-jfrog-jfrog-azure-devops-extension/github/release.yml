@@ -1,0 +1,40 @@
+# Ported from .jfrog-pipelines/pipelines.release.yml (JFrog Pipelines is EOL)
+name: Release
+on:
+  workflow_dispatch:
+    inputs:
+      next_version:
+        description: "Version to release (e.g. 2.1.0)"
+        required: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      NEXT_VERSION: ${{ github.event.inputs.next_version }}
+      JFROG_CLI_BUILD_NAME: ecosystem-azure-devops-extension-release
+      JFROG_CLI_BUILD_NUMBER: ${{ github.run_number }}
+      JFROG_CLI_BUILD_PROJECT: ecosys
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: v2
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "16"
+
+      - name: Setup JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v4
+
+      - name: Run release script
+        env:
+          IL_AUTOMATION_TOKEN: ${{ secrets.IL_AUTOMATION_TOKEN }}
+          ARTIFACTORY_URL: ${{ secrets.ARTIFACTORY_URL }}
+          ARTIFACTORY_USER: ${{ secrets.ARTIFACTORY_USER }}
+          ARTIFACTORY_APIKEY: ${{ secrets.ARTIFACTORY_APIKEY }}
+          AZURE_DEVOPS_TOKEN: ${{ secrets.AZURE_DEVOPS_TOKEN }}
+        run: .github/scripts/release.sh

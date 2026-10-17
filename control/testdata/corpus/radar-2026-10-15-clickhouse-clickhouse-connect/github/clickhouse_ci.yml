@@ -1,0 +1,52 @@
+name: ClickHouse CI Tests
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '34 17 * * *'
+
+jobs:
+  head:
+    runs-on: ubuntu-26.04
+    name: ClickHouse CI Tests
+    env:
+      CLICKHOUSE_CONNECT_TEST_DOCKER: 'False'
+      CLICKHOUSE_CONNECT_TEST_FUZZ: 50
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v7
+        with:
+          python-version: 3.11
+      - name: Install pip
+        run: python -m pip install --upgrade pip
+      - name: Install Test Dependencies
+        run: pip install -r tests/test_requirements.txt
+      - name: Build cython extensions
+        run: python setup.py build_ext --inplace
+      - name: "Add distribution info"  #  This lets SQLAlchemy find entry points
+        run: pip install -e . --no-deps
+
+      - name: run ClickHouse Cloud tests
+        env:
+          CLICKHOUSE_CONNECT_TEST_PORT: 8443
+          CLICKHOUSE_CONNECT_TEST_CLOUD: 'True'
+          CLICKHOUSE_CONNECT_TEST_HOST: ${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_HOST_SMT_PROD }}
+          CLICKHOUSE_CONNECT_TEST_PASSWORD: ${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_PASSWORD_SMT_PROD }}
+          CLICKHOUSE_CONNECT_TEST_JWT_SECRET: ${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_JWT_DESERT_VM_43 }}
+          SQLALCHEMY_SILENCE_UBER_WARNING: 1
+        run: pytest tests/integration_tests -n 4
+
+      - name: Run ClickHouse Container (HEAD)
+        env:
+          CLICKHOUSE_CONNECT_TEST_CH_VERSION: head
+          COMPOSE_PROJECT_NAME: clickhouse-connect-ci
+        run: docker compose -f docker-compose.yml up -d --wait clickhouse
+      - name: Run HEAD tests
+        run: pytest tests/integration_tests -n 4
+      - name: remove HEAD container
+        if: ${{ always() && hashFiles('docker-compose.yml') != '' }}
+        env:
+          COMPOSE_PROJECT_NAME: clickhouse-connect-ci
+        run: docker compose -f docker-compose.yml down --volumes --remove-orphans

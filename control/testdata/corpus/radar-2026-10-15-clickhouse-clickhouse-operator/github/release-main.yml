@@ -1,0 +1,58 @@
+name: Publish main branch artifact
+on:
+  push:
+    branches: [ main ]
+env:
+  REGISTRY: ghcr.io
+  IMAGE_REPO: ghcr.io/clickhouse
+
+permissions:
+  contents: read
+
+jobs:
+  release-main:
+    permissions:
+      contents: read
+      packages: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-tags: true
+          fetch-depth: '0'
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+      - name: Log in to the Container registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install jq
+        uses: dcarbone/install-jq-action@4fcb5062d7ce9bc4382d1a352d19ba3ba2c317c1 # v4.0.1
+      - name: Build operator image
+        run: make docker-buildx-latest
+      - name: Install Helm
+        run: curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      - name: Set VERSION
+        run: |
+          FULL_VER=$(make -s print-full-version)
+          echo "VERSION=${FULL_VER#v}" >> "$GITHUB_ENV"
+      - name: Package and push helm charts
+        run: |
+          helm registry login ghcr.io -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }}
+          make push-helmchart push-cluster-chart
+      - name: Build and push fast bundle
+        run: make bundle bundle-buildx
+      - name: Build catalog
+        run: make catalog-buildx
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - name: Mark catalog as latest
+        run: make catalog-push-latest

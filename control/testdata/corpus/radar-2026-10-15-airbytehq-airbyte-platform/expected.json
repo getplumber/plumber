@@ -1,0 +1,50 @@
+{
+  "source": "https://github.com/airbytehq/airbyte-platform",
+  "commit": "2043cf7640446e97eb70f1b28627274168d9504b",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/gradle.yml": "active",
+    ".github/workflows/label-prs-by-context.yml": "active",
+    ".github/workflows/create-oss-pr-snapshot-in-cloud.yml": "active",
+    ".github/workflows/create-cloud-pr-command.yml": "active",
+    ".github/workflows/label-pr-by-filepath.yml": "active",
+    ".github/workflows/auto-close-prs.yml": "active",
+    ".github/workflows/terminate-zombie-build-instances.yml": "disabled_manually"
+  },
+  "workflowStatesKnown": true,
+  "note": "Three High paths were judged overstated: `stefanluptak/check-branch-up-to-date@v1` and `xt0rted/pull-request-comment-branch@v1` are output-only actions with no secret, Medium at most; `dorny/paths-filter@v2` in `gradle/platform-build` holds at High (two secrets, push, publish and deploy). Read against the workflows: of the `check` job's outputs, only `pull_request_branch` (set from `xt0rted/pull-request-comment-branch`) reaches the `GH_PAT_MAINTENANCE_OCTAVIA` step, as part of the `static-args` of `peter-evans/slash-command-dispatch`; `branch_up_to_date` (from `stefanluptak/check-branch-up-to-date`) is only compared in step `if:`s and `repo_full_name` comes from an earlier shell step. The dispatch action forwards `static-args` as the payload of a repository dispatch to another repository and executes nothing here, so under section 6.3 that `with:` crosses as unknown, not as executed: both actions stay at Medium at most.",
+  "expect": {
+    "paths": [
+      {
+        "entryKind": "mutable_dependency",
+        "tier": "high",
+        "subjectContains": "dorny/paths-filter@v2"
+      }
+    ],
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "stefanluptak/check-branch-up-to-date@v1",
+        "tier": "medium",
+        "pending": "the handoff kind is decided per pair of jobs, not per output: `branch_up_to_date` is only compared in step `if:`s of the dependent, yet it crosses as executed because another output of the same job is interpolated, so the action that sets only the compared output reaches the dependent step's secret."
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "xt0rted/pull-request-comment-branch@v1",
+        "tier": "medium",
+        "pending": "a `needs` output interpolated into the `with:` of an action that does not execute it (`peter-evans/slash-command-dispatch` forwards `static-args` as a dispatch payload) is read as executed, so the dependent step's secret joins the reach where section 6.3 crosses it as unknown."
+      }
+    ]
+  }
+}

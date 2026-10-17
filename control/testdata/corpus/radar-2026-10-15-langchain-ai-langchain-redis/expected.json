@@ -1,0 +1,47 @@
+{
+  "source": "https://github.com/langchain-ai/langchain-redis",
+  "commit": "042f2112c8c5b958c3b95221a1b602ecd0c4a185",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "copilot",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/_codespell.yml": "active",
+    ".github/workflows/_compile_integration_test.yml": "active",
+    ".github/workflows/_lint.yml": "active",
+    ".github/workflows/_release.yml": "active",
+    ".github/workflows/_test.yml": "active",
+    ".github/workflows/_test_release.yml": "active",
+    ".github/workflows/check_diffs.yml": "active",
+    ".github/workflows/claude.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "`_codespell.yml` is a `workflow_call`-only workflow that no workflow of the repository calls, so its job never runs and the High path through `codespell-project/actions-codespell@v2` was judged false; the High `Ana06/get-changed-files` path in `check_diffs/build` was judged overstated: a compromised action runs code on a runner with a read-only token and no secret, Medium at most.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "codespell-project/actions-codespell@v2",
+        "tier": "none"
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "Ana06/get-changed-files@v2.3.0",
+        "tier": "medium"
+      }
+    ]
+  }
+}

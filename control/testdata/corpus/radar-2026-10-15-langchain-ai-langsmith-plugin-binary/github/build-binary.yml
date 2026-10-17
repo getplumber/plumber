@@ -1,0 +1,438 @@
+name: Build Binary
+
+on:
+  workflow_call:
+    inputs:
+      config:
+        description: The plugin's binary config, relative to its repository root.
+        type: string
+        default: binary.config.json
+      node-version:
+        type: string
+        default: 26.8.2
+      bun-version:
+        type: string
+        default: 1.4.2
+      binary-directory:
+        description: The folder in the plugin's repository the signed binaries are committed to.
+        type: string
+        default: binary
+      signing-environment:
+        description: The deployment environment holding the Apple credentials.
+        type: string
+        default: macos-signing
+      release-notes:
+        description: A line to add to the notes of a release this workflow creates.
+        type: string
+        default: ""
+    secrets:
+      APPLE_API_ISSUER:
+        required: false
+      APPLE_API_KEY:
+        required: false
+      APPLE_API_KEY_ID:
+        required: false
+      CSC_KEY_PASSWORD:
+        required: false
+      CSC_LINK:
+        required: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: Read the Plugin's Binary Config
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      executable: ${{ steps.config.outputs.executable }}
+      host-binary: ${{ steps.config.outputs.host-binary }}
+      cross-binary: ${{ steps.config.outputs.cross-binary }}
+      output-directory: ${{ steps.config.outputs.output-directory }}
+      publishing: ${{ steps.gate.outputs.publishing }}
+      prerelease: ${{ steps.gate.outputs.prerelease }}
+      target-branch: ${{ steps.target.outputs.branch }}
+      commit-directly: ${{ steps.target.outputs.commit-directly }}
+    steps:
+      - name: Check Out the Plugin Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check Out the Scripts This Workflow Runs
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: pipeline
+
+      - name: Decide Whether This Run Is Releasing
+        id: gate
+        env:
+          PUBLISHING: ${{ startsWith(github.ref, 'refs/tags/') }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          echo "publishing=$PUBLISHING" >> "$GITHUB_OUTPUT"
+          case "$TAG" in
+            *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Read the Binary Config
+        id: config
+        env:
+          CONFIG: ${{ inputs.config }}
+        run: node pipeline/dist/workflow/read-config.js
+
+      - name: Check the Version Matches the Tag
+        if: steps.gate.outputs.publishing == 'true'
+        env:
+          CONFIG: ${{ inputs.config }}
+          TAG: ${{ github.ref_name }}
+        run: node pipeline/dist/workflow/check-version.js
+
+      - name: Find the Branch This Tag Belongs To
+        id: target
+        if: steps.gate.outputs.publishing == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          PRERELEASE: ${{ steps.gate.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          if [ "${PRERELEASE:-true}" != "true" ]; then
+            DEFAULT=$(gh api "repos/$GH_REPO" --jq .default_branch)
+            COMMIT=$(gh api "repos/$GH_REPO/commits/$TAG" --jq .sha)
+            HEADS=$(gh api "repos/$GH_REPO/commits/$COMMIT/branches-where-head" --jq '.[].name')
+            if [ -z "$HEADS" ]; then
+              echo "$TAG is not at the tip of any branch, so these binaries have nowhere to land. Move the tag to the tip of the branch carrying the version bump, then rerun." >&2
+              exit 1
+            fi
+            BRANCH="$HEADS"
+            if [ "$(printf '%s\n' "$HEADS" | wc -l | tr -d ' ')" -gt 1 ]; then
+              if printf '%s\n' "$HEADS" | grep -qx -- "$DEFAULT"; then
+                BRANCH="$DEFAULT"
+              else
+                echo "$TAG is at the tip of more than one branch: $(printf '%s\n' "$HEADS" | tr '\n' ' '). Nothing can tell which one these binaries belong on. Put the version bump on one branch only, then retag." >&2
+                exit 1
+              fi
+            fi
+            echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+            if [ "$BRANCH" = "$DEFAULT" ]; then
+              echo "commit-directly=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "commit-directly=true" >> "$GITHUB_OUTPUT"
+            fi
+            exit 0
+          fi
+          BRANCH="beta-${TAG%%-*}"
+          if ! LOOKUP=$(gh api "repos/$GH_REPO/branches/$BRANCH" --silent 2>&1); then
+            case "$LOOKUP" in
+              *"Branch not found"*)
+                echo "$TAG belongs to $BRANCH, which does not exist. Cut $BRANCH off the default branch, bump the version on it, then retag." >&2
+                ;;
+              "") echo "Looking $BRANCH up failed and GitHub said nothing about why. Rerun the release, and check https://githubstatus.com if it keeps failing." >&2 ;;
+              *) echo "$LOOKUP" >&2 ;;
+            esac
+            exit 1
+          fi
+          DEFAULT=$(gh api "repos/$GH_REPO" --jq .default_branch)
+          STANDING=$(gh api "repos/$GH_REPO/compare/$DEFAULT...$BRANCH" --jq .status)
+          case "$STANDING" in
+            ahead|identical) ;;
+            *)
+              echo "$BRANCH is missing work that is already on $DEFAULT, so these binaries would land somewhere nothing matches them. Merge $DEFAULT into $BRANCH, then retag." >&2
+              exit 1
+              ;;
+          esac
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "commit-directly=false" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build the Unsigned Binaries
+    needs: plan
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - name: Check Out the Plugin Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - name: Install Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ inputs.node-version }}
+          architecture: arm64
+          cache: pnpm
+      - name: Install Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ inputs.bun-version }}
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build the Unsigned Binaries
+        env:
+          CONFIG: ${{ inputs.config }}
+        run: pnpm build:binary -- --config "$CONFIG" --arch=all
+      - name: Test the Binary
+        run: pnpm test:binary
+      - name: Upload the Unsigned arm64 Binary
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ needs.plan.outputs.executable }}-darwin-arm64-unsigned
+          path: ${{ needs.plan.outputs.host-binary }}
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload the Unsigned x64 Binary
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ needs.plan.outputs.executable }}-darwin-x64-unsigned
+          path: ${{ needs.plan.outputs.cross-binary }}
+          if-no-files-found: error
+          retention-days: 7
+
+  run-on-intel:
+    name: Run the x64 Binary on Intel
+    needs: [plan, build]
+    runs-on: macos-26-intel
+    timeout-minutes: 45
+    steps:
+      - name: Check Out the Plugin Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - name: Install Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ inputs.node-version }}
+          architecture: x64
+          cache: pnpm
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Download the Unsigned x64 Binary
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.plan.outputs.executable }}-darwin-x64-unsigned
+          path: ${{ needs.plan.outputs.output-directory }}
+      - name: Restore the Executable Bit and Report What Was Built
+        env:
+          BINARY: ${{ needs.plan.outputs.host-binary }}
+        run: |
+          chmod +x "$BINARY"
+          arch
+          file "$BINARY"
+      - name: Test the Binary
+        run: pnpm test:binary
+
+  sign:
+    name: Sign and Notarize the ${{ matrix.arch }} Binary
+    needs: [plan, build]
+    if: needs.plan.outputs.publishing == 'true'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    environment: ${{ inputs.signing-environment }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-26
+          - arch: x64
+            runner: macos-26-intel
+    steps:
+      - name: Check Out the Plugin Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - name: Install Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ inputs.node-version }}
+          architecture: ${{ matrix.arch }}
+          cache: pnpm
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Download the Unsigned Binary
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.plan.outputs.executable }}-darwin-${{ matrix.arch }}-unsigned
+          path: ${{ needs.plan.outputs.output-directory }}
+      - name: Restore the Executable Bit
+        env:
+          BINARY: ${{ needs.plan.outputs.host-binary }}
+        run: chmod +x "$BINARY"
+      - name: Sign and Notarize the Binary
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CONFIG: ${{ inputs.config }}
+        run: pnpm sign:binary -- --config "$CONFIG"
+      - name: Test the Signed Binary
+        run: pnpm test:binary
+      - name: Upload the Signed Binary
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ needs.plan.outputs.executable }}-darwin-${{ matrix.arch }}-signed
+          path: ${{ needs.plan.outputs.host-binary }}
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish the Binaries to the Release
+    needs: [plan, build, run-on-intel, sign]
+    if: needs.plan.outputs.publishing == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - name: Download the Signed Binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: ${{ needs.plan.outputs.executable }}-darwin-*-signed
+          path: signed
+      - name: Attach the Binaries to the Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          EXECUTABLE: ${{ needs.plan.outputs.executable }}
+          PRERELEASE: ${{ needs.plan.outputs.prerelease }}
+          EXTRA_NOTES: ${{ inputs.release-notes }}
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          ASSETS=()
+          for ARCH in arm64 x64; do
+            NAME="$EXECUTABLE-darwin-$ARCH-$TAG"
+            SIGNED="signed/$EXECUTABLE-darwin-$ARCH-signed/$EXECUTABLE"
+            if [ ! -f "$SIGNED" ]; then
+              echo "The $ARCH signing job uploaded no binary. Nothing is published." >&2
+              exit 1
+            fi
+            mv "$SIGNED" "release/$NAME"
+            (cd release && sha256sum "$NAME" > "$NAME.sha256")
+            ASSETS+=("release/$NAME" "release/$NAME.sha256")
+          done
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${ASSETS[@]}" --clobber
+            exit 0
+          fi
+
+          cat > release/notes.md <<'NOTES'
+          These macOS arm64 and x64 binaries are signed and notarized. The plugin carries the
+          one matching your Mac, so there is nothing to download by hand. Each binary has a
+          SHA-256 sidecar if you want to check it.
+          NOTES
+          if [ -n "$EXTRA_NOTES" ]; then printf '\n%s\n' "$EXTRA_NOTES" >> release/notes.md; fi
+          gh release create "$TAG" "${ASSETS[@]}" \
+            --draft \
+            --verify-tag \
+            --prerelease="$PRERELEASE" \
+            --generate-notes \
+            --notes-file release/notes.md
+
+  propose:
+    name: Land the Binaries on the Branch This Tag Belongs To
+    needs: [plan, publish]
+    if: needs.plan.outputs.publishing == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Check Out the Branch the Binaries Belong On
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.target-branch }}
+      - name: Download the Signed Binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: ${{ needs.plan.outputs.executable }}-darwin-*-signed
+          path: signed
+      - name: Land the Binaries on the Branch This Tag Belongs To
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BASE: ${{ needs.plan.outputs.target-branch }}
+          DIRECTLY: ${{ needs.plan.outputs.commit-directly }}
+          DIRECTORY: ${{ inputs.binary-directory }}
+          EXECUTABLE: ${{ needs.plan.outputs.executable }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ ! -d "$DIRECTORY" ]; then
+            echo "$BASE has no $DIRECTORY folder. Point binary-directory at the folder the plugin already runs its builds from, then rerun." >&2
+            exit 1
+          fi
+          BRANCH="binary/$TAG"
+          BODY="${RUNNER_TEMP:-.}/pull-request-body.md"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          EVIDENCE=()
+          for ARCH in arm64 x64; do
+            SIGNED="signed/$EXECUTABLE-darwin-$ARCH-signed/$EXECUTABLE"
+            if [ ! -f "$SIGNED" ]; then
+              echo "The $ARCH signing job uploaded no binary. Nothing lands on $BASE." >&2
+              exit 1
+            fi
+            CARRIED="$DIRECTORY/$EXECUTABLE-darwin-$ARCH"
+            cp "$SIGNED" "$CARRIED"
+            chmod +x "$CARRIED"
+            EVIDENCE+=("- [x] $ARCH is $(wc -c < "$CARRIED" | tr -d ' ') bytes, sha256 $(sha256sum "$CARRIED" | cut -d' ' -f1)")
+          done
+
+          git add -- "$DIRECTORY"
+          if git diff --cached --quiet; then
+            echo "$BASE already carries the $TAG binaries. Nothing is pushed."
+            exit 0
+          fi
+          git commit -m "chore(binary): Add the Signed Binaries for $TAG"
+
+          if [ "${DIRECTLY:-false}" = "true" ]; then
+            git push origin "HEAD:refs/heads/$BASE"
+            echo "$BASE now carries the $TAG binaries beside its version bump, so one merge ships both."
+            exit 0
+          fi
+
+          git push --force origin "HEAD:refs/heads/$BRANCH"
+
+          RELEASE=$(gh release view "$TAG" --json url --jq .url 2>/dev/null || true)
+          if [ -z "$RELEASE" ]; then RELEASE="the $TAG release"; fi
+          {
+            echo "# What"
+            echo
+            echo "- Adds the macOS builds this beta ships with"
+            echo "- Replaces the pair the previous beta left behind"
+            echo
+            echo "# Why"
+            echo
+            echo "- Anyone on the beta sees this version in their plugin list, which is the list they trust"
+            echo "- Nobody on the default branch moves, since the binaries never leave the beta line"
+            echo
+            echo "# Test Plan"
+            echo
+            echo "- [x] Built from tag $TAG, run on a real Intel Mac, signed and notarized by Apple, then attached to $RELEASE"
+            printf '%s\n' "${EVIDENCE[@]}"
+          } > "$BODY"
+
+          if gh pr view "$BRANCH" --json url --jq .url; then
+            echo "The pull request for $TAG was already open, and now carries the newest binaries."
+            exit 0
+          fi
+          gh pr create \
+            --base "$BASE" \
+            --head "$BRANCH" \
+            --title "chore(binary): Add the Signed Binaries for $TAG" \
+            --body-file "$BODY"

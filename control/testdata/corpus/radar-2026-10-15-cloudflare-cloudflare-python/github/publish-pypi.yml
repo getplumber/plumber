@@ -1,0 +1,30 @@
+# This workflow is triggered when a GitHub release is created.
+# It can also be run manually to re-publish to PyPI in case it failed for some reason.
+# You can run this workflow by navigating to https://www.github.com/cloudflare/cloudflare-python/actions/workflows/publish-pypi.yml
+name: Publish PyPI
+on:
+  workflow_dispatch:
+
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    name: publish
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+        with:
+          version: '0.9.13'
+
+      - name: Publish to PyPI
+        run: |
+          bash ./bin/publish-pypi
+        env:
+          PYPI_TOKEN: ${{ secrets.CLOUDFLARE_PYPI_TOKEN || secrets.PYPI_TOKEN }}

@@ -1,0 +1,52 @@
+name: test EVD
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-evd:
+    name: Test EVD
+    runs-on: ubuntu-latest
+    env:
+      JFROG_CLI_KEY_ALIAS: ${{ vars.JFROG_CLI_KEY_ALIAS }}
+      JFROG_CLI_SIGNING_KEY: ${{ secrets.JFROG_CLI_SIGNING_KEY }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup JFrog CLI
+      uses: jfrog/setup-jfrog-cli@v4
+      with:
+        version: latest
+      env:
+        JF_URL: ${{ vars.JF_URL }}
+        JF_USER: ${{ vars.JF_USER }}
+        JF_ACCESS_TOKEN: ${{ secrets.JF_ACCESS_TOKEN }}
+
+    - name: Create evidence default key 
+      run: |
+        echo "📋 Creating evidence from test results..."
+        echo '{name: "test", key: "test"}' > test-report.json
+        jf evd create \
+          --subject-repo-path dev-generic-local/Target.file \
+          --predicate-type https://cypress.io/evidence/e2e/v1 --predicate test-report.json  
+
+    - name: Create evidence key from pbcopy
+      run: |
+        echo "📋 Creating evidence from test results..."
+        echo '{name: "test", key: "test"}' > test-report.json
+        jf evd create \
+          --subject-repo-path dev-generic-local/Target.file \
+          --predicate-type https://cypress.io/evidence/e2e/v1 --predicate test-report.json  \
+          --key ${{secrets.KEY1}} 
+
+
+    - name: Create evidence key terminal
+      run: |
+        echo "📋 Creating evidence from test results..."
+        echo '{name: "test", key: "test"}' > test-report.json
+        jf evd create \
+          --subject-repo-path dev-generic-local/Target.file \
+          --predicate-type https://cypress.io/evidence/e2e/v1 --predicate test-report.json  \
+          --key ${{secrets.KEY}}

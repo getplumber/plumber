@@ -1,0 +1,56 @@
+name: Test
+permissions:
+  contents: read
+  pull-requests: write
+on:
+  pull_request: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.x
+          cache: "npm"
+
+      - run: npm ci
+      - run: npm run build
+      - run: npm run lint
+      - run: npm run test -- --coverage
+      - name: Coverage summary
+        if: always() && github.event_name == 'pull_request'
+        uses: davelosert/vitest-coverage-report-action@v2
+        with:
+          json-summary-path: coverage/coverage-summary.json
+          json-final-path: coverage/coverage-final.json
+
+      # Template smoke tests — ensure the starter template stays valid
+      - name: Template — verify chanfana version is in sync
+        run: |
+          node -e "
+            const s = require('semver');
+            const v = require('./package.json').version;
+            const r = require('./template/package.json').dependencies.chanfana;
+            if (!s.satisfies(v, r)) {
+              console.error('Template chanfana range ' + r + ' does not match current version ' + v);
+              console.error('Update template/package.json to include the current version.');
+              process.exit(1);
+            }
+            console.log('OK: ' + v + ' satisfies ' + r);
+          "
+      - name: Template — install dependencies
+        run: npm ci
+        working-directory: template
+      - name: Template — typecheck
+        run: npm run typecheck
+        working-directory: template
+      - name: Template — tests
+        run: npm test
+        working-directory: template

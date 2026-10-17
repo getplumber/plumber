@@ -1,0 +1,306 @@
+name: 'Rust Binding CI'
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'rust/**'
+      - 'clickhouse_connect/driver/**'
+      - 'clickhouse_connect/datatypes/**'
+      - 'clickhouse_connect/driverc/**'
+      - 'setup.py'
+      - 'pyproject.toml'
+      - 'tests/conftest.py'
+      - 'tests/test_requirements.txt'
+      - 'tests/helpers.py'
+      - 'tests/integration_tests/conftest.py'
+      - 'tests/integration_tests/test_rust_codec*.py'
+      - 'tests/unit_tests/test_driver/test_rust*.py'
+      - 'clickhouse_connect/cc_sqlalchemy/**'
+      - 'clickhouse_connect/dbapi/**'
+      - 'tests/integration_tests/test_sqlalchemy/**'
+      - 'tests/unit_tests/test_driver/test_async_client*.py'
+      - 'tests/unit_tests/test_sqlalchemy/**'
+      - 'tests/unit_tests/test_streaming_source.py'
+      - '.github/workflows/binding_ci.yml'
+      - '.github/workflows/clickhouse-versions.yml'
+      - '.github/clickhouse-versions.json'
+      - 'docker-compose.yml'
+      - '.docker/**'
+      - '.github/scripts/qualify_core_wheel.py'
+  push:
+    branches:
+      - main
+    paths:
+      - 'rust/**'
+      - 'clickhouse_connect/driver/**'
+      - 'clickhouse_connect/datatypes/**'
+      - 'clickhouse_connect/driverc/**'
+      - 'setup.py'
+      - 'pyproject.toml'
+      - 'tests/conftest.py'
+      - 'tests/test_requirements.txt'
+      - 'tests/helpers.py'
+      - 'tests/integration_tests/conftest.py'
+      - 'tests/integration_tests/test_rust_codec*.py'
+      - 'tests/unit_tests/test_driver/test_rust*.py'
+      - 'clickhouse_connect/cc_sqlalchemy/**'
+      - 'clickhouse_connect/dbapi/**'
+      - 'tests/integration_tests/test_sqlalchemy/**'
+      - 'tests/unit_tests/test_driver/test_async_client*.py'
+      - 'tests/unit_tests/test_sqlalchemy/**'
+      - 'tests/unit_tests/test_streaming_source.py'
+      - '.github/workflows/binding_ci.yml'
+      - '.github/workflows/clickhouse-versions.yml'
+      - '.github/clickhouse-versions.json'
+      - 'docker-compose.yml'
+      - '.docker/**'
+      - '.github/scripts/qualify_core_wheel.py'
+  workflow_dispatch:
+
+jobs:
+  clickhouse-versions:
+    uses: ./.github/workflows/clickhouse-versions.yml
+
+  rust-checks:
+    runs-on: ubuntu-26.04
+    name: Cargo fmt + clippy + tests
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      # pinned so new stable clippy lints don't break unrelated PRs, bump deliberately
+      - uses: dtolnay/rust-toolchain@1.97.0
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Format check
+        working-directory: rust
+        run: cargo fmt --all -- --check
+      - name: Clippy (deny warnings)
+        working-directory: rust
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Rust ownership and validation tests
+        working-directory: rust
+        run: cargo test --release --locked
+
+  binding-build:
+    runs-on: ubuntu-26.04
+    name: Build binding and run unit tests
+    needs: [rust-checks, clickhouse-versions]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Start ClickHouse (${{ needs.clickhouse-versions.outputs.default }}) in Docker
+        env:
+          CLICKHOUSE_CONNECT_TEST_CH_VERSION: ${{ needs.clickhouse-versions.outputs.default }}
+          COMPOSE_PROJECT_NAME: clickhouse-connect-binding-build
+        run: docker compose -f docker-compose.yml up -d --wait clickhouse
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Install Test Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r tests/test_requirements.txt
+          pip install maturin uv
+      - name: Build cython extensions
+        run: python setup.py build_ext --inplace
+      - name: "Add distribution info"  #  This lets SQLAlchemy find entry points
+        run: pip install -e . --no-deps
+      - name: Build and install the clickhouse-connect-core wheel
+        run: |
+          maturin build --release --locked -m rust/ch-core-py/Cargo.toml -o core-wheelhouse
+          pip install core-wheelhouse/*.whl
+      - name: Extension smoke check
+        run: python -c "import _ch_core; print(_ch_core.__version__, _ch_core.BINDING_API_VERSION, _ch_core.COLUMN_BUFFER_API_VERSION)"
+      - name: Run binding tests
+        run: pytest rust/ch-core-py/tests -n 4
+      - name: Run unit tests
+        run: pytest tests/unit_tests -n 4
+      - name: Build the driver wheel
+        run: uv build --wheel --out-dir driver-wheelhouse
+      - name: Upload the driver wheel
+        uses: actions/upload-artifact@v7
+        with:
+          name: driver-wheelhouse
+          path: driver-wheelhouse/*.whl
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload the core wheel
+        uses: actions/upload-artifact@v7
+        with:
+          name: core-wheelhouse
+          path: core-wheelhouse/*.whl
+          if-no-files-found: error
+          retention-days: 7
+      - name: Stop ClickHouse
+        if: ${{ always() && hashFiles('docker-compose.yml') != '' }}
+        env:
+          COMPOSE_PROJECT_NAME: clickhouse-connect-binding-build
+        run: docker compose -f docker-compose.yml down --volumes --remove-orphans
+
+  binding-tests:
+    runs-on: ubuntu-26.04
+    name: Rust codec integration tests CH=${{ matrix.clickhouse-version }}
+    needs: [binding-build, clickhouse-versions]
+    strategy:
+      fail-fast: false
+      matrix:
+        clickhouse-version: ${{ fromJSON(needs.clickhouse-versions.outputs.matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Start ClickHouse (${{ matrix.clickhouse-version }}) in Docker
+        env:
+          CLICKHOUSE_CONNECT_TEST_CH_VERSION: ${{ matrix.clickhouse-version }}
+          COMPOSE_PROJECT_NAME: clickhouse-connect-binding-ci
+        run: docker compose -f docker-compose.yml up -d --wait clickhouse
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install Test Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r tests/test_requirements.txt
+      - name: Build cython extensions
+        run: python setup.py build_ext --inplace
+      - name: "Add distribution info"  #  This lets SQLAlchemy find entry points
+        run: pip install -e . --no-deps
+      - name: Download the core wheel
+        uses: actions/download-artifact@v8
+        with:
+          name: core-wheelhouse
+          path: core-wheelhouse
+      - name: Install the clickhouse-connect-core wheel
+        run: pip install core-wheelhouse/*.whl
+      - name: Extension smoke check
+        run: python -c "import _ch_core; print(_ch_core.__version__, _ch_core.BINDING_API_VERSION, _ch_core.COLUMN_BUFFER_API_VERSION)"
+      - name: Run rust codec integration tests
+        env:
+          CLICKHOUSE_CONNECT_TEST_DOCKER: 'False'
+        run: pytest tests/integration_tests/test_rust_codec.py tests/integration_tests/test_rust_codec_contract.py -n 4
+      - name: Stop ClickHouse
+        if: ${{ always() && hashFiles('docker-compose.yml') != '' }}
+        env:
+          COMPOSE_PROJECT_NAME: clickhouse-connect-binding-ci
+        run: docker compose -f docker-compose.yml down --volumes --remove-orphans
+
+  installed-contract:
+    runs-on: ubuntu-26.04
+    name: Installed Rust contract (${{ matrix.profile }})
+    needs: [binding-build, clickhouse-versions]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - profile: bare
+            packages: ''
+          - profile: numpy
+            packages: 'numpy'
+          - profile: pandas2
+            packages: 'numpy pandas>=2.2,<3'
+          - profile: pandas3
+            packages: 'numpy pandas>=3,<4'
+          - profile: pandas2-arrow
+            packages: 'numpy pandas>=2.2,<3 pyarrow'
+          - profile: pandas3-arrow
+            packages: 'numpy pandas>=3,<4 pyarrow'
+    steps:
+      - uses: actions/checkout@v7
+      - name: Start the oldest supported ClickHouse from the integration matrix
+        env:
+          CLICKHOUSE_CONNECT_TEST_CH_VERSION: ${{ needs.clickhouse-versions.outputs.default }}
+          COMPOSE_PROJECT_NAME: clickhouse-connect-installed-contract
+        run: docker compose -f docker-compose.yml up -d --wait clickhouse
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: actions/download-artifact@v8
+        with:
+          name: core-wheelhouse
+          path: core-wheelhouse
+      - uses: actions/download-artifact@v8
+        with:
+          name: driver-wheelhouse
+          path: driver-wheelhouse
+      - name: Install only the selected runtime dependencies
+        env:
+          CONTRACT_PACKAGES: ${{ matrix.packages }}
+        run: |
+          uv venv "$RUNNER_TEMP/contract-venv"
+          uv pip install --python "$RUNNER_TEMP/contract-venv/bin/python" \
+            driver-wheelhouse/*.whl core-wheelhouse/*.whl aiohttp pytest pytest-asyncio $CONTRACT_PACKAGES
+      - name: Run installed contracts outside the checkout
+        env:
+          CLICKHOUSE_CONNECT_TEST_INSTALLED_PROFILE: ${{ matrix.profile }}
+          CLICKHOUSE_CONNECT_TEST_DOCKER: 'False'
+        run: |
+          mkdir -p "$RUNNER_TEMP/installed-contract"
+          cp -R tests "$RUNNER_TEMP/installed-contract/tests"
+          cd "$RUNNER_TEMP/installed-contract"
+          unset PYTHONPATH
+          status=0
+          for use_c in 1 0; do
+            CLICKHOUSE_CONNECT_USE_C=$use_c timeout --kill-after=10s 180s "$RUNNER_TEMP/contract-venv/bin/python" -m pytest \
+              tests/integration_tests/test_rust_codec_contract.py \
+              tests/unit_tests/test_driver/test_rustcodec_lifecycle.py tests/unit_tests/test_streaming_source.py -q || status=1
+          done
+          exit "$status"
+      - name: Stop ClickHouse
+        if: ${{ always() && hashFiles('docker-compose.yml') != '' }}
+        env:
+          COMPOSE_PROJECT_NAME: clickhouse-connect-installed-contract
+        run: docker compose -f docker-compose.yml down --volumes --remove-orphans
+
+  binding-freethreaded:
+    name: Core binding tests (Python 3.14t, GIL off)
+    runs-on: ubuntu-26.04
+    needs: rust-checks
+    env:
+      PYTHON_GIL: '0'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14t'
+      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: dtolnay/rust-toolchain@1.97.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Build the experimental core wheel
+        run: uvx --from 'maturin>=1.7,<2' maturin build --release --locked -m rust/ch-core-py/Cargo.toml -o core-wheelhouse -i "$(command -v python)"
+      - name: Build the portable driver wheel
+        env:
+          CLICKHOUSE_CONNECT_SKIP_CYTHON: '1'
+        run: uv build --wheel --out-dir driver-wheelhouse
+      - name: Install the built wheels and binding test dependencies
+        run: uv pip install --system core-wheelhouse/*.whl driver-wheelhouse/*.whl pytest pytest-asyncio pytest-dotenv pytest-xdist numpy
+      - name: Run binding tests with the GIL disabled
+        run: python -m pytest rust/ch-core-py/tests -n 4
+      - name: Qualify with the GIL disabled and without Arrow
+        run: |
+          python .github/scripts/qualify_core_wheel.py \
+            --core-wheels core-wheelhouse --driver-wheel driver-wheelhouse/*-py3-none-any.whl \
+            --output "$RUNNER_TEMP/core-qualification" --allow-source-lz4
+      - name: Upload qualification records
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: qualification-linux-3.14t
+          path: |
+            ${{ runner.temp }}/core-qualification/*.json
+            ${{ runner.temp }}/core-qualification/*.xml
+          if-no-files-found: warn

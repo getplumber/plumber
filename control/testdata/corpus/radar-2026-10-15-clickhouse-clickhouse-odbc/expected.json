@@ -1,0 +1,61 @@
+{
+  "source": "https://github.com/ClickHouse/clickhouse-odbc",
+  "commit": "81e12df5de7d90ce0b770a4218c8977348e30fba",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "master",
+  "branches": [
+    {
+      "name": "master",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "copilot",
+      "known": true
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/Coverage.yml": "active",
+    ".github/workflows/Linux.yml": "active",
+    ".github/workflows/Sanitizer.yml": "active",
+    ".github/workflows/Windows.yml": "active",
+    ".github/workflows/WindowsSigning.yml": "active",
+    ".github/workflows/debug.yml": "active",
+    ".github/workflows/docs_sync.yml": "active",
+    ".github/workflows/docs_verify.yml": "active",
+    ".github/workflows/macOS.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "defaultTokenWrite": "false",
+  "defaultTokenSource": "log",
+  "note": "Four High paths were judged overstated: `hoverkraft-tech/compose-action@v2.0.1` and `Vampire/setup-wsl@v5` reach their jobs' secrets but no write token (read-only default, run log), High at most; `curl https://clickhouse.com | bash` is the organisation's own installer, Low; `hmarr/debug-action@v3` reaches the runner only, Medium at most.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "hoverkraft-tech/compose-action@v2.0.1",
+        "tier": "high"
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "Vampire/setup-wsl@v5",
+        "tier": "high"
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "https://clickhouse.com",
+        "tier": "low",
+        "pending": "the spec holds a first-party fetch (the organisation's own installer domain) at the insider ceiling, Medium (section 8.1), while the assessment argued Low: the repository already trusts its own release infrastructure."
+      },
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "hmarr/debug-action@v3",
+        "tier": "medium"
+      }
+    ]
+  }
+}

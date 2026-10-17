@@ -1,0 +1,67 @@
+name: Cloud Tests (TCP) by label
+
+# Runs tests-cloud-tcp.yml on a pull request, including one from a fork, when a maintainer adds the
+# tests:run-cloud label. That runs the pull request's code with the Cloud credentials, so review the code before
+# adding the label. The run uses the head commit at the time of labeling, and removes the label when it ends, so a
+# later push needs a new label.
+on:
+  # Not pull_request: that trigger withholds secrets from a fork. pull_request_target runs this file from the base
+  # branch, so a pull request cannot change the checks below.
+  pull_request_target:
+    types: [labeled]
+    branches: [main, tcp-client, "tcp/**"]
+
+permissions: {}
+
+jobs:
+  authorize:
+    name: Check the labeler's access
+    if: github.event.label.name == 'tests:run-cloud'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      # Anyone with triage access can add a label. Only write access may release the credentials.
+      - name: Require write access
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          LABELER: ${{ github.event.sender.login }}
+        run: |
+          role=$(gh api "repos/$REPO/collaborators/$LABELER/permission" --jq .role_name)
+          case "$role" in
+            admin|maintain|write) ;;
+            *) echo "::error::$LABELER has role '$role'; tests:run-cloud needs write access."; exit 1 ;;
+          esac
+
+  cloud-tcp:
+    name: Cloud (TCP)
+    needs: authorize
+    uses: $/.github/workflows/tests-cloud-tcp.yml
+    permissions:
+      contents: read
+    secrets:
+      CLICKHOUSE_CLOUD_HOST: ${{ secrets.CLICKHOUSE_CLOUD_HOST }}
+      CLICKHOUSE_CLOUD_USER: ${{ secrets.CLICKHOUSE_CLOUD_USER }}
+      CLICKHOUSE_CLOUD_PASSWORD: ${{ secrets.CLICKHOUSE_CLOUD_PASSWORD }}
+    with:
+      # The head commit named by the label event, not the base branch that github.ref names.
+      ref: ${{ github.event.pull_request.head.sha }}
+
+  remove-label:
+    name: Remove the tests:run-cloud label
+    needs: [authorize, cloud-tcp]
+    if: always() && github.event.label.name == 'tests:run-cloud'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # A separate job, so that the pull request code in cloud-tcp never gets a token that can write.
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Remove the label
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.pull_request.number }}
+        run: gh api -X DELETE "repos/$REPO/issues/$NUMBER/labels/tests%3Arun-cloud" || true

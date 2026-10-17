@@ -1,0 +1,116 @@
+name: iOS SwiftUI Analyze with Bitrise Build Cache
+#
+# This workflow demonstrates Bitrise Build Cache integration with Xcode
+# and includes XCLogParser for build timing analysis.
+#
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/samples-ios-swift-swiftui/**'
+      - '.github/workflows/ios-swiftui-analyze.yml'
+  pull_request:
+    paths:
+      - 'src/samples-ios-swift-swiftui/**'
+      - '.github/workflows/ios-swiftui-analyze.yml'
+  workflow_dispatch:
+
+jobs:
+  xcode_analyze:
+    name: Xcode Analyze
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Bitrise Build Cache for Xcode
+        working-directory: src/samples-ios-swift-swiftui
+        env:
+          # Set Auth Token in Repository Secrets
+          BITRISE_BUILD_CACHE_AUTH_TOKEN: ${{ secrets.BITRISE_BUILD_CACHE_AUTH_TOKEN }}
+          # Set Workspace ID in Repository Variables
+          BITRISE_BUILD_CACHE_WORKSPACE_ID: ${{ vars.BITRISE_BUILD_CACHE_WORKSPACE_ID }}
+        run: |
+          #!/usr/bin/env bash
+          set -euxo pipefail
+
+          # download Bitrise Build Cache CLI
+          curl --retry 5 -sSfL 'https://raw.githubusercontent.com/bitrise-io/bitrise-build-cache-cli/main/install/installer.sh' | sh -s -- -b /tmp/bin
+
+          # run the CLI to enable Bitrise build cache for Xcode
+          /tmp/bin/bitrise-build-cache activate xcode --cache --cache-push --debug
+      - name: PATH test
+        run: |
+          #!/usr/bin/env bash
+          set -euxo pipefail
+          
+          echo "$PATH"
+      - name: Select Xcode 26
+        run: sudo xcode-select -s /Applications/Xcode_26.2.app
+      - name: Check Xcode Version
+        run: xcodebuild -version
+
+      - name: Install XCLogParser
+        run: brew install xclogparser
+
+      - name: Analyze
+        working-directory: src/samples-ios-swift-swiftui
+        run: |
+          # Create directory for result bundle
+          mkdir -p build-results
+
+          # Run analyze with result bundle path to generate xcactivitylog
+          xcodebuild "analyze" \
+            "-project" "samples-ios-swift-swiftui.xcodeproj" \
+            "-scheme" "samples-ios-swift-swiftui" \
+            "-showBuildTimingSummary" \
+            "-resultBundlePath" "build-results/analyze-result.xcresult" \
+            "CODE_SIGNING_ALLOWED=NO" \
+            "COMPILER_INDEX_STORE_ENABLE=NO"
+
+      - name: Parse Build Timing with XCLogParser
+        if: always()
+        working-directory: src/samples-ios-swift-swiftui
+        run: |
+          # Parse to JSON format for analysis
+          xclogparser parse \
+            --xcodeproj samples-ios-swift-swiftui.xcodeproj \
+            --reporter json \
+            --output build-results/build-timing.json
+
+          # Parse to HTML format for visualization
+          xclogparser parse \
+            --xcodeproj samples-ios-swift-swiftui.xcodeproj \
+            --reporter html \
+            --output build-results/build-timing.html
+
+          # Parse to Chrome Tracer format for detailed timeline visualization
+          xclogparser parse \
+            --xcodeproj samples-ios-swift-swiftui.xcodeproj \
+            --reporter chromeTracer \
+            --output build-results/build-timing.json.gz
+
+          echo "✅ Build timing reports generated"
+
+      - name: Upload Build Timing Reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: build-timing-reports
+          path: |
+            src/samples-ios-swift-swiftui/build-results/build-timing.json
+            src/samples-ios-swift-swiftui/build-results/build-timing.html
+            src/samples-ios-swift-swiftui/build-results/build-timing.json.gz
+            src/samples-ios-swift-swiftui/build-results/analyze-result.xcresult
+          retention-days: 30
+
+      - name: Attach Xcelerate logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: bitrise-xcelerate-xcodebuild-logs
+          path: '~/.local/state/xcelerate/logs'
+          retention-days: 7

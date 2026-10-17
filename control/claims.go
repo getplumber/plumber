@@ -22,11 +22,11 @@ type Claim struct {
 	Kind    string     `json:"kind"`
 	Subject string     `json:"subject"`
 	State   ClaimState `json:"state"`
-	Source  string     `json:"source"`
+	Source  string     `json:"source,omitempty"`
 }
 
 // claimRank orders ClaimState from best to worst: a proven claim first,
-// an assumed one next, an unknown one last. WorstState folds a list of
+// an assumed one next, an unknown one last. worstState folds a list of
 // states to the single worst one by this order.
 var claimRank = map[ClaimState]int{
 	ClaimProven:  0,
@@ -34,11 +34,11 @@ var claimRank = map[ClaimState]int{
 	ClaimUnknown: 2,
 }
 
-// WorstState folds states to the worst one among them: unknown outranks
+// worstState folds states to the worst one among them: unknown outranks
 // assumed, which outranks proven. No states at all folds to ClaimProven,
 // the identity of the fold: a path with nothing to claim has nothing
 // unsettled either.
-func WorstState(states ...ClaimState) ClaimState {
+func worstState(states ...ClaimState) ClaimState {
 	worst := ClaimProven
 	for _, s := range states {
 		if claimRank[s] > claimRank[worst] {

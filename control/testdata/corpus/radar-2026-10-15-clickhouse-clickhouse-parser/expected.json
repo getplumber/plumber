@@ -1,0 +1,30 @@
+{
+  "source": "https://github.com/ClickHouse/clickhouse-parser",
+  "commit": "c6bd76a3426b77dd4edfa218e077a348c5e60bf0",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": false
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/test.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The High unprotected `main` path was judged overstated: a writer pushing to main gets a job with no secret and a read-only token, and nothing consumes its cache, Low.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "unprotected_push",
+        "subjectContains": "main",
+        "tier": "low"
+      }
+    ]
+  }
+}

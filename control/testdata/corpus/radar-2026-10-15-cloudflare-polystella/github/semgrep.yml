@@ -1,0 +1,36 @@
+name: Semgrep OSS scan
+
+on:
+  pull_request: {}
+  push:
+    branches: [main, master]
+  workflow_dispatch: {}
+  schedule:
+    - cron: "0 0 20 * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: semgrep-${{ github.event_name }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  semgrep:
+    name: semgrep-oss
+    runs-on: ubuntu-slim
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - id: cache-semgrep
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ~/.local
+          key: semgrep-1.160.0-${{ runner.os }}
+      - if: steps.cache-semgrep.outputs.cache-hit != 'true'
+        run: pip install --user semgrep==1.160.0
+      - run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - run: semgrep scan --config=auto

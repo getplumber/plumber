@@ -1,0 +1,63 @@
+name: JS Release
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "js/package.json"
+  workflow_dispatch:
+    inputs:
+      dangerous-non-main-release:
+        required: false
+        type: boolean
+        default: false
+        description: "Release from a non-main branch (danger!)"
+
+permissions:
+  id-token: write  # Required for OIDC
+  contents: read
+
+jobs:
+  if_release:
+    # Disallow publishing from branches that aren't `main`.
+    if: github.ref == 'refs/heads/main' || inputs.dangerous-non-main-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    defaults:
+      run:
+        working-directory: "js"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # JS Build
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 10
+      - name: Use Node.js 24.x
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: 24.x
+          cache: pnpm
+          cache-dependency-path: js/pnpm-lock.yaml
+          registry-url: "https://registry.npmjs.org"
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build
+        run: pnpm run build
+      - name: Check version
+        run: pnpm run check-version
+      - name: Check NPM version
+        id: check_npm_version
+        run: |
+          if pnpm run check-npm-version; then
+            echo "should_publish=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_publish=false" >> $GITHUB_OUTPUT
+          fi
+      - name: Publish package to NPM
+        if: steps.check_npm_version.outputs.should_publish == 'true'
+        run: |
+          npm publish

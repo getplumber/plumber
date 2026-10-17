@@ -1,0 +1,114 @@
+name: Chromatic PR comment
+
+# Posts the Chromatic Storybook link as a sticky PR comment, fork PRs included.
+# "Chromatic deployment" cannot comment itself: on a fork PR its token is
+# read-only. workflow_run runs this file from main with repo secrets, so it
+# must never check out, install or run PR code. It reads the commit statuses
+# the Chromatic GitHub app set on the PR head, not the fork run's outputs.
+# Accepted risk: a fork PR's Storybook is fork-authored content hosted on
+# chromatic.com, and this comment links it like any other.
+
+on:
+  workflow_run:
+    workflows: ['Chromatic deployment']
+    types: [completed]
+
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: read
+
+concurrency:
+  group: chromatic-pr-comment-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: true
+
+jobs:
+  comment:
+    # cancelled / skipped: no Storybook to link. action_required: a fork run
+    # waiting for approval; the approved run comments once it completes.
+    # Dependabot: assumed to get no repo secrets here, like its pull_request
+    # runs, so the app token below would fail. Unverified; see the PR text.
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion != 'cancelled' &&
+      github.event.workflow_run.conclusion != 'skipped' &&
+      github.event.workflow_run.conclusion != 'action_required' &&
+      github.event.workflow_run.actor.login != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        # workflow_run checks out main, never the PR head. Only the comment
+        # script is used.
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: .scripts/bash
+
+      - name: Find the pull request
+        id: pr
+        # workflow_run.pull_requests is empty for fork PRs, and
+        # commits/{sha}/pulls finds a fork PR only once it is merged. Look the
+        # PR up by its head instead (owner:branch; forks and same-repo alike).
+        # Only an open PR whose head is still this sha: after a newer push,
+        # that push's run owns the comment.
+        # shell: bash for pipefail; the default shell would read a failed
+        # `gh api` as "no PR" and stay green.
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          # Fork-controlled: only ever passed as a quoted API parameter.
+          HEAD_OWNER: ${{ github.event.workflow_run.head_repository.owner.login }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          NUMBER=""
+          if [[ -n "$HEAD_OWNER" && -n "$HEAD_BRANCH" ]]; then
+            NUMBER=$(gh api --method GET "repos/$REPO/pulls" \
+              -f state=open -f head="$HEAD_OWNER:$HEAD_BRANCH" \
+              | jq -r --arg sha "$HEAD_SHA" \
+                '[.[] | select(.head.sha == $sha) | .number][0] // empty')
+          fi
+          if [[ -z "$NUMBER" ]]; then
+            echo "No open PR has $HEAD_SHA as its head; nothing to comment on."
+            echo "⏭️ No open PR has \`$HEAD_SHA\` as its head: no comment." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "number=$NUMBER" >> "$GITHUB_OUTPUT"
+          echo "Commenting on PR #$NUMBER"
+
+      - name: Render the comment
+        if: steps.pr.outputs.number
+        shell: bash # pipefail, see above
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+        run: |
+          gh api "repos/$REPO/commits/$HEAD_SHA/status" \
+            | .scripts/bash/chromatic-pr-comment-body "$HEAD_SHA" "$RUN_URL" \
+            > "$RUNNER_TEMP/chromatic-comment.md"
+          cat "$RUNNER_TEMP/chromatic-comment.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Generate GitHub workflow token
+        # Same app as the Storybook preview comment, so both comments share an author.
+        if: steps.pr.outputs.number
+        id: gh-workflow-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.WORKFLOW_AUTH_PUBLIC_APP_ID }}
+          private-key: ${{ secrets.WORKFLOW_AUTH_PUBLIC_PRIVATE_KEY }}
+
+      - name: Comment PR with the Chromatic links
+        if: steps.pr.outputs.number
+        uses: mshick/add-pr-comment@v3
+        with:
+          issue: ${{ steps.pr.outputs.number }}
+          message-path: ${{ runner.temp }}/chromatic-comment.md
+          message-id: chromatic-storybook
+          repo-token: ${{ steps.gh-workflow-token.outputs.token }}
+          # Same as the Storybook preview comment: repost at the bottom, so the
+          # bot always owns a fresh comment next to the newest push.
+          refresh-message-position: true

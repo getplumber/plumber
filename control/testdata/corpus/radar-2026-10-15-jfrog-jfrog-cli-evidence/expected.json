@@ -1,0 +1,59 @@
+{
+  "source": "https://github.com/jfrog/jfrog-cli-evidence",
+  "commit": "79b735ec565e64eb234f2251767bc5fcc890ced9",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [
+    {
+      "name": "frogbot",
+      "known": true,
+      "requiredReviewers": true,
+      "reviewers": 1
+    }
+  ],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/analysis.yml": "active",
+    ".github/workflows/cla.yml": "active",
+    ".github/workflows/e2e-tests.yml": "active",
+    ".github/workflows/frogbot-scan-pr.yml": "active",
+    ".github/workflows/monitorIssues.yml": "active",
+    ".github/workflows/pr-labels.yml": "active",
+    ".github/workflows/test.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "The Critical pull_request_target path from the Frogbot scan was judged false: the job runs under environment `frogbot`, whose required approvers approve each run before it starts, and it checks out the approved head commit, so the path holds as a maintainer-approved Medium at most. The e2e-tests-saas job also checks out the pull request head under pull_request_target, behind a condition whose pull_request branch compares head.repo.full_name with github.repository; its pull_request_target branch runs only when a maintainer applies the `safe to test` label (types labeled, synchronize; the condition requires the labeled action), so that path is a maintainer-approved one at the labelled head commit, Medium.",
+  "expect": {
+    "paths": [
+      {
+        "entryKind": "pr_target",
+        "tier": "medium",
+        "subjectContains": "github.event.pull_request.head.sha",
+        "actor": "maintainer_approved"
+      },
+      {
+        "entryKind": "pr_target",
+        "tier": "medium",
+        "job": "e2e-tests/e2e-tests-saas",
+        "actor": "maintainer_approved",
+        "pending": "the checkout ref `github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.ref` resolves to the labelled head commit under pull_request_target, but the head-pin reading accepts only a plain head.sha reference, so the path holds at the maintainer's High instead of the pinned-head Medium."
+      }
+    ],
+    "ceilings": [
+      {
+        "entryKind": "pr_target",
+        "subjectContains": "github.event.pull_request.head.sha",
+        "tier": "medium",
+        "job": "frogbot-scan-pr/scan-pull-request"
+      }
+    ]
+  }
+}

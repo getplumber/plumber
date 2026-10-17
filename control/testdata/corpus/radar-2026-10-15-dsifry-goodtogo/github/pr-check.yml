@@ -1,0 +1,147 @@
+name: PR Readiness Check
+
+# Run after Tests & Quality workflow completes to get accurate CI status
+on:
+  workflow_run:
+    workflows: ["Tests & Quality"]
+    types: [completed]
+
+permissions:
+  actions: read
+  checks: read
+  contents: read
+  pull-requests: read
+  statuses: write
+
+jobs:
+  gtg-check:
+    # Only run on pull requests (not direct pushes to main)
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get PR number
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Get the PR number from the workflow run
+          PR_NUMBER=$(gh api \
+            repos/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }} \
+            --jq '.pull_requests[0].number')
+
+          if [ -z "$PR_NUMBER" ] || [ "$PR_NUMBER" = "null" ]; then
+            echo "Could not determine PR number from workflow run"
+            exit 1
+          fi
+
+          echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
+          echo "Found PR #$PR_NUMBER"
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install gtg from source
+        run: pip install .
+
+      - name: Run gtg check
+        id: gtg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e  # Don't exit on non-zero
+          # Exclude gtg-check from evaluation to avoid circular dependency
+          # (gtg-check seeing its own previous failure as a CI failure)
+          # Exclude AI review checks (use exact names - gtg uses exact matching)
+          # Use --semantic-codes to get different exit codes per status (0=ready, 1=action, 2=threads, 3=ci, 4=error)
+          gtg ${{ steps.pr.outputs.pr_number }} --repo ${{ github.repository }} --format json --semantic-codes \
+            --exclude-checks "gtg-check" \
+            --exclude-checks "CodeRabbit" \
+            --exclude-checks "claude-review" \
+            --exclude-checks "Greptile Review" > gtg-result.json
+          EXIT_CODE=$?
+          echo "exit_code=$EXIT_CODE" >> $GITHUB_OUTPUT
+
+          # Parse status for summary
+          STATUS=$(jq -r '.status' gtg-result.json)
+          echo "status=$STATUS" >> $GITHUB_OUTPUT
+
+          # Show results
+          echo "## GTG Check Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**PR #${{ steps.pr.outputs.pr_number }}**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          case $EXIT_CODE in
+            0)
+              echo "### ✅ Good to Go!" >> $GITHUB_STEP_SUMMARY
+              echo "All CI checks passing, no actionable comments, all threads resolved." >> $GITHUB_STEP_SUMMARY
+              ;;
+            1)
+              echo "### ⚠️ Action Required" >> $GITHUB_STEP_SUMMARY
+              echo "Actionable comments need attention:" >> $GITHUB_STEP_SUMMARY
+              jq -r '.action_items[] | "- " + .' gtg-result.json >> $GITHUB_STEP_SUMMARY
+              ;;
+            2)
+              echo "### 💬 Unresolved Threads" >> $GITHUB_STEP_SUMMARY
+              UNRESOLVED=$(jq -r '.threads.unresolved' gtg-result.json)
+              echo "$UNRESOLVED unresolved review threads need resolution." >> $GITHUB_STEP_SUMMARY
+              ;;
+            3)
+              echo "### ❌ CI Failing" >> $GITHUB_STEP_SUMMARY
+              echo "Failing checks:" >> $GITHUB_STEP_SUMMARY
+              jq -r '.ci_status.checks[] | select(.conclusion == "failure") | "- " + .name' gtg-result.json >> $GITHUB_STEP_SUMMARY
+              ;;
+            4)
+              echo "### ⚠️ Error" >> $GITHUB_STEP_SUMMARY
+              echo "Could not fetch PR data." >> $GITHUB_STEP_SUMMARY
+              ;;
+          esac
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "*Checked by [gtg](https://github.com/dsifry/goodtogo) - Good To Go PR readiness tool*" >> $GITHUB_STEP_SUMMARY
+
+          exit $EXIT_CODE
+
+      - name: Upload gtg results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gtg-results-pr-${{ steps.pr.outputs.pr_number }}
+          path: gtg-result.json
+
+      - name: Post status to PR
+        if: always() && steps.pr.outputs.pr_number != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          EXIT_CODE="${{ steps.gtg.outputs.exit_code }}"
+          PR_NUMBER=${{ steps.pr.outputs.pr_number }}
+
+          # Default to error state if exit code is empty
+          if [ -z "$EXIT_CODE" ]; then
+            EXIT_CODE=4
+          fi
+
+          case $EXIT_CODE in
+            0) STATUS_TEXT="Good to Go!" ;;
+            1) STATUS_TEXT="Action Required" ;;
+            2) STATUS_TEXT="Unresolved Threads" ;;
+            3) STATUS_TEXT="CI Failing" ;;
+            *) STATUS_TEXT="Error" ;;
+          esac
+
+          # Create a commit status on the PR head
+          # Note: GitHub commit status API doesn't accept 4-byte unicode (emojis)
+          gh api repos/${{ github.repository }}/statuses/${{ github.event.workflow_run.head_sha }} \
+            -f state=$([ "$EXIT_CODE" = "0" ] && echo "success" || echo "failure") \
+            -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            -f description="$STATUS_TEXT" \
+            -f context="gtg-check"

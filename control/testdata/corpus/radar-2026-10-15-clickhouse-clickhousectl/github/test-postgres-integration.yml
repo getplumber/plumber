@@ -1,0 +1,44 @@
+name: Test local postgres (integration)
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "crates/clickhousectl/src/local/**"
+      - "crates/clickhousectl/Cargo.toml"
+      - "Cargo.lock"
+      - "scripts/test-postgres-integration.sh"
+      - ".github/workflows/test-postgres-integration.yml"
+
+permissions:
+  contents: read
+
+env:
+  DO_NOT_TRACK: "1"
+
+jobs:
+  integration:
+    name: local postgres edge cases
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable @ 2026-10-01
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Build clickhousectl
+        run: cargo build -p clickhousectl
+
+      - name: Pull postgres images
+        run: |
+          docker pull postgres:16-alpine
+          docker pull postgres:17-alpine
+          docker pull postgres:18
+
+      - name: Run integration tests
+        run: scripts/test-postgres-integration.sh

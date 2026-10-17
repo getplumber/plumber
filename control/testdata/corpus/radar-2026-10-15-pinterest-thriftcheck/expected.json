@@ -1,0 +1,37 @@
+{
+  "source": "https://github.com/pinterest/thriftcheck",
+  "commit": "a209be3d589dbd84bb2225ef64169caccda6b0c5",
+  "captured": "2026-10-15",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [
+    {
+      "name": "main",
+      "protected": true
+    }
+  ],
+  "environments": [],
+  "environmentsKnown": true,
+  "workflowStates": {
+    ".github/workflows/ci.yml": "active",
+    ".github/workflows/codeql.yml": "disabled_inactivity",
+    ".github/workflows/release.yml": "active"
+  },
+  "workflowStatesKnown": true,
+  "note": "Both High paths were judged false: `dorny/paths-filter@v4` runs in a job whose token can only read pull requests and whose output `lint-goreleaser` only compares in its `if:`, so the action reaches no secret and no publish (Low at most); the setup-go cache the tag release restores is written in the default-branch scope only by pushes to the protected main, the pull_request writers named write their own merge-ref scope, Medium at most. Corrected after reading the workflows: `ci/changes` runs `dorny/paths-filter@v4` (an unauthorized mutable action) on every push to main, so a compromised version of it holds the push run's cache token and can write the default-branch setup-go cache the tag release restores; the cache path holds at that writer's High ceiling (the pull_request writers named are indeed out of scope). No job here declares cache-mode, so GitHub keeps the cache of every low-trust run read-only and grants no job cache write: ISSUE-705 is silent and no cache path exists, so the cache ceiling admits none.",
+  "expect": {
+    "ceilings": [
+      {
+        "entryKind": "mutable_dependency",
+        "subjectContains": "dorny/paths-filter@v4",
+        "tier": "low"
+      },
+      {
+        "entryKind": "poisoned_cache",
+        "subjectContains": "",
+        "tier": "none"
+      }
+    ]
+  }
+}

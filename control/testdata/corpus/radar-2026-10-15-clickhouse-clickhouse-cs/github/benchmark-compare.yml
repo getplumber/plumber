@@ -1,0 +1,267 @@
+name: Benchmark Comparison
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to benchmark (leave empty if running on PR branch)'
+        required: false
+        type: string
+      baseline_ref:
+        description: 'Ref to compare against. Empty uses the PR base branch, so a stacked PR compares against its own base rather than main.'
+        required: false
+        type: string
+      categories:
+        description: 'BenchmarkDotNet categories, comma-separated. Empty selects them from the changed files. Pass "all" to run everything.'
+        required: false
+        type: string
+
+jobs:
+  benchmark-compare:
+    name: Compare PR vs baseline
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:latest
+        ports:
+          - 8123:8123
+          - 9000:9000
+        env:
+          CLICKHOUSE_DB: test
+          CLICKHOUSE_USER: test
+          CLICKHOUSE_PASSWORD: test1234
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: '1'
+
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.pr_number && format('refs/pull/{0}/head', inputs.pr_number) || '' }}
+          path: pr
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.x
+
+      - name: Cache NuGet
+        uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Resolve PR, baseline and categories
+        id: plan
+        working-directory: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_PR_NUMBER: ${{ inputs.pr_number }}
+          INPUT_BASELINE_REF: ${{ inputs.baseline_ref }}
+          INPUT_CATEGORIES: ${{ inputs.categories }}
+        run: |
+          set -euo pipefail
+
+          PR_NUM="$INPUT_PR_NUMBER"
+          if [ -z "$PR_NUM" ]; then
+            PR_NUM=$(gh pr view --json number -q .number 2>/dev/null || echo "local")
+          fi
+          echo "number=$PR_NUM" >> $GITHUB_OUTPUT
+
+          # A tcp/** PR sits on a stack whose base is not main, and its benchmarks can reference code
+          # main does not have. Comparing against the PR's own base keeps the baseline compilable.
+          BASELINE="$INPUT_BASELINE_REF"
+          if [ -z "$BASELINE" ] && [ "$PR_NUM" != "local" ]; then
+            BASELINE=$(gh pr view "$PR_NUM" --json baseRefName -q .baseRefName 2>/dev/null || true)
+          fi
+          BASELINE="${BASELINE:-main}"
+          echo "baseline=$BASELINE" >> $GITHUB_OUTPUT
+          echo "Baseline ref: $BASELINE"
+
+          CATEGORIES="$INPUT_CATEGORIES"
+          if [ "$CATEGORIES" = "all" ]; then
+            echo "categories=" >> $GITHUB_OUTPUT
+            echo "Running every benchmark."
+            exit 0
+          fi
+
+          if [ -n "$CATEGORIES" ]; then
+            echo "categories=$CATEGORIES" >> $GITHUB_OUTPUT
+            echo "Categories from input: $CATEGORIES"
+            exit 0
+          fi
+
+          # Select the benchmark set from what the PR touched, so a TCP-only change does not pay for
+          # the HTTP suite and the other way round.
+          if [ "$PR_NUM" != "local" ]; then
+            CHANGED=$(gh pr diff "$PR_NUM" --name-only)
+          else
+            git fetch --no-tags --depth=1 origin "$BASELINE"
+            CHANGED=$(git diff --name-only FETCH_HEAD...HEAD)
+          fi
+          echo "Changed files:"
+          echo "$CHANGED" | sed 's/^/  /'
+
+          SELECTED=""
+          add() { case " $SELECTED " in *" $1 "*) ;; *) SELECTED="$SELECTED $1" ;; esac; }
+
+          if echo "$CHANGED" | grep -q '^ClickHouse\.Driver\.Benchmark/'; then
+            # The harness itself moved, so no arm can be assumed unaffected.
+            echo "categories=" >> $GITHUB_OUTPUT
+            echo "Benchmark project changed; running every benchmark."
+            exit 0
+          fi
+
+          if echo "$CHANGED" | grep -q '^ClickHouse\.Driver\.Tcp/'; then
+            add tcp-regression
+          fi
+          if echo "$CHANGED" | grep -q '^ClickHouse\.Driver/'; then
+            add http-regression
+          fi
+          if echo "$CHANGED" | grep -q '^ClickHouse\.Driver\.Common/'; then
+            # Shared: the compression codecs and CityHash serve both transports.
+            add http-regression
+            add tcp-regression
+            add compression
+          fi
+          # The frame reader and writer live in the TCP project, and the regression sets only ever
+          # run the default codec.
+          if echo "$CHANGED" | grep -q '^ClickHouse\.Driver\.Tcp/Compression/'; then
+            add compression
+          fi
+
+          # Both transports moved together, which is the case where the cross-transport table says
+          # something the per-transport ones cannot.
+          case " $SELECTED " in
+            *" http-regression "*)
+              case " $SELECTED " in *" tcp-regression "*) add cross ;; esac
+              ;;
+          esac
+
+          if [ -z "$SELECTED" ]; then
+            SELECTED="http-regression tcp-regression"
+            echo "No driver sources changed; falling back to both regression sets."
+          fi
+
+          SELECTED=$(echo "$SELECTED" | xargs | tr ' ' ',')
+          echo "categories=$SELECTED" >> $GITHUB_OUTPUT
+          echo "Selected categories: $SELECTED"
+
+      - name: Checkout baseline branch
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.plan.outputs.baseline }}
+          path: baseline
+          persist-credentials: false
+
+      - name: Build baseline package
+        run: |
+          mkdir -p pr/.nupkg
+          dotnet build baseline/ClickHouse.Driver/ClickHouse.Driver.csproj \
+            --configuration Release \
+            /p:Version=0.0.0-baseline
+          cp baseline/ClickHouse.Driver/bin/Release/*.nupkg pr/.nupkg/
+
+      - name: Build PR package
+        env:
+          PR_NUMBER: ${{ steps.plan.outputs.number }}
+        run: |
+          dotnet build pr/ClickHouse.Driver/ClickHouse.Driver.csproj \
+            --configuration Release \
+            "/p:Version=0.0.0-pr.${PR_NUMBER}"
+          cp pr/ClickHouse.Driver/bin/Release/*.nupkg pr/.nupkg/
+
+      - name: Run comparison benchmarks
+        working-directory: pr
+        env:
+          CLICKHOUSE_CONNECTION: Host=localhost;Port=8123;Username=test;Password=test1234
+          CLICKHOUSE_TCP_CONNECTION_STRING: Host=localhost;Port=9000;Username=test;Password=test1234
+          BASELINE_VERSION: 0.0.0-baseline
+          PR_VERSION: 0.0.0-pr.${{ steps.plan.outputs.number }}
+          NUGET_SOURCE: ${{ github.workspace }}/pr/.nupkg
+          CATEGORIES: ${{ steps.plan.outputs.categories }}
+        run: |
+          CATEGORY_ARG=""
+          if [ -n "$CATEGORIES" ]; then
+            CATEGORY_ARG="--anyCategories $(echo "$CATEGORIES" | tr ',' ' ')"
+          fi
+          # The outer build must resolve the same package the baseline job uses. Left unpinned it
+          # takes the ClickHouseDriverVersion default from Directory.Packages.props, restores that
+          # release from nuget.org, and fails to compile against any API added since it.
+          dotnet run \
+            --project ClickHouse.Driver.Benchmark/ClickHouse.Driver.Benchmark.csproj \
+            --framework net10.0 \
+            --configuration Release \
+            --no-launch-profile \
+            -p:BenchmarkComparisonMode=true \
+            -p:ClickHouseDriverVersion=$BASELINE_VERSION \
+            -p:RestoreAdditionalProjectSources=$NUGET_SOURCE \
+            -- --join --filter "*" $CATEGORY_ARG --artifacts .
+
+      - name: Post results to PR
+        if: steps.plan.outputs.number != 'local'
+        uses: actions/github-script@v9
+        env:
+          BASELINE_REF: ${{ steps.plan.outputs.baseline }}
+          CATEGORIES: ${{ steps.plan.outputs.categories }}
+          PR_NUMBER: ${{ steps.plan.outputs.number }}
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            const resultsDir = 'pr/results';
+            const files = fs.readdirSync(resultsDir)
+              .filter(f => f.endsWith('-report-github.md'))
+              .map(f => path.join(resultsDir, f));
+
+            const prNumber = Number.parseInt(process.env.PR_NUMBER, 10);
+
+            let body = '## Benchmark Comparison\n\n';
+            body += `**Baseline:** \`${process.env.BASELINE_REF}\`\n`;
+            body += `**PR:** #${prNumber}\n`;
+            body += `**Categories:** ${process.env.CATEGORIES || 'all'}\n\n`;
+
+            for (const file of files) {
+              const content = fs.readFileSync(file, 'utf8');
+              body += content + '\n\n';
+            }
+
+            body += '\n\n<sub>Generated by benchmark workflow</sub>';
+
+            // Find existing comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber
+            });
+
+            const botComment = comments.find(c =>
+              c.user.type === 'Bot' &&
+              c.body.includes('Benchmark Comparison')
+            );
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: body
+              });
+            }
+
+      - name: Post results to summary
+        run: cat pr/results/*-report-github.md >> $GITHUB_STEP_SUMMARY

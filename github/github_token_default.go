@@ -219,8 +219,10 @@ func defaultTokenFromLog(host, owner, repo, defaultBranch string, eligible func(
 	}
 	runs, err := listCompletedRuns(rest, owner, repo)
 	if err != nil {
+		logRefusedLane("default token runs", err)
 		return "", false
 	}
+	jobsCalls := 0
 	for _, run := range runs {
 		if !runSafeForDefaultToken(run, owner, repo, defaultBranch) {
 			continue
@@ -228,6 +230,12 @@ func defaultTokenFromLog(host, owner, repo, defaultBranch string, eligible func(
 		if !eligible(run.Path) {
 			continue
 		}
+		if jobsCalls == maxDefaultTokenJobsCalls {
+			// Three eligible runs answered no job: the route stops
+			// here rather than walk the whole listing.
+			return "", false
+		}
+		jobsCalls++
 		job, found := firstRunJob(rest, owner, repo, run.ID)
 		if !found {
 			// The job fetch itself failed (network, 404, an empty
@@ -318,6 +326,7 @@ func firstRunJob(rest restClient, owner, repo string, runID int64) (job remoteJo
 		"repos/%s/%s/actions/runs/%d/jobs?per_page=1", owner, repo, runID,
 	), nil)
 	if err != nil {
+		logRefusedLane("default token jobs", err)
 		return remoteJob{}, false
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -484,6 +493,7 @@ func releaseAuthoredByBot(rest restClient, owner, repo string) bool {
 		"repos/%s/%s/releases?per_page=%d", owner, repo, defaultTokenRunsPerPage,
 	), nil)
 	if err != nil {
+		logRefusedLane("default token releases", err)
 		return false
 	}
 	defer func() { _ = resp.Body.Close() }()

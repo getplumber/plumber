@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  ci:
+    name: CI Pipeline
+    runs-on: ubuntu-latest
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        build_type: [debug, release]
+
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server
+        ports:
+          - 18123:8123
+          - 19000:9000
+        env:
+          CLICKHOUSE_PASSWORD: changeme
+        options: >-
+          --ulimit nofile=262144:262144
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v6
+
+    - name: Install dependencies
+      run: sudo apt-get update && sudo apt-get install -y clang-format clang-tidy ninja-build openssl libssl-dev
+
+    - name: Check code formatting
+      run: uv run scripts/format.py --check
+
+    - uses: lukka/get-cmake@latest
+
+    - name: Build
+      run: uv run scripts/build.py --mode ${{ matrix.build_type }} --tests --export-compile-commands
+
+    - name: Run tests
+      working-directory: build
+      run: ctest --build-config ${{ matrix.build_type == 'debug' && 'Debug' || 'Release' }} --output-on-failure --parallel
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

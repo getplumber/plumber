@@ -23,6 +23,9 @@ func TestDigestIsComparisonOperand(t *testing.T) {
 		{"digest as a non-operand argument", `[ -n ` + d + ` ]`, false},
 		{"glued equals is one word, not a comparison", `[ "$x"="` + d + `" ]`, false},
 		{"unterminated bracket", `[ "$x" = ` + d, false},
+		{"single brackets, backtick substitution on the left", "[ `sha256sum install.sh | cut -d' ' -f1` = " + d + " ]", true},
+		{"double-quoted backtick substitution operand", "[ \"`sha256sum install.sh`\" = \"" + d + "\" ]", true},
+		{"unterminated backtick", "[ `sha256sum install.sh = " + d, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -1,0 +1,41 @@
+name: conftest
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/**'
+  pull_request:
+    paths:
+      - '.github/**'
+
+env:
+  CONFTEST_VERSION: "0.67.0"
+  CONFTEST_SHA256: "a98cfd236f3cadee16d860fbe31cc6edcb0da3efc317f661c7ccd097164b1fdf"
+
+jobs:
+  conftest:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install conftest
+        run: |-
+          curl -fsSL "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz" \
+            -o conftest.tar.gz
+          echo "${CONFTEST_SHA256}  conftest.tar.gz" | sha256sum --check --strict
+          tar xz -f conftest.tar.gz conftest
+          sudo mv conftest /usr/local/bin/
+
+      - name: Run conftest
+        shell: bash
+        run: |-
+          shopt -s nullglob
+          conftest test \
+            .github/workflows/*.yml \
+            .github/workflows/*.yaml \
+            .github/actions/*/action.yml \
+            .github/actions/*/action.yaml \
+            --policy .github/conftest/rules

@@ -1,0 +1,294 @@
+name: Create release images and GitHub Release
+on:
+  push:
+    tags:
+      - v*.*.*
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_REPO: ghcr.io/clickhouse
+  VERSION: ${{ github.ref_name }}
+
+permissions:
+  contents: read
+
+jobs:
+  release-operator-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
+      - name: Log in to the Container registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set VERSION
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      - name: Build operator image
+        run: make docker-buildx-latest
+
+  release-operator-olm-images:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
+      - name: Log in to the Container registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install jq
+        uses: dcarbone/install-jq-action@4fcb5062d7ce9bc4382d1a352d19ba3ba2c317c1 # v4.0.1
+      - name: Set VERSION
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      - name: Build operator bundle image
+        run: make bundle bundle-buildx
+      - name: Build catalog
+        run: make catalog-buildx
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - name: Mark catalog as latest
+        run: make catalog-push-latest
+
+  release-operator-helm-chart:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Install Helm
+        run: curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      - name: Verify Helm installation
+        run: helm version
+      - name: Set VERSION
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      - name: Log in registry
+        run: helm registry login ghcr.io -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }}
+      - name: Package operator helm chart
+        run: make package-helmchart
+      - name: Build and push helm OCI image
+        run: make push-helmchart
+      - name: Build and push cluster chart OCI image
+        run: make push-cluster-chart
+
+  create-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      packages: read
+      pull-requests: read
+    needs:
+      - release-operator-image
+      - release-operator-olm-images
+      - release-operator-helm-chart
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+      - name: Set VERSION
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
+      - name: Kustomize Build
+        run: |
+          make build-installer
+          mv dist/install.yaml dist/clickhouse-operator.yaml
+          make build-installer-stripped
+          mv dist/install-stripped-crds.yaml dist/clickhouse-operator-stripped-crds.yaml
+          make build-crds
+          mv dist/crds.yaml dist/clickhouse-operator-crds.yaml
+          make build-crds-stripped
+          mv dist/crds-stripped.yaml dist/clickhouse-operator-crds-stripped.yaml
+      - name: Install Helm
+        run: curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      - name: Verify Helm installation
+        run: helm version
+      - name: Package helm chart
+        run: make package-helmchart
+      - name: Package cluster chart
+        run: make package-cluster-chart
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Save controller images
+        run: make docker-save
+
+      - name: Build Changelog
+        id: build_changelog
+        uses: mikepenz/release-changelog-builder-action@aa013739bbc8e7067dbbecd4525ff11aeb51a84b # v6.4.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          toTag: ${{ github.ref_name }}
+          configurationJson: |
+            {
+              "categories": [{
+                  "title": "## 🚀 Features",
+                  "labels": ["feature", "feat"]
+                },{
+                  "title": "## 🐛 Fixes",
+                  "labels": ["fix", "bug"]
+                }, {
+                  "title": "## 🧪 Tests",
+                  "labels": ["test"]
+                }, {
+                  "title": "## 📚 Docs",
+                  "labels": ["docs"]
+                }, {
+                  "title": "## 🧹 Chores",
+                  "labels": ["chore", "chores", "ci", "build", "refactor", "perf"]
+                }, {
+                  "title": "## 📦 Uncategorized",
+                  "labels": []
+                }],
+              "label_extractor": [{
+                  "pattern": "^([a-zA-Z]+)(\\([^)]*\\))?!?:.*",
+                  "on_property": "title",
+                  "target": "$1"
+                }]
+            }
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{github.ref_name }}
+          draft: true
+          body: |
+            ## Install using the manifest (server-side apply)
+            ```
+            kubectl apply --server-side --force-conflicts -f https://github.com/ClickHouse/clickhouse-operator/releases/download/${{github.ref_name}}/clickhouse-operator.yaml
+            ```
+
+            For clusters restricted to client-side apply, use the description-stripped CRDs:
+            ```
+            kubectl apply -f https://github.com/ClickHouse/clickhouse-operator/releases/download/${{github.ref_name}}/clickhouse-operator-stripped-crds.yaml
+            ```
+
+            ## CRDs only
+            ```
+            kubectl apply --server-side --force-conflicts -f https://github.com/ClickHouse/clickhouse-operator/releases/download/${{github.ref_name}}/clickhouse-operator-crds.yaml
+            ```
+
+            Client-side apply variant: `clickhouse-operator-crds-stripped.yaml`
+            
+            ## Install using helmchart
+            ```
+            helm install clickhouse-operator oci://ghcr.io/clickhouse/clickhouse-operator-helm \
+               --version=${{env.VERSION}} \
+               --create-namespace \
+               -n clickhouse-operator-system
+            ```
+            
+            ## Changelog
+            ${{steps.build_changelog.outputs.changelog}}
+          generate_release_notes: false
+          append_body: true
+          files: |
+            dist/clickhouse-operator.yaml
+            dist/clickhouse-operator-stripped-crds.yaml
+            dist/clickhouse-operator-crds.yaml
+            dist/clickhouse-operator-crds-stripped.yaml
+            clickhouse-operator-helm-${{env.VERSION}}.tgz
+            clickhouse-cluster-helm-${{env.VERSION}}.tgz
+            clickhouse-operator_${{env.VERSION}}_*.tar.gz
+
+  community-operators-pr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    needs: create-release
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Multi-repo workflow authentication
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        id: generate-token
+        with:
+          app-id: ${{ secrets.WORKFLOW_AUTH_PUBLIC_APP_ID }}
+          private-key: ${{ secrets.WORKFLOW_AUTH_PUBLIC_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: |
+            clickhouse-operator
+            community-operators
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+      - name: Set VERSION
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      - name: Generate operator bundle
+        run: make bundle
+      - name: Checkout community-operators fork
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ github.repository_owner }}/community-operators
+          token: ${{ steps.generate-token.outputs.token }}
+          path: community-operators
+          fetch-depth: 0
+      - name: Configure git identity
+        working-directory: community-operators
+        run: |
+          git config user.name "clickhouse-operator-bot"
+          git config user.email "clickhouse-operator-bot@users.noreply.github.com"
+      - name: Sync fork main with upstream
+        working-directory: community-operators
+        run: |
+          git remote add upstream https://github.com/k8s-operatorhub/community-operators.git
+          git fetch upstream main
+          git checkout -B main upstream/main
+          git push origin main --force
+      - name: Stage bundle in operators/clickhouse-operator/${VERSION}
+        working-directory: community-operators
+        run: |
+          BRANCH="clickhouse-operator-${VERSION}"
+          git checkout -b "${BRANCH}"
+          TARGET="operators/clickhouse-operator/${VERSION}"
+          rm -rf "${TARGET}"
+          mkdir -p "${TARGET}"
+          cp -r ../bundle/manifests "${TARGET}/"
+          cp -r ../bundle/metadata "${TARGET}/"
+      - name: Commit and push branch
+        working-directory: community-operators
+        run: |
+          BRANCH="clickhouse-operator-${VERSION}"
+          git add "operators/clickhouse-operator/${VERSION}"
+          git commit -s -m "operator clickhouse-operator (${VERSION})"
+          git push origin "${BRANCH}" --force
+      - name: Create pull request to fork
+        env:
+          GH_TOKEN: ${{ steps.generate-token.outputs.token }}
+        working-directory: community-operators
+        run: |
+          BRANCH="clickhouse-operator-${VERSION}"
+          gh pr create \
+            --repo ${{ github.repository_owner }}/community-operators \
+            --title "operator clickhouse-operator (${VERSION})" \
+            --body "Bundle for clickhouse-operator ${VERSION}. Generated from https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}. Merge then submit upstream to k8s-operatorhub/community-operators following https://k8s-operatorhub.github.io/community-operators/packaging-operator/." \
+            --head "${BRANCH}" \
+            --base main

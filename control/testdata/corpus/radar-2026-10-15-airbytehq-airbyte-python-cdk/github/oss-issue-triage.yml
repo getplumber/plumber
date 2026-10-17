@@ -1,0 +1,122 @@
+name: OSS Issue Triage
+
+# This workflow automatically triggers AI triage for issues opened by community
+# members (users without write access to the repository). It provides a quick
+# initial response and escalates confirmed defects to the internal oncall team.
+#
+# CDK-specific behavior lives in the shared `oss_issue_triage` playbook:
+#   - Escalated issues are filed as P2, because a CDK defect can affect every
+#     source connector built on it.
+#   - Feature requests are NOT escalated. They stay in this repo.
+#   - A defect is only escalated when the report includes a reproducing snippet,
+#     a stack trace, or a CDK version where the behavior changed.
+#
+# Playbook source: airbytehq/ai-skills → devin/playbooks/oss_issue_triage.md
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  issues: write
+
+jobs:
+  check-permissions:
+    name: Check Author Permissions
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Authenticate as GitHub App
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        id: get-app-token
+        with:
+          owner: "airbytehq"
+          repositories: "airbyte-python-cdk"
+          app-id: ${{ secrets.OCTAVIA_BOT_APP_ID }}
+          private-key: ${{ secrets.OCTAVIA_BOT_PRIVATE_KEY }}
+
+      - name: Check if user has write access
+        id: check-access
+        env:
+          GH_TOKEN: ${{ steps.get-app-token.outputs.token }}
+          AUTHOR: ${{ github.event.issue.user.login }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          echo "Checking permissions for user: $AUTHOR"
+
+          # A 404 is the expected answer for a non-collaborator. Every other
+          # failure -- rate limit, 5xx, expired token -- must NOT be mistaken for
+          # one: that would classify a maintainer as a community member and start
+          # a Devin session that can file a P2 issue in airbytehq/oncall. Fail the
+          # job instead, so the problem is visible rather than silently wrong.
+          ERR="$RUNNER_TEMP/permission-error.txt"
+          STATUS=0
+          PERMISSION=$(gh api "repos/$REPO/collaborators/$AUTHOR/permission" --jq '.permission' 2>"$ERR") || STATUS=$?
+
+          if [[ "$STATUS" -ne 0 ]]; then
+            if grep -q "HTTP 404" "$ERR"; then
+              PERMISSION="none"
+            else
+              echo "::error::Permission lookup for $AUTHOR failed; refusing to guess."
+              cat "$ERR" >&2
+              exit 1
+            fi
+          fi
+
+          echo "User permission level: $PERMISSION"
+
+          # Users with write, maintain, or admin access are NOT community members
+          if [[ "$PERMISSION" == "admin" || "$PERMISSION" == "maintain" || "$PERMISSION" == "write" ]]; then
+            echo "User has write access - skipping AI triage"
+            echo "is-community-member=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "User is a community member - triggering AI triage"
+            echo "is-community-member=true" >> "$GITHUB_OUTPUT"
+          fi
+    outputs:
+      is-community-member: ${{ steps.check-access.outputs.is-community-member }}
+
+  ai-triage-issue:
+    name: AI Triage for Community Issue
+    needs: check-permissions
+    if: needs.check-permissions.outputs.is-community-member == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Authenticate as GitHub App
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        id: get-app-token
+        with:
+          owner: "airbytehq"
+          repositories: "airbyte-python-cdk,oncall"
+          app-id: ${{ secrets.OCTAVIA_BOT_APP_ID }}
+          private-key: ${{ secrets.OCTAVIA_BOT_PRIVATE_KEY }}
+
+      - name: Run AI Triage
+        uses: airbytehq/devin-action@main
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          playbook-macro: "!oss_issue_triage"
+          devin-token: ${{ secrets.DEVIN_AI_API_KEY }}
+          github-token: ${{ steps.get-app-token.outputs.token }}
+          api-version: v3
+          org-id: ${{ vars.DEVIN_AI_ORG_ID }}
+          start-message: |
+            **AI Triage Starting...**
+
+            Thank you for opening this issue! I'm an AI assistant that will do an initial review and may:
+            - Ask clarifying questions if needed
+            - Suggest relevant documentation or workarounds
+            - Flag this for internal visibility
+
+            **Note:** Community issues are reviewed on a best-effort basis and do not have a guaranteed response time. To help us act on a suspected bug, please include at least one of: a reproducing manifest or code snippet, the full stack trace or error message, or the CDK version where the behavior changed. More detail is always welcome.
+
+            For additional help:
+            - Join the [Airbyte Community Slack](https://slack.airbyte.com) to connect with other users and community members
+            - If you're an Airbyte Cloud customer, you can [open a support ticket](https://support.airbyte.com) or contact your account representative, referencing this issue URL
+
+            [View playbook](https://github.com/airbytehq/ai-skills/blob/main/devin/playbooks/oss_issue_triage.md)
+          tags: |
+            oss-issue-triage
+            community-issue
+            airbyte-python-cdk

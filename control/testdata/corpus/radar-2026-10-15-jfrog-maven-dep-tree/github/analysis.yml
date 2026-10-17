@@ -1,0 +1,25 @@
+name: Static Code Analysis
+
+on: [ push, pull_request ]
+
+jobs:
+  spotbugs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: jfrog-fastci/fastci@main  # Use the FastCI optimization action
+        with:
+          github_token: ${{secrets.GITHUB_TOKEN}}
+          fastci_otel_token: ${{ secrets.FASTCI_TOKEN }}
+
+      # Install required tools
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: "zulu"
+          java-version: "8"
+
+      # Run static code analysis
+      - name: Run spotbugs:check
+        run: mvn spotbugs:check -B
