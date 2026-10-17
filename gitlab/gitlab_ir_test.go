@@ -469,6 +469,49 @@ lint:
 	}
 }
 
+// TestBuildJobs_ReportTypesFromArtifactsReports covers the keys of the job's
+// artifacts.reports map (secret_detection, sast, ...), which the platform's
+// pipeline capabilities read as evidence a job runs a scanner.
+func TestBuildJobs_ReportTypesFromArtifactsReports(t *testing.T) {
+	const merged = `
+secret_scan:
+  script:
+    - gitleaks detect
+  artifacts:
+    paths:
+      - gl-secret-detection-report.json
+    reports:
+      secret_detection: gl-secret-detection-report.json
+      sast: gl-sast-report.json
+build:
+  script:
+    - make
+`
+	var conf GitlabCIConf
+	if err := yaml.Unmarshal([]byte(merged), &conf); err != nil {
+		t.Fatalf("merged fixture does not parse: %v", err)
+	}
+	origin := &GitlabPipelineOriginData{
+		JobMap: map[string]*GitlabPipelineJobData{
+			"secret_scan": {Name: "secret_scan"},
+			"build":       {Name: "build"},
+		},
+		MergedConf: &conf,
+	}
+
+	byName := map[string]ir.Job{}
+	for _, j := range buildJobs(origin, nil, ".gitlab-ci.yml", nil) {
+		byName[j.Name] = j
+	}
+
+	if got, want := byName["secret_scan"].ReportTypes, []string{"sast", "secret_detection"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("secret_scan ReportTypes = %v, want %v (sorted keys of artifacts.reports)", got, want)
+	}
+	if got := byName["build"].ReportTypes; len(got) != 0 {
+		t.Fatalf("build ReportTypes = %v, want none", got)
+	}
+}
+
 // TestExtractGitLabTags covers the polymorphic `tags:` keyword: GitLab accepts
 // a list of strings, and authors reach the parser with a bare string or a list
 // holding a non-string entry. Nothing is invented and nothing panics: entries
