@@ -720,6 +720,13 @@ func TestBuildJobs_OriginIncludeNamesTheDefiningInclude(t *testing.T) {
 	plumberTmpl.FromPlumber = true
 	plumberTmpl.PlumberOrigin.Path = "gitleaks"
 	plumberTmpl.Jobs = []GitlabPipelineJobData{{Name: "plumber_scan"}}
+	// A local include: its job is both listed by an origin with a real identity and marked
+	// hardcoded (the project's own files define it), so the hardcoded guard alone keeps its
+	// OriginInclude empty; without the guard it would name the local file.
+	local := GitlabPipelineOriginDataFull{}
+	local.OriginType = "local"
+	local.GitlabIncludeOrigin.Location = ".ci/scan.gitlab-ci.yml"
+	local.Jobs = []GitlabPipelineJobData{{Name: "local_scan"}}
 	origin := &GitlabPipelineOriginData{
 		JobMap: map[string]*GitlabPipelineJobData{
 			"secret_detection": {Name: "secret_detection"},
@@ -727,9 +734,10 @@ func TestBuildJobs_OriginIncludeNamesTheDefiningInclude(t *testing.T) {
 			"shared":           {Name: "shared"},
 			"plumber_scan":     {Name: "plumber_scan"},
 			"build":            {Name: "build"},
+			"local_scan":       {Name: "local_scan"},
 		},
-		JobHardcodedMap: map[string]bool{"build": true},
-		Origins:         []GitlabPipelineOriginDataFull{tmpl, comp, plumberTmpl},
+		JobHardcodedMap: map[string]bool{"build": true, "local_scan": true},
+		Origins:         []GitlabPipelineOriginDataFull{tmpl, comp, plumberTmpl, local},
 	}
 
 	byName := map[string]ir.Job{}
@@ -742,6 +750,7 @@ func TestBuildJobs_OriginIncludeNamesTheDefiningInclude(t *testing.T) {
 		"shared":           "Security/Secret-Detection.gitlab-ci.yml",
 		"plumber_scan":     "gitleaks",
 		"build":            "",
+		"local_scan":       "",
 	}
 	for name, w := range want {
 		if got := byName[name].OriginInclude; got != w {

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/getplumber/plumber/capability"
 	"github.com/getplumber/plumber/gitlab"
 	"github.com/getplumber/plumber/internal/ir"
 	"github.com/getplumber/plumber/utils"
@@ -43,6 +44,9 @@ type Generator struct {
 	// nil when the caller never attached one, which is what keeps the jobs
 	// key out of the document entirely.
 	jobs []ir.Job
+	// capabilities is the recognized capability list, attached by
+	// WithCapabilities and copied into the document as is.
+	capabilities []capability.Match
 }
 
 // WithJobResources attaches the analyzed pipeline's jobs so the document can
@@ -53,6 +57,14 @@ type Generator struct {
 // reads YAML or splits an image reference a second time.
 func (g *Generator) WithJobResources(jobs []ir.Job) *Generator {
 	g.jobs = jobs
+	return g
+}
+
+// WithCapabilities attaches what package capability recognized on the
+// analyzed pipeline. The generator copies the matches verbatim: recognizing is
+// the capability package's job, the document only carries the result.
+func (g *Generator) WithCapabilities(matches []capability.Match) *Generator {
+	g.capabilities = matches
 	return g
 }
 
@@ -135,6 +147,10 @@ func (g *Generator) Generate(
 	// rather than the collections above, because neither collection carries
 	// them: images are pipeline-level and includes are not jobs.
 	pbom.Jobs = g.processJobResources()
+
+	for _, m := range g.capabilities {
+		pbom.Capabilities = append(pbom.Capabilities, Capability{Kind: m.Kind, Job: m.Job, Tool: m.Tool, Evidence: m.Evidence})
+	}
 
 	// Calculate summary
 	pbom.Summary = g.calculateSummary(pbom)

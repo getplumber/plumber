@@ -30,6 +30,10 @@ func Recognize(pipe *ir.NormalizedPipeline, repoRoot string, recs []Recognizer) 
 	includeTools := includeEvidence(pipe.Includes, recs)
 	var out []Match
 	for _, j := range pipe.Jobs {
+		// A hidden job (leading `.`) never runs on its own; a job that extends it is listed under its own name and judged on its own merged content.
+		if strings.HasPrefix(j.Name, ".") {
+			continue
+		}
 		if m, ok := recognizeJob(j, repoRoot, recs, includeTools); ok {
 			out = append(out, m)
 		}
@@ -92,45 +96,159 @@ func recognizeJob(j ir.Job, repoRoot string, recs []Recognizer, includeTools map
 			}
 		}
 	}
-	// 4. command tokens of the job's own lines: all lines are tokenized first so the
-	// recognizers, not the line order, decide which tool a job names.
-	var tokens []string
+	// 4. command tokens of the job's own lines, and the image arguments of its container-run
+	// lines (`docker run <image>`): all lines are tokenized first so the recognizers, not the
+	// line order, decide which tool a job names.
+	var tokens, images []string
+	var following [][]string
 	for _, line := range j.Scripts {
-		tokens = append(tokens, commandTokens(line)...)
+		c, im, f := lineTokens(line)
+		tokens = append(tokens, c...)
+		images = append(images, im...)
+		following = append(following, f...)
 	}
-	if tool, ok := toolOfTokens(tokens, recs); ok {
+	if tool, ok := toolOfTokens(tokens, following, images, recs); ok {
 		return Match{KindSecretDetection, j.Name, tool, EvidenceCommand}, true
 	}
 	// 5. wrapper scripts, one level: the lines of every script the job runs, same order rule
 	if repoRoot != "" {
-		var inner []string
+		var inner, innerImages []string
+		var innerFollowing [][]string
 		for _, line := range j.Scripts {
 			rel, ok := wrapperPath(line)
 			if !ok {
 				continue
 			}
 			for _, l := range readWrapper(repoRoot, rel, j.Name) {
-				inner = append(inner, commandTokens(l)...)
+				c, im, f := lineTokens(l)
+				inner = append(inner, c...)
+				innerImages = append(innerImages, im...)
+				innerFollowing = append(innerFollowing, f...)
 			}
 		}
-		if tool, ok := toolOfTokens(inner, recs); ok {
+		if tool, ok := toolOfTokens(inner, innerFollowing, innerImages, recs); ok {
 			return Match{KindSecretDetection, j.Name, tool, EvidenceWrapperScript}, true
 		}
 	}
 	return Match{}, false
 }
 
-func toolOfTokens(tokens []string, recs []Recognizer) (string, bool) {
+// toolOfTokens returns the tool of the first recognizer (in list order) one of whose
+// commands matches a token (and, for a multi-word command, the fields following it, same
+// index as tokens) or one of whose image patterns matches an image candidate, the
+// candidate canonicalized like a job image.
+func toolOfTokens(tokens []string, following [][]string, images []string, recs []Recognizer) (string, bool) {
+	keys := make([]string, len(images))
+	for i, ref := range images {
+		keys[i] = imageKey(parseImageRef(ref))
+	}
 	for _, r := range recs {
 		for _, want := range r.Commands {
-			for _, tok := range tokens {
-				if tok == want {
+			head, tail := commandHeadAndTail(want)
+			for i, tok := range tokens {
+				if tok == head && followsFields(following[i], tail) {
+					return r.Tool, true
+				}
+			}
+		}
+		for _, pat := range r.Images {
+			for _, key := range keys {
+				if globMatch(pat, key) {
 					return r.Tool, true
 				}
 			}
 		}
 	}
 	return "", false
+}
+
+// commandHeadAndTail splits a recognizer command on spaces into its first word (matched
+// against a cmds token) and the words that must follow it in order (a multi-purpose tool's
+// subcommand, `ggshield secret` disambiguating from `ggshield iac`). A single-word command
+// has no tail, so it matches regardless of what follows.
+func commandHeadAndTail(want string) (head string, tail []string) {
+	fields := strings.Fields(want)
+	if len(fields) == 0 {
+		return "", nil
+	}
+	return fields[0], fields[1:]
+}
+
+// followsFields reports whether tail appears, contiguously and in order, in fields at a
+// position where a subcommand may stand: an index whose field is not a flag (a leading `-`)
+// and before which every field is a flag or a flag's value, so global flags may precede the
+// subcommand (`ggshield --config f.yaml secret scan`) but another positional word may not
+// (`ggshield iac scan` never matches `secret`). A field is a flag's value only under
+// flagValueField; a bare word is never one, so `ggshield -v iac scan .` stops at `iac` and
+// does not reach the legacy `scan` tail. The cost, accepted: a bare-word value before the
+// subcommand (`corp-scan --profile ci secrets`) is taken as a positional word and the
+// command is not recognized. The candidates are tried in order and the first that matches
+// wins. An empty tail always matches, a single-word command's case.
+func followsFields(fields, tail []string) bool {
+	if len(tail) == 0 {
+		return true
+	}
+	afterValueFlag := false
+	for i, f := range fields {
+		if strings.HasPrefix(f, "-") {
+			afterValueFlag = !strings.Contains(f, "=")
+			continue
+		}
+		if hasPrefixFields(fields[i:], tail) {
+			return true
+		}
+		if !afterValueFlag || !flagValueField(f) {
+			return false
+		}
+		afterValueFlag = false
+	}
+	return false
+}
+
+// flagValueField reports whether f, standing right after a flag without `=`, is taken as
+// that flag's value: any field that is not a bare word. A bare word is made only of letters,
+// hyphens and underscores (`iac`, `sca`, `secret`, `scan`), the shape of a subcommand, so it
+// is never a flag value; a field holding a digit, a quote or one of `. / : = @ ~ ,` (a path,
+// a number, a host, a list), or any other character (`$CONFIG`), is. This is the one place
+// the rule lives.
+func flagValueField(f string) bool {
+	for _, r := range f {
+		if !isBareWordRune(r) {
+			return true
+		}
+	}
+	return false
+}
+
+// isBareWordRune reports whether r may appear in a bare word: a letter, a hyphen or an
+// underscore.
+func isBareWordRune(r rune) bool {
+	return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r == '-' || r == '_'
+}
+
+// hasPrefixFields reports whether fields starts with tail, in order.
+func hasPrefixFields(fields, tail []string) bool {
+	if len(fields) < len(tail) {
+		return false
+	}
+	for i, w := range tail {
+		if fields[i] != w {
+			return false
+		}
+	}
+	return true
+}
+
+// parseImageRef splits an image reference into the registry and the name imageKey reads:
+// the part before the first `/` is a registry when it holds a `.` or a `:` or is
+// `localhost`; otherwise the whole reference is a Docker Hub name.
+func parseImageRef(ref string) *ir.Image {
+	if i := strings.IndexByte(ref, '/'); i > 0 {
+		if host := ref[:i]; strings.ContainsAny(host, ".:") || host == "localhost" {
+			return &ir.Image{Registry: host, Name: ref[i+1:]}
+		}
+	}
+	return &ir.Image{Name: ref}
 }
 
 // imageKey is `<registry>/<name>` with the tag and digest stripped; a bare Docker Hub name

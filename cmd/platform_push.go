@@ -122,6 +122,21 @@ type platformBOM struct {
 	Includes []platformBOMInclude `json:"includes"`
 	Images   []platformBOMImage   `json:"images"`
 	Jobs     []platformBOMJob     `json:"jobs"`
+	// Capabilities follows the same rule as the three inventories: it is
+	// always an array, never an absent key. An empty array means no job was
+	// recognized, which includes a run where no pipeline could be read; the
+	// platform treats it like an absent key.
+	Capabilities []platformBOMCapability `json:"capabilities"`
+}
+
+// platformBOMCapability is one recognized capability of one job, copied from
+// pbom.Capability. Kind and Evidence are closed vocabularies (package
+// capability).
+type platformBOMCapability struct {
+	Kind     string `json:"kind"`
+	Job      string `json:"job"`
+	Tool     string `json:"tool"`
+	Evidence string `json:"evidence"`
 }
 
 type platformBOMInclude struct {
@@ -642,6 +657,9 @@ const (
 	bomMaxIncludes = 500
 	bomMaxImages   = 500
 	bomMaxJobs     = 500
+	// bomMaxCapabilities bounds the recognized capabilities, one entry per
+	// job and capability.
+	bomMaxCapabilities = 500
 	// bomMaxJobsPerImage is the platform's own ceiling on the jobs one image
 	// may name (bom_image_jobs). The design spec's sizing section does not
 	// list it: an image shared by a thousand jobs sits inside every bound
@@ -712,6 +730,8 @@ func platformBOMFrom(doc *pbom.PBOM) (*platformBOM, string) {
 		Includes: []platformBOMInclude{},
 		Images:   []platformBOMImage{},
 		Jobs:     []platformBOMJob{},
+
+		Capabilities: []platformBOMCapability{},
 	}
 	for _, inc := range doc.Includes {
 		entry := platformBOMInclude{
@@ -775,6 +795,9 @@ func platformBOMFrom(doc *pbom.PBOM) (*platformBOM, string) {
 			continue
 		}
 		out.Jobs = append(out.Jobs, entry)
+	}
+	for _, c := range doc.Capabilities {
+		out.Capabilities = append(out.Capabilities, platformBOMCapability(c))
 	}
 
 	// Every bound is measured HERE, on the finished section, never on the
@@ -928,6 +951,9 @@ func platformBOMBound(out *platformBOM) string {
 	if len(out.Jobs) > bomMaxJobs {
 		return fmt.Sprintf("jobs > %d", bomMaxJobs)
 	}
+	if len(out.Capabilities) > bomMaxCapabilities {
+		return fmt.Sprintf("capabilities > %d", bomMaxCapabilities)
+	}
 	// The product bound, checked here because it is arithmetic over the
 	// section's own lengths and therefore costs nothing: a bill that would
 	// write more edges than the platform writes in one transaction is refused
@@ -984,6 +1010,11 @@ func platformBOMBound(out *platformBOM) string {
 			return bound
 		}
 	}
+	for _, c := range out.Capabilities {
+		if bound := bomStringBound(c.Kind, c.Job, c.Tool, c.Evidence); bound != "" {
+			return bound
+		}
+	}
 	return ""
 }
 
@@ -1017,6 +1048,8 @@ func bomProjectedEdges(out *platformBOM) int {
 	for _, job := range out.Jobs {
 		n += len(job.Services) + len(job.RunnerTags)
 	}
+	// One edge per recognized capability: the job to its capability node.
+	n += len(out.Capabilities)
 	return n
 }
 
@@ -1066,7 +1099,8 @@ func platformBOMDocument(p providerPkg.Provider, conf *configuration.Configurati
 	gen := pbom.NewGenerator(result.ProjectPath, result.ProjectID, gitlabURL, branch).
 		WithComplianceData(pbom.ImageComplianceFor(source, noControls, summary)).
 		WithIncludeOverrideData(pbom.BuildIncludeOverrideData(source)).
-		WithJobResources(platformPipelineJobs(result))
+		WithJobResources(platformPipelineJobs(result)).
+		WithCapabilities(providerPkg.CapabilitiesOf(result, conf))
 	if noControls {
 		gen = gen.WithoutComplianceVerdicts()
 	}

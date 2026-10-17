@@ -2734,8 +2734,8 @@ func TestPlatformBOMFrom_AlwaysEmitsTheThreeArrays(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	if string(raw) != `{"version":1,"includes":[],"images":[],"jobs":[]}` {
-		t.Errorf("empty bom = %s, want the three arrays present and empty", raw)
+	if string(raw) != `{"version":1,"includes":[],"images":[],"jobs":[],"capabilities":[]}` {
+		t.Errorf("empty bom = %s, want the three arrays and capabilities present and empty", raw)
 	}
 }
 
@@ -4152,5 +4152,34 @@ func TestPlatformBOMFrom_ViaIsCarriedAndBounded(t *testing.T) {
 	}
 	if out, bound := platformBOMFrom(&pbom.PBOM{Includes: []pbom.Include{{Type: "action", Location: "acme/c", Via: []string{strings.Repeat("x", 513)}}}}); out != nil || bound != "string > 512 runes" {
 		t.Fatalf("long entry: out %v bound %q", out, bound)
+	}
+}
+
+func TestPlatformBOMFrom_CapabilitiesCopiedAndBounded(t *testing.T) {
+	doc := &pbom.PBOM{Capabilities: []pbom.Capability{{Kind: "secret_detection", Job: "scan", Tool: "gitleaks", Evidence: "image"}}}
+	out, bound := platformBOMFrom(doc)
+	if bound != "" || len(out.Capabilities) != 1 || out.Capabilities[0] != (platformBOMCapability{Kind: "secret_detection", Job: "scan", Tool: "gitleaks", Evidence: "image"}) {
+		t.Fatalf("out=%+v bound=%q", out.Capabilities, bound)
+	}
+	if bomProjectedEdges(out) != 1 {
+		t.Fatalf("a capability entry must count as one edge, got %d", bomProjectedEdges(out))
+	}
+	empty, _ := platformBOMFrom(&pbom.PBOM{})
+	if b, _ := json.Marshal(empty); !strings.Contains(string(b), `"capabilities":[]`) {
+		t.Fatalf("capabilities must serialize as an empty array, got %s", b)
+	}
+	many := &pbom.PBOM{}
+	for i := 0; i < bomMaxCapabilities+1; i++ {
+		many.Capabilities = append(many.Capabilities, pbom.Capability{Kind: "secret_detection", Job: fmt.Sprintf("j%d", i), Tool: "gitleaks", Evidence: "image"})
+	}
+	if _, bound := platformBOMFrom(many); !strings.Contains(bound, "capabilities") {
+		t.Fatalf("over the cap must name the capabilities bound, got %q", bound)
+	}
+	// A capability's own strings go through the same per-string loop as every other
+	// section: an over-long tool must be refused and must name the string bound, not slip
+	// through because platformBOMBound's capabilities loop was never exercised.
+	longTool := &pbom.PBOM{Capabilities: []pbom.Capability{{Kind: "secret_detection", Job: "scan", Tool: strings.Repeat("x", bomMaxStringRunes+1), Evidence: "image"}}}
+	if _, bound := platformBOMFrom(longTool); bound != "string > 512 runes" {
+		t.Fatalf("an over-long capability tool must name the string bound, got %q", bound)
 	}
 }

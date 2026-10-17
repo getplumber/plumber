@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/getplumber/plumber/capability"
 	"github.com/getplumber/plumber/gitlab"
 	"github.com/getplumber/plumber/internal/ir"
 )
@@ -425,5 +426,17 @@ func TestCycloneDX_NestedIncludeCarriesItsChain(t *testing.T) {
 	}
 	if props["plumber:nested"] != "true" || props["plumber:via"] != "acme/b@main > acme/d@main" {
 		t.Fatalf("properties = %v", props)
+	}
+}
+
+func TestGenerate_CapabilitiesAreCopiedVerbatim(t *testing.T) {
+	g := NewGenerator("grp/app", 1, "https://gitlab.example", "main").
+		WithCapabilities([]capability.Match{{Kind: "secret_detection", Job: "scan", Tool: "gitleaks", Evidence: "image"}})
+	doc := g.Generate(&gitlab.GitlabPipelineImageData{}, &gitlab.GitlabPipelineOriginData{})
+	if len(doc.Capabilities) != 1 || doc.Capabilities[0] != (Capability{Kind: "secret_detection", Job: "scan", Tool: "gitleaks", Evidence: "image"}) {
+		t.Fatalf("Capabilities = %+v", doc.Capabilities)
+	}
+	if NewGenerator("grp/app", 1, "https://gitlab.example", "main").Generate(&gitlab.GitlabPipelineImageData{}, &gitlab.GitlabPipelineOriginData{}).Capabilities != nil {
+		t.Fatal("no WithCapabilities call must leave the field nil, so json omits it")
 	}
 }
