@@ -4061,9 +4061,9 @@ func TestPlatformPushSituationIsTheSituationFacts(t *testing.T) {
 }
 
 func TestPlatformBOMFrom_CapabilitiesCopiedAndBounded(t *testing.T) {
-	doc := &pbom.PBOM{Capabilities: []pbom.Capability{{Kind: "secret_detection", Job: "scan", Tool: "gitleaks", Evidence: "image"}}}
+	doc := &pbom.PBOM{Capabilities: []pbom.Capability{{Kind: "secret_detection", Job: "scan", Tool: "gitleaks", Evidence: "images"}}}
 	out, bound := platformBOMFrom(doc)
-	if bound != "" || len(out.Capabilities) != 1 || out.Capabilities[0] != (platformBOMCapability{Kind: "secret_detection", Job: "scan", Tool: "gitleaks", Evidence: "image"}) {
+	if bound != "" || len(out.Capabilities) != 1 || out.Capabilities[0] != (platformBOMCapability{Kind: "secret_detection", Job: "scan", Tool: "gitleaks", Evidence: "images"}) {
 		t.Fatalf("out=%+v bound=%q", out.Capabilities, bound)
 	}
 	if bomProjectedEdges(out) != 1 {
@@ -4075,7 +4075,7 @@ func TestPlatformBOMFrom_CapabilitiesCopiedAndBounded(t *testing.T) {
 	}
 	many := &pbom.PBOM{}
 	for i := 0; i < bomMaxCapabilities+1; i++ {
-		many.Capabilities = append(many.Capabilities, pbom.Capability{Kind: "secret_detection", Job: fmt.Sprintf("j%d", i), Tool: "gitleaks", Evidence: "image"})
+		many.Capabilities = append(many.Capabilities, pbom.Capability{Kind: "secret_detection", Job: fmt.Sprintf("j%d", i), Tool: "gitleaks", Evidence: "images"})
 	}
 	if _, bound := platformBOMFrom(many); !strings.Contains(bound, "capabilities") {
 		t.Fatalf("over the cap must name the capabilities bound, got %q", bound)
@@ -4083,8 +4083,48 @@ func TestPlatformBOMFrom_CapabilitiesCopiedAndBounded(t *testing.T) {
 	// A capability's own strings go through the same per-string loop as every other
 	// section: an over-long tool must be refused and must name the string bound, not slip
 	// through because platformBOMBound's capabilities loop was never exercised.
-	longTool := &pbom.PBOM{Capabilities: []pbom.Capability{{Kind: "secret_detection", Job: "scan", Tool: strings.Repeat("x", bomMaxStringRunes+1), Evidence: "image"}}}
+	longTool := &pbom.PBOM{Capabilities: []pbom.Capability{{Kind: "secret_detection", Job: "scan", Tool: strings.Repeat("x", bomMaxStringRunes+1), Evidence: "images"}}}
 	if _, bound := platformBOMFrom(longTool); bound != "string > 512 runes" {
 		t.Fatalf("an over-long capability tool must name the string bound, got %q", bound)
+	}
+}
+
+// Spec 4.4 and 5: the push bill's capabilities section, golden, built through the real
+// path (the served declarations of /context, the built-in list filling in, the recognizer,
+// the bill generator, the push projection). The evidence is the field name that matched
+// (`images`, `commands`), the kind a user-declared name rides as is, the tool the
+// recognizer's declared tool.
+func TestPlatformBOMDocument_CapabilitiesGolden(t *testing.T) {
+	result := &control.AnalysisResult{
+		ProjectPath: "group/app",
+		PipelineImageData: &gitlab.GitlabPipelineImageData{
+			Images: []gitlab.GitlabPipelineImageInfo{{Link: "docker.io/zricethezav/gitleaks:v8", Registry: "docker.io", Name: "zricethezav/gitleaks", Tag: "v8", Job: "leaks"}},
+		},
+		Pipeline: &ir.NormalizedPipeline{Jobs: []ir.Job{
+			{Name: "leaks", Image: &ir.Image{Registry: "docker.io", Name: "zricethezav/gitleaks", Tag: "v8"}, Scripts: []string{"gitleaks detect"}},
+			{Name: "sast", Scripts: []string{"semgrep ci"}},
+		}},
+	}
+	conf := &configuration.Configuration{
+		GitlabURL: "https://gitlab.example.com", Branch: "main",
+		PlatformRun: &platform.RunContext{Context: &platform.ProjectContext{
+			Capabilities: json.RawMessage(`[{"name":"sast","recognizers":[{"tool":"semgrep","commands":["semgrep *"]}]}]`),
+		}},
+	}
+	doc := platformBOMDocument(testProvider(t), conf, result, nil)
+	if doc == nil {
+		t.Fatal("no bill")
+	}
+	out, bound := platformBOMFrom(doc)
+	if bound != "" {
+		t.Fatalf("refused on %q", bound)
+	}
+	raw, err := json.Marshal(out.Capabilities)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `[{"kind":"secret_detection","job":"leaks","tool":"gitleaks","evidence":"images"},{"kind":"sast","job":"sast","tool":"semgrep","evidence":"commands"}]`
+	if string(raw) != want {
+		t.Fatalf("capabilities = %s\nwant          %s", raw, want)
 	}
 }

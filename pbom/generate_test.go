@@ -341,9 +341,9 @@ func TestProcessIncludesCarriesTheComponentProject(t *testing.T) {
 
 func TestGenerate_CapabilitiesAreCopiedVerbatim(t *testing.T) {
 	g := NewGenerator("grp/app", 1, "https://gitlab.example", "main").
-		WithCapabilities([]capability.Match{{Kind: "secret_detection", Job: "scan", Tool: "gitleaks", Evidence: "image"}})
+		WithCapabilities([]capability.Match{{Kind: "secret_detection", Job: "scan", Tool: "gitleaks", Evidence: "images"}})
 	doc := g.Generate(&gitlab.GitlabPipelineImageData{}, &gitlab.GitlabPipelineOriginData{})
-	if len(doc.Capabilities) != 1 || doc.Capabilities[0] != (Capability{Kind: "secret_detection", Job: "scan", Tool: "gitleaks", Evidence: "image"}) {
+	if len(doc.Capabilities) != 1 || doc.Capabilities[0] != (Capability{Kind: "secret_detection", Job: "scan", Tool: "gitleaks", Evidence: "images"}) {
 		t.Fatalf("Capabilities = %+v", doc.Capabilities)
 	}
 	if NewGenerator("grp/app", 1, "https://gitlab.example", "main").Generate(&gitlab.GitlabPipelineImageData{}, &gitlab.GitlabPipelineOriginData{}).Capabilities != nil {

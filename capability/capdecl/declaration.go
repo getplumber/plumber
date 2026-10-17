@@ -1,17 +1,17 @@
 // Package capdecl holds the pipeline capability declaration schema: the types a user (or
 // the CLI's own built-in list) writes a capability in, their strict decode from YAML and
-// from JSON, and the bounds that make a declared list safe to compile and to store (spec
-// section 4.2 of docs/superpowers/specs/2026-10-17-pipeline-capabilities-revised.md).
+// tolerant decode from JSON, the bounds that make a declared list safe to compile and to
+// store, and the bounded glob matcher its patterns compile to (spec sections 4.2, 4.3 and
+// 4.6 of the pipeline capabilities design, revised 2026-10-17, in the Plumber monorepo).
 //
 // This package is a leaf: it imports nothing from this module. The capability package
 // (which recognizes capabilities over a parsed pipeline and so imports gitlab, for the
-// wrapper-script read) re-exports Declaration and these functions; configuration imports
-// capdecl directly, never capability, to read the field into .plumber.yaml without a cycle
-// (configuration -> capability -> gitlab -> configuration).
+// wrapper-script read) re-exports Declaration and these functions, and keeping the schema
+// in a leaf leaves it importable from anywhere in the module without a cycle
+// (capability -> gitlab -> configuration).
 package capdecl
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -59,13 +59,15 @@ func DecodeYAML(data []byte) ([]Declaration, error) {
 	return doc.Capabilities, nil
 }
 
-// DecodeJSON strictly decodes a bare JSON array of declarations (the org setting, served
-// through /context) into a declaration list. An unknown key is refused by name.
+// DecodeJSON decodes a bare JSON array of declarations (the org setting, served through
+// /context) into a declaration list, tolerantly: an unknown key is ignored. The platform
+// refused unknown keys at PUT already, so one the CLI does not know comes from a platform
+// newer than the CLI (a recognizer field added later): the CLI keeps the fields it knows
+// rather than dropping the whole list (spec 4.6). The caller validates the result
+// (Validate). The strict decode is DecodeYAML's, for the file a user types.
 func DecodeJSON(data []byte) ([]Declaration, error) {
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
 	var decls []Declaration
-	if err := dec.Decode(&decls); err != nil {
+	if err := json.Unmarshal(data, &decls); err != nil {
 		return nil, err
 	}
 	return decls, nil
@@ -157,6 +159,29 @@ func Validate(decls []Declaration) error {
 	}
 
 	return nil
+}
+
+// PruneEmptyRecognizers drops every recognizer that carries no pattern in the fields this
+// CLI knows, calling dropped with the capability's name and the recognizer's index in the
+// declared list for each one. It is for the served list only, after DecodeJSON and before
+// Validate (spec 4.6): a recognizer the platform accepted with only a field of a platform
+// newer than this CLI (a future github_actions) decodes here with zero patterns, and
+// Validate would otherwise refuse the whole org list. A capability left with no recognizer
+// keeps its name, which is the disable gesture (spec 4.2). The input is not modified.
+func PruneEmptyRecognizers(decls []Declaration, dropped func(capability string, index int)) []Declaration {
+	out := make([]Declaration, len(decls))
+	for i, d := range decls {
+		kept := make([]Recognizer, 0, len(d.Recognizers))
+		for j, r := range d.Recognizers {
+			if countPatterns(r) == 0 {
+				dropped(d.Name, j)
+				continue
+			}
+			kept = append(kept, r)
+		}
+		out[i] = Declaration{Name: d.Name, Recognizers: kept}
+	}
+	return out
 }
 
 // countPatterns is the number of patterns a recognizer carries across every field.

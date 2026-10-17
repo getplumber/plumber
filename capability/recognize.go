@@ -160,24 +160,28 @@ func (s *jobSubjects) of(field string) []string {
 	return nil
 }
 
-// wrapperLines returns the lines of every wrapper script the job's entries run, one level
-// only (a script the wrapper itself calls is never followed), read once.
+// wrapperLines returns the lines of every wrapper script the job's entries run (every
+// qualifying call of every entry, each script once per job), one level only (a script the
+// wrapper itself calls is never followed), each file read at most once per Recognize call.
 func (s *jobSubjects) wrapperLines() []string {
 	if s.readDone || s.repoRoot == "" {
 		return s.wrapped
 	}
 	s.readDone = true
+	added := map[string]bool{}
 	for _, e := range s.entries {
-		rel, ok := wrapperPath(e)
-		if !ok {
-			continue
+		for _, rel := range wrapperPaths(e) {
+			if added[rel] {
+				continue
+			}
+			added[rel] = true
+			lines, seen := s.wrappers[rel]
+			if !seen {
+				lines = readWrapper(s.repoRoot, rel, s.job)
+				s.wrappers[rel] = lines
+			}
+			s.wrapped = append(s.wrapped, lines...)
 		}
-		lines, seen := s.wrappers[rel]
-		if !seen {
-			lines = readWrapper(s.repoRoot, rel, s.job)
-			s.wrappers[rel] = lines
-		}
-		s.wrapped = append(s.wrapped, lines...)
 	}
 	return s.wrapped
 }

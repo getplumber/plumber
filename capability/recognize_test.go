@@ -7,6 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sirupsen/logrus"
+	logrustest "github.com/sirupsen/logrus/hooks/test"
+
 	"github.com/getplumber/plumber/capability/capdecl"
 	"github.com/getplumber/plumber/internal/ir"
 )
@@ -285,8 +288,81 @@ func TestRecognize_Spec43_WrapperScript_NeverFails(t *testing.T) {
 		job("commented", "alpine", "# ./ci/scan.sh"),
 		job("commented-after", "alpine", "echo hi # ./ci/scan.sh"),
 	}}
+	hook := capturedLog(t)
 	if got := Recognize(pipe, root, builtin(t)); len(got) != 0 {
 		t.Fatalf("got %+v, want no match: absent, escaping, unreadable, oversized, second-level and commented scripts yield no evidence", got)
+	}
+	assertDebugLinesNameJobAndPathOnly(t, hook, "gitleaks detect")
+}
+
+// capturedLog hooks the standard logger at debug level (the package logger hangs off it)
+// and restores it afterwards.
+func capturedLog(t *testing.T) *logrustest.Hook {
+	t.Helper()
+	std := logrus.StandardLogger()
+	savedLevel, savedHooks := std.GetLevel(), std.Hooks
+	std.SetLevel(logrus.DebugLevel)
+	hook := logrustest.NewLocal(std)
+	t.Cleanup(func() {
+		std.ReplaceHooks(savedHooks)
+		std.SetLevel(savedLevel)
+	})
+	return hook
+}
+
+// assertDebugLinesNameJobAndPathOnly checks the contract's logging rule on the wrapper read:
+// at least one debug line was logged, every one carries the job and the script path, and
+// none carries a byte of the script content (the message, the fields and the error alike).
+func assertDebugLinesNameJobAndPathOnly(t *testing.T, hook *logrustest.Hook, content string) {
+	t.Helper()
+	n := 0
+	for _, e := range hook.AllEntries() {
+		if e.Level != logrus.DebugLevel || !strings.Contains(e.Message, "wrapper script") {
+			continue
+		}
+		n++
+		if e.Data["job"] == nil || e.Data["script"] == nil {
+			t.Errorf("debug line %q fields %v: want the job and the script path", e.Message, e.Data)
+		}
+		line, err := e.String()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(line, content) {
+			t.Errorf("debug line %q carries the script content %q", line, content)
+		}
+	}
+	if n == 0 {
+		t.Fatal("want at least one wrapper-script debug line")
+	}
+}
+
+// Spec 4.3 and decision 5: a wrapper path inside the root that is a symlink to a file
+// outside it is refused by ResolveWithinRepo (the resolved target is compared, not the
+// path as written, unlike the `..` refusal of wrapperPaths): no read, no match, no error,
+// and the debug line names the job and the path, never the target's content.
+func TestRecognize_Spec43_WrapperScript_SymlinkOutsideTheRootIsNotRead(t *testing.T) {
+	outside := t.TempDir()
+	must(t, os.WriteFile(filepath.Join(outside, "scan.sh"), []byte("gitleaks detect --outside-content\n"), 0o755))
+	root := t.TempDir()
+	must(t, os.MkdirAll(filepath.Join(root, "ci"), 0o755))
+	if err := os.Symlink(filepath.Join(outside, "scan.sh"), filepath.Join(root, "ci", "scan.sh")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	pipe := &ir.NormalizedPipeline{Jobs: []ir.Job{job("wrapper", "alpine", "./ci/scan.sh")}}
+	hook := capturedLog(t)
+	if got := Recognize(pipe, root, builtin(t)); len(got) != 0 {
+		t.Fatalf("got %+v, want no match: a symlink out of the root is never read", got)
+	}
+	assertDebugLinesNameJobAndPathOnly(t, hook, "outside-content")
+	var refused bool
+	for _, e := range hook.AllEntries() {
+		if e.Message == "capability: wrapper script not under the repository, skipped" && e.Data["job"] == "wrapper" && e.Data["script"] == "ci/scan.sh" {
+			refused = true
+		}
+	}
+	if !refused {
+		t.Fatal("want the ResolveWithinRepo refusal logged for job wrapper and script ci/scan.sh")
 	}
 }
 
@@ -438,16 +514,23 @@ func TestRecognize_NilAndEmpty(t *testing.T) {
 	}
 }
 
-// recognizeWithin fails t unless Recognize returns within 2 s.
+// recognizeWithin fails t unless Recognize, without a repository root, returns within 2 s.
 func recognizeWithin(t *testing.T, pipe *ir.NormalizedPipeline, decls []Compiled) []Match {
+	t.Helper()
+	return recognizeWithinRoot(t, pipe, "", decls)
+}
+
+// recognizeWithinRoot fails t unless Recognize under root (the wrapper_script subject on
+// when root is set) returns within 2 s.
+func recognizeWithinRoot(t *testing.T, pipe *ir.NormalizedPipeline, root string, decls []Compiled) []Match {
 	t.Helper()
 	var got []Match
 	done := make(chan struct{})
-	go func() { got = Recognize(pipe, "", decls); close(done) }()
+	go func() { got = Recognize(pipe, root, decls); close(done) }()
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("Recognize on a 256 KiB script line took over 2 s")
+		t.Fatal("Recognize on a 256 KiB script entry took over 2 s")
 	}
 	return got
 }
@@ -466,4 +549,53 @@ func TestRecognize_Spec43_LongLinesAreBounded(t *testing.T) {
 	if len(got) != 1 || got[0] != (Match{"secret_detection", "long", "trufflehog", EvidenceImages}) {
 		t.Fatalf("got %+v, want one trufflehog match by images", got)
 	}
+}
+
+// Spec 4.3: a pattern is the user's and a subject any developer's script line, so a user
+// pattern with several literal runs never makes matching super-linear: each of these pairs
+// is decided well within 2 s through Recognize.
+func TestRecognize_Spec43_UserPatternsAreBounded(t *testing.T) {
+	const size = 256 << 10
+	for _, c := range []struct{ pattern, line string }{
+		{"*b*a*a*", strings.Repeat("a", size) + "b"},
+		{"*ggshield*secret*", strings.Repeat("ggshield ", size/len("ggshield "))},
+		{"*a*a*a*a*a*a*a*a*", strings.Repeat("b", size)},
+	} {
+		decls := compiled(t, "custom", capdecl.Recognizer{Tool: "t", Commands: []string{c.pattern}})
+		if got := recognizeWithin(t, &ir.NormalizedPipeline{Jobs: []ir.Job{job("j", "alpine", c.line)}}, decls); len(got) != 0 {
+			t.Fatalf("%q: got %+v, want no match", c.pattern, got)
+		}
+	}
+}
+
+// Spec 4.3: the wrapper rule follows a relative `cd` chain, but only a short one (16
+// segments, 1024 bytes of directory): a 256 KiB chain of `cd a&&` before `./x.sh`, on one
+// line or as a `- |` block, is decided well within 2 s and yields no wrapper evidence.
+func TestRecognize_Spec43_LongCdChainIsBounded(t *testing.T) {
+	root := t.TempDir()
+	must(t, os.WriteFile(filepath.Join(root, "x.sh"), []byte("gitleaks detect\n"), 0o755))
+	n := (256 << 10) / len("cd a&&")
+	for name, entry := range map[string]string{
+		"one line": strings.Repeat("cd a&&", n) + "./x.sh",
+		"a block":  strings.Repeat("cd a\n", n) + "./x.sh\n",
+	} {
+		pipe := &ir.NormalizedPipeline{Jobs: []ir.Job{job("chain", "alpine", entry)}}
+		if got := recognizeWithinRoot(t, pipe, root, builtin(t)); len(got) != 0 {
+			t.Fatalf("%s: got %+v, want no wrapper evidence past the cd cap", name, got)
+		}
+	}
+}
+
+// Spec 4.3: every wrapper call of a script entry is a wrapper subject, not only the first:
+// a `- |` block that runs a setup script then a scan script is recognized by the scan
+// script's lines.
+func TestRecognize_Spec43_WrapperScript_EveryLineOfAnEntry(t *testing.T) {
+	root := t.TempDir()
+	must(t, os.MkdirAll(filepath.Join(root, "ci"), 0o755))
+	must(t, os.WriteFile(filepath.Join(root, "ci", "setup.sh"), []byte("apk add git\n"), 0o755))
+	must(t, os.WriteFile(filepath.Join(root, "ci", "scan.sh"), []byte("gitleaks detect --source .\n"), 0o755))
+	pipe := &ir.NormalizedPipeline{Jobs: []ir.Job{job("block", "alpine", "./ci/setup.sh\n./ci/scan.sh\n")}}
+	assertMatchesByJob(t, Recognize(pipe, root, builtin(t)), map[string]Match{
+		"block": {"secret_detection", "block", "gitleaks", EvidenceWrapperScript},
+	})
 }

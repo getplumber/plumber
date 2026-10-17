@@ -315,26 +315,54 @@ The CycloneDX export does not carry `jobs[]`: a runner tag is not a component, a
 
 ### `capabilities[]` Array
 
-**GitLab only.** One entry per job and capability: what the job does, the tool it does it with, and the evidence the match rests on. The CLI recognizes it from what it already parsed (the job's image, the includes, the job's `artifacts:reports`, its own script lines) and from the shell scripts the job calls in the checkout. The key is omitted when nothing was recognized.
+**GitLab only.** One entry per job and capability: what the job does, the tool it does it with, and the evidence the match rests on. A capability is a name you declare (or the CLI's built-in list declares, `secret_detection`) with recognizers: glob patterns over what the CLI already parsed (the job's image, the include that defined it, its `artifacts:reports`, its own script lines) and over the shell scripts the job calls in the checkout. The key is omitted when nothing was recognized.
 
-Entries are sorted by job name, then by kind, so two runs over the same pipeline produce the same document. Hidden jobs (a name starting with `.`) are never listed: they never run on their own, and a job that extends one is judged under its own name.
+Entries are sorted by job name, then by kind, so two runs over the same pipeline produce the same document. Hidden jobs (a name starting with `.`) are never listed: they never run on their own, and a job that extends one is judged under its own name. A job that matches two capabilities yields two entries.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `kind` | string | The capability. Closed vocabulary: `secret_detection` |
+| `kind` | string | The capability's declared name (`secret_detection`, or a name you declared) |
 | `job` | string | The job name, exactly as the pipeline declares it |
-| `tool` | string | The tool the recognizer names (`gitleaks`, `betterleaks`, `trufflehog`, `detect-secrets`, `ggshield`, `gitlab-secret-detection`, or a tool your organization defined on the platform) |
-| `evidence` | string | What the match rests on. Closed vocabulary, in the order the rules run (the first that matches wins): `image`, `include`, `report`, `command`, `wrapper_script` |
+| `tool` | string | The matching recognizer's `tool` when it declares one (`gitleaks`, `betterleaks`, `trufflehog`, `detect-secrets`, `ggshield`, `gitlab-secret-detection` in the built-in list), else the pattern that matched (`*gitleaks*`) |
+| `evidence` | string | The recognizer field that matched. Closed vocabulary: `images`, `gitlab_include_template`, `gitlab_include_component`, `gitlab_report_types`, `commands`, `wrapper_script` |
 
-The five evidence rules:
+**Declaring capabilities.** The schema is the same in `.plumber.yaml`, in the platform's capabilities setting (as JSON) and in the CLI's built-in list:
 
-- `image`: the job's image (`<registry>/<name>`, tag and digest ignored) matches a recognizer's image pattern.
-- `include`: the job is defined by an include a recognizer names (the GitLab Secret Detection template or component).
-- `report`: the job declares an `artifacts:reports` key a recognizer names (`secret_detection`). A job that only re-publishes a report it did not produce is listed too, because the rule reads the declaration, not the run; such a job is rare and an organization can tell it apart from the job name.
-- `command`: one of the job's own `before_script` / `script` / `after_script` lines runs a recognizer's command. Known prefixes are skipped (`env` with its `VAR=value` fields and options, `sudo` with its options and their values, `timeout` with its options and its duration, `time`, `nice`, `exec`, `command`, `nohup`), and `python -m <module>` counts as the module (`python -m detect_secrets`). Launchers are skipped too, the next field being the command (`bundle exec`, `poetry run`, `pipenv run`, `uv run`, `pdm run`, `pipx run`, `pnpm exec`, `npx` with its options), and `pre-commit run <hook>` counts as the hook (`pre-commit run gitleaks`), the run's own options understood and skipped first (`--hook-stage`, `--from-ref`, `--to-ref`, `--color` and the like, including their `=` form); an all-hooks run (`pre-commit run --all-files`) is not recognized because the hook list is in `.pre-commit-config.yaml`, which the rules do not read, and neither is a run whose hook id follows `--files` or `--file` (`pre-commit run --files a.py b.py gitleaks`), because those options consume every file field after them and a hook id placed there is indistinguishable from a file path. Shell comments are ignored, and a `make` target is not followed (`make secret-scan` counts as `make`). A container-run line (`docker run`, `podman run`, `nerdctl run`) also counts when one of its arguments is an image a recognizer's image pattern matches (`docker run --rm trufflesecurity/trufflehog:latest filesystem .`); the job's own image is not involved. The image is the first argument after `run` that is neither a flag nor a flag's value (`--rm`, `-it` and a flag written with `=` take no value, any other flag takes the next argument), and the arguments after it are the container's command, never an image. A recognizer's command may also be a space-separated sequence (`ggshield secret`), which matches only when the fields after the command equal the sequence's remaining words, in order; this disambiguates a multi-purpose tool's CLI (`ggshield secret scan .` matches, `ggshield iac scan .` does not), and a recognizer your organization defines on the platform may use the same form. Flags and their values may stand before the subcommand (`ggshield --config .gitguardian.yaml secret scan ci` matches), another word may not (`ggshield iac scan ci` does not). A flag's value is only skipped when it does not look like a bare word: a value holding a digit, a quote or one of `. / : = @ ~ ,` is skipped, while a word made only of letters, hyphens and underscores is never taken for a flag's value (`ggshield -v iac scan .` does not match). The accepted cost: a bare-word flag value before the subcommand is not understood (`corp-scan --profile ci secrets` does not match `corp-scan secrets`); ggshield is recognized by `ggshield secret` and by the legacy `ggshield scan` (ggshield before 1.14).
-- `wrapper_script`: a line runs a shell script of the repository (`./ci/scan.sh`, `bash scripts/scan.sh`, `cd ci && ./scan.sh`), and that script runs a recognizer's command. One level only (a script called by the script is not read), relative paths under the repository root only, at most 256 KiB per script. A script that is absent, outside the root, unreadable or over the cap is skipped quietly: it yields no evidence and never fails the run. Scripts are read only when the checkout the CLI runs in is the analyzed project itself, checked out at the analyzed ref (a CI job of that project on that branch); otherwise, including a local run or a run that names another project with `--project`, this rule is off, so a script of one repository never becomes evidence for another.
+```yaml
+capabilities:
+  - name: secret_detection
+    recognizers:
+      - tool: gitleaks                       # optional, shown as the entry's tool
+        images: ["*zricethezav/gitleaks*"]
+        commands: ["*gitleaks*"]
+      - tool: gitlab-secret-detection
+        images: ["registry.gitlab.com/security-products/secrets*"]
+        gitlab_report_types: ["secret_detection"]
+        gitlab_include_template: ["Jobs/Secret-Detection*"]
+        gitlab_include_component: ["*/secret-detection/*"]
+```
 
-The recognizers are the CLI's shipped defaults, then, in platform mode, the recognizers your organization defined on the platform (served on the project context), merged after them: a served recognizer extends the defaults, it never removes one.
+A name is 1 to 64 bytes of lowercase letters, digits, underscore or hyphen, unique within the list. A recognizer carries an optional `tool` (1 to 64 bytes) and any of the five pattern lists (`images`, `gitlab_include_template`, `gitlab_include_component`, `gitlab_report_types`, `commands`; the `wrapper_script` subject reuses `commands`), at least one pattern in all. Bounds: 50 capabilities, 32 recognizers per capability, 64 patterns per field, 1 to 256 bytes per pattern. In `.plumber.yaml` an unknown key is refused by name, so a typo never silently disables a recognizer; in the list the platform serves, a key this CLI does not know yet (a field of a newer platform) is ignored and the fields it knows are kept, and a recognizer left without any pattern this CLI knows is dropped (one debug line) while the rest of the list stays in force.
+
+**The globs.** `*` matches any run of characters, `/` included, `?` one character, `[...]` a class (`[a-z]`, negated by `[!...]` or `[^...]`, a `]` first in it literal), `\x` the character `x`. Matching is case-sensitive and on the whole subject: `*gitleaks*` matches `gitleaks detect`, `gitleaks` alone does not. A pattern in `.plumber.yaml` that is not a valid glob (an unclosed class, a trailing backslash) is skipped with one warning; the rest of the list stays in force. A match costs at most the length of the subject times the length of the pattern, whatever the pattern.
+
+**The six subjects**, in the order a recognizer's fields are tried (the first field that matches names the evidence, so a job whose image and script both say gitleaks records `images`):
+
+- `images`: the job's image as `<registry>/<name>`, tag and digest stripped, a Docker Hub short name expanded (`zricethezav/gitleaks:v8` is `docker.io/zricethezav/gitleaks`); and the image of a `docker run`, `podman run` or `nerdctl run` script line, the first argument after `run` that is neither a flag nor a flag's value (a flag written with `=` and the boolean ones such as `--rm` or `-it` take no value, any other flag takes the next argument; the arguments after the image are the container's command).
+- `gitlab_include_template`: the template path as written in the `include: template:` entry that defines the job (`Jobs/Secret-Detection.gitlab-ci.yml`).
+- `gitlab_include_component`: the component source of the `include: component:` entry that defines the job, as `host/path/name` with the `@version` stripped, so a pattern never names a version.
+- `gitlab_report_types`: each key of the job's `artifacts:reports` (`secret_detection`). A job that only re-publishes a report it did not produce matches too: the subject is the declaration, not the run.
+- `commands`: each line of the job's `before_script`, `script` and `after_script`, an entry split on newlines first (a `- |` block holds several lines), an unquoted `#` comment removed, surrounding whitespace trimmed. The line is matched whole: the pattern sees the text inside `sh -c "..."` or after `env`, `sudo` or a launcher anyway, so nothing is unwrapped. A `make` target is not followed.
+- `wrapper_script`: a script line whose command (after an optional `sh`, `bash`, `source` or `.`) is a relative path under the repository ending in `.sh` or `.bash` (`./ci/scan.sh`, `bash scripts/scan.sh`, `cd ci && ./scan.sh`, every such call of the job, not only the first; a `cd` chain is followed for 16 steps and 1024 bytes of directory at most); the script's lines, comments removed, are matched against the recognizer's `commands`. One level only (a script called by the script is not read), at most 256 KiB per script. A script that is absent, outside the root, unreadable or over the cap yields no evidence and never fails the run. Scripts are read only when the checkout the CLI runs in is the analyzed project itself, at the analyzed ref (a CI job of that project on that branch); otherwise, including a local run or a run that names another project with `--project`, this subject is off, so a script of one repository never becomes evidence for another.
+
+**Precedence.** Inside a recognizer, the fields in the order above; inside a capability, the recognizers in list order, the first that matches naming the tool. One entry per job and capability.
+
+**The effective list.** A run recognizes your list, then every built-in capability whose name your list does not declare. The order carries no meaning: the entries are sorted. A declaration with a built-in's name replaces that built-in whole (there is no merge of recognizers inside one name), so you can narrow `secret_detection` to your own tool, or switch it off with `name: secret_detection` and `recognizers: []`. Your list comes from:
+
+- in platform mode, the capabilities setting of your organization, served on the project context. It is the configuration: a `capabilities` key in `.plumber.yaml` is ignored, with one info line saying so. A platform that does not serve the field means the built-in list alone; a served list that does not decode or exceeds the bounds is not used, with one warning, and the run goes on with the built-in list.
+- in a standalone run, the `capabilities` key of `.plumber.yaml`. A list with an unknown key, a value of the wrong type or a violation of the bounds is not used, with one warning naming the error, and the run goes on with the built-in list; the key never fails the configuration load.
+
+`plumber capabilities defaults` prints the built-in list in this schema, ready to copy into `.plumber.yaml` and edit.
 
 The platform push carries the same list in its `bom` section, always as an array (`[]` when nothing was recognized), at most 500 entries; past that bound the whole `bom` section is left out of the push and the bound is named on stderr.
 
@@ -345,7 +373,7 @@ The platform push carries the same list in its `bom` section, always as an array
   "kind": "secret_detection",
   "job": "secret-scan",
   "tool": "gitleaks",
-  "evidence": "image"
+  "evidence": "images"
 }
 ```
 

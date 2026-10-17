@@ -9,8 +9,9 @@ import (
 	"github.com/getplumber/plumber/capability/capdecl"
 )
 
-// Spec 4.2: the schema decodes from YAML and from JSON with the same keys, strictly.
-func TestDeclaration_DecodeYAMLAndJSON_Strict(t *testing.T) {
+// Spec 4.2: the schema decodes from YAML and from JSON with the same keys, the YAML (the
+// file a user types) strictly, the served JSON tolerantly (spec 4.6).
+func TestDeclaration_DecodeYAMLStrict_JSONTolerant(t *testing.T) {
 	y := []byte("capabilities:\n  - name: secret_detection\n    recognizers:\n      - tool: gitleaks\n        images: [\"*gitleaks*\"]\n        commands: [\"*gitleaks*\"]\n      - gitlab_report_types: [secret_detection]\n        gitlab_include_template: [\"Jobs/Secret-Detection*\"]\n        gitlab_include_component: [\"*/secret-detection/*\"]\n")
 	decls, err := DecodeYAML(y)
 	if err != nil || len(decls) != 1 || decls[0].Name != "secret_detection" || len(decls[0].Recognizers) != 2 || decls[0].Recognizers[1].GitlabReportTypes[0] != "secret_detection" {
@@ -23,8 +24,14 @@ func TestDeclaration_DecodeYAMLAndJSON_Strict(t *testing.T) {
 	if _, err := DecodeYAML([]byte("capabilities:\n  - name: a\n    recognisers: []\n")); err == nil || !strings.Contains(err.Error(), "recognisers") {
 		t.Fatalf("an unknown key must be refused by name, got %v", err)
 	}
-	if _, err := DecodeJSON([]byte(`[{"name":"a","recognizers":[{"image":["x"]}]}]`)); err == nil || !strings.Contains(err.Error(), "image") {
-		t.Fatalf("an unknown recognizer key must be refused by name, got %v", err)
+	// Spec 4.6 (ruling): the served JSON is decoded tolerantly, an unknown key ignored and
+	// the known fields kept, so a newer platform's field never drops the list.
+	tolerant, err := DecodeJSON([]byte(`[{"name":"a","future":1,"recognizers":[{"github_actions":["x"],"commands":["y"]}]}]`))
+	if err != nil || len(tolerant) != 1 || tolerant[0].Name != "a" || !reflect.DeepEqual(tolerant[0].Recognizers[0].Commands, []string{"y"}) {
+		t.Fatalf("an unknown JSON key must be ignored and the known fields kept, got %v %+v", err, tolerant)
+	}
+	if _, err := DecodeJSON([]byte(`{"name":"a"}`)); err == nil {
+		t.Fatal("a JSON value that is not an array must be refused")
 	}
 }
 

@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/getplumber/plumber/capability/capdecl"
 	defaultconfig "github.com/getplumber/plumber/defaultConfig"
 	"github.com/getplumber/plumber/utils"
 	"github.com/sirupsen/logrus"
@@ -226,17 +225,20 @@ type PlumberConfig struct {
 	// moves these into GitLab.Controls and clears this field.
 	Controls ControlsConfig `yaml:"controls,omitempty"`
 
-	// Capabilities declares the user's pipeline capabilities for a standalone run (spec
-	// 4.2 of docs/superpowers/specs/2026-10-17-pipeline-capabilities-revised.md): a
-	// capability name and the recognizers that reveal it, the same schema the platform
+	// Capabilities holds the user's pipeline capabilities for a standalone run (spec 4.2
+	// of the pipeline capabilities design, revised 2026-10-17, in the Plumber monorepo):
+	// a capability name and the recognizers that reveal it, the same schema the platform
 	// serves through /context in platform mode (where this field is ignored: the served
-	// list is the configuration, spec 4.6). Nil when the file carries no capabilities
-	// key; the CLI builds the effective list (capability.Effective) from it, filling in
-	// the built-in list (capability.Builtin) for any name this list does not declare.
-	// The type is capdecl.Declaration (identical to capability.Declaration, a type
-	// alias) because configuration cannot import capability without a cycle
-	// (capability -> gitlab -> configuration): see capability/declaration.go.
-	Capabilities []capdecl.Declaration `yaml:"capabilities,omitempty"`
+	// list is the configuration, spec 4.6). Nil when the file carries no capabilities key.
+	//
+	// It is kept as the raw YAML value, not decoded into capdecl.Declaration here, so the
+	// configuration load never fails on it (a wrong type, a map instead of a list) and
+	// never half applies it (a typo key this lenient whole-file decode would drop): the
+	// CLI decodes it strictly (capdecl.DecodeYAML) and checks its bounds (capdecl.Validate)
+	// when it builds the effective list (provider.CapabilitiesOf), falling back to the
+	// built-in list with one warning when either fails. The value round-trips through
+	// yaml.Marshal, so the extends overlay and a re-encoded config keep it as written.
+	Capabilities interface{} `yaml:"capabilities,omitempty"`
 
 	// Raw is the verbatim text of the config that produced this run, captured
 	// at load. The self-describing `plumberConfig` block in the JSON report
@@ -1944,81 +1946,11 @@ func ValidateKnownKeys(data []byte) []string {
 		}
 	}
 
-	// capabilities: a strict walk, an unknown key at any level is an error naming its
-	// path (spec 4.2: "unknown fields are refused ... so a typo never silently disables
-	// a recognizer"). Unlike the controls walk above, this one does not look up a
-	// catalog: the vocabulary of capability and recognizer NAMES is the user's (spec
-	// decision 7); only the SHAPE (which keys a capability or a recognizer may carry)
-	// is fixed.
-	if capsRaw, ok := raw["capabilities"]; ok {
-		warnings = append(warnings, validateCapabilitiesBlock(capsRaw)...)
-	}
+	// capabilities: no walk here. The key is decoded strictly when the effective list is
+	// built (provider.CapabilitiesOf, capdecl.DecodeYAML), which names an unknown key in
+	// its one warning; a load-time walk would warn twice, and in platform mode about a key
+	// the run ignores.
 
-	return warnings
-}
-
-// capabilityKnownKeys and recognizerKnownKeys are the strict shape of spec 4.2: a
-// capability carries only name and recognizers; a recognizer carries only tool and the
-// five pattern-list fields (provider-neutral or GitLab-prefixed).
-var (
-	capabilityKnownKeys = []string{"name", "recognizers"}
-	recognizerKnownKeys = []string{
-		"tool", "images", "commands",
-		"gitlab_report_types", "gitlab_include_template", "gitlab_include_component",
-	}
-)
-
-// validateCapabilitiesBlock validates the unmarshalled `capabilities:` sequence against the
-// strict shape of spec 4.2, naming the exact path of any unknown key
-// (capabilities[i] or capabilities[i].recognizers[j]).
-func validateCapabilitiesBlock(capsRaw interface{}) []string {
-	caps, ok := capsRaw.([]interface{})
-	if !ok {
-		return nil
-	}
-
-	var warnings []string
-	for i, capRaw := range caps {
-		capMap, ok := capRaw.(map[interface{}]interface{})
-		if !ok {
-			continue
-		}
-		capPath := fmt.Sprintf("capabilities[%d]", i)
-		for keyRaw := range capMap {
-			key, ok := keyRaw.(string)
-			if !ok {
-				continue
-			}
-			if !slices.Contains(capabilityKnownKeys, key) {
-				warnings = append(warnings, fmt.Sprintf("Unknown key in %s: %q", capPath, key))
-			}
-		}
-
-		recsRaw, ok := capMap["recognizers"]
-		if !ok {
-			continue
-		}
-		recs, ok := recsRaw.([]interface{})
-		if !ok {
-			continue
-		}
-		for j, recRaw := range recs {
-			recMap, ok := recRaw.(map[interface{}]interface{})
-			if !ok {
-				continue
-			}
-			recPath := fmt.Sprintf("%s.recognizers[%d]", capPath, j)
-			for keyRaw := range recMap {
-				key, ok := keyRaw.(string)
-				if !ok {
-					continue
-				}
-				if !slices.Contains(recognizerKnownKeys, key) {
-					warnings = append(warnings, fmt.Sprintf("Unknown key in %s: %q", recPath, key))
-				}
-			}
-		}
-	}
 	return warnings
 }
 

@@ -58,7 +58,11 @@ type PBOM struct {
 }
 
 // Capability is one recognized capability of one job (package capability's Match, in the
-// document's own shape). Kind and Evidence are closed vocabularies.
+// document's own shape). Kind is the declared capability name (the effective list's, spec
+// 4.2), not a closed vocabulary; Tool is the recognizer's declared tool, else the pattern
+// that matched; Evidence is the closed set of the recognizer's field names: images,
+// commands, wrapper_script, gitlab_report_types, gitlab_include_template,
+// gitlab_include_component.
 type Capability struct {
 	Kind     string `json:"kind"`
 	Job      string `json:"job"`

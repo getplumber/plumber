@@ -129,8 +129,11 @@ type platformBOM struct {
 }
 
 // platformBOMCapability is one recognized capability of one job, copied from
-// pbom.Capability. Kind and Evidence are closed vocabularies (package
-// capability).
+// pbom.Capability (spec 4.4). Kind is the declared capability name (the
+// built-in list's, the platform's served list's or the .plumber.yaml key's),
+// never a closed vocabulary. Evidence is the closed set of the recognizer's
+// field names: images, commands, wrapper_script, gitlab_report_types,
+// gitlab_include_template, gitlab_include_component (package capability).
 type platformBOMCapability struct {
 	Kind     string `json:"kind"`
 	Job      string `json:"job"`

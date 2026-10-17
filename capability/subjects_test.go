@@ -2,6 +2,7 @@ package capability
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/getplumber/plumber/internal/ir"
@@ -107,9 +108,31 @@ func TestWrapperPath_Spec43(t *testing.T) {
 		{"# old\n./scripts/scan.sh\n", "scripts/scan.sh", true},
 	}
 	for _, c := range cases {
-		got, ok := wrapperPath(c.line)
+		paths := wrapperPaths(c.line)
+		got, ok := "", len(paths) > 0
+		if ok {
+			got = paths[0]
+		}
 		if got != c.want || ok != c.ok {
-			t.Errorf("wrapperPath(%q) = (%q, %v), want (%q, %v)", c.line, got, ok, c.want, c.ok)
+			t.Errorf("wrapperPaths(%q) = %q, want first (%q, %v)", c.line, paths, c.want, c.ok)
+		}
+	}
+	// Every qualifying call of an entry, in order; an unsafe cd ends the search after the
+	// calls before it; a cd chain past 16 segments ends it too.
+	multi := []struct {
+		entry string
+		want  []string
+	}{
+		{"./ci/setup.sh\n./ci/scan.sh\n", []string{"ci/setup.sh", "ci/scan.sh"}},
+		{"./a.sh && cd ci && ./b.sh; sh c.sh", []string{"a.sh", "ci/b.sh", "ci/c.sh"}},
+		{"./a.sh && cd /opt && ./b.sh", []string{"a.sh"}},
+		{strings.Repeat("cd a && ", 16) + "./x.sh", []string{strings.Repeat("a/", 16) + "x.sh"}},
+		{strings.Repeat("cd a && ", 17) + "./x.sh", nil},
+		{"cd " + strings.Repeat("a", 1024) + " && ./x.sh", nil},
+	}
+	for _, c := range multi {
+		if got := wrapperPaths(c.entry); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("wrapperPaths(%q) = %q, want %q", c.entry, got, c.want)
 		}
 	}
 }

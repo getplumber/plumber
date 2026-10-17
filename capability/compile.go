@@ -3,7 +3,7 @@ package capability
 import (
 	"fmt"
 
-	"github.com/gobwas/glob"
+	"github.com/getplumber/plumber/capability/capdecl"
 )
 
 // Compiled is one declaration ready for matching: its name and its recognizers, compiled.
@@ -32,13 +32,14 @@ type CompiledField struct {
 
 // CompiledPattern is one glob pattern, compiled, with its source text kept: the tool
 // fallback needs it (spec 4.3, "the recognizer's tool when declared, else the pattern that
-// matched") and so does a later warning that names the pattern.
+// matched") and so does a later warning that names the pattern. The matcher is
+// capdecl.Glob, bounded by len(subject) * len(pattern) whatever the pattern.
 type CompiledPattern struct {
 	Source string
-	Glob   glob.Glob
+	Glob   *capdecl.Glob
 }
 
-// Compile compiles decls' patterns to glob.Glob, keeping the source text of each. A pattern
+// Compile compiles decls' patterns to capdecl.Glob, keeping the source text of each. A pattern
 // that does not compile as a plain glob is skipped and, when warn is not nil, reported once
 // through warn naming the capability, the recognizer's tool (or its declared order when the
 // recognizer named no tool), the field and the pattern (spec 4.3: "a pattern that does not
@@ -75,7 +76,7 @@ func Compile(decls []Declaration, warn func(string)) []Compiled {
 func compileField(capName, tool, field string, patterns []string, warn func(string)) CompiledField {
 	cf := CompiledField{Name: field}
 	for _, p := range patterns {
-		g, err := glob.Compile(p)
+		g, err := capdecl.CompileGlob(p)
 		if err != nil {
 			if warn != nil {
 				warn(fmt.Sprintf("capability %q: recognizer %q: field %q: pattern %q does not compile as a glob, skipped: %v", capName, tool, field, p, err))

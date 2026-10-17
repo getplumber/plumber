@@ -146,30 +146,42 @@ func combinedDITFlag(f string) bool {
 	return true
 }
 
-// wrapperPath reports the repository-relative shell script a script entry runs, when it runs
-// one: `./x.sh`, `x.sh`, `sh x.sh`, `bash ./x.bash`, `source x.sh`, `. x.sh`, in any segment
-// the shell operators and newlines split (`make && ./x.sh`, `./x.sh;`, the second line of a
-// `- |` entry), the first one found; a commented-out call is not one. A relative `cd dir`
-// segment before it is applied (`cd ci && ./x.sh` runs ci/x.sh); a cd that is absolute,
-// bare, variable or escapes the root ends the search, since the script is then no longer
-// known to be under the root. Absolute paths and paths with `..` are refused here
-// (ResolveWithinRepo refuses them again at read time).
-func wrapperPath(entry string) (string, bool) {
+// The cd chain the wrapper rule follows is short: a real script changes directory a few
+// times at most. Past maxCdSegments cd segments, or once the directory would exceed
+// maxCdDirBytes, the search ends (no wrapper evidence past that point), which keeps the
+// rule linear on a 256 KiB `cd a && cd a && ...` line.
+const (
+	maxCdSegments = 16
+	maxCdDirBytes = 1024
+)
+
+// wrapperPaths reports the repository-relative shell scripts a script entry runs, in order:
+// `./x.sh`, `x.sh`, `sh x.sh`, `bash ./x.bash`, `source x.sh`, `. x.sh`, in every segment
+// the shell operators and newlines split (`make && ./x.sh`, `./x.sh;`, each line of a `- |`
+// entry); a commented-out call is not one. A relative `cd dir` segment before a call is
+// applied (`cd ci && ./x.sh` runs ci/x.sh); a cd that is absolute, bare, variable or escapes
+// the root ends the search, since a later script is then no longer known to be under the
+// root, and so does a cd chain past maxCdSegments or maxCdDirBytes. Absolute paths and paths
+// with `..` are refused here (ResolveWithinRepo refuses them again at read time).
+func wrapperPaths(entry string) []string {
+	var out []string
 	dir := ""
+	cds := 0
 	for _, seg := range splitSegments(entry) {
 		fields := strings.Fields(seg)
 		if len(fields) > 0 && fields[0] == "cd" {
-			if len(fields) != 2 || !safeRelative(fields[1]) {
-				return "", false
+			cds++
+			if len(fields) != 2 || !safeRelative(fields[1]) || cds > maxCdSegments || len(dir)+1+len(fields[1]) > maxCdDirBytes {
+				return out
 			}
 			dir = path.Join(dir, fields[1])
 			continue
 		}
 		if rel, ok := segmentWrapperPath(fields); ok {
-			return path.Join(dir, rel), true
+			out = append(out, path.Join(dir, rel))
 		}
 	}
-	return "", false
+	return out
 }
 
 // safeRelative reports whether p is a plain relative path that stays under its base.
