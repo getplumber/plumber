@@ -625,28 +625,45 @@ func ResolveLocalIncludes(content []byte, repoRoot string) ([]byte, error) {
 	var nonLocalIncludes []interface{}
 	var localContents [][]byte
 	hasLocalIncludes := false
+	// A local file included more than once contributes the same content each
+	// time, so read it once; and bound the number of distinct local includes
+	// the way GitLab bounds an include list, so a list padded with thousands
+	// of entries cannot inline gigabytes. A repeat or an over-cap entry is
+	// dropped from the include list without being read again.
+	seenLocal := map[string]bool{}
+	readLocal := func(pathStr string) (bool, error) {
+		if seenLocal[pathStr] {
+			return false, nil
+		}
+		if len(seenLocal) >= maxLocalIncludes {
+			l.WithField("path", pathStr).Warn("Local include limit reached, skipping")
+			seenLocal[pathStr] = true
+			return false, nil
+		}
+		seenLocal[pathStr] = true
+		fileContent, err := readLocalInclude(repoRoot, pathStr)
+		if err != nil {
+			return false, fmt.Errorf("unable to read local include '%s': %w", pathStr, err)
+		}
+		l.WithField("path", pathStr).Info("Resolved local include from filesystem")
+		localContents = append(localContents, fileContent)
+		return true, nil
+	}
 
 	for _, inc := range includes {
 		switch entry := inc.(type) {
 		case string:
 			// A bare string in the include list is a local include
-			fileContent, err := readLocalInclude(repoRoot, entry)
-			if err != nil {
-				return nil, fmt.Errorf("unable to read local include '%s': %w", entry, err)
+			if _, err := readLocal(entry); err != nil {
+				return nil, err
 			}
-			l.WithField("path", entry).Info("Resolved local include from filesystem")
-			localContents = append(localContents, fileContent)
 			hasLocalIncludes = true
 
 		case map[interface{}]interface{}:
 			if localPath, ok := entry["local"]; ok {
-				pathStr := fmt.Sprintf("%v", localPath)
-				fileContent, err := readLocalInclude(repoRoot, pathStr)
-				if err != nil {
-					return nil, fmt.Errorf("unable to read local include '%s': %w", pathStr, err)
+				if _, err := readLocal(fmt.Sprintf("%v", localPath)); err != nil {
+					return nil, err
 				}
-				l.WithField("path", pathStr).Info("Resolved local include from filesystem")
-				localContents = append(localContents, fileContent)
 				hasLocalIncludes = true
 			} else {
 				nonLocalIncludes = append(nonLocalIncludes, entry)
@@ -797,6 +814,10 @@ func ParseGitlabCIJob(jobContent interface{}) (*GitlabJob, error) {
 	return &job, nil
 }
 
+// varDelimiters strips the $, {, } and % that wrap a variable reference, so
+// the name can be looked up. Package-level to avoid recompiling per match.
+var varDelimiters = regexp.MustCompile(`[\$\{\}%]`)
+
 // ReplaceVariable replaces variables in the input string recursively up to 5 levels
 func ReplaceVariable(input string, project, group, instance, job, defaultJob, predefined map[string]string) string {
 	regex := `(\$[a-zA-Z_][a-zA-Z0-9_]*|\${[a-zA-Z_][a-zA-Z0-9_]*}|%[a-zA-Z_][a-zA-Z0-9_]*%)`
@@ -813,16 +834,28 @@ func ReplaceVariable(input string, project, group, instance, job, defaultJob, pr
 		return val, found && val != ""
 	}
 
+	// resolveVariables expands one pass, but never grows the result past
+	// maxExpandedVariableBytes within that single pass: once the running
+	// output would exceed the cap, the remaining references are left as
+	// placeholders. This bounds the pass itself, so a near-cap string of
+	// references to a large-valued variable cannot allocate gigabytes in one
+	// ReplaceAllStringFunc call (the pre-pass check below only bounds the
+	// NEXT pass).
 	resolveVariables := func(input string) string {
+		budget := maxExpandedVariableBytes - len(input)
 		return r.ReplaceAllStringFunc(input, func(match string) string {
-			varName := regexp.MustCompile(`[\$\{\}%]`).ReplaceAllString(match, "")
-
+			varName := varDelimiters.ReplaceAllString(match, "")
 			for _, source := range []map[string]string{project, group, instance, job, defaultJob, predefined} {
 				if val, found := lookup(source, varName); found {
+					if grow := len(val) - len(match); grow > 0 {
+						if grow > budget {
+							return match // expanding this would exceed the cap
+						}
+						budget -= grow
+					}
 					return val
 				}
 			}
-
 			return match
 		})
 	}
@@ -833,6 +866,14 @@ func ReplaceVariable(input string, project, group, instance, job, defaultJob, pr
 	level := 0
 
 	for current != previous && level < maxLevels {
+		// A variable defined in terms of other variables grows the string by
+		// up to one factor per pass. Stop once it has outgrown a size no real
+		// image reference reaches, so a self-referential or fan-out chain
+		// cannot expand geometrically; the last value stands, placeholders
+		// and all, which the reference checks already treat as unresolved.
+		if len(current) > maxExpandedVariableBytes {
+			break
+		}
 		previous = current
 		current = resolveVariables(previous)
 		level++
@@ -840,6 +881,15 @@ func ReplaceVariable(input string, project, group, instance, job, defaultJob, pr
 
 	return current
 }
+
+// maxExpandedVariableBytes caps the string ReplaceVariable will keep
+// expanding. A real image reference is a few dozen bytes; this leaves ample
+// room for a legitimately long one while bounding a pathological chain.
+const maxExpandedVariableBytes = 64 << 10 // 64 KiB
+
+// maxLocalIncludes bounds how many distinct local include files one config
+// inlines, matching the order of GitLab's own include limit.
+const maxLocalIncludes = 150
 
 // GetImageName gets the image name from an interface parsed from gitlab ci file
 func GetImageName(imageInterface interface{}) (string, error) {
