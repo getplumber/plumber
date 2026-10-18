@@ -560,10 +560,10 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 	applyPolicyFailures(result, policyFailures)
 	attachSituation(l, conf, "github", pipeline, result)
 	markGitHubLanes(result, conf, conf.ProjectPath, scanMutableExec, branchScope)
-	// Local scans read workflow files from disk, so a skipped file is a
-	// parse/read problem (user-fixable), not a degraded collection — only
-	// a failed branch-protection API fetch and an invalid workflow whose
-	// control is not active (#517) count as degraded here (#220).
+	// Local scans read workflow files from disk, so a file skipped on a
+	// read error is a user-fixable problem, not a degraded collection:
+	// only a failed branch-protection API fetch and an invalid workflow
+	// whose control is not active (#517) count as degraded here (#220).
 	invalidInactive := 0
 	if !workflowsMustBeValidActive(conf) {
 		invalidInactive = len(pipeline.InvalidWorkflows)

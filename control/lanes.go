@@ -817,6 +817,15 @@ func ReEvaluateForConfig(
 	// policy's verdict the same way it degrades the run's (#489); the
 	// scoped copy keeps its own reasons and marks, the run's are untouched.
 	scopedResult.DegradedReasons = append([]string(nil), result.DegradedReasons...)
+	// The "could not be parsed" reason is a verdict about THIS policy's
+	// own control tree, not the run's: the run's copy above is right for
+	// every other cause but this one, which this policy's own
+	// workflowsMustBeValidActive answer overrides (#517 fix round 2),
+	// the same way the ISSUE-423 findings already followed it through
+	// evaluatePolicies above.
+	if provider == configuration.ProviderGitHub {
+		applyInvalidWorkflowDegradedForPolicy(&scopedResult, len(pipeline.InvalidWorkflows), workflowsMustBeValidActive(&scopedConf))
+	}
 	applyPolicyFailures(&scopedResult, failures)
 	// Tier caveats are a statement about a CONTROL, so they belong to the
 	// policy that enables it, not to the run. Inherited from the run they

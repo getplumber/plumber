@@ -81,6 +81,26 @@ const degradedReasonVariablesPrefix = "CI/CD variables could not be fetched"
 // keeps every unrelated control from flipping to error over it.
 const degradedReasonSecurityPolicyPrefix = "security policy project could not be fetched"
 
+// invalidWorkflowDegradedSuffix is the fixed tail of the "could not be
+// parsed" degraded reason, after the varying file count. It is the
+// contract between invalidWorkflowDegradedReason (the one writer, used
+// by both the standalone run via degradedReasonsFromGitHubCollection and
+// the per-policy recompute via applyInvalidWorkflowDegradedForPolicy)
+// and any reader that needs to recognise the reason regardless of count,
+// such as the per-policy recompute removing a copy it inherited from the
+// run that no longer applies under the policy's own control tree (#517
+// fix round 2).
+const invalidWorkflowDegradedSuffix = "could not be parsed and were skipped (enable workflowsMustBeValid to report them as findings)"
+
+// invalidWorkflowDegradedReason is the exact "could not be parsed"
+// degraded-reason text for count invalid workflow files, shared between
+// the standalone run (degradedReasonsFromGitHubCollection) and the
+// per-policy recompute (applyInvalidWorkflowDegradedForPolicy) so the
+// wording and the count live in one place (#517).
+func invalidWorkflowDegradedReason(count int) string {
+	return fmt.Sprintf("%d workflow file(s) %s", count, invalidWorkflowDegradedSuffix)
+}
+
 // degradedReasonsFromGitHubCollection builds the human-readable list of
 // collection failures behind a degraded GitHub run (#220). partialCount
 // is the number of workflow files that could not be read or fetched and
@@ -101,12 +121,48 @@ func degradedReasonsFromGitHubCollection(partialCount, invalidInactiveCount int,
 		reasons = append(reasons, fmt.Sprintf("%d workflow file(s) could not be read or fetched and were skipped", partialCount))
 	}
 	if invalidInactiveCount > 0 {
-		reasons = append(reasons, fmt.Sprintf("%d workflow file(s) could not be parsed and were skipped (enable workflowsMustBeValid to report them as findings)", invalidInactiveCount))
+		reasons = append(reasons, invalidWorkflowDegradedReason(invalidInactiveCount))
 	}
 	if branchFetchFailed {
 		reasons = append(reasons, degradedReasonBranchProtectionPrefix+"; branch controls were not evaluated")
 	}
 	return reasons
+}
+
+// applyInvalidWorkflowDegradedForPolicy makes scopedResult's "could not
+// be parsed" degraded reason match THIS policy's own control tree,
+// overriding whatever the run-level evaluation decided (#517 fix round
+// 2): ReEvaluateForConfig evaluates every platform policy under its own
+// control tree, and the ISSUE-423 findings already follow it (through
+// FilterFindingsByEnabledControls inside evaluatePolicies), so the
+// degraded reason must follow it too, not the run that collected the
+// pipeline. active is whether workflowsMustBeValid is active under the
+// policy's own configuration (workflowsMustBeValidActive against the
+// scoped conf). invalidCount is len(pipeline.InvalidWorkflows).
+//
+// Whatever copy of the reason scopedResult inherited from the run is
+// dropped first (it is wrong either way under this policy's tree: at
+// the wrong count, or present/absent when the opposite is true), then
+// added back only when this policy does not carry the control.
+// DataCollectionDegraded is recomputed from the resulting reason list,
+// matching the invariant markDegraded and applyGitHubDegraded already
+// hold elsewhere.
+func applyInvalidWorkflowDegradedForPolicy(scopedResult *AnalysisResult, invalidCount int, active bool) {
+	if scopedResult == nil {
+		return
+	}
+	kept := scopedResult.DegradedReasons[:0:0]
+	for _, r := range scopedResult.DegradedReasons {
+		if strings.HasSuffix(r, invalidWorkflowDegradedSuffix) {
+			continue
+		}
+		kept = append(kept, r)
+	}
+	if !active && invalidCount > 0 {
+		kept = append(kept, invalidWorkflowDegradedReason(invalidCount))
+	}
+	scopedResult.DegradedReasons = kept
+	scopedResult.DataCollectionDegraded = len(kept) > 0
 }
 
 // applyGitHubDegraded stamps the degraded-collection signals onto a
