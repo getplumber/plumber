@@ -26,6 +26,34 @@ func TestBuildGitHubControlStats_CacheWriteExemptions(t *testing.T) {
 	}
 }
 
+// TestBuildGitHubControlStats_WorkflowsMustBeValid pins the stat block of
+// workflowsMustBeValid (ISSUE-423, #517): the total includes the invalid
+// files (never parsed into a workflow), named again as their own count.
+func TestBuildGitHubControlStats_WorkflowsMustBeValid(t *testing.T) {
+	stats := &control.GitHubAnalysisStats{WorkflowsTotal: 110, WorkflowFilesInvalid: 1}
+	got := buildGitHubControlStats("workflowsMustBeValid", stats, nil)
+	want := []statLine{
+		{Label: "Total Workflows", Value: "111"},
+		{Label: "Invalid workflow files", Value: "1"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("stats = %+v, want %+v", got, want)
+	}
+}
+
+// With no invalid workflow files, the counts still add up (zero invalid).
+func TestBuildGitHubControlStats_WorkflowsMustBeValid_NoneInvalid(t *testing.T) {
+	stats := &control.GitHubAnalysisStats{WorkflowsTotal: 5}
+	got := buildGitHubControlStats("workflowsMustBeValid", stats, nil)
+	want := []statLine{
+		{Label: "Total Workflows", Value: "5"},
+		{Label: "Invalid workflow files", Value: "0"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("stats = %+v, want %+v", got, want)
+	}
+}
+
 // With no exemption the block carries no exemption line, so no note.
 func TestBuildGitHubControlStats_CacheWriteNoExemption(t *testing.T) {
 	got := buildGitHubControlStats("untrustedTriggersMustNotWriteCache", &control.GitHubAnalysisStats{WorkflowsTotal: 1}, nil)

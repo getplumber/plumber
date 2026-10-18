@@ -152,6 +152,29 @@ func TestAggregate_ActionRefsAbsentUpstreamCounter(t *testing.T) {
 // rule's fork-guard recognition lives in Rego (#235), so a workflow with
 // a dangerous trigger but a `push`-event / author-association guard emits
 // no finding and must not inflate the metric (#235 follow-up).
+// TestAggregate_WorkflowFilesInvalidCountsInvalidWorkflows pins the
+// ISSUE-423 denominator (#517): the metric mirrors
+// len(pipeline.InvalidWorkflows) exactly, regardless of config.
+func TestAggregate_WorkflowFilesInvalidCountsInvalidWorkflows(t *testing.T) {
+	pc := &configuration.PlumberConfig{GitHub: &configuration.ProviderConfig{}}
+
+	pipeline := &ir.NormalizedPipeline{Provider: ir.ProviderGitHub}
+	if s := AggregateGitHubStats(pipeline, pc); s.WorkflowFilesInvalid != 0 {
+		t.Fatalf("no invalid workflows -> 0, got %d", s.WorkflowFilesInvalid)
+	}
+
+	pipeline = &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitHub,
+		InvalidWorkflows: []ir.InvalidWorkflow{
+			{Path: ".github/workflows/anchor-aliases.yml", Error: "yaml: unknown anchor 'checkout_with' referenced"},
+			{Path: ".github/workflows/duplicate-key.yml", Error: "yaml: mapping key already defined"},
+		},
+	}
+	if s := AggregateGitHubStats(pipeline, pc); s.WorkflowFilesInvalid != 2 {
+		t.Fatalf("2 invalid workflows -> 2, got %d", s.WorkflowFilesInvalid)
+	}
+}
+
 func TestDangerousTriggerMetricFollowsFindings(t *testing.T) {
 	// No ISSUE-802 findings → metric 0, even if a structural pass seeded
 	// a higher value.

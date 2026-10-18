@@ -52,6 +52,7 @@ const (
 	compPRTargetHead       = "Forbid pull_request_target workflows that check out the PR head"
 	compCheckoutPersist    = "Forbid actions/checkout that persists the GITHUB_TOKEN (persist-credentials: false)"
 	compDeclarePermissions = "Require workflows to declare an explicit permissions: block"
+	compWorkflowValid      = "Require every workflow file to be valid"
 	compReusableSecrets    = "Forbid reusable-workflow calls using secrets: inherit"
 	compOverprovSecrets    = "Forbid exporting the entire secrets context (toJson(secrets))"
 	compTemplateInjection  = "Detect script-injection sinks (${{ github.event.* }} → run:)"
@@ -914,6 +915,7 @@ func compositionOptionsForProviders(providers []string) []string {
 			compPRTargetHead,
 			compCheckoutPersist,
 			compDeclarePermissions,
+			compWorkflowValid,
 			compReusableSecrets,
 			compOverprovSecrets,
 			compTemplateInjection,
@@ -1568,6 +1570,9 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 			}
 			if compSelected(st, compDeclarePermissions) {
 				gh.Controls.WorkflowsMustDeclarePermissions = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
+			}
+			if compSelected(st, compWorkflowValid) {
+				gh.Controls.WorkflowsMustBeValid = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
 			}
 			if compSelected(st, compReusableSecrets) {
 				gh.Controls.ReusableWorkflowsMustNotInheritSecrets = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}

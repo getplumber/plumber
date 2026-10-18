@@ -2326,6 +2326,19 @@
       ],
       "description": "Verifies that every file under .github/workflows parses as a workflow; GitHub refuses to run a file it cannot read, so that workflow silently does nothing.",
       "requiresConfig": false,
+      "configSchema": {
+        "control": "workflowsMustBeValid",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "nullable": true,
+            "toggle": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          }
+        ]
+      },
       "issueCodes": [
         "ISSUE-423"
       ],

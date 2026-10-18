@@ -257,6 +257,11 @@ func GitHubControls(pc *configuration.PlumberConfig) []ControlEntry {
 		Skipped:     c.WorkflowsMustDeclarePermissions == nil || !c.WorkflowsMustDeclarePermissions.IsEnabled(),
 	})
 	entries = append(entries, ControlEntry{
+		DisplayName: "Workflow files must be valid",
+		ControlName: "workflowsMustBeValid",
+		Skipped:     c.WorkflowsMustBeValid == nil || !c.WorkflowsMustBeValid.IsEnabled(),
+	})
+	entries = append(entries, ControlEntry{
 		DisplayName: "Workflows must include required actions",
 		ControlName: "workflowMustIncludeRequiredActions",
 		Skipped:     c.WorkflowMustIncludeRequiredActions == nil || !c.WorkflowMustIncludeRequiredActions.IsEnabled(),

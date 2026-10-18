@@ -1172,6 +1172,15 @@ github:
       enabled: true
 
     # ===========================================
+    # Workflow files must be valid
+    # ===========================================
+    # A file under .github/workflows that cannot be parsed as a workflow
+    # (an undefined YAML anchor, a tab-indented block, a duplicate key)
+    # holds no job: GitHub refuses to run it.
+    workflowsMustBeValid:
+      enabled: true
+
+    # ===========================================
     # Branch must be protected (project governance)
     # ===========================================
     # Inspects repository settings via the GitHub branch-protection API.

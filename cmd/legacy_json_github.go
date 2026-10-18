@@ -53,6 +53,8 @@ func buildLegacyResultGitHub(e control.ControlEntry, result *control.AnalysisRes
 		return "pullRequestTargetHeadCheckoutResult", buildPullRequestTargetHeadCheckoutBlock(common, result, findings)
 	case "workflowsMustDeclarePermissions":
 		return "permissionsResult", buildPermissionsBlock(common, result, findings)
+	case "workflowsMustBeValid":
+		return "invalidWorkflowsResult", buildInvalidWorkflowsBlock(common, result, findings)
 	case "workflowMustIncludeRequiredActions":
 		return "requiredActionsResult", buildRequiredActionsBlock(common, pc.ControlsFor("github").WorkflowMustIncludeRequiredActions, result, findings)
 	case "workflowMustNotGrantPermissionsWriteAll":
@@ -488,6 +490,26 @@ func buildPermissionsBlock(c legacyCommon, result *control.AnalysisResult, findi
 		"metrics": map[string]any{
 			"workflowsTotal":              s.WorkflowsTotal,
 			"workflowsMissingPermissions": s.WorkflowsMissingPermissions,
+		},
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
+	}
+}
+
+// buildInvalidWorkflowsBlock - ISSUE-423 (#517). The finding has no job;
+// its identity block and url already carry the file, so issues reads
+// with no job key. Denominator is total workflows plus the invalid
+// ones (an invalid file never parsed into a workflow, so it is not
+// among WorkflowsTotal); numerator is the invalid file count.
+func buildInvalidWorkflowsBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
+	s := statsOf(result)
+	return map[string]any{
+		"issues": projectFindings(findings, ""),
+		"metrics": map[string]any{
+			"workflowsTotal":       s.WorkflowsTotal,
+			"workflowFilesInvalid": s.WorkflowFilesInvalid,
 		},
 		"version":   "0.1.0",
 		"ciValid":   c.CiValid,

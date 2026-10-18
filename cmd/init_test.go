@@ -208,7 +208,7 @@ func starterWizardConfig() *configuration.PlumberConfig {
 		AuthorizedActionsUsePlumberList: true,
 		CompositionChoices: []string{
 			compHardcoded, compUpToDate, compForbidden, compRefCollision, compAuthorizedComponents, compAuthorizedFunctions, compSecurity, compScripts, compJobVars, compDinD,
-			compActionPin, compAuthorizedActions, compDangerousTriggers, compPRTargetHead, compCheckoutPersist, compDeclarePermissions, compReusableSecrets, compOverprovSecrets, compTemplateInjection,
+			compActionPin, compAuthorizedActions, compDangerousTriggers, compPRTargetHead, compCheckoutPersist, compDeclarePermissions, compWorkflowValid, compReusableSecrets, compOverprovSecrets, compTemplateInjection,
 			compEnvInjection, compWriteAllPerms, compRefConfusion, compArchivedActions, compKnownCVEs, compImpostorCommit, compMutableRemoteExec, compCachePoisoning, compDebugTraceGitHub,
 		},
 		TrustSameGroupComponentsEnabled:        true,

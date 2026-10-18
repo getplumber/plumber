@@ -205,6 +205,7 @@ func AggregateGitHubStats(pipeline *ir.NormalizedPipeline, pc *configuration.Plu
 	_ = pinnedByDigestRequired
 
 	stats.WorkflowsTotal = len(workflowsSeen)
+	stats.WorkflowFilesInvalid = len(pipeline.InvalidWorkflows)
 	// WorkflowsWithDangerousTrigger is set from the emitted ISSUE-802
 	// findings in ApplyGitHubFindingCounts, not from a structural scan
 	// here — the rule's fork-guard logic lives in Rego (#235 follow-up).

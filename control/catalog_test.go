@@ -7,6 +7,63 @@ import (
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 )
 
+// TestGitHubControls_WorkflowsMustBeValid locks the entry that lets
+// ISSUE-423 (an invalid GitHub workflow file, #517) show up in the
+// terminal's Individual findings section and in the per-control JSON:
+// both are built from this catalog, keyed on ControlName.
+func TestGitHubControls_WorkflowsMustBeValid(t *testing.T) {
+	find := func(entries []ControlEntry) (ControlEntry, bool) {
+		for _, e := range entries {
+			if e.ControlName == "workflowsMustBeValid" {
+				return e, true
+			}
+		}
+		return ControlEntry{}, false
+	}
+
+	t.Run("enabled true is not skipped", func(t *testing.T) {
+		enabled := true
+		pc := &configuration.PlumberConfig{GitHub: &configuration.ProviderConfig{Controls: configuration.ControlsConfig{
+			WorkflowsMustBeValid: &configuration.EnabledOnlyControlConfig{Enabled: &enabled},
+		}}}
+		e, ok := find(GitHubControls(pc))
+		if !ok {
+			t.Fatal("workflowsMustBeValid is not in GitHubControls()")
+		}
+		if e.Skipped {
+			t.Error("enabled: true must not be skipped")
+		}
+		if e.DisplayName != "Workflow files must be valid" {
+			t.Errorf("DisplayName = %q, want %q", e.DisplayName, "Workflow files must be valid")
+		}
+	})
+
+	t.Run("enabled false is skipped", func(t *testing.T) {
+		disabled := false
+		pc := &configuration.PlumberConfig{GitHub: &configuration.ProviderConfig{Controls: configuration.ControlsConfig{
+			WorkflowsMustBeValid: &configuration.EnabledOnlyControlConfig{Enabled: &disabled},
+		}}}
+		e, ok := find(GitHubControls(pc))
+		if !ok {
+			t.Fatal("workflowsMustBeValid is not in GitHubControls()")
+		}
+		if !e.Skipped {
+			t.Error("enabled: false must be skipped")
+		}
+	})
+
+	t.Run("absent is skipped", func(t *testing.T) {
+		pc := &configuration.PlumberConfig{GitHub: &configuration.ProviderConfig{}}
+		e, ok := find(GitHubControls(pc))
+		if !ok {
+			t.Fatal("workflowsMustBeValid is not in GitHubControls()")
+		}
+		if !e.Skipped {
+			t.Error("an absent block must be skipped")
+		}
+	})
+}
+
 func TestFilterFindingsByEnabledControls_dropsDisabledControlFindings(t *testing.T) {
 	disabled := false
 	enabled := true

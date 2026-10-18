@@ -313,6 +313,11 @@ type GitHubAnalysisStats struct {
 	WorkflowsWithDangerousTrigger int
 	WorkflowsMissingPermissions   int
 
+	// WorkflowFilesInvalid (ISSUE-423) counts the GitHub workflow files
+	// this scan fetched but could not parse as a workflow. These files
+	// are not among WorkflowsTotal (never parsed into a job).
+	WorkflowFilesInvalid int
+
 	// Branch protection (ISSUE-501 / ISSUE-505).
 	BranchesTotal     int
 	BranchesProtected int

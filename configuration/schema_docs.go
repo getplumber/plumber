@@ -318,6 +318,9 @@ var controlFieldDocs = map[string]FieldDoc{
 	"workflowsMustDeclarePermissions.enabled": {
 		Description: "Turns the control on; when false or absent the control is skipped.",
 	},
+	"workflowsMustBeValid.enabled": {
+		Description: "Turns the control on; when false or absent the control is skipped.",
+	},
 	"reusableWorkflowsMustNotInheritSecrets.enabled": {
 		Description: "Turns the control on; when false or absent the control is skipped.",
 	},

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/getplumber/plumber/control"
+	identityfields "github.com/getplumber/plumber/finding/identity"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 )
 
@@ -64,6 +65,78 @@ func TestPullRequestTargetHeadCheckoutJSONBlock(t *testing.T) {
 	}
 	if cm := cleanBlock.(map[string]any); cm["compliance"] != nil {
 		t.Errorf("clean block must not carry compliance (#320), got %v", cm["compliance"])
+	}
+}
+
+// TestInvalidWorkflowsJSONBlock locks the ISSUE-423 JSON export (#517):
+// the dispatch must route workflowsMustBeValid to invalidWorkflowsResult,
+// with one issue per invalid workflow (keyed on the file, no job) and the
+// workflowFilesInvalid metric from GitHubStats.
+func TestInvalidWorkflowsJSONBlock(t *testing.T) {
+	entry := control.ControlEntry{
+		DisplayName: "Workflow files must be valid",
+		ControlName: "workflowsMustBeValid",
+	}
+	findings := []opaengine.Finding{{
+		Code:    "ISSUE-423",
+		File:    ".github/workflows/anchor-aliases.yml",
+		Message: `workflow file ".github/workflows/anchor-aliases.yml" is not a valid workflow: yaml: unknown anchor 'checkout_with' referenced; GitHub will not run it`,
+	}}
+	result := &control.AnalysisResult{
+		CiValid:     true,
+		GitHubStats: &control.GitHubAnalysisStats{WorkflowsTotal: 110, WorkflowFilesInvalid: 1},
+	}
+
+	name, block := buildLegacyResultGitHub(entry, result, nil, findings)
+	if name != "invalidWorkflowsResult" {
+		t.Fatalf("block name = %q, want invalidWorkflowsResult", name)
+	}
+	m, ok := block.(map[string]any)
+	if !ok {
+		t.Fatalf("block is %T, want map[string]any", block)
+	}
+	issues, ok := m["issues"].([]map[string]any)
+	if !ok || len(issues) != 1 {
+		t.Fatalf("issues = %v, want exactly 1 entry", m["issues"])
+	}
+	if issues[0]["code"] != "ISSUE-423" {
+		t.Errorf("issue code = %v, want ISSUE-423", issues[0]["code"])
+	}
+	identityBlock, ok := issues[0]["identity"].(map[string]any)
+	if !ok {
+		t.Fatalf("issue carries no identity block: %v", issues[0])
+	}
+	fields, ok := identityBlock["fields"].([]identityfields.Field)
+	if !ok {
+		t.Fatalf("identity.fields is %T, want []identity.Field: %v", identityBlock["fields"], identityBlock["fields"])
+	}
+	fileSeen := false
+	for _, f := range fields {
+		if f.Key == "file" && f.Value == ".github/workflows/anchor-aliases.yml" {
+			fileSeen = true
+		}
+	}
+	if !fileSeen {
+		t.Errorf("identity.fields = %v, want a file field naming anchor-aliases.yml", fields)
+	}
+	metrics, ok := m["metrics"].(map[string]any)
+	if !ok {
+		t.Fatalf("block carries no metrics: %v", m)
+	}
+	if metrics["workflowsTotal"] != 110 {
+		t.Errorf("metrics.workflowsTotal = %v, want 110", metrics["workflowsTotal"])
+	}
+	if metrics["workflowFilesInvalid"] != 1 {
+		t.Errorf("metrics.workflowFilesInvalid = %v, want 1", metrics["workflowFilesInvalid"])
+	}
+
+	// Clean run: no findings -> empty issues.
+	cleanName, cleanBlock := buildLegacyResultGitHub(entry, result, nil, nil)
+	if cleanName != "invalidWorkflowsResult" {
+		t.Fatalf("clean block name = %q", cleanName)
+	}
+	if cm := cleanBlock.(map[string]any); len(cm["issues"].([]map[string]any)) != 0 {
+		t.Errorf("clean block must carry no issues, got %v", cm["issues"])
 	}
 }
 
