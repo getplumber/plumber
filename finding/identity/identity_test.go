@@ -375,6 +375,7 @@ func TestDeclarations_EveryCodeFingerprintIsPinned(t *testing.T) {
 		"ISSUE-506": "aa6378b9df051002",
 		"ISSUE-601": "3a68700e66069498",
 		"ISSUE-422": "ade0bea017f69d56",
+		"ISSUE-423": "b30503f030b41d3a",
 		"ISSUE-701": "87a2f87a752971bd",
 		"ISSUE-702": "875ec32b1513e8a8",
 		"ISSUE-703": "cf522b35974397b7",

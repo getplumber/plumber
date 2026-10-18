@@ -5443,6 +5443,78 @@ func TestIssue601_SecurityPolicyProject(t *testing.T) {
 	}
 }
 
+// TestIssue423_InvalidWorkflow flags a GitHub workflow file this scan
+// fetched but could not parse. One finding per entry of
+// pipeline.InvalidWorkflows, keyed on the file (#517).
+func TestIssue423_InvalidWorkflow(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	only423 := func(p *ir.NormalizedPipeline) []opaengine.Finding {
+		t.Helper()
+		findings, err := evaluateStrict(engine, context.Background(), p, nil)
+		if err != nil {
+			t.Fatalf("evaluate: %v", err)
+		}
+		var out []opaengine.Finding
+		for _, f := range findings {
+			if f.Code == "ISSUE-423" {
+				out = append(out, f)
+			}
+		}
+		return out
+	}
+
+	t.Run("two invalid workflows, two findings", func(t *testing.T) {
+		p := &ir.NormalizedPipeline{
+			Provider: ir.ProviderGitHub,
+			InvalidWorkflows: []ir.InvalidWorkflow{
+				{Path: ".github/workflows/anchor-aliases.yml", Error: "yaml: unknown anchor 'checkout_with' referenced"},
+				{Path: ".github/workflows/duplicate-key.yml", Error: "yaml: line 4: mapping key \"on\" already defined"},
+			},
+		}
+		findings := only423(p)
+		if len(findings) != 2 {
+			t.Fatalf("expected 2 findings, got %d: %+v", len(findings), findings)
+		}
+		byFile := map[string]opaengine.Finding{}
+		for _, f := range findings {
+			byFile[f.File] = f
+		}
+		f, ok := byFile[".github/workflows/anchor-aliases.yml"]
+		if !ok {
+			t.Fatalf("expected a finding for anchor-aliases.yml, got %+v", findings)
+		}
+		wantMessage := `workflow file ".github/workflows/anchor-aliases.yml" is not a valid workflow: yaml: unknown anchor 'checkout_with' referenced; GitHub will not run it`
+		if f.Message != wantMessage {
+			t.Errorf("message = %q, want %q", f.Message, wantMessage)
+		}
+		if f.Severity != "low" {
+			t.Errorf("severity = %q, want %q", f.Severity, "low")
+		}
+	})
+
+	t.Run("no invalid workflows, no findings", func(t *testing.T) {
+		p := &ir.NormalizedPipeline{Provider: ir.ProviderGitHub}
+		if got := len(only423(p)); got != 0 {
+			t.Fatalf("expected no findings, got %d", got)
+		}
+	})
+
+	t.Run("gitlab provider never fires", func(t *testing.T) {
+		p := &ir.NormalizedPipeline{
+			Provider: ir.ProviderGitLab,
+			InvalidWorkflows: []ir.InvalidWorkflow{
+				{Path: ".github/workflows/anchor-aliases.yml", Error: "yaml: unknown anchor 'checkout_with' referenced"},
+			},
+		}
+		if got := len(only423(p)); got != 0 {
+			t.Fatalf("expected no findings on gitlab, got %d", got)
+		}
+	})
+}
+
 // TestIssue422_AnonymousDefinition flags workflow files without a
 // top-level `name:`. One finding per file (not per job). Renumbered from
 // ISSUE-601 when the security-policy control took 601 (#417).

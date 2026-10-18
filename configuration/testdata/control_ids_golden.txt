@@ -38,6 +38,7 @@ CTRL-419 workflowMustNotUseKnownMisfeatures
 CTRL-420 workflowMustNotContainObfuscation
 CTRL-421 publishWorkflowsMustUseOidcTrustedPublishing
 CTRL-422 workflowsMustHaveExplicitName
+CTRL-423 workflowsMustBeValid
 CTRL-501 branchMustBeProtected
 CTRL-502 mergeRequestApprovalRulesMustRequireMinimumApprovals
 CTRL-503 mergeRequestApprovalSettingsMustBeCompliant

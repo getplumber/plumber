@@ -1244,6 +1244,7 @@ var findingFixes = map[ErrorCode]string{
 	"ISSUE-420": "remove the hidden characters from the script",
 	"ISSUE-421": "publish through OIDC trusted publishing",
 	"ISSUE-422": "give the workflow a name",
+	"ISSUE-423": "fix the workflow file so GitHub can read it",
 	"ISSUE-502": "require more approvals on merge requests",
 	"ISSUE-503": "fix the merge request approval settings",
 	"ISSUE-504": "cover every protected branch with an approval rule",

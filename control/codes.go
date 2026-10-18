@@ -187,6 +187,8 @@ const (
 	CodeWorkflowObfuscation ErrorCode = "ISSUE-420"
 	// ISSUE-421: PyPI / npm publish relies on a static token instead of OIDC trusted publishing
 	CodeUseTrustedPublishing ErrorCode = "ISSUE-421"
+	// ISSUE-423: A file under .github/workflows cannot be parsed as a workflow
+	CodeInvalidWorkflow ErrorCode = "ISSUE-423"
 	// ISSUE-901: dependabot.yml re-enables insecure external code execution
 	CodeDependabotInsecureExec ErrorCode = "ISSUE-901"
 	// ISSUE-902: dependabot.yml update ecosystem has no cooldown window
@@ -981,6 +983,16 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Add a human-readable `name: <descriptive-name>` at the top of every workflow. Keep the name stable so branch protections and required status checks continue to match after renames.",
 		DocURL:      docsBaseURL + string(CodeAnonymousDefinition),
 		ControlName: "workflowsMustHaveExplicitName",
+		Role:        RoleHygiene,
+	},
+	CodeInvalidWorkflow: {
+		Code:        CodeInvalidWorkflow,
+		Severity:    SeverityLow,
+		Title:       "Workflow file is not valid",
+		Description: "A file under `.github/workflows` cannot be parsed as a workflow (an undefined YAML anchor, a tab-indented block, a duplicate key, a syntax error). GitHub refuses to run such a file and shows it as an invalid workflow on the Actions tab, so whatever that workflow was meant to do, a test, a security scan, a release gate, never happens, and nothing else in the repository notices.",
+		Remediation: "Open the Actions tab, read the error GitHub reports for the file, and fix it: define a YAML anchor in the same file before using it, or inline the block; GitHub Actions resolves anchors only within one file. Then confirm the workflow appears without the invalid-workflow banner.",
+		DocURL:      docsBaseURL + string(CodeInvalidWorkflow),
+		ControlName: "workflowsMustBeValid",
 		Role:        RoleHygiene,
 	},
 	CodeWorkflowMisfeature: {

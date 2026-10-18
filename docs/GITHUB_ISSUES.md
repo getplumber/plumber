@@ -78,6 +78,7 @@ reading the upstream docs.
 | Code | Name | Severity |
 | :--- | :--- | :--- |
 | [ISSUE-422](#issue-422--anonymous-definition) | `anonymous-definition` | low |
+| [ISSUE-423](#issue-423-invalid-workflow) | `invalid-workflow` | low |
 | [ISSUE-418](#issue-418--missing-concurrency) | `missing-concurrency` | medium |
 | [ISSUE-419](#issue-419--workflow-misfeature) | `workflow-misfeature` | medium |
 | [ISSUE-420](#issue-420--workflow-obfuscation) | `workflow-obfuscation` | high |
@@ -1790,6 +1791,53 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps: [ { run: make build } ]
+```
+
+---
+
+## ISSUE-423: `invalid-workflow`
+
+**Severity:** `low` • **Control:** `workflowsMustBeValid`
+
+A file under `.github/workflows` cannot be parsed as a workflow: an
+undefined YAML anchor, a tab-indented block, a duplicate key, a syntax
+error. GitHub refuses to run such a file and shows it as invalid on the
+Actions tab, so whatever that workflow was meant to do never happens,
+and nothing else in the repository notices.
+
+```yaml
+# ❌ before: the alias has no matching anchor in this file
+name: Anchor Aliases
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: *checkout_with
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: *checkout_with
+```
+
+```yaml
+# ✅ after: the anchor is defined in the same file before it is used
+name: Anchor Aliases
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: &checkout_with
+          fetch-depth: 0
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: *checkout_with
 ```
 
 ---

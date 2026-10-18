@@ -197,6 +197,8 @@ var declarations = map[string][]string{
 	"ISSUE-601": {},
 	// Workflow has no explicit name: one finding per workflow file, keyed on the file (benched, not yet live: declaration provisional, revisit on unbench). Renumbered from 601 when the security-policy control took 601 (#417).
 	"ISSUE-422": {"file"},
+	// Workflow file is not a valid workflow: one finding per workflow file, keyed on the file (#517).
+	"ISSUE-423": {"file"},
 	// Action not pinned by commit SHA: keyed on the action ref (uses); step separates a reused action.
 	"ISSUE-701": {"file", "job", "uses", "step"},
 	// Action in an archived repo: keyed on the action ref (uses); step separates a reused action.

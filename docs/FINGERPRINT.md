@@ -173,7 +173,7 @@ Finding as emitted by the rule
 the finding's canonical `Job` field rather than the `Data` payload bag. Most
 codes declare it, but nothing in the mechanism requires it: the repository-
 and file-level GitHub checks whose finding is not about a job leave it out
-(`{file}` for ISSUE-418 / ISSUE-422, `{file, ecosystem}` for the dependabot
+(`{file}` for ISSUE-418 / ISSUE-422 / ISSUE-423, `{file, ecosystem}` for the dependabot
 checks, the `{}` singleton for ISSUE-601 / ISSUE-903 / ISSUE-904 / ISSUE-905), and a code
 whose declaration does not name `job` does not hash on it at all.
 
@@ -262,7 +262,7 @@ where the finding has no sub-finding subject:
 | `condition` (the `if:` expression) | ISSUE-210, ISSUE-211, ISSUE-212 |
 | `ecosystem` (the dependabot ecosystem) | ISSUE-901, ISSUE-902 |
 | `{file, job}` (one finding per job) | ISSUE-207, ISSUE-208, ISSUE-213, ISSUE-214, ISSUE-215, ISSUE-303, ISSUE-305, ISSUE-308, ISSUE-309, ISSUE-419, ISSUE-420, ISSUE-704, ISSUE-712, ISSUE-801, ISSUE-802, ISSUE-803 |
-| `{file}` (one finding per workflow file) | ISSUE-418, ISSUE-422 |
+| `{file}` (one finding per workflow file) | ISSUE-418, ISSUE-422, ISSUE-423 |
 | `{}` (one finding per repository) | ISSUE-601, ISSUE-903, ISSUE-904, ISSUE-905 |
 
 Rewording any rule's prose no longer re-keys a registered finding.
@@ -317,7 +317,7 @@ The same job cannot produce two ISSUE-803 findings, so `{file, job}` is a
 complete identity; two `write-all` jobs in different workflows differ on
 `file`. `identity.Of` reports `SubjectFromMessage == false`, and rewording the
 rule's message does not move the fingerprint. Coarser variants exist for
-findings that are one per file (`{file}`: ISSUE-418, ISSUE-422) or one per
+findings that are one per file (`{file}`: ISSUE-418, ISSUE-422, ISSUE-423) or one per
 repository (the `{}` singleton: ISSUE-601, ISSUE-903, ISSUE-904, ISSUE-905).
 
 Moving a rule from prose onto a structured payload changes its declaration and

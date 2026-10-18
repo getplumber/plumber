@@ -611,6 +611,13 @@ var controlsMeta = map[string]ControlMeta{
 		ID:          "CTRL-422",
 		Description: "Verifies that every workflow declares a top-level name instead of falling back to its file path in the Actions UI and status checks.",
 	},
+	"workflowsMustBeValid": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Workflow files must be valid",
+		Category:    CategoryPipelineComposition,
+		ID:          "CTRL-423",
+		Description: "Verifies that every file under .github/workflows parses as a workflow; GitHub refuses to run a file it cannot read, so that workflow silently does nothing.",
+	},
 }
 
 // removedControls maps control names that shipped in earlier releases
