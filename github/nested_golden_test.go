@@ -41,7 +41,7 @@ func recordedFetch(override map[string]string) rawFetcher {
 func resolveRecorded(t *testing.T, defs *definitionFetcher) *ir.NormalizedPipeline {
 	t.Helper()
 	repo := filepath.Join(nestedGoldenRoot, "a")
-	jobs, _, partial, err := collectWorkflowJobs(repo)
+	jobs, _, _, partial, err := collectWorkflowJobs(repo)
 	if err != nil || len(partial) != 0 || len(jobs) != 1 {
 		t.Fatalf("collect: %v %v %d jobs", err, partial, len(jobs))
 	}

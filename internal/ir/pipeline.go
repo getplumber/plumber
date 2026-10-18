@@ -93,6 +93,15 @@ type NormalizedPipeline struct {
 	// never part of the OPA evaluation input. Empty on the GitLab path.
 	AnalyzedWorkflows []AnalyzedWorkflow `json:"-"`
 
+	// InvalidWorkflows are the GitHub workflow files this scan fetched but
+	// could not parse as a workflow (YAML the parser refuses: an undefined
+	// anchor, a tab-indented block, a duplicate key). GitHub refuses to run
+	// such a file, so it holds no job; it is reported as a finding of its
+	// own (ISSUE-423), never as a collection failure. Path is the file's
+	// repository path (".github/workflows/x.yml", as Job.OriginFile), Error
+	// the parser's message.
+	InvalidWorkflows []InvalidWorkflow `json:"invalidWorkflows,omitempty"`
+
 	// GlobalVariables are pipeline-level variables declared at the top
 	// of the source (e.g. `variables:` block at the root of
 	// .gitlab-ci.yml). Includes the merge with upstream component /
@@ -985,6 +994,17 @@ type MRSettings struct {
 type AnalyzedWorkflow struct {
 	Path    string
 	Content string
+}
+
+// InvalidWorkflow is one GitHub workflow file a scan fetched but could not
+// parse as a workflow (an undefined YAML anchor, a tab-indented block, a
+// duplicate key, a syntax error). GitHub refuses to run such a file and
+// shows it as invalid on the Actions tab; it holds no job, so it is
+// reported through ISSUE-423 rather than silently dropped or treated as a
+// collection failure.
+type InvalidWorkflow struct {
+	Path  string `json:"path"`
+	Error string `json:"error"`
 }
 
 // Repository exposure values carried by NormalizedPipeline.Visibility.

@@ -490,6 +490,9 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 	for _, perr := range partial {
 		l.WithError(perr).Warn("GitHub workflow parse: partial failure (file skipped)")
 	}
+	for _, inv := range pipeline.InvalidWorkflows {
+		l.WithField("file", inv.Path).Warn("GitHub workflow is not valid, reported as ISSUE-423")
+	}
 
 	resolveGitHubDefaultBranch(l, pipeline, conf.GithubAPIHost, conf.ProjectPath)
 	applyGitHubVisibility(pipeline, conf.GithubAPIHost, conf.ProjectPath)
@@ -637,6 +640,9 @@ func RunGitHubAnalysisRemote(conf *configuration.Configuration, owner, repo, ref
 	}
 	for _, perr := range partial {
 		l.WithError(perr).Warn("GitHub workflow parse: partial failure (file skipped)")
+	}
+	for _, inv := range pipeline.InvalidWorkflows {
+		l.WithField("file", inv.Path).Warn("GitHub workflow is not valid, reported as ISSUE-423")
 	}
 	applyGitHubVisibility(pipeline, conf.GithubAPIHost, owner+"/"+repo)
 

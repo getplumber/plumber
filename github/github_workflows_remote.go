@@ -103,7 +103,10 @@ func ScanGitHubWorkflowsRemote(host, owner, repo, ref string, enrichActionMetada
 		pipeline.AnalyzedWorkflows = append(pipeline.AnalyzedWorkflows, ir.AnalyzedWorkflow{Path: item.Path, Content: string(raw)})
 		jobs, parseErr := parseGitHubWorkflowJobs(raw, baseName, item.Path)
 		if parseErr != nil {
-			partialErrors = append(partialErrors, fmt.Errorf("%s: %w", item.Name, parseErr))
+			// GitHub refuses to run a file it cannot parse; that is a
+			// finding of its own (ISSUE-423), not a collection failure
+			// (#517).
+			pipeline.InvalidWorkflows = append(pipeline.InvalidWorkflows, ir.InvalidWorkflow{Path: item.Path, Error: dedupeYAMLErrorPrefix(parseErr)})
 			continue
 		}
 		pipeline.Jobs = append(pipeline.Jobs, jobs...)

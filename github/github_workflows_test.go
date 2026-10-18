@@ -433,7 +433,7 @@ jobs:
 	}
 }
 
-func TestScanGitHubWorkflows_ParseErrorReportedAsPartial(t *testing.T) {
+func TestScanGitHubWorkflows_ParseErrorReportedAsInvalidWorkflow(t *testing.T) {
 	tmp := t.TempDir()
 	wfDir := filepath.Join(tmp, ".github", "workflows")
 	if err := os.MkdirAll(wfDir, 0o755); err != nil {
@@ -444,12 +444,15 @@ func TestScanGitHubWorkflows_ParseErrorReportedAsPartial(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, partial, err := ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
+	pipeline, partial, err := ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
 	if err != nil {
 		t.Fatalf("expected no fatal error, got %v", err)
 	}
-	if len(partial) != 1 {
-		t.Fatalf("expected 1 partial error, got %d: %v", len(partial), partial)
+	if len(partial) != 0 {
+		t.Fatalf("expected no partial errors, got %d: %v", len(partial), partial)
+	}
+	if len(pipeline.InvalidWorkflows) != 1 {
+		t.Fatalf("expected 1 invalid workflow, got %d: %+v", len(pipeline.InvalidWorkflows), pipeline.InvalidWorkflows)
 	}
 }
 

@@ -237,8 +237,9 @@ jobs:
 func TestScanGitHubWorkflowsRemote_RetainsUnparseableFile(t *testing.T) {
 	// A file that fetches successfully but fails to parse is still retained on
 	// AnalyzedWorkflows (recorded before the parse, #443), so the analyzed CI
-	// file is reported even when it does not parse; the parse failure lands in
-	// partial errors. Mirror of the local collectWorkflowJobs guarantee.
+	// file is reported even when it does not parse; the parse failure lands as
+	// an invalid workflow, not a partial error (#517). Mirror of the local
+	// collectWorkflowJobs guarantee.
 	const brokenYAML = "jobs: [unterminated\n"
 	mux := http.NewServeMux()
 	mux.HandleFunc("/repos/owner/repo/contents/.github/workflows", func(w http.ResponseWriter, _ *http.Request) {
@@ -257,8 +258,14 @@ func TestScanGitHubWorkflowsRemote_RetainsUnparseableFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected hard error: %v", err)
 	}
-	if len(partial) != 1 {
-		t.Errorf("expected 1 partial error for the unparseable file, got %d: %v", len(partial), partial)
+	if len(partial) != 0 {
+		t.Errorf("expected no partial errors for the unparseable file, got %d: %v", len(partial), partial)
+	}
+	if len(pipeline.InvalidWorkflows) != 1 {
+		t.Fatalf("expected 1 invalid workflow, got %d: %+v", len(pipeline.InvalidWorkflows), pipeline.InvalidWorkflows)
+	}
+	if pipeline.InvalidWorkflows[0].Path != ".github/workflows/broken.yml" {
+		t.Errorf("invalid workflow path = %q, want %q", pipeline.InvalidWorkflows[0].Path, ".github/workflows/broken.yml")
 	}
 	if len(pipeline.AnalyzedWorkflows) != 1 {
 		t.Fatalf("expected the unparseable file to still be retained, got %d: %+v", len(pipeline.AnalyzedWorkflows), pipeline.AnalyzedWorkflows)
@@ -266,6 +273,64 @@ func TestScanGitHubWorkflowsRemote_RetainsUnparseableFile(t *testing.T) {
 	w := pipeline.AnalyzedWorkflows[0]
 	if w.Path != ".github/workflows/broken.yml" || w.Content != brokenYAML {
 		t.Errorf("retained workflow = %+v, want the fetched path and verbatim content despite the parse failure", w)
+	}
+}
+
+func TestScanGitHubWorkflowsRemote_InvalidWorkflowReportedSeparately(t *testing.T) {
+	// Mirrors the local-scan test: an undefined YAML anchor fetches fine but
+	// GitHub refuses to run it. It must not withhold the whole run (#517).
+	const goodYAML = `name: good
+on: [push]
+jobs:
+  ok:
+    runs-on: ubuntu-latest
+    steps: [{ run: echo ok }]
+`
+	const anchorYAML = `name: Anchor Aliases
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: *checkout_with
+`
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/owner/repo/contents/.github/workflows", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]any{
+			{"name": "good.yml", "path": ".github/workflows/good.yml", "type": "file"},
+			{"name": "anchor-aliases.yml", "path": ".github/workflows/anchor-aliases.yml", "type": "file"},
+		})
+	})
+	mux.HandleFunc("/repos/owner/repo/contents/.github/workflows/good.yml", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"content": b64(goodYAML), "encoding": "base64"})
+	})
+	mux.HandleFunc("/repos/owner/repo/contents/.github/workflows/anchor-aliases.yml", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"content": b64(anchorYAML), "encoding": "base64"})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	swapRESTClient(t, server)
+
+	pipeline, partial, err := ScanGitHubWorkflowsRemote("", "owner", "repo", "main", false, false, nil)
+	if err != nil {
+		t.Fatalf("unexpected hard error: %v", err)
+	}
+	if len(partial) != 0 {
+		t.Fatalf("expected no partial errors, got %v", partial)
+	}
+	if len(pipeline.Jobs) != 1 {
+		t.Fatalf("expected 1 job from the valid file only, got %d", len(pipeline.Jobs))
+	}
+	if len(pipeline.InvalidWorkflows) != 1 {
+		t.Fatalf("expected 1 invalid workflow, got %d: %+v", len(pipeline.InvalidWorkflows), pipeline.InvalidWorkflows)
+	}
+	inv := pipeline.InvalidWorkflows[0]
+	if inv.Path != ".github/workflows/anchor-aliases.yml" {
+		t.Errorf("path = %q, want %q", inv.Path, ".github/workflows/anchor-aliases.yml")
+	}
+	if !strings.Contains(inv.Error, "unknown anchor 'checkout_with'") {
+		t.Errorf("error = %q, want it to contain %q", inv.Error, "unknown anchor 'checkout_with'")
 	}
 }
 

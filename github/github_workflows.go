@@ -47,26 +47,46 @@ const (
 	fmtFileErr = "%s: %w"
 )
 
+// dedupeYAMLErrorPrefix returns err's message with one redundant leading
+// "yaml: " removed. parseGitHubWorkflowJobs wraps every yaml.Unmarshal
+// failure with "yaml: %w", and the yaml library's own message for a
+// syntax-level failure (an undefined anchor, a duplicate key, ...) already
+// starts with "yaml: ", so the unwrapped message would otherwise read
+// "yaml: yaml: unknown anchor ...". Reported to the user with one prefix
+// kept.
+func dedupeYAMLErrorPrefix(err error) string {
+	const prefix = "yaml: "
+	msg := err.Error()
+	if strings.HasPrefix(msg, prefix+prefix) {
+		return strings.TrimPrefix(msg, prefix)
+	}
+	return msg
+}
+
 // collectWorkflowJobs reads every .yml/.yaml file under
 // <rootDir>/.github/workflows/ and returns the parsed jobs, sorted by
 // name. A missing workflows directory — or one that resolves outside
 // the repository (e.g. a committed symlink) — is not an error: the
 // scan simply carries no jobs, and the caller still collects the
 // repository-level artifacts (dependabot, Renovate, security policy,
-// Dockerfiles) that do not depend on that directory. Individual
-// unreadable or unparseable files land in partialErrors so the caller
-// can surface them without aborting the whole scan.
-func collectWorkflowJobs(rootDir string) (jobs []ir.Job, files []ir.AnalyzedWorkflow, partialErrors []error, err error) {
+// Dockerfiles) that do not depend on that directory. An unreadable file
+// lands in partialErrors so the caller can surface it without aborting
+// the whole scan. A file that reads fine but does not parse as a
+// workflow (GitHub itself refuses to run it: an undefined anchor, a
+// tab-indented block, a duplicate key) is not a collection failure: it
+// is returned as an invalid workflow, reported through ISSUE-423
+// (monorepo issue #517).
+func collectWorkflowJobs(rootDir string) (jobs []ir.Job, files []ir.AnalyzedWorkflow, invalid []ir.InvalidWorkflow, partialErrors []error, err error) {
 	dir, ok := resolveWithinRoot(rootDir, githubWorkflowsSubdir)
 	if !ok {
-		return nil, nil, nil, nil
+		return nil, nil, nil, nil, nil
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil, nil, nil
+			return nil, nil, nil, nil, nil
 		}
-		return nil, nil, nil, fmt.Errorf(fmtReadErr, dir, err)
+		return nil, nil, nil, nil, fmt.Errorf(fmtReadErr, dir, err)
 	}
 	for _, entry := range entries {
 		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
@@ -88,7 +108,7 @@ func collectWorkflowJobs(rootDir string) (jobs []ir.Job, files []ir.AnalyzedWork
 		files = append(files, ir.AnalyzedWorkflow{Path: rel, Content: string(data)})
 		fileJobs, parseErr := parseGitHubWorkflowJobs(data, workflowBaseName(name), path)
 		if parseErr != nil {
-			partialErrors = append(partialErrors, fmt.Errorf(fmtFileErr, name, parseErr))
+			invalid = append(invalid, ir.InvalidWorkflow{Path: rel, Error: dedupeYAMLErrorPrefix(parseErr)})
 			continue
 		}
 		jobs = append(jobs, fileJobs...)
@@ -97,7 +117,8 @@ func collectWorkflowJobs(rootDir string) (jobs []ir.Job, files []ir.AnalyzedWork
 		return jobs[i].Name < jobs[j].Name
 	})
 	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
-	return jobs, files, partialErrors, nil
+	sort.Slice(invalid, func(i, j int) bool { return invalid[i].Path < invalid[j].Path })
+	return jobs, files, invalid, partialErrors, nil
 }
 
 // ScanGitHubWorkflowsWithProgress reads every .yml/.yaml file under
@@ -135,11 +156,12 @@ func ScanGitHubWorkflowsWithProgress(projectPath, defaultBranch, rootDir, apiHos
 	if scanMutableExec {
 		pipeline.SelfActionMutableExec = ScanLocalSelfAction(rootDir)
 	}
-	jobs, workflowFiles, partialErrors, err := collectWorkflowJobs(rootDir)
+	jobs, workflowFiles, invalidWorkflows, partialErrors, err := collectWorkflowJobs(rootDir)
 	if err != nil {
 		return nil, nil, err
 	}
 	pipeline.Jobs = jobs
+	pipeline.InvalidWorkflows = invalidWorkflows
 	var client *GitHubMetadataClient
 	if enrichActionMetadata {
 		client = NewGitHubMetadataClientForHost(apiHost)
@@ -1088,7 +1110,73 @@ func matrixArtifacts(refs []ir.ArtifactRef, section map[string]any) []ir.Artifac
 	return out
 }
 
+// firstDuplicateYAMLKey decodes data into a yaml.MapSlice, which, unlike
+// a plain map, keeps every key-value pair in document order including a
+// repeated key, and walks it (and every nested mapping yaml.v2 also
+// decodes as MapSlice) looking for the first mapping that carries the
+// same key twice. Returns nil when the document does not decode this
+// way at all (a syntax error, say): that is a failure the typed decode
+// right after this call reports in its own words, so this pre-check
+// only adds a new failure mode, never hides one.
+func firstDuplicateYAMLKey(data []byte) error {
+	var top yaml.MapSlice
+	if err := yaml.Unmarshal(data, &top); err != nil {
+		return nil
+	}
+	return duplicateKeyIn(top)
+}
+
+// duplicateKeyIn is firstDuplicateYAMLKey's recursive step over one
+// decoded mapping. Keys are compared by type and value through their
+// printed form, so a sequence or a mapping used as a key (legal YAML,
+// never a workflow) cannot panic the walk the way an unhashable map key
+// would, and 1 and "1" stay distinct. The walk descends through nested
+// mappings and through sequences, so a duplicate inside one step of a
+// job's `steps:` list is caught too.
+func duplicateKeyIn(items yaml.MapSlice) error {
+	seen := make(map[string]bool, len(items))
+	for _, item := range items {
+		k := fmt.Sprintf("%T:%v", item.Key, item.Key)
+		if seen[k] {
+			return fmt.Errorf("mapping key %v already defined", item.Key)
+		}
+		seen[k] = true
+		if err := duplicateKeyInValue(item.Value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// duplicateKeyInValue walks one decoded value: a mapping is checked, a
+// sequence has each element checked, a scalar carries no keys.
+func duplicateKeyInValue(v interface{}) error {
+	switch t := v.(type) {
+	case yaml.MapSlice:
+		return duplicateKeyIn(t)
+	case []interface{}:
+		for _, e := range t {
+			if err := duplicateKeyInValue(e); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func parseGitHubWorkflowJobs(data []byte, namespace, originFile string) ([]ir.Job, error) {
+	// A duplicate mapping key anywhere in the document (the same `on:`
+	// twice, the same `runs-on:` twice under one job, ...) makes GitHub's
+	// own YAML parser refuse the file outright, but the typed decode just
+	// below silently keeps the last value: gopkg.in/yaml.v2 does not
+	// reject a duplicate key when unmarshalling into a struct (PR #560,
+	// thread 2). Caught here with a lightweight pre-check, before
+	// the typed decode, rather than switching that decode to
+	// UnmarshalStrict, which would also reject every workflow field this
+	// parser does not itself model.
+	if err := firstDuplicateYAMLKey(data); err != nil {
+		return nil, fmt.Errorf("yaml: %w", err)
+	}
 	var wf ghWorkflowHeader
 	if err := yaml.Unmarshal(data, &wf); err != nil {
 		return nil, fmt.Errorf("yaml: %w", err)

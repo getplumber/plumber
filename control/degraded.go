@@ -83,10 +83,13 @@ const degradedReasonSecurityPolicyPrefix = "security policy project could not be
 
 // degradedReasonsFromGitHubCollection builds the human-readable list of
 // collection failures behind a degraded GitHub run (#220). partialCount
-// is the number of workflow files that could not be fetched/parsed and
-// were skipped; branchFetchFailed reports that the branch-protection
-// fetch failed outright. Returns nil when neither happened, which is the
-// signal callers use to leave DataCollectionDegraded false.
+// is the number of workflow files that could not be read or fetched and
+// were skipped; a file that was fetched but does not parse as a workflow
+// is not counted here, it is an invalid workflow reported through
+// ISSUE-423 (#517), never a collection failure. branchFetchFailed reports
+// that the branch-protection fetch failed outright. Returns nil when
+// neither happened, which is the signal callers use to leave
+// DataCollectionDegraded false.
 func degradedReasonsFromGitHubCollection(partialCount int, branchFetchFailed bool) []string {
 	var reasons []string
 	if partialCount > 0 {
@@ -100,8 +103,10 @@ func degradedReasonsFromGitHubCollection(partialCount int, branchFetchFailed boo
 
 // applyGitHubDegraded stamps the degraded-collection signals onto a
 // GitHub AnalysisResult from the two collection failure modes (#220):
-// partialCount workflow files skipped, and a failed branch-protection
-// fetch. No-op when neither happened, so a healthy run is left clean.
+// partialCount workflow files that could not be read or fetched and were
+// skipped, and a failed branch-protection fetch. A file that was fetched
+// but could not be parsed is not one of partialCount's files (#517). No-op
+// when neither happened, so a healthy run is left clean.
 func applyGitHubDegraded(result *AnalysisResult, partialCount int, branchFetchFailed bool) {
 	if result == nil {
 		return

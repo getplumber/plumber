@@ -3,7 +3,11 @@ package control
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
+
+	githubpkg "github.com/getplumber/plumber/github"
 )
 
 func TestIsNetworkError(t *testing.T) {
@@ -129,6 +133,43 @@ func TestApplyGitHubDegraded(t *testing.T) {
 		}
 		if len(r.DegradedReasons) != 2 {
 			t.Fatalf("expected 2 reasons, got %v", r.DegradedReasons)
+		}
+	})
+
+	// A run whose only problem is a workflow file GitHub itself refuses to
+	// run must not read as data-collection-degraded (#517): the file was
+	// fetched fine, it is reported through ISSUE-423 instead.
+	t.Run("invalid workflow alone leaves the run clean", func(t *testing.T) {
+		tmp := t.TempDir()
+		wfDir := filepath.Join(tmp, ".github", "workflows")
+		if err := os.MkdirAll(wfDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		invalid := `name: Anchor Aliases
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: *checkout_with
+`
+		if err := os.WriteFile(filepath.Join(wfDir, "anchor-aliases.yml"), []byte(invalid), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		pipeline, partial, err := githubpkg.ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
+		if err != nil {
+			t.Fatalf("unexpected scan error: %v", err)
+		}
+		if len(pipeline.InvalidWorkflows) != 1 {
+			t.Fatalf("expected 1 invalid workflow, got %d", len(pipeline.InvalidWorkflows))
+		}
+
+		r := &AnalysisResult{}
+		applyGitHubDegraded(r, len(partial), false)
+		if r.DataCollectionDegraded {
+			t.Fatalf("expected DataCollectionDegraded false, got reasons %v", r.DegradedReasons)
 		}
 	})
 }

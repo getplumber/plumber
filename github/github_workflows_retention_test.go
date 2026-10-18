@@ -31,7 +31,7 @@ func TestCollectWorkflowJobsRetainsFiles(t *testing.T) {
 	write("alpha.yaml", alpha)
 	write("broken.yml", broken)
 
-	_, files, partial, err := collectWorkflowJobs(root)
+	_, files, invalid, partial, err := collectWorkflowJobs(root)
 	if err != nil {
 		t.Fatalf("collectWorkflowJobs: %v", err)
 	}
@@ -65,8 +65,15 @@ func TestCollectWorkflowJobsRetainsFiles(t *testing.T) {
 		t.Errorf("broken content = %q, want the unparseable file retained verbatim", byPath[".github/workflows/broken.yml"])
 	}
 
-	// The unparseable file surfaces as a partial error, not an abort.
-	if len(partial) == 0 {
-		t.Error("want a partial error for the unparseable workflow, got none")
+	// The unparseable file surfaces as an invalid workflow, not an abort
+	// and not a fetch/read partial error (#517).
+	if len(partial) != 0 {
+		t.Errorf("want no partial errors for the unparseable workflow, got %v", partial)
+	}
+	if len(invalid) != 1 {
+		t.Fatalf("want 1 invalid workflow for the unparseable file, got %d: %+v", len(invalid), invalid)
+	}
+	if invalid[0].Path != ".github/workflows/broken.yml" {
+		t.Errorf("invalid[0].Path = %q, want %q", invalid[0].Path, ".github/workflows/broken.yml")
 	}
 }
