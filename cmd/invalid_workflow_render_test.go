@@ -27,7 +27,7 @@ func TestInvalidWorkflowFindingReachesTheTerminalReport(t *testing.T) {
 	pc := &configuration.PlumberConfig{GitHub: &configuration.ProviderConfig{Controls: configuration.ControlsConfig{
 		WorkflowsMustBeValid: &configuration.EnabledOnlyControlConfig{Enabled: &enabled},
 	}}}
-	message := `workflow file ".github/workflows/anchor-aliases.yml" is not a valid workflow: yaml: unknown anchor 'checkout_with' referenced; GitHub will not run it`
+	message := `workflow file ".github/workflows/anchor-aliases.yml" could not be parsed as a workflow: yaml: unknown anchor 'checkout_with' referenced`
 	result := &control.AnalysisResult{
 		CiValid: true,
 		Findings: []opaengine.Finding{{
@@ -47,7 +47,7 @@ func TestInvalidWorkflowFindingReachesTheTerminalReport(t *testing.T) {
 	for _, want := range []string{
 		"ISSUE-423",
 		"Workflow file is not valid",
-		`anchor-aliases.yml" is not a valid workflow: yaml:`,
+		`anchor-aliases.yml" could not be parsed as a workflow:`,
 		"unknown anchor 'checkout_with' referenced",
 		"Fix    fix the workflow file so GitHub can read it",
 		"↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-423",

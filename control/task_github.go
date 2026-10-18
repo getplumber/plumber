@@ -488,7 +488,7 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 		return nil, err
 	}
 	for _, perr := range partial {
-		l.WithError(perr).Warn("GitHub workflow parse: partial failure (file skipped)")
+		l.WithError(perr).Warn("GitHub workflow read: partial failure (file skipped)")
 	}
 	for _, inv := range pipeline.InvalidWorkflows {
 		l.WithField("file", inv.Path).Warn("GitHub workflow is not valid, reported as ISSUE-423")
@@ -548,8 +548,8 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 		DefaultBranch:     defaultBranch,
 		AnalyzeBranch:     conf.Branch,
 		CIConfigSource:    "local",
-		CiValid:           len(pipeline.Jobs) > 0,
-		CiMissing:         len(pipeline.Jobs) == 0,
+		CiValid:           len(pipeline.Jobs) > 0 || len(pipeline.InvalidWorkflows) > 0,
+		CiMissing:         len(pipeline.Jobs) == 0 && len(pipeline.InvalidWorkflows) == 0,
 		Findings:          findings,
 		GitHubStats:       AggregateGitHubStats(pipeline, conf.PlumberConfig),
 		GitHubPipeline:    pipeline,
@@ -562,8 +562,13 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 	markGitHubLanes(result, conf, conf.ProjectPath, scanMutableExec, branchScope)
 	// Local scans read workflow files from disk, so a skipped file is a
 	// parse/read problem (user-fixable), not a degraded collection — only
-	// a failed branch-protection API fetch counts as degraded here (#220).
-	applyGitHubDegraded(result, 0, branchFetchFailed)
+	// a failed branch-protection API fetch and an invalid workflow whose
+	// control is not active (#517) count as degraded here (#220).
+	invalidInactive := 0
+	if !workflowsMustBeValidActive(conf) {
+		invalidInactive = len(pipeline.InvalidWorkflows)
+	}
+	applyGitHubDegraded(result, 0, invalidInactive, branchFetchFailed)
 	applyNestedActions(result, pipeline)
 	// Resolve the local clone's HEAD SHA so source links in the report
 	// point at the exact commit being analysed instead of a mutable
@@ -639,7 +644,7 @@ func RunGitHubAnalysisRemote(conf *configuration.Configuration, owner, repo, ref
 		return nil, err
 	}
 	for _, perr := range partial {
-		l.WithError(perr).Warn("GitHub workflow parse: partial failure (file skipped)")
+		l.WithError(perr).Warn("GitHub workflow read: partial failure (file skipped)")
 	}
 	for _, inv := range pipeline.InvalidWorkflows {
 		l.WithField("file", inv.Path).Warn("GitHub workflow is not valid, reported as ISSUE-423")
@@ -691,8 +696,8 @@ func RunGitHubAnalysisRemote(conf *configuration.Configuration, owner, repo, ref
 		DefaultBranch:     defaultBranch,
 		AnalyzeBranch:     ref,
 		CIConfigSource:    "remote",
-		CiValid:           len(pipeline.Jobs) > 0,
-		CiMissing:         len(pipeline.Jobs) == 0,
+		CiValid:           len(pipeline.Jobs) > 0 || len(pipeline.InvalidWorkflows) > 0,
+		CiMissing:         len(pipeline.Jobs) == 0 && len(pipeline.InvalidWorkflows) == 0,
 		Findings:          findings,
 		GitHubStats:       AggregateGitHubStats(pipeline, conf.PlumberConfig),
 		GitHubPipeline:    pipeline,
@@ -703,7 +708,11 @@ func RunGitHubAnalysisRemote(conf *configuration.Configuration, owner, repo, ref
 	applyPolicyFailures(result, policyFailures)
 	attachSituation(l, conf, "github", pipeline, result)
 	markGitHubLanes(result, conf, owner+"/"+repo, scanMutableExec, branchScope)
-	applyGitHubDegraded(result, len(partial), branchFetchFailed)
+	invalidInactive := 0
+	if !workflowsMustBeValidActive(conf) {
+		invalidInactive = len(pipeline.InvalidWorkflows)
+	}
+	applyGitHubDegraded(result, len(partial), invalidInactive, branchFetchFailed)
 	applyNestedActions(result, pipeline)
 	// An enabled control asserting nothing until its substantive fields are set is not a clean
 	// pass either (#459): it is not_evaluable, config_required, same as any other lane gap. Runs

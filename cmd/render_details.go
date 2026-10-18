@@ -967,10 +967,12 @@ func buildGitHubControlStats(controlName string, stats *control.GitHubAnalysisSt
 			{Label: "Missing permissions block", Value: fmt.Sprintf("%d", stats.WorkflowsMissingPermissions)},
 		}
 	case "workflowsMustBeValid":
-		// An invalid file is not among WorkflowsTotal (never parsed into a
-		// workflow), so the total here adds it back (#517).
+		// WorkflowsTotal dedupes on workflow name and includes reusable
+		// callees (control/github_stats.go), so it is not a file count;
+		// read the two counters straight, with no sum pretending to be
+		// one (#517 fix round 1, Minor 2).
 		return []statLine{
-			{Label: "Total Workflows", Value: fmt.Sprintf("%d", stats.WorkflowsTotal+stats.WorkflowFilesInvalid)},
+			{Label: "Workflows parsed", Value: fmt.Sprintf("%d", stats.WorkflowsTotal)},
 			{Label: "Invalid workflow files", Value: fmt.Sprintf("%d", stats.WorkflowFilesInvalid)},
 		}
 	case "workflowMustNotGrantPermissionsWriteAll":

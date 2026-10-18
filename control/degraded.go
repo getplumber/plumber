@@ -84,16 +84,24 @@ const degradedReasonSecurityPolicyPrefix = "security policy project could not be
 // degradedReasonsFromGitHubCollection builds the human-readable list of
 // collection failures behind a degraded GitHub run (#220). partialCount
 // is the number of workflow files that could not be read or fetched and
-// were skipped; a file that was fetched but does not parse as a workflow
-// is not counted here, it is an invalid workflow reported through
-// ISSUE-423 (#517), never a collection failure. branchFetchFailed reports
-// that the branch-protection fetch failed outright. Returns nil when
-// neither happened, which is the signal callers use to leave
-// DataCollectionDegraded false.
-func degradedReasonsFromGitHubCollection(partialCount int, branchFetchFailed bool) []string {
+// were skipped. invalidInactiveCount is the number of workflow files
+// that were read or fetched fine but do not parse as a workflow, while
+// workflowsMustBeValid is not active for this run (absent from the
+// config, disabled, or excluded by --controls / --skip-controls): with
+// the control active those files are ISSUE-423 findings instead, never
+// counted here (#517); with it inactive, an invalid file must still
+// degrade the run rather than vanish silently (#517 fix round 1,
+// Important 1), with its own reason naming the toggle that would have
+// reported it. branchFetchFailed reports that the branch-protection
+// fetch failed outright. Returns nil when none of the three happened,
+// which is the signal callers use to leave DataCollectionDegraded false.
+func degradedReasonsFromGitHubCollection(partialCount, invalidInactiveCount int, branchFetchFailed bool) []string {
 	var reasons []string
 	if partialCount > 0 {
-		reasons = append(reasons, fmt.Sprintf("%d workflow file(s) could not be fetched and were skipped", partialCount))
+		reasons = append(reasons, fmt.Sprintf("%d workflow file(s) could not be read or fetched and were skipped", partialCount))
+	}
+	if invalidInactiveCount > 0 {
+		reasons = append(reasons, fmt.Sprintf("%d workflow file(s) could not be parsed and were skipped (enable workflowsMustBeValid to report them as findings)", invalidInactiveCount))
 	}
 	if branchFetchFailed {
 		reasons = append(reasons, degradedReasonBranchProtectionPrefix+"; branch controls were not evaluated")
@@ -102,16 +110,17 @@ func degradedReasonsFromGitHubCollection(partialCount int, branchFetchFailed boo
 }
 
 // applyGitHubDegraded stamps the degraded-collection signals onto a
-// GitHub AnalysisResult from the two collection failure modes (#220):
-// partialCount workflow files that could not be read or fetched and were
-// skipped, and a failed branch-protection fetch. A file that was fetched
-// but could not be parsed is not one of partialCount's files (#517). No-op
-// when neither happened, so a healthy run is left clean.
-func applyGitHubDegraded(result *AnalysisResult, partialCount int, branchFetchFailed bool) {
+// GitHub AnalysisResult from the three collection failure modes (#220,
+// #517): partialCount workflow files that could not be read or fetched
+// and were skipped, invalidInactiveCount workflow files that did not
+// parse while workflowsMustBeValid is not active for this run, and a
+// failed branch-protection fetch. No-op when none happened, so a healthy
+// run is left clean.
+func applyGitHubDegraded(result *AnalysisResult, partialCount, invalidInactiveCount int, branchFetchFailed bool) {
 	if result == nil {
 		return
 	}
-	reasons := degradedReasonsFromGitHubCollection(partialCount, branchFetchFailed)
+	reasons := degradedReasonsFromGitHubCollection(partialCount, invalidInactiveCount, branchFetchFailed)
 	if len(reasons) == 0 {
 		return
 	}

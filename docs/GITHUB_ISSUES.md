@@ -1799,11 +1799,16 @@ jobs:
 
 **Severity:** `low` • **Control:** `workflowsMustBeValid`
 
-A file under `.github/workflows` cannot be parsed as a workflow: an
-undefined YAML anchor, a tab-indented block, a duplicate key, a syntax
-error. GitHub refuses to run such a file and shows it as invalid on the
-Actions tab, so whatever that workflow was meant to do never happens,
-and nothing else in the repository notices.
+A file under `.github/workflows` cannot be parsed as a workflow by
+Plumber's own parser: an undefined YAML anchor, a tab-indented block, a
+duplicate key, a syntax error. GitHub shows a workflow file it cannot
+read as invalid on the Actions tab and does not run it, so whatever
+that workflow was meant to do never happens, and nothing else in the
+repository notices.
+
+Out of scope: an empty file and a file with no `jobs:` block parse fine
+as YAML but still produce nothing GitHub will run; this control does
+not flag them, only a file its own parser refuses outright.
 
 ```yaml
 # ❌ before: the alias has no matching anchor in this file
@@ -1813,12 +1818,12 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.1.7
         with: *checkout_with
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.1.7
         with: *checkout_with
 ```
 
@@ -1830,15 +1835,23 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.1.7
         with: &checkout_with
+          persist-credentials: false
           fetch-depth: 0
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.1.7
         with: *checkout_with
 ```
+
+**Remediation:** open the Actions tab and read the error GitHub reports
+for the file; for an undefined anchor, define it in the same file
+before using it (GitHub Actions resolves YAML anchors only within one
+file, never across included or reusable workflows), or inline the block
+instead of aliasing it. Confirm the workflow appears without the
+invalid-workflow banner once fixed.
 
 ---
 

@@ -35,6 +35,7 @@ const opaEvaluateTimeout = 2 * time.Minute
 // the catalog in catalog.go.
 const controlBranchMustBeProtected = "branchMustBeProtected"
 const controlMutableRemoteExec = "actionsMustNotExecuteMutableRemoteCode"
+const controlWorkflowsMustBeValid = "workflowsMustBeValid"
 const controlMRApprovalRulesMinApprovals = "mergeRequestApprovalRulesMustRequireMinimumApprovals"
 const controlMRApprovalRulesCoverAllBranches = "mergeRequestApprovalRulesMustCoverAllProtectedBranches"
 const controlMRApprovalSettings = "mergeRequestApprovalSettingsMustBeCompliant"
@@ -237,6 +238,26 @@ func shouldScanMutableExec(conf *configuration.Configuration) bool {
 		return false
 	}
 	return shouldRunControl(controlMutableRemoteExec, conf)
+}
+
+// workflowsMustBeValidActive reports whether workflowsMustBeValid is
+// active for this run: enabled in .plumber.yaml (a control absent from
+// the loaded config, or an explicit enabled: false, both read as not
+// enabled by EnabledOnlyControlConfig.IsEnabled) and not excluded by
+// --controls / --skip-controls. When it is not active, an invalid
+// workflow file is not reported as a finding, so the collector must
+// fold it back into the degraded-collection path instead of letting it
+// vanish silently (#517 fix round 1, Important 1): an invalid file is
+// either a finding or a degraded cause, never neither.
+func workflowsMustBeValidActive(conf *configuration.Configuration) bool {
+	if conf == nil || conf.PlumberConfig == nil {
+		return false
+	}
+	cfg := conf.PlumberConfig.ControlsFor("github").WorkflowsMustBeValid
+	if cfg == nil || !cfg.IsEnabled() {
+		return false
+	}
+	return shouldRunControl(controlWorkflowsMustBeValid, conf)
 }
 
 // shouldRunControl applies --controls / --skip-controls filtering for a control.

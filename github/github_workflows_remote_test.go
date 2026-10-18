@@ -334,6 +334,50 @@ jobs:
 	}
 }
 
+// TestScanGitHubWorkflowsRemote_InvalidWorkflowsSortedByPath pins parity
+// with the local scanner (github/github_workflows.go): InvalidWorkflows
+// is sorted by path regardless of the order the listing names the files
+// in, not just however the Contents API happened to return them.
+func TestScanGitHubWorkflowsRemote_InvalidWorkflowsSortedByPath(t *testing.T) {
+	const anchorYAML = `on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: *checkout_with
+`
+	const unterminatedYAML = "jobs: [unterminated\n"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/owner/repo/contents/.github/workflows", func(w http.ResponseWriter, _ *http.Request) {
+		// Listed out of path order on purpose: zebra.yml before alpha.yml.
+		_ = json.NewEncoder(w).Encode([]map[string]any{
+			{"name": "zebra.yml", "path": ".github/workflows/zebra.yml", "type": "file"},
+			{"name": "alpha.yml", "path": ".github/workflows/alpha.yml", "type": "file"},
+		})
+	})
+	mux.HandleFunc("/repos/owner/repo/contents/.github/workflows/zebra.yml", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"content": b64(anchorYAML), "encoding": "base64"})
+	})
+	mux.HandleFunc("/repos/owner/repo/contents/.github/workflows/alpha.yml", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"content": b64(unterminatedYAML), "encoding": "base64"})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	swapRESTClient(t, server)
+
+	pipeline, _, err := ScanGitHubWorkflowsRemote("", "owner", "repo", "main", false, false, nil)
+	if err != nil {
+		t.Fatalf("unexpected hard error: %v", err)
+	}
+	if len(pipeline.InvalidWorkflows) != 2 {
+		t.Fatalf("expected 2 invalid workflows, got %d: %+v", len(pipeline.InvalidWorkflows), pipeline.InvalidWorkflows)
+	}
+	if pipeline.InvalidWorkflows[0].Path != ".github/workflows/alpha.yml" || pipeline.InvalidWorkflows[1].Path != ".github/workflows/zebra.yml" {
+		t.Errorf("InvalidWorkflows not sorted by path: %+v", pipeline.InvalidWorkflows)
+	}
+}
+
 func TestScanGitHubWorkflowsRemote_BadEncoding(t *testing.T) {
 	// Defensive: if the API returns content under a non-base64
 	// encoding (today none does, but the field exists), surface the

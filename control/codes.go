@@ -989,7 +989,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Code:        CodeInvalidWorkflow,
 		Severity:    SeverityLow,
 		Title:       "Workflow file is not valid",
-		Description: "A file under `.github/workflows` cannot be parsed as a workflow (an undefined YAML anchor, a tab-indented block, a duplicate key, a syntax error). GitHub refuses to run such a file and shows it as an invalid workflow on the Actions tab, so whatever that workflow was meant to do, a test, a security scan, a release gate, never happens, and nothing else in the repository notices.",
+		Description: "A file under `.github/workflows` cannot be parsed as a workflow by Plumber's own parser (an undefined YAML anchor, a tab-indented block, a duplicate key, a syntax error). GitHub shows a workflow file it cannot read as invalid on the Actions tab and does not run it, so whatever that workflow was meant to do, a test, a security scan, a release gate, never happens, and nothing else in the repository notices.",
 		Remediation: "Open the Actions tab, read the error GitHub reports for the file, and fix it: define a YAML anchor in the same file before using it, or inline the block; GitHub Actions resolves anchors only within one file. Then confirm the workflow appears without the invalid-workflow banner.",
 		DocURL:      docsBaseURL + string(CodeInvalidWorkflow),
 		ControlName: "workflowsMustBeValid",

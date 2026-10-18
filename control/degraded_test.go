@@ -61,32 +61,45 @@ func TestMarkDegraded(t *testing.T) {
 
 func TestDegradedReasonsFromGitHubCollection(t *testing.T) {
 	t.Run("healthy run yields no reasons", func(t *testing.T) {
-		if got := degradedReasonsFromGitHubCollection(0, false); got != nil {
+		if got := degradedReasonsFromGitHubCollection(0, 0, false); got != nil {
 			t.Fatalf("expected nil, got %v", got)
 		}
 	})
 
 	t.Run("skipped workflow files", func(t *testing.T) {
-		got := degradedReasonsFromGitHubCollection(3, false)
+		got := degradedReasonsFromGitHubCollection(3, 0, false)
 		if len(got) != 1 {
 			t.Fatalf("expected 1 reason, got %d: %v", len(got), got)
 		}
-		if want := "3 workflow file(s) could not be fetched and were skipped"; got[0] != want {
+		if want := "3 workflow file(s) could not be read or fetched and were skipped"; got[0] != want {
+			t.Fatalf("reason = %q, want %q", got[0], want)
+		}
+	})
+
+	// #517 follow-up: an invalid workflow file whose control is not active
+	// for this run must still degrade the collection (never a silent
+	// drop), with its own reason naming the toggle.
+	t.Run("invalid workflows with the control inactive", func(t *testing.T) {
+		got := degradedReasonsFromGitHubCollection(0, 2, false)
+		if len(got) != 1 {
+			t.Fatalf("expected 1 reason, got %d: %v", len(got), got)
+		}
+		if want := "2 workflow file(s) could not be parsed and were skipped (enable workflowsMustBeValid to report them as findings)"; got[0] != want {
 			t.Fatalf("reason = %q, want %q", got[0], want)
 		}
 	})
 
 	t.Run("branch fetch failure", func(t *testing.T) {
-		got := degradedReasonsFromGitHubCollection(0, true)
+		got := degradedReasonsFromGitHubCollection(0, 0, true)
 		if len(got) != 1 {
 			t.Fatalf("expected 1 reason, got %d: %v", len(got), got)
 		}
 	})
 
-	t.Run("both failure modes", func(t *testing.T) {
-		got := degradedReasonsFromGitHubCollection(2, true)
-		if len(got) != 2 {
-			t.Fatalf("expected 2 reasons, got %d: %v", len(got), got)
+	t.Run("every failure mode at once", func(t *testing.T) {
+		got := degradedReasonsFromGitHubCollection(2, 1, true)
+		if len(got) != 3 {
+			t.Fatalf("expected 3 reasons, got %d: %v", len(got), got)
 		}
 	})
 }
@@ -94,7 +107,7 @@ func TestDegradedReasonsFromGitHubCollection(t *testing.T) {
 func TestApplyGitHubDegraded(t *testing.T) {
 	t.Run("healthy run leaves result clean", func(t *testing.T) {
 		r := &AnalysisResult{}
-		applyGitHubDegraded(r, 0, false)
+		applyGitHubDegraded(r, 0, 0, false)
 		if r.DataCollectionDegraded {
 			t.Fatal("expected DataCollectionDegraded false")
 		}
@@ -105,7 +118,7 @@ func TestApplyGitHubDegraded(t *testing.T) {
 
 	t.Run("partial files set degraded", func(t *testing.T) {
 		r := &AnalysisResult{}
-		applyGitHubDegraded(r, 4, false)
+		applyGitHubDegraded(r, 4, 0, false)
 		if !r.DataCollectionDegraded {
 			t.Fatal("expected DataCollectionDegraded true")
 		}
@@ -116,7 +129,7 @@ func TestApplyGitHubDegraded(t *testing.T) {
 
 	t.Run("branch fetch failure sets degraded", func(t *testing.T) {
 		r := &AnalysisResult{}
-		applyGitHubDegraded(r, 0, true)
+		applyGitHubDegraded(r, 0, 0, true)
 		if !r.DataCollectionDegraded {
 			t.Fatal("expected DataCollectionDegraded true")
 		}
@@ -125,21 +138,23 @@ func TestApplyGitHubDegraded(t *testing.T) {
 		}
 	})
 
-	t.Run("both modes accumulate reasons", func(t *testing.T) {
+	t.Run("every mode accumulates reasons", func(t *testing.T) {
 		r := &AnalysisResult{}
-		applyGitHubDegraded(r, 2, true)
+		applyGitHubDegraded(r, 2, 1, true)
 		if !r.DataCollectionDegraded {
 			t.Fatal("expected DataCollectionDegraded true")
 		}
-		if len(r.DegradedReasons) != 2 {
-			t.Fatalf("expected 2 reasons, got %v", r.DegradedReasons)
+		if len(r.DegradedReasons) != 3 {
+			t.Fatalf("expected 3 reasons, got %v", r.DegradedReasons)
 		}
 	})
 
 	// A run whose only problem is a workflow file GitHub itself refuses to
-	// run must not read as data-collection-degraded (#517): the file was
-	// fetched fine, it is reported through ISSUE-423 instead.
-	t.Run("invalid workflow alone leaves the run clean", func(t *testing.T) {
+	// run must not read as data-collection-degraded (#517) when the
+	// caller has determined the control is active (so it passes 0 for
+	// invalidInactiveCount): the file was fetched fine, it is reported
+	// through ISSUE-423 instead.
+	t.Run("invalid workflow alone, control active, leaves the run clean", func(t *testing.T) {
 		tmp := t.TempDir()
 		wfDir := filepath.Join(tmp, ".github", "workflows")
 		if err := os.MkdirAll(wfDir, 0o755); err != nil {
@@ -167,9 +182,47 @@ jobs:
 		}
 
 		r := &AnalysisResult{}
-		applyGitHubDegraded(r, len(partial), false)
+		applyGitHubDegraded(r, len(partial), 0, false)
 		if r.DataCollectionDegraded {
 			t.Fatalf("expected DataCollectionDegraded false, got reasons %v", r.DegradedReasons)
+		}
+	})
+
+	// The symmetric case: the same invalid workflow, but the caller
+	// determined the control is NOT active, so it passes the invalid
+	// count through. This must degrade, never drop silently (#517 fix
+	// round 1, Important 1).
+	t.Run("invalid workflow alone, control inactive, degrades", func(t *testing.T) {
+		tmp := t.TempDir()
+		wfDir := filepath.Join(tmp, ".github", "workflows")
+		if err := os.MkdirAll(wfDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		invalid := `name: Anchor Aliases
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: *checkout_with
+`
+		if err := os.WriteFile(filepath.Join(wfDir, "anchor-aliases.yml"), []byte(invalid), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		pipeline, partial, err := githubpkg.ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
+		if err != nil {
+			t.Fatalf("unexpected scan error: %v", err)
+		}
+
+		r := &AnalysisResult{}
+		applyGitHubDegraded(r, len(partial), len(pipeline.InvalidWorkflows), false)
+		if !r.DataCollectionDegraded {
+			t.Fatal("expected DataCollectionDegraded true when the control is inactive")
+		}
+		if len(r.DegradedReasons) != 1 {
+			t.Fatalf("expected 1 reason, got %v", r.DegradedReasons)
 		}
 	})
 }

@@ -80,7 +80,7 @@ func TestInvalidWorkflowsJSONBlock(t *testing.T) {
 	findings := []opaengine.Finding{{
 		Code:    "ISSUE-423",
 		File:    ".github/workflows/anchor-aliases.yml",
-		Message: `workflow file ".github/workflows/anchor-aliases.yml" is not a valid workflow: yaml: unknown anchor 'checkout_with' referenced; GitHub will not run it`,
+		Message: `workflow file ".github/workflows/anchor-aliases.yml" could not be parsed as a workflow: yaml: unknown anchor 'checkout_with' referenced`,
 	}}
 	result := &control.AnalysisResult{
 		CiValid:     true,

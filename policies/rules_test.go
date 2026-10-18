@@ -5486,12 +5486,38 @@ func TestIssue423_InvalidWorkflow(t *testing.T) {
 		if !ok {
 			t.Fatalf("expected a finding for anchor-aliases.yml, got %+v", findings)
 		}
-		wantMessage := `workflow file ".github/workflows/anchor-aliases.yml" is not a valid workflow: yaml: unknown anchor 'checkout_with' referenced; GitHub will not run it`
+		wantMessage := `workflow file ".github/workflows/anchor-aliases.yml" could not be parsed as a workflow: yaml: unknown anchor 'checkout_with' referenced`
 		if f.Message != wantMessage {
 			t.Errorf("message = %q, want %q", f.Message, wantMessage)
 		}
 		if f.Severity != "low" {
 			t.Errorf("severity = %q, want %q", f.Severity, "low")
+		}
+	})
+
+	// Two invalid files must identify as two distinct issues, not one: the
+	// {file} declaration (finding/identity/declarations.go) keys ISSUE-423
+	// on the file, so their fingerprints must differ even though every
+	// other field (code, severity) is the same.
+	t.Run("two invalid workflows, distinct fingerprints", func(t *testing.T) {
+		p := &ir.NormalizedPipeline{
+			Provider: ir.ProviderGitHub,
+			InvalidWorkflows: []ir.InvalidWorkflow{
+				{Path: ".github/workflows/anchor-aliases.yml", Error: "yaml: unknown anchor 'checkout_with' referenced"},
+				{Path: ".github/workflows/duplicate-key.yml", Error: "yaml: line 4: mapping key \"on\" already defined"},
+			},
+		}
+		findings := only423(p)
+		if len(findings) != 2 {
+			t.Fatalf("expected 2 findings, got %d: %+v", len(findings), findings)
+		}
+		fp0, ok0 := findings[0].Identity()
+		fp1, ok1 := findings[1].Identity()
+		if !ok0 || !ok1 {
+			t.Fatalf("expected both findings to carry an identity, got ok0=%v ok1=%v", ok0, ok1)
+		}
+		if identity.Fingerprint(findings[0].IdentityInput()) == identity.Fingerprint(findings[1].IdentityInput()) {
+			t.Fatalf("expected distinct fingerprints for two different files, got the same for both: %+v / %+v", fp0, fp1)
 		}
 	})
 

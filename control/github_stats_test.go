@@ -146,12 +146,6 @@ func TestAggregate_ActionRefsAbsentUpstreamCounter(t *testing.T) {
 	}
 }
 
-// TestDangerousTriggerMetricFollowsFindings locks the
-// workflowsWithDangerousTrigger metric to the ISSUE-802 findings the rule
-// actually emits, rather than a structural scan of trigger names. The
-// rule's fork-guard recognition lives in Rego (#235), so a workflow with
-// a dangerous trigger but a `push`-event / author-association guard emits
-// no finding and must not inflate the metric (#235 follow-up).
 // TestAggregate_WorkflowFilesInvalidCountsInvalidWorkflows pins the
 // ISSUE-423 denominator (#517): the metric mirrors
 // len(pipeline.InvalidWorkflows) exactly, regardless of config.
@@ -175,6 +169,12 @@ func TestAggregate_WorkflowFilesInvalidCountsInvalidWorkflows(t *testing.T) {
 	}
 }
 
+// TestDangerousTriggerMetricFollowsFindings locks the
+// workflowsWithDangerousTrigger metric to the ISSUE-802 findings the rule
+// actually emits, rather than a structural scan of trigger names. The
+// rule's fork-guard recognition lives in Rego (#235), so a workflow with
+// a dangerous trigger but a `push`-event / author-association guard emits
+// no finding and must not inflate the metric (#235 follow-up).
 func TestDangerousTriggerMetricFollowsFindings(t *testing.T) {
 	// No ISSUE-802 findings → metric 0, even if a structural pass seeded
 	// a higher value.

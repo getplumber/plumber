@@ -115,6 +115,12 @@ func ScanGitHubWorkflowsRemote(host, owner, repo, ref string, enrichActionMetada
 	sort.Slice(pipeline.Jobs, func(i, j int) bool {
 		return pipeline.Jobs[i].Name < pipeline.Jobs[j].Name
 	})
+	// Sorted explicitly, like the local scanner (github_workflows.go),
+	// rather than relying on listWorkflowFiles' own sort as an implicit
+	// invariant.
+	sort.Slice(pipeline.InvalidWorkflows, func(i, j int) bool {
+		return pipeline.InvalidWorkflows[i].Path < pipeline.InvalidWorkflows[j].Path
+	})
 	var client *GitHubMetadataClient
 	if enrichActionMetadata {
 		client = NewGitHubMetadataClientForHost(host)

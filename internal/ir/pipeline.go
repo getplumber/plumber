@@ -98,8 +98,8 @@ type NormalizedPipeline struct {
 	// anchor, a tab-indented block, a duplicate key). GitHub refuses to run
 	// such a file, so it holds no job; it is reported as a finding of its
 	// own (ISSUE-423), never as a collection failure. Path is the file's
-	// repository path (".github/workflows/x.yml", as Job.OriginFile), Error
-	// the parser's message.
+	// repository-relative path (".github/workflows/x.yml") in both scan
+	// modes, Error the parser's message.
 	InvalidWorkflows []InvalidWorkflow `json:"invalidWorkflows,omitempty"`
 
 	// GlobalVariables are pipeline-level variables declared at the top

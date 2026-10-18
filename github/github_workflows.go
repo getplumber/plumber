@@ -128,9 +128,10 @@ func collectWorkflowJobs(rootDir string) (jobs []ir.Job, files []ir.AnalyzedWork
 // identically-named jobs without clashing in the IR.
 //
 // A missing workflows directory is not an error: the returned pipeline
-// simply carries no jobs. Individual unreadable or unparseable files are
-// returned in partialErrors so the caller can surface them without
-// aborting the whole scan.
+// simply carries no jobs. An individual unreadable file is returned in
+// partialErrors so the caller can surface it without aborting the whole
+// scan; a file that reads fine but does not parse as a workflow is
+// returned on the pipeline's InvalidWorkflows instead (#517).
 //
 // The caller is notified through progressFn as the scan works. The
 // progress total is sized so the bar advances monotonically end-to-end:
