@@ -593,6 +593,9 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 	// pass either (#459): it is not_evaluable, config_required, same as any other lane gap. Runs
 	// before the finding-count aggregation below so a dropped not_evaluable finding never inflates
 	// the report's stats, matching the GitLab task's mark-before-assembly ordering.
+	// Every workflow file invalid: CiValid is true so ISSUE-423 reports them,
+	// but the controls that read the workflows had nothing parsed to judge.
+	result.MarkNoParsedWorkflow(GitHubControls(conf.PlumberConfig))
 	MarkUnconfiguredControls(result, GitHubControls(conf.PlumberConfig), conf.PlumberConfig, configuration.ProviderGitHub)
 	ApplyGitHubFindingCounts(result.GitHubStats, result.Findings)
 	if conf.ProgressFunc != nil {
@@ -727,6 +730,9 @@ func RunGitHubAnalysisRemote(conf *configuration.Configuration, owner, repo, ref
 	// pass either (#459): it is not_evaluable, config_required, same as any other lane gap. Runs
 	// before the finding-count aggregation below so a dropped not_evaluable finding never inflates
 	// the report's stats, matching the GitLab task's mark-before-assembly ordering.
+	// Every workflow file invalid: CiValid is true so ISSUE-423 reports them,
+	// but the controls that read the workflows had nothing parsed to judge.
+	result.MarkNoParsedWorkflow(GitHubControls(conf.PlumberConfig))
 	MarkUnconfiguredControls(result, GitHubControls(conf.PlumberConfig), conf.PlumberConfig, configuration.ProviderGitHub)
 	ApplyGitHubFindingCounts(result.GitHubStats, result.Findings)
 	if conf.ProgressFunc != nil {

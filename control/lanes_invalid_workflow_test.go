@@ -172,3 +172,36 @@ func TestReEvaluateForConfig_InvalidWorkflowFollowsThePolicysOwnControl(t *testi
 		}
 	})
 }
+
+// TestReEvaluateForConfig_EveryWorkflowInvalidMarksThePolicysCIControls
+// is the policy-scoped mirror of the PR #560 all-invalid finding: a
+// control the run's config left disabled, but this policy enables, has
+// no parsed workflow to judge either, so it must not read as Passed.
+func TestReEvaluateForConfig_EveryWorkflowInvalidMarksThePolicysCIControls(t *testing.T) {
+	runConf := &configuration.Configuration{
+		PlumberConfig: &configuration.PlumberConfig{GitHub: &configuration.ProviderConfig{Controls: configuration.ControlsConfig{
+			WorkflowsMustBeValid: &configuration.EnabledOnlyControlConfig{Enabled: boolPtr(true)},
+		}}},
+	}
+	policy := invalidOnlyControls()
+	result := &AnalysisResult{
+		CiValid: true,
+		GitHubPipeline: &ir.NormalizedPipeline{
+			Provider: ir.ProviderGitHub,
+			InvalidWorkflows: []ir.InvalidWorkflow{
+				{Path: ".github/workflows/anchor-aliases.yml", Error: "yaml: unknown anchor 'checkout_with' referenced"},
+			},
+		},
+	}
+
+	scoped, _, ok := ReEvaluateForConfig(result, runConf, "github", policy)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if got := statusOf(t, scoped, policy, "workflowsMustDeclarePermissions"); got != StatusError {
+		t.Errorf("workflowsMustDeclarePermissions: expected %s, got %s", StatusError, got)
+	}
+	if got := statusOf(t, scoped, policy, "workflowsMustBeValid"); got != StatusFailed {
+		t.Errorf("workflowsMustBeValid: expected %s, got %s", StatusFailed, got)
+	}
+}

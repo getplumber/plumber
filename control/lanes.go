@@ -244,6 +244,32 @@ func (r *AnalysisResult) MarkMergedConfigUnavailable(entries []ControlEntry, rea
 	}
 }
 
+// MarkNoParsedWorkflow flags every GitHub control that reads the workflows
+// as not evaluable when the repository's workflow files are ALL invalid
+// (review of PR 560). CiValid stays true there so ISSUE-423 can report the
+// files, but no workflow was parsed: an empty findings list from a control
+// that reads them must not read as Passed. workflowsMustBeValid itself is
+// left alone, its findings are the point. A no-op as soon as one job was
+// parsed, or when no file was invalid.
+func (r *AnalysisResult) MarkNoParsedWorkflow(entries []ControlEntry) {
+	if r == nil || r.GitHubPipeline == nil {
+		return
+	}
+	if len(r.GitHubPipeline.Jobs) > 0 || len(r.GitHubPipeline.InvalidWorkflows) == 0 {
+		return
+	}
+	for _, e := range entries {
+		if e.Skipped || e.ControlName == controlWorkflowsMustBeValid {
+			continue
+		}
+		if controlsIndependentOfMergedConfig[e.ControlName] {
+			continue
+		}
+		r.MarkNotEvaluable(e.ControlName, ReasonResolutionUnavailable)
+	}
+	r.DropNotEvaluableFindings()
+}
+
 // markPlatformLaneGaps records which controls platform mode's data lanes
 // could not feed for this run. A no-op in standalone mode, which is the
 // CLI's default: without --platform nothing here applies and no control's
@@ -871,6 +897,11 @@ func ReEvaluateForConfig(
 		entries = GitHubControls(pc)
 	}
 	MarkUnconfiguredControls(&scopedResult, entries, pc, provider)
+	// Every workflow file invalid: this policy's own workflow controls had
+	// nothing parsed to judge either (review of PR 560).
+	if provider == configuration.ProviderGitHub {
+		scopedResult.MarkNoParsedWorkflow(entries)
+	}
 	// Collection is gated, so a control this policy enables whose lane was
 	// never collected has nothing to report: mark it rather than let an
 	// empty findings list read as a pass (row 62). This is the arm GitHub

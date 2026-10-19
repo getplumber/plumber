@@ -307,3 +307,92 @@ func TestRunGitHubAnalysisRemote_EveryWorkflowInvalid(t *testing.T) {
 		t.Fatalf("expected 1 ISSUE-423 finding, got %d", n)
 	}
 }
+
+// invalidOnlyControls enables workflowsMustBeValid next to one control
+// that reads the workflows, for the PR #560 all-invalid status tests
+// below.
+func invalidOnlyControls() *configuration.PlumberConfig {
+	return &configuration.PlumberConfig{GitHub: &configuration.ProviderConfig{Controls: configuration.ControlsConfig{
+		WorkflowsMustBeValid:            &configuration.EnabledOnlyControlConfig{Enabled: boolPtr(true)},
+		WorkflowsMustDeclarePermissions: &configuration.EnabledOnlyControlConfig{Enabled: boolPtr(true)},
+	}}}
+}
+
+// statusOf returns StatusFor for one GitHub control of result, counting
+// that control's findings the way the renderers do.
+func statusOf(t *testing.T, result *AnalysisResult, pc *configuration.PlumberConfig, name string) string {
+	t.Helper()
+	for _, e := range GitHubControls(pc) {
+		if e.ControlName == name {
+			return StatusFor(e, result, len(FindingsByControl(result.Findings)[name]))
+		}
+	}
+	t.Fatalf("control %s not in the GitHub catalog", name)
+	return ""
+}
+
+// assertNoWorkflowParsed is the PR #560 review finding: when every
+// workflow file is invalid no workflow was examined, so a control that
+// reads them must not read as Passed, while ISSUE-423 still fails and
+// the run is not degraded (an invalid file is a user-fixable finding).
+func assertNoWorkflowParsed(t *testing.T, result *AnalysisResult, pc *configuration.PlumberConfig) {
+	t.Helper()
+	if got := statusOf(t, result, pc, "workflowsMustBeValid"); got != StatusFailed {
+		t.Errorf("workflowsMustBeValid: expected %s, got %s", StatusFailed, got)
+	}
+	if got := statusOf(t, result, pc, "workflowsMustDeclarePermissions"); got != StatusError {
+		t.Errorf("workflowsMustDeclarePermissions: expected %s, got %s", StatusError, got)
+	}
+	if reason, ok := result.NotEvaluableReason("workflowsMustDeclarePermissions"); !ok || reason != ReasonResolutionUnavailable {
+		t.Errorf("workflowsMustDeclarePermissions: expected not evaluable for %s, got %q (%v)", ReasonResolutionUnavailable, reason, ok)
+	}
+	if _, ok := result.NotEvaluableReason("workflowsMustBeValid"); ok {
+		t.Error("workflowsMustBeValid reports the invalid files: it must not be marked")
+	}
+	if result.DataCollectionDegraded {
+		t.Errorf("expected DataCollectionDegraded false, got reasons %v", result.DegradedReasons)
+	}
+}
+
+func TestRunGitHubAnalysis_EveryWorkflowInvalidLeavesCIControlsNotEvaluated(t *testing.T) {
+	tmp := t.TempDir()
+	wfDir := filepath.Join(tmp, ".github", "workflows")
+	if err := os.MkdirAll(wfDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	invalid := "name: Dup\non: push\non: pull_request\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps: [{ run: echo hi }]\n"
+	if err := os.WriteFile(filepath.Join(wfDir, "dup.yml"), []byte(invalid), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pc := invalidOnlyControls()
+	result, err := RunGitHubAnalysis(&configuration.Configuration{ProjectPath: "owner/repo", GitRepoRoot: tmp, PlumberConfig: pc})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertNoWorkflowParsed(t, result, pc)
+}
+
+func TestRunGitHubAnalysisRemote_EveryWorkflowInvalidLeavesCIControlsNotEvaluated(t *testing.T) {
+	swapRemoteScan(t, remoteInvalidWorkflowStub(false))
+	pc := invalidOnlyControls()
+	result, err := RunGitHubAnalysisRemote(&configuration.Configuration{PlumberConfig: pc}, "owner", "repo", "main")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertNoWorkflowParsed(t, result, pc)
+}
+
+// TestRunGitHubAnalysis_MixedWorkflowsKeepCIControlsEvaluated: one valid
+// file is enough for the workflow controls to have something to judge.
+func TestRunGitHubAnalysis_MixedWorkflowsKeepCIControlsEvaluated(t *testing.T) {
+	tmp := t.TempDir()
+	writeInvalidAndValidWorkflows(t, tmp)
+	pc := invalidOnlyControls()
+	result, err := RunGitHubAnalysis(&configuration.Configuration{ProjectPath: "owner/repo", GitRepoRoot: tmp, PlumberConfig: pc})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if reason, ok := result.NotEvaluableReason("workflowsMustDeclarePermissions"); ok {
+		t.Errorf("expected workflowsMustDeclarePermissions evaluated with a valid file present, got not evaluable (%s)", reason)
+	}
+}
