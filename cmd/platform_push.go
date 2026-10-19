@@ -122,6 +122,25 @@ type platformBOM struct {
 	Includes []platformBOMInclude `json:"includes"`
 	Images   []platformBOMImage   `json:"images"`
 	Jobs     []platformBOMJob     `json:"jobs"`
+	// Capabilities follows the same rule as the three inventories: it is
+	// always an array, never an absent key. An empty array means no job was
+	// recognized, which includes a run where no pipeline could be read; the
+	// platform treats it like an absent key.
+	Capabilities []platformBOMCapability `json:"capabilities"`
+}
+
+// platformBOMCapability is one recognized capability of one job, copied from
+// pbom.Capability (spec 4.4). Kind is the declared capability name (the
+// built-in list's, the platform's served list's or the .plumber.yaml key's),
+// never a closed vocabulary. Evidence is the closed set of the recognizer's
+// field names: images, commands, wrapper_script, gitlab_report_types,
+// gitlab_include_template, gitlab_include_component, gitlab_include_project
+// (package capability).
+type platformBOMCapability struct {
+	Kind     string `json:"kind"`
+	Job      string `json:"job"`
+	Tool     string `json:"tool"`
+	Evidence string `json:"evidence"`
 }
 
 type platformBOMInclude struct {
@@ -206,8 +225,11 @@ type platformPipeline struct {
 }
 
 // platformCLI carries the CLI version that produced the push. ComponentVersion
-// is not populated by this build — the GitLab component version is not
-// currently threaded through to the binary at this call site.
+// is the version of the Plumber CI pin that defines the running job, when it
+// is version-like: the component include on GitLab (componentVersionForPush,
+// issue #562), or the getplumber/plumber action's own `uses:` reference on
+// GitHub (componentVersionForGitHubPush, review of PR 563). Omitted when no
+// version-like candidate exists on either provider.
 type platformCLI struct {
 	Version          string `json:"version,omitempty"`
 	ComponentVersion string `json:"component_version,omitempty"`
@@ -642,6 +664,9 @@ const (
 	bomMaxIncludes = 500
 	bomMaxImages   = 500
 	bomMaxJobs     = 500
+	// bomMaxCapabilities bounds the recognized capabilities, one entry per
+	// job and capability.
+	bomMaxCapabilities = 500
 	// bomMaxJobsPerImage is the platform's own ceiling on the jobs one image
 	// may name (bom_image_jobs). The design spec's sizing section does not
 	// list it: an image shared by a thousand jobs sits inside every bound
@@ -712,6 +737,8 @@ func platformBOMFrom(doc *pbom.PBOM) (*platformBOM, string) {
 		Includes: []platformBOMInclude{},
 		Images:   []platformBOMImage{},
 		Jobs:     []platformBOMJob{},
+
+		Capabilities: []platformBOMCapability{},
 	}
 	for _, inc := range doc.Includes {
 		entry := platformBOMInclude{
@@ -775,6 +802,9 @@ func platformBOMFrom(doc *pbom.PBOM) (*platformBOM, string) {
 			continue
 		}
 		out.Jobs = append(out.Jobs, entry)
+	}
+	for _, c := range doc.Capabilities {
+		out.Capabilities = append(out.Capabilities, platformBOMCapability(c))
 	}
 
 	// Every bound is measured HERE, on the finished section, never on the
@@ -928,6 +958,9 @@ func platformBOMBound(out *platformBOM) string {
 	if len(out.Jobs) > bomMaxJobs {
 		return fmt.Sprintf("jobs > %d", bomMaxJobs)
 	}
+	if len(out.Capabilities) > bomMaxCapabilities {
+		return fmt.Sprintf("capabilities > %d", bomMaxCapabilities)
+	}
 	// The product bound, checked here because it is arithmetic over the
 	// section's own lengths and therefore costs nothing: a bill that would
 	// write more edges than the platform writes in one transaction is refused
@@ -984,6 +1017,11 @@ func platformBOMBound(out *platformBOM) string {
 			return bound
 		}
 	}
+	for _, c := range out.Capabilities {
+		if bound := bomStringBound(c.Kind, c.Job, c.Tool, c.Evidence); bound != "" {
+			return bound
+		}
+	}
 	return ""
 }
 
@@ -1017,6 +1055,8 @@ func bomProjectedEdges(out *platformBOM) int {
 	for _, job := range out.Jobs {
 		n += len(job.Services) + len(job.RunnerTags)
 	}
+	// One edge per recognized capability: the job to its capability node.
+	n += len(out.Capabilities)
 	return n
 }
 
@@ -1066,7 +1106,8 @@ func platformBOMDocument(p providerPkg.Provider, conf *configuration.Configurati
 	gen := pbom.NewGenerator(result.ProjectPath, result.ProjectID, gitlabURL, branch).
 		WithComplianceData(pbom.ImageComplianceFor(source, noControls, summary)).
 		WithIncludeOverrideData(pbom.BuildIncludeOverrideData(source)).
-		WithJobResources(platformPipelineJobs(result))
+		WithJobResources(platformPipelineJobs(result)).
+		WithCapabilities(providerPkg.CapabilitiesOf(result, conf))
 	if noControls {
 		gen = gen.WithoutComplianceVerdicts()
 	}
@@ -1145,6 +1186,18 @@ func buildPlatformPush(p providerPkg.Provider, conf *configuration.Configuration
 		logrus.WithField("bound", bound).Warn("platform push: bill of materials omitted")
 	}
 
+	// Read from the same origin data (GitLab) or IR (GitHub, review of PR
+	// 563) the bill is built from, not from the bill: the bill carries no
+	// job list, and it is dropped whole past a bound while the component
+	// version still holds (issue #562).
+	var componentVersion string
+	if result != nil {
+		componentVersion = pushComponentVersion(p, result.PipelineOriginData)
+		if componentVersion == "" {
+			componentVersion = pushComponentVersionForGitHub(p, result.GitHubPipeline)
+		}
+	}
+
 	push := platformPush{
 		SchemaVersion: 1,
 		Provider:      p.Name(),
@@ -1152,7 +1205,7 @@ func buildPlatformPush(p providerPkg.Provider, conf *configuration.Configuration
 		Project:       platformProject{Path: projectPath, ID: platformProjectID(p, conf)},
 		Ref:           platformRefFor(p),
 		Pipeline:      platformPipelineFor(p),
-		CLI:           platformCLI{Version: strings.TrimPrefix(Version, "v")},
+		CLI:           platformCLI{Version: strings.TrimPrefix(Version, "v"), ComponentVersion: componentVersion},
 		Collection:    platformCollectionFor(conf, result),
 		Evaluation:    evaluation,
 		Results:       results,

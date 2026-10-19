@@ -175,6 +175,52 @@ func TestBuildPublishPayload_GateAndBytes(t *testing.T) {
 	})
 }
 
+// TestBuildPublishPayload_CarriesCapabilities pins that the hosted score payload
+// (the badge push) carries the same capabilities inventory --output does
+// (buildAnalysisJSONReport's `capabilities` key, spec 4.4): the shape
+// TestBuildPublishPayload_GateAndBytes does not exercise, since its fixture
+// recognizes nothing and so never reaches a non-empty `capabilities` array on
+// this path.
+func TestBuildPublishPayload_CarriesCapabilities(t *testing.T) {
+	origP, origS := platformURL, pushScore
+	defer func() { platformURL, pushScore = origP, origS }()
+	platformURL, pushScore = "", true
+
+	prov := &providerPkg.GitLabProvider{}
+	pc := noControlsPC(t)
+	result := capabilitiesJSONFixture()
+	conf := configuration.NewDefaultConfiguration()
+	conf.PlumberConfig = pc
+	summary := buildComplianceSummary(prov, result, conf)
+
+	payload := buildPublishPayload(prov, conf, result, summary)
+	if payload == nil {
+		t.Fatal("payload = nil for a --score-push run, want the analysis JSON bytes")
+	}
+
+	var out map[string]any
+	if err := json.Unmarshal(payload, &out); err != nil {
+		t.Fatalf("parse json: %v", err)
+	}
+	rawCaps, ok := out["capabilities"].([]any)
+	if !ok {
+		t.Fatalf("capabilities key missing or not an array, got %T: %v", out["capabilities"], out["capabilities"])
+	}
+	if len(rawCaps) != 1 {
+		t.Fatalf("capabilities has %d entries, want 1: %v", len(rawCaps), rawCaps)
+	}
+	entry, ok := rawCaps[0].(map[string]any)
+	if !ok {
+		t.Fatalf("capabilities[0] is not an object: %v", rawCaps[0])
+	}
+	want := map[string]any{"kind": "secret_detection", "job": "secret-scan", "tool": "gitleaks", "evidence": "images"}
+	for k, v := range want {
+		if entry[k] != v {
+			t.Errorf("capabilities[0][%q] = %v, want %v (entry: %v)", k, entry[k], v, entry)
+		}
+	}
+}
+
 // The platform parses schema_version and a plain-string results[].policy; a
 // prior version of this file sent schemaVersion (silently reads as the zero
 // value, 422s) and results[].policy as a {name,source,ref} object
@@ -2734,8 +2780,8 @@ func TestPlatformBOMFrom_AlwaysEmitsTheThreeArrays(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	if string(raw) != `{"version":1,"includes":[],"images":[],"jobs":[]}` {
-		t.Errorf("empty bom = %s, want the three arrays present and empty", raw)
+	if string(raw) != `{"version":1,"includes":[],"images":[],"jobs":[],"capabilities":[]}` {
+		t.Errorf("empty bom = %s, want the three arrays and capabilities present and empty", raw)
 	}
 }
 
@@ -4152,5 +4198,76 @@ func TestPlatformBOMFrom_ViaIsCarriedAndBounded(t *testing.T) {
 	}
 	if out, bound := platformBOMFrom(&pbom.PBOM{Includes: []pbom.Include{{Type: "action", Location: "acme/c", Via: []string{strings.Repeat("x", 513)}}}}); out != nil || bound != "string > 512 runes" {
 		t.Fatalf("long entry: out %v bound %q", out, bound)
+	}
+}
+
+func TestPlatformBOMFrom_CapabilitiesCopiedAndBounded(t *testing.T) {
+	doc := &pbom.PBOM{Capabilities: []pbom.Capability{{Kind: "secret_detection", Job: "scan", Tool: "gitleaks", Evidence: "images"}}}
+	out, bound := platformBOMFrom(doc)
+	if bound != "" || len(out.Capabilities) != 1 || out.Capabilities[0] != (platformBOMCapability{Kind: "secret_detection", Job: "scan", Tool: "gitleaks", Evidence: "images"}) {
+		t.Fatalf("out=%+v bound=%q", out.Capabilities, bound)
+	}
+	if bomProjectedEdges(out) != 1 {
+		t.Fatalf("a capability entry must count as one edge, got %d", bomProjectedEdges(out))
+	}
+	empty, _ := platformBOMFrom(&pbom.PBOM{})
+	if b, _ := json.Marshal(empty); !strings.Contains(string(b), `"capabilities":[]`) {
+		t.Fatalf("capabilities must serialize as an empty array, got %s", b)
+	}
+	many := &pbom.PBOM{}
+	for i := 0; i < bomMaxCapabilities+1; i++ {
+		many.Capabilities = append(many.Capabilities, pbom.Capability{Kind: "secret_detection", Job: fmt.Sprintf("j%d", i), Tool: "gitleaks", Evidence: "images"})
+	}
+	if _, bound := platformBOMFrom(many); !strings.Contains(bound, "capabilities") {
+		t.Fatalf("over the cap must name the capabilities bound, got %q", bound)
+	}
+	// A capability's own strings go through the same per-string loop as every other
+	// section: an over-long tool must be refused and must name the string bound, not slip
+	// through because platformBOMBound's capabilities loop was never exercised.
+	longTool := &pbom.PBOM{Capabilities: []pbom.Capability{{Kind: "secret_detection", Job: "scan", Tool: strings.Repeat("x", bomMaxStringRunes+1), Evidence: "images"}}}
+	if _, bound := platformBOMFrom(longTool); bound != "string > 512 runes" {
+		t.Fatalf("an over-long capability tool must name the string bound, got %q", bound)
+	}
+}
+
+// Spec 3 decision 10 and 4.4, 5: the push bill's capabilities section, golden, built through
+// the real path (the served declarations of /context, compiled exactly as served with no
+// built-in fill-in, the recognizer, the bill generator, the push projection). A served list
+// that does not name secret_detection never recognizes the built-in gitleaks job: the leaks
+// job's image match is absent from the bill. The evidence is the field name that matched
+// (`commands`), the kind a user-declared name rides as is, the tool the recognizer's
+// declared tool.
+func TestPlatformBOMDocument_CapabilitiesGolden(t *testing.T) {
+	result := &control.AnalysisResult{
+		ProjectPath: "group/app",
+		PipelineImageData: &gitlab.GitlabPipelineImageData{
+			Images: []gitlab.GitlabPipelineImageInfo{{Link: "docker.io/zricethezav/gitleaks:v8", Registry: "docker.io", Name: "zricethezav/gitleaks", Tag: "v8", Job: "leaks"}},
+		},
+		Pipeline: &ir.NormalizedPipeline{Jobs: []ir.Job{
+			{Name: "leaks", Image: &ir.Image{Registry: "docker.io", Name: "zricethezav/gitleaks", Tag: "v8"}, Scripts: []string{"gitleaks detect"}},
+			{Name: "sast", Scripts: []string{"semgrep ci"}},
+		}},
+	}
+	conf := &configuration.Configuration{
+		GitlabURL: "https://gitlab.example.com", Branch: "main",
+		PlatformRun: &platform.RunContext{Context: &platform.ProjectContext{
+			Capabilities: json.RawMessage(`[{"name":"sast","recognizers":[{"tool":"semgrep","commands":["semgrep *"]}]}]`),
+		}},
+	}
+	doc := platformBOMDocument(testProvider(t), conf, result, nil)
+	if doc == nil {
+		t.Fatal("no bill")
+	}
+	out, bound := platformBOMFrom(doc)
+	if bound != "" {
+		t.Fatalf("refused on %q", bound)
+	}
+	raw, err := json.Marshal(out.Capabilities)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `[{"kind":"sast","job":"sast","tool":"semgrep","evidence":"commands"}]`
+	if string(raw) != want {
+		t.Fatalf("capabilities = %s\nwant          %s", raw, want)
 	}
 }

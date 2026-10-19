@@ -50,6 +50,24 @@ type PBOM struct {
 	// model: an empty list would read as "this pipeline has no service and
 	// no runner tag" for a run that simply never looked.
 	Jobs []JobResources `json:"jobs,omitempty"`
+
+	// Capabilities lists what the pipeline's jobs do, as the CLI recognized it (package
+	// capability): one entry per job and capability, with the tool and the evidence the
+	// match rested on. Absent when nothing was recognized.
+	Capabilities []Capability `json:"capabilities,omitempty"`
+}
+
+// Capability is one recognized capability of one job (package capability's Match, in the
+// document's own shape). Kind is the declared capability name (the effective list's, spec
+// 4.2), not a closed vocabulary; Tool is the recognizer's declared tool, else the pattern
+// that matched; Evidence is the closed set of the recognizer's field names: images,
+// commands, wrapper_script, gitlab_report_types, gitlab_include_template,
+// gitlab_include_component, gitlab_include_project.
+type Capability struct {
+	Kind     string `json:"kind"`
+	Job      string `json:"job"`
+	Tool     string `json:"tool"`
+	Evidence string `json:"evidence"`
 }
 
 // JobResources is one job's share of the bill of materials. Name is the job

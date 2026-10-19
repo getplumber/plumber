@@ -16,6 +16,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/lipgloss/table"
+	"github.com/getplumber/plumber/capability"
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
 	defaultconfig "github.com/getplumber/plumber/defaultConfig"
@@ -1059,6 +1060,14 @@ func buildAnalysisJSONReport(result *control.AnalysisResult, pc *configuration.P
 	if p.forScorePush {
 		delete(output, "analyzedCiConfig")
 	}
+	// capabilities is an inventory ("this job does X"), not a verdict: it
+	// carries over --no-controls and platform mode exactly like the PBOM and
+	// the platform push (spec 4.4, 6). omitempty by hand, since this report
+	// is a map, not a struct: a run that recognized nothing stays
+	// byte-identical to a report built before this key existed.
+	if len(p.capabilities) > 0 {
+		output["capabilities"] = p.capabilities
+	}
 	output["passed"] = s.passed()
 	// `passed` means "the gate was met", and under --no-controls there was no
 	// gate to fail. Say so explicitly so a consumer can tell that apart from
@@ -1587,6 +1596,13 @@ type jsonOutputParams struct {
 	// content, #443) is a local artifact for the AI pipeline and is kept out of
 	// the external payload; everything else is byte-identical.
 	forScorePush bool
+	// capabilities is the recognized-capabilities inventory (spec 4.4), the
+	// same providerPkg.CapabilitiesOf call the --pbom artifact and the
+	// platform push read, so the three documents never disagree about what
+	// the jobs do. Nil (not an empty slice) on GitHub and on any run that
+	// recognized nothing, which is what keeps the `capabilities` key out of
+	// the report rather than emitting `[]` (omitempty).
+	capabilities []capability.Match
 }
 
 // noControlsSkipReason is the SkipReason stamped on every control of a

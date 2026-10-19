@@ -276,6 +276,7 @@ func buildIncludes(origin *GitlabPipelineOriginData, ciConfigPath string) []ir.I
 			Kind:           o.OriginType,
 			Source:         o.GitlabIncludeOrigin.Location,
 			Ref:            o.Version,
+			Project:        o.GitlabIncludeOrigin.Project,
 			Current:        o.PlumberOrigin.LatestVersion,
 			Nested:         o.Nested,
 			ComponentName:  o.GitlabComponent.ComponentName,
@@ -570,6 +571,7 @@ func buildJobs(origin *GitlabPipelineOriginData, imagesByJob map[string]ir.Image
 	// every finding has a clickable pointer into the user's file.
 	lineByJob := scanGitLabJobLines(origin.ConfString)
 	originKindByJob := indexJobOriginKind(origin)
+	originIncludeByJob := indexJobOriginInclude(origin)
 	overrideKeysByJob := indexOverrideKeys(origin)
 	includeLineByJob := indexIncludeLineByJob(origin, includes)
 	jobs := make([]ir.Job, 0, len(origin.JobMap))
@@ -586,6 +588,9 @@ func buildJobs(origin *GitlabPipelineOriginData, imagesByJob map[string]ir.Image
 			job.OriginKind = "hardcoded"
 		case originKindByJob[name] != "":
 			job.OriginKind = originKindByJob[name]
+		}
+		if origin.JobHardcodedMap == nil || !origin.JobHardcodedMap[name] {
+			job.OriginInclude = originIncludeByJob[name]
 		}
 		if data.IsOverridden {
 			job.Overridden = true
@@ -694,6 +699,51 @@ func indexJobOriginKind(origin *GitlabPipelineOriginData) map[string]string {
 	return out
 }
 
+// indexJobOriginInclude walks origin.Origins like indexJobOriginKind and returns a map of
+// job name -> the identity of the include that defined it: the include's Source, or its
+// Path when Source is empty, computed exactly as buildIncludes computes them so the value
+// equals the matching ir.Include's Source or Path. A job listed by several origins keeps the
+// first.
+func indexJobOriginInclude(origin *GitlabPipelineOriginData) map[string]string {
+	if origin == nil || len(origin.Origins) == 0 {
+		return nil
+	}
+	out := make(map[string]string)
+	for i := range origin.Origins {
+		o := &origin.Origins[i]
+		id := originIncludeIdentity(o)
+		if id == "" {
+			continue
+		}
+		for _, job := range o.Jobs {
+			if job.Name == "" {
+				continue
+			}
+			if _, seen := out[job.Name]; seen {
+				continue
+			}
+			out[job.Name] = id
+		}
+	}
+	return out
+}
+
+// originIncludeIdentity is the Source buildIncludes gives this origin's include (the
+// include location, else the component include path), or, when that is empty, the Path it
+// falls back to (the Plumber template path).
+func originIncludeIdentity(o *GitlabPipelineOriginDataFull) string {
+	if o.GitlabIncludeOrigin.Location != "" {
+		return o.GitlabIncludeOrigin.Location
+	}
+	if o.GitlabComponent.ComponentIncludePath != "" {
+		return o.GitlabComponent.ComponentIncludePath
+	}
+	if o.FromPlumber {
+		return o.PlumberOrigin.Path
+	}
+	return ""
+}
+
 // enrichLocalVariables sets job.LocalVariables to the variables block
 // authored directly in the project's CI file. Read from the raw,
 // pre-merge conf so upstream-component / template-defined variables
@@ -795,6 +845,7 @@ func enrichFromMergedConf(job *ir.Job, name string, conf *GitlabCIConf) {
 	job.Needs = gitlabNeeds(parsed.Needs)
 	job.Caches = gitlabCaches(jobCache(parsed, conf))
 	job.Artifacts = gitlabArtifacts(name, parsed.Artifacts, parsed.Needs, parsed.Dependencies)
+	job.ReportTypes = gitlabReportTypes(parsed.Artifacts)
 	if job.Environment == "" {
 		job.Environment = gitlabEnvironmentName(parsed.Environment)
 	}
@@ -1268,6 +1319,29 @@ func gitlabCaches(v any) []ir.CacheRef {
 		}
 		out = append(out, ref)
 	}
+	return out
+}
+
+// gitlabReportTypes returns the sorted, deduplicated keys of a job's artifacts.reports map
+// (`secret_detection`, `sast`, ...). artifacts is the raw `artifacts:` value of the merged
+// configuration (the same value gitlabArtifacts reads); any shape other than a map with a
+// `reports` map yields nil. yamlMap normalizes the yaml.v2 map[interface{}]interface{} shape
+// (recursively, including the nested reports map) the same way gitlabArtifacts already relies
+// on, so a direct type assertion to map[string]any would silently miss every real pipeline.
+func gitlabReportTypes(artifacts any) []string {
+	m := yamlMap(artifacts)
+	if m == nil {
+		return nil
+	}
+	reports, ok := m["reports"].(map[string]any)
+	if !ok || len(reports) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(reports))
+	for k := range reports {
+		out = append(out, k)
+	}
+	sort.Strings(out)
 	return out
 }
 

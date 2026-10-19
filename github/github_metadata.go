@@ -233,12 +233,34 @@ func (c *GitHubMetadataClient) Available() bool {
 // us. Never returns an error — all failures degrade to "unknown"
 // (zero-valued GitHubMetadata). Repeated calls for the same key
 // return the cached value.
+// safeActionAPIRef reports whether owner, repo and ref can be placed into a
+// GitHub REST path without reaching beyond the repository endpoint. owner and
+// repo are single path segments (no slash); none of the three may carry a
+// path-traversal, query, fragment, percent, backslash, space or control
+// character. A ref may contain a slash (a branch like `release/1.0` is a real
+// ref). The check is deliberately narrow: it keeps legitimately named owners
+// (underscores, dots) resolving, and only screens out a reference crafted to
+// steer the request elsewhere on the host.
+func safeActionAPIRef(owner, repo, ref string) bool {
+	for _, s := range []string{owner, repo, ref} {
+		if s == "" || strings.Contains(s, "..") || strings.ContainsAny(s, "?#%\\ ") {
+			return false
+		}
+		for _, r := range s {
+			if r < 0x20 || r == 0x7f {
+				return false
+			}
+		}
+	}
+	return !strings.Contains(owner, "/") && !strings.Contains(repo, "/")
+}
+
 func (c *GitHubMetadataClient) Resolve(ownerRepoRef string) GitHubMetadata {
 	if c.disabled {
 		return GitHubMetadata{}
 	}
 	owner, repo, ref, ok := splitActionRef(ownerRepoRef)
-	if !ok {
+	if !ok || !safeActionAPIRef(owner, repo, ref) {
 		return GitHubMetadata{}
 	}
 	key := owner + "/" + repo + "@" + ref
@@ -953,7 +975,7 @@ func (c *GitHubMetadataClient) ResolveTagSha(ownerRepo, tag string) string {
 		return ""
 	}
 	parts := strings.SplitN(ownerRepo, "/", 2)
-	if len(parts) < 2 {
+	if len(parts) < 2 || !safeActionAPIRef(parts[0], parts[1], tag) {
 		return ""
 	}
 	sha, ok := c.resolveTag(parts[0], parts[1], tag)

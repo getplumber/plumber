@@ -6,6 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v2"
+
+	"github.com/getplumber/plumber/capability/capdecl"
 	"github.com/getplumber/plumber/internal/ir"
 )
 
@@ -635,5 +638,112 @@ github:
 	}
 	if got := cfg.ControlsFor("github").ContainerImageMustNotUseForbiddenTags.ExemptImages; strings.Join(got, ",") != "ghcr.io/my-org/report-tool,debian" {
 		t.Errorf("github exemptImages = %v", got)
+	}
+}
+
+// Spec 4.2/4.6: .plumber.yaml carries the same capabilities schema as the org setting; a
+// well-formed capabilities key loads into PlumberConfig.Capabilities.
+func TestLoadPlumberConfigFromBytes_Capabilities(t *testing.T) {
+	data := []byte(`version: "2.0"
+capabilities:
+  - name: secret_detection
+    recognizers:
+      - tool: gitleaks
+        images: ["*gitleaks*"]
+        commands: ["*gitleaks*"]
+`)
+	cfg, _, warnings, err := LoadPlumberConfigFromBytes(data, "capabilities")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", warnings)
+	}
+	decls := decodedCapabilities(t, cfg)
+	if len(decls) != 1 || decls[0].Name != "secret_detection" ||
+		len(decls[0].Recognizers) != 1 || decls[0].Recognizers[0].Tool != "gitleaks" {
+		t.Fatalf("Capabilities = %+v", decls)
+	}
+}
+
+// decodedCapabilities re-encodes the raw capabilities value the load kept and decodes it
+// strictly, the way provider.CapabilitiesOf does.
+func decodedCapabilities(t *testing.T, cfg *PlumberConfig) []capdecl.Declaration {
+	t.Helper()
+	data, err := yaml.Marshal(map[string]interface{}{"capabilities": cfg.Capabilities})
+	if err != nil {
+		t.Fatalf("re-encode: %v", err)
+	}
+	decls, err := capdecl.DecodeYAML(data)
+	if err != nil {
+		t.Fatalf("strict decode: %v", err)
+	}
+	return decls
+}
+
+// Spec 4.2 and 7: the load keeps the capabilities key raw, so a malformed key (a typo, a
+// wrong type, a map instead of a list) never fails the configuration load, in either mode;
+// the strict decode and its one warning happen when the effective list is built.
+func TestLoadPlumberConfigFromBytes_MalformedCapabilitiesNeverFailTheLoad(t *testing.T) {
+	for name, text := range map[string]string{
+		"typo key":          "capabilities:\n  - name: secret_detection\n    recognizers:\n      - image: [\"*gitleaks*\"]\n",
+		"wrong-typed field": "capabilities:\n  - name: secret_detection\n    recognizers:\n      - images: \"*foo*\"\n",
+		"a map, not a list": "capabilities:\n  name: secret_detection\n",
+		"a scalar":          "capabilities: yes\n",
+	} {
+		cfg, _, _, err := LoadPlumberConfigFromBytes([]byte("version: \"2.0\"\n"+text), name)
+		if err != nil || cfg == nil || cfg.Capabilities == nil {
+			t.Errorf("%s: load = %v, %v; want the key kept raw and no error", name, cfg, err)
+		}
+	}
+}
+
+// A file without the capabilities key leaves PlumberConfig.Capabilities nil (the CLI fills
+// in the built-in list itself, spec 4.2; the field is not defaulted here).
+func TestLoadPlumberConfigFromBytes_NoCapabilitiesKeyLeavesNil(t *testing.T) {
+	cfg, _, _, err := LoadPlumberConfigFromBytes([]byte(`version: "2.0"`), "no-capabilities")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Capabilities != nil {
+		t.Fatalf("Capabilities = %+v, want nil", cfg.Capabilities)
+	}
+}
+
+// ValidateKnownKeys no longer walks the capabilities key: the strict decode when the
+// effective list is built names an unknown key in its one warning (provider.CapabilitiesOf),
+// so a load-time walk would warn twice for one typo.
+func TestValidateKnownKeys_CapabilitiesLeftToTheStrictDecode(t *testing.T) {
+	cfg := []byte(`capabilities:
+  - name: secret_detection
+    recognisers:
+      - tool: gitleaks
+        image: ["*gitleaks*"]
+`)
+	for _, w := range ValidateKnownKeys(cfg) {
+		if strings.Contains(w, "capabilities") {
+			t.Fatalf("unexpected load-time capabilities warning %q", w)
+		}
+	}
+}
+
+// The extends overlay (deepMergeYAML) replaces lists wholesale, so the capabilities key
+// needs no special merge code: the overlay's own list, not a union with the base, is what
+// the user gets (spec 4.2, configuration/merge.go).
+func TestLoadPlumberConfigFromBytes_CapabilitiesOverlayReplacesWholesale(t *testing.T) {
+	data := []byte(`version: "2.0"
+extends: plumber:default
+capabilities:
+  - name: sast
+    recognizers:
+      - tool: semgrep
+        commands: ["*semgrep*"]
+`)
+	cfg, _, _, err := LoadPlumberConfigFromBytes(data, "capabilities-overlay")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if decls := decodedCapabilities(t, cfg); len(decls) != 1 || decls[0].Name != "sast" {
+		t.Fatalf("Capabilities = %+v, want exactly the overlay's own [sast]", decls)
 	}
 }

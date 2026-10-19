@@ -144,6 +144,39 @@ func TestJSONReport_ControlsStillReportedByDefault(t *testing.T) {
 	}
 }
 
+// TestJSONReport_NoControlsStillCarriesCapabilities pins that --no-controls
+// withholds the verdict, not the inventory: capabilities is what the
+// recognizer SAW the pipeline do, not a claim that it passed anything, so it
+// survives a run that evaluated no control (spec 4.4, 6).
+func TestJSONReport_NoControlsStillCarriesCapabilities(t *testing.T) {
+	pc := noControlsPC(t)
+	result := capabilitiesJSONFixture()
+	conf := &configuration.Configuration{PlumberConfig: pc, NoControls: true}
+	caps := provider.CapabilitiesOf(result, conf)
+	if len(caps) != 1 {
+		t.Fatalf("fixture precondition: want exactly one recognized capability, got %+v", caps)
+	}
+
+	s := buildComplianceSummary(&provider.GitLabProvider{}, result, conf)
+	params := jsonOutputParams{provider: "gitlab", noControls: conf.NoControls, capabilities: caps}
+	payload, err := buildAnalysisJSONReport(result, pc, s, params, nil, nil)
+	if err != nil {
+		t.Fatalf("build json: %v", err)
+	}
+
+	var out map[string]any
+	if err := json.Unmarshal(payload, &out); err != nil {
+		t.Fatalf("parse json: %v", err)
+	}
+	if out["noControls"] != true {
+		t.Fatalf("precondition: noControls must be true, got %v", out["noControls"])
+	}
+	rawCaps, ok := out["capabilities"].([]any)
+	if !ok || len(rawCaps) != 1 {
+		t.Fatalf("capabilities must survive --no-controls (an inventory, not a verdict), got %v", out["capabilities"])
+	}
+}
+
 // complianceAssertionProps are the CycloneDX properties that state a
 // VERDICT about a component rather than record what was collected. They are
 // all derived from findings, so on a --no-controls run every one of them

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/getplumber/plumber/internal/ir"
+	"github.com/getplumber/plumber/utils"
 )
 
 // This file analyses a third-party action's OWN source to decide
@@ -1115,30 +1116,51 @@ func analyzeActionMutableExec(def actionDefinition, fetch rawFetcher, owner, rep
 // nothing mutable is found. This is the producer-side check: scanning an
 // action's own repo must flag the action it publishes.
 func ScanLocalSelfAction(rootDir string) *ir.MutableRemoteExec {
-	actionYML, ok := readLocalFile(rootDir, "action.yml")
-	if !ok {
-		actionYML, ok = readLocalFile(rootDir, "action.yaml")
-		if !ok {
-			return nil
-		}
+	actionYML, st := readLocalFile(rootDir, "action.yml", maxWorkflowFileBytes)
+	if st == fetchMissing {
+		actionYML, st = readLocalFile(rootDir, "action.yaml", maxWorkflowFileBytes)
+	}
+	switch st {
+	case fetchOK:
+		// proceed
+	case fetchMissing:
+		return nil // the repo is not an action
+	default:
+		// The action definition is present but could not be read (too large,
+		// permission): could-not-verify, never a clean pass, matching the
+		// remote path's handling of a definition it cannot fetch.
+		return &ir.MutableRemoteExec{Tier: "unverified", File: "action.yml"}
 	}
 	return scanActionDefinition(actionYML, "action.yml", func(rel string) (string, fetchStatus) {
-		// A local read has no transport to fail: an unreadable path here is
-		// an absent file, which is a real answer.
-		src, ok := readLocalFile(rootDir, rel)
-		if !ok {
-			return "", fetchMissing
-		}
-		return src, fetchOK
+		// Entrypoints are read at the same bound the remote path uses
+		// (maxRawFileBytes), since a legitimate bundled dist/index.js is
+		// routinely a few MB; the definition file itself stays at the
+		// smaller workflow bound.
+		return readLocalFile(rootDir, rel, maxRawFileBytes)
 	})
 }
 
-func readLocalFile(rootDir, rel string) (string, bool) {
-	b, err := os.ReadFile(filepath.Join(rootDir, filepath.FromSlash(rel)))
-	if err != nil {
-		return "", false
+// readLocalFile reads rel relative to rootDir and reports the status of the
+// read, so the self-action scan can tell an absent entrypoint from one that
+// is present but could not be read. fetchOK returns the content; fetchMissing
+// means the file is not there, or it resolves outside the checkout (a
+// main/image pointing through `..` or an escaping symlink), which cannot run
+// on a consumer and is treated as absent; fetchError means it exists but could
+// not be read within the shared size limit, so the scan records it as
+// could-not-verify rather than grading the action clean on a file it skipped.
+func readLocalFile(rootDir, rel string, max int64) (string, fetchStatus) {
+	path, ok := resolveWithinRoot(rootDir, filepath.FromSlash(rel))
+	if !ok {
+		return "", fetchMissing
 	}
-	return string(b), true
+	b, err := utils.ReadFileLimit(path, max)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fetchMissing
+		}
+		return "", fetchError
+	}
+	return string(b), fetchOK
 }
 
 // ScanRemoteSelfAction is the remote counterpart of ScanLocalSelfAction:

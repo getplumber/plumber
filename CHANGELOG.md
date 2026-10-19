@@ -1,3 +1,30 @@
+## [0.7.7](https://github.com/getplumber/plumber/compare/v0.7.6...v0.7.7) (2026-10-19)
+
+
+### 🐛 Bug Fixes
+
+* **cmd:** the platform push names the component version of the include that defines the running job ([75f9ed1](https://github.com/getplumber/plumber/commit/75f9ed1ea279a56bab3e02d1a6169e680249af5a)), closes [#562](https://github.com/getplumber/plumber/issues/562)
+
+## [0.7.6](https://github.com/getplumber/plumber/compare/v0.7.5...v0.7.6) (2026-10-19)
+
+
+### 🐛 Bug Fixes
+
+* **github:** read a local action's entrypoint within the repository ([018074a](https://github.com/getplumber/plumber/commit/018074a97187c0d3ccc0edf9a1a0d5519d9c39a0))
+* **github:** resolve only well-formed action references ([b06e171](https://github.com/getplumber/plumber/commit/b06e171a90a5aeee9ebb53957529e51334d685a0))
+* **gitlab:** bound variable and local-include expansion ([13a6f97](https://github.com/getplumber/plumber/commit/13a6f97f673dab607755d4d5584faf3fec011933))
+
+## [0.7.5](https://github.com/getplumber/plumber/compare/v0.7.4...v0.7.5) (2026-10-19)
+
+
+### ✨ Features
+
+* **capability:** the declarations from the context or .plumber.yaml, and the defaults command ([6686e3f](https://github.com/getplumber/plumber/commit/6686e3f091bee2f1972ff4465c868e4d66040edc))
+* **capability:** the first recognizer and the five evidence rules ([31b1782](https://github.com/getplumber/plumber/commit/31b17822b62f5d6ddd9b57f9c5c7217767f1f5a4))
+* **capability:** user-declared capabilities, the built-in list and the glob matcher ([024cce3](https://github.com/getplumber/plumber/commit/024cce3914c34a0cc5a1ba08d210bfba9606d7bc))
+* **ir:** a job carries the keys of its artifacts.reports and the include that defined it ([8482d15](https://github.com/getplumber/plumber/commit/8482d15c54ca683beb05bdec9d8046b10579f3c1))
+* **pbom:** the bill carries the recognized capabilities from the push and the --pbom artifact ([5541574](https://github.com/getplumber/plumber/commit/55415746dc68c5415b5c8d172a0428acc487031b))
+
 ## [0.7.4](https://github.com/getplumber/plumber/compare/v0.7.3...v0.7.4) (2026-10-18)
 
 

@@ -228,6 +228,21 @@ type PlumberConfig struct {
 	// moves these into GitLab.Controls and clears this field.
 	Controls ControlsConfig `yaml:"controls,omitempty"`
 
+	// Capabilities holds the user's pipeline capabilities for a standalone run (spec 4.2
+	// of the pipeline capabilities design, revised 2026-10-17, in the Plumber monorepo):
+	// a capability name and the recognizers that reveal it, the same schema the platform
+	// serves through /context in platform mode (where this field is ignored: the served
+	// list is the configuration, spec 4.6). Nil when the file carries no capabilities key.
+	//
+	// It is kept as the raw YAML value, not decoded into capdecl.Declaration here, so the
+	// configuration load never fails on it (a wrong type, a map instead of a list) and
+	// never half applies it (a typo key this lenient whole-file decode would drop): the
+	// CLI decodes it strictly (capdecl.DecodeYAML) and checks its bounds (capdecl.Validate)
+	// when it builds the effective list (provider.CapabilitiesOf), falling back to the
+	// built-in list with one warning when either fails. The value round-trips through
+	// yaml.Marshal, so the extends overlay and a re-encoded config keep it as written.
+	Capabilities interface{} `yaml:"capabilities,omitempty"`
+
 	// Raw is the verbatim text of the config that produced this run, captured
 	// at load. The self-describing `plumberConfig` block in the JSON report
 	// parses it into a structured object (the verbatim text is never shipped).
@@ -1888,6 +1903,11 @@ func ValidateKnownKeys(data []byte) []string {
 			warnings = append(warnings, validateControlsBlockProvider(controlsRaw, provider)...)
 		}
 	}
+
+	// capabilities: no walk here. The key is decoded strictly when the effective list is
+	// built (provider.CapabilitiesOf, capdecl.DecodeYAML), which names an unknown key in
+	// its one warning; a load-time walk would warn twice, and in platform mode about a key
+	// the run ignores.
 
 	return warnings
 }

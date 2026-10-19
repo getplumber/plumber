@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/getplumber/plumber/capability"
 	"github.com/getplumber/plumber/configuration"
 	defaultconfig "github.com/getplumber/plumber/defaultConfig"
 	"github.com/sirupsen/logrus"
@@ -215,6 +216,15 @@ func runConfigView(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	}
+
+	// The effective capabilities (spec 4.2): the file's own declarations, decoded the
+	// strict way and checked against the bounds (capability.FromFile, the step the
+	// provider shares, spec 4.6), filled in with the CLI's built-in list
+	// (capability.Effective). This is exactly what a standalone run uses, so `config
+	// view` always shows it, file key or not: without this a config carrying no
+	// capabilities key printed nothing at all, even though the built-in
+	// secret_detection capability was in force the whole time.
+	config.Capabilities = capability.Effective(capability.FromFile(config.Capabilities, logrus.WithField("context", "capability")))
 
 	// Marshal to clean YAML (this strips comments)
 	cleanYAML, err := yaml.Marshal(config)
