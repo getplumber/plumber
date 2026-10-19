@@ -1115,7 +1115,9 @@ func firstDuplicateYAMLKey(data []byte) error {
 // Keys are compared by their source text, the way GitHub's parser sees
 // them, not by the value YAML 1.1 resolves them to: `on` and "on" are the
 // same key, while `no` and `off` stay two keys even though gopkg.in/yaml.v2
-// reads both as false (PR #560 review). The walk descends through
+// reads both as false (PR #560 review). The comparison ignores case, as
+// GitHub's does: `on` next to `ON`, or `FOO` next to `foo` under `env:`,
+// is a file GitHub refuses (checked on a real run, PR #560 e2e). The walk descends through
 // nested mappings and through sequences, so a duplicate inside one step of
 // a job's `steps:` list is caught too. An alias is not followed: the node
 // it points to is walked where its anchor is defined, and a `<<` merge key
@@ -1133,10 +1135,11 @@ func duplicateKeyIn(n *yamlv3.Node) error {
 		for i := 0; i+1 < len(n.Content); i += 2 {
 			key := n.Content[i]
 			k := yamlKeyIdentity(key)
-			if seen[k] {
+			folded := strings.ToLower(k)
+			if seen[folded] {
 				return fmt.Errorf("line %d: mapping key %q already defined", key.Line, k)
 			}
-			seen[k] = true
+			seen[folded] = true
 			if err := duplicateKeyIn(n.Content[i+1]); err != nil {
 				return err
 			}

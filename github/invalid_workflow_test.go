@@ -286,7 +286,9 @@ func TestDuplicateKeyComparesSourceText(t *testing.T) {
 	}{
 		{"no and off stay distinct", "on: push\njobs:\n  a:\n    env:\n      no: a\n      off: b\n", ""},
 		{"yes and on stay distinct", "on: push\njobs:\n  a:\n    env:\n      yes: a\n      on: b\n", ""},
-		{"on and On stay distinct", "on: push\nOn: pull_request\njobs: {}\n", ""},
+		{"on and ON collide", "on: push\nON: pull_request\njobs: {}\n", `line 2: mapping key "ON" already defined`},
+		{"env keys differing only by case collide", "on: push\njobs:\n  a:\n    env:\n      FOO: a\n      foo: b\n", `line 6: mapping key "foo" already defined`},
+		{"no and NO collide", "on: push\njobs:\n  a:\n    env:\n      no: a\n      NO: b\n", `line 6: mapping key "NO" already defined`},
 		{"on and quoted on collide", "name: CI\non: push\n\"on\": pull_request\njobs: {}\n", `line 3: mapping key "on" already defined`},
 		{"on and single-quoted on collide", "on: push\n'on': pull_request\njobs: {}\n", `line 2: mapping key "on" already defined`},
 	}
