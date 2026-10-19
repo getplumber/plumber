@@ -250,11 +250,12 @@ func TestScanGitHubWorkflows_TabIndentedBlockIsInvalid(t *testing.T) {
 	}
 }
 
-// TestDuplicateKeyWalkReachesStepsAndSurvivesComplexKeys pins two edges
+// TestDuplicateKeyWalkReachesStepsAndSurvivesComplexKeys pins three edges
 // of the duplicate-key pre-check: a duplicate inside one element of a
-// job's steps list (a mapping nested in a sequence) is refused, and a
-// document whose mapping key is itself a sequence, legal YAML that no
-// workflow uses, is walked without a panic and without a false duplicate.
+// job's steps list (a mapping nested in a sequence) is refused, a document
+// whose mapping key is itself a sequence, legal YAML that no workflow
+// uses, is walked without a panic, and 1 and "1" are the same key, as they
+// are for GitHub, which reads every key as a string.
 func TestDuplicateKeyWalkReachesStepsAndSurvivesComplexKeys(t *testing.T) {
 	dupInStep := []byte("on: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo one\n        run: echo two\n")
 	if err := firstDuplicateYAMLKey(dupInStep); err == nil {
@@ -267,8 +268,101 @@ func TestDuplicateKeyWalkReachesStepsAndSurvivesComplexKeys(t *testing.T) {
 	if err == nil {
 		t.Fatal("the same sequence key twice is a duplicate too")
 	}
-	distinct := []byte("1: a\n\"1\": b\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n")
-	if err := firstDuplicateYAMLKey(distinct); err != nil {
-		t.Fatalf("1 and \"1\" are distinct keys, got %v", err)
+	quoted := []byte("1: a\n\"1\": b\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n")
+	if err := firstDuplicateYAMLKey(quoted); err == nil {
+		t.Fatal("1 and \"1\" are the same key to GitHub")
+	}
+}
+
+// TestDuplicateKeyComparesSourceText pins that keys are compared by their
+// source text, not by the value YAML 1.1 resolves them to: gopkg.in/yaml.v2
+// reads `no` and `off` both as false and `on` as true, which used to flag
+// valid env maps and miss an `on` repeated as "on" (PR #560 review).
+func TestDuplicateKeyComparesSourceText(t *testing.T) {
+	cases := []struct {
+		name    string
+		src     string
+		wantErr string
+	}{
+		{"no and off stay distinct", "on: push\njobs:\n  a:\n    env:\n      no: a\n      off: b\n", ""},
+		{"yes and on stay distinct", "on: push\njobs:\n  a:\n    env:\n      yes: a\n      on: b\n", ""},
+		{"on and On stay distinct", "on: push\nOn: pull_request\njobs: {}\n", ""},
+		{"on and quoted on collide", "name: CI\non: push\n\"on\": pull_request\njobs: {}\n", `line 3: mapping key "on" already defined`},
+		{"on and single-quoted on collide", "on: push\n'on': pull_request\njobs: {}\n", `line 2: mapping key "on" already defined`},
+	}
+	for _, c := range cases {
+		err := firstDuplicateYAMLKey([]byte(c.src))
+		switch {
+		case c.wantErr == "" && err != nil:
+			t.Errorf("%s: want no duplicate, got %v", c.name, err)
+		case c.wantErr != "" && (err == nil || err.Error() != c.wantErr):
+			t.Errorf("%s: want %q, got %v", c.name, c.wantErr, err)
+		}
+	}
+}
+
+// TestScanGitHubWorkflows_ValidAnchorsAreNotInvalid feeds the two valid
+// anchor shapes GitHub runs through the real scanner: an anchor that is
+// defined and reused in a second job (the docs' "after" example), and a
+// `<<` merge key followed by an override of a merged key. Neither is a
+// duplicate key, so neither may be reported as ISSUE-423.
+func TestScanGitHubWorkflows_ValidAnchorsAreNotInvalid(t *testing.T) {
+	cases := map[string]struct {
+		src  string
+		jobs int
+	}{
+		"defined-anchor.yml": {`name: Defined Anchor
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: &checkout_with
+          fetch-depth: 0
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: *checkout_with
+`, 2},
+		"merge-key.yml": {`name: Merge Key
+on: push
+jobs:
+  a:
+    runs-on: ubuntu-latest
+    env: &base
+      LOG: info
+    steps: [{ run: echo a }]
+  b:
+    runs-on: ubuntu-latest
+    env:
+      <<: *base
+      LOG: debug
+    steps: [{ run: echo b }]
+`, 2},
+	}
+	for name, c := range cases {
+		tmp := t.TempDir()
+		wfDir := filepath.Join(tmp, ".github", "workflows")
+		if err := os.MkdirAll(wfDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(wfDir, name), []byte(c.src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		pipeline, partial, err := ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
+		if err != nil {
+			t.Fatalf("%s: unexpected hard error: %v", name, err)
+		}
+		if len(partial) != 0 {
+			t.Fatalf("%s: expected no partial errors, got %v", name, partial)
+		}
+		if len(pipeline.InvalidWorkflows) != 0 {
+			t.Errorf("%s: a valid anchor must not be an invalid workflow, got %+v", name, pipeline.InvalidWorkflows)
+		}
+		if len(pipeline.Jobs) != c.jobs {
+			t.Errorf("%s: expected %d jobs, got %d", name, c.jobs, len(pipeline.Jobs))
+		}
 	}
 }

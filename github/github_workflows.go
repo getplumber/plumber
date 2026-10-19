@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v2"
+	yamlv3 "gopkg.in/yaml.v3"
 
 	"github.com/getplumber/plumber/internal/ir"
 	"github.com/getplumber/plumber/internal/runners"
@@ -1095,58 +1096,70 @@ func matrixArtifacts(refs []ir.ArtifactRef, section map[string]any) []ir.Artifac
 	return out
 }
 
-// firstDuplicateYAMLKey decodes data into a yaml.MapSlice, which, unlike
-// a plain map, keeps every key-value pair in document order including a
-// repeated key, and walks it (and every nested mapping yaml.v2 also
-// decodes as MapSlice) looking for the first mapping that carries the
-// same key twice. Returns nil when the document does not decode this
-// way at all (a syntax error, say): that is a failure the typed decode
-// right after this call reports in its own words, so this pre-check
-// only adds a new failure mode, never hides one.
+// firstDuplicateYAMLKey parses data into a yaml.v3 node tree, which keeps
+// every key-value pair in document order including a repeated key, and
+// walks it looking for the first mapping that carries the same key twice.
+// Returns nil when the document does not parse this way at all (a syntax
+// error, say): that is a failure the typed decode right after this call
+// reports in its own words, so this pre-check only adds a new failure
+// mode, never hides one.
 func firstDuplicateYAMLKey(data []byte) error {
-	var top yaml.MapSlice
-	if err := yaml.Unmarshal(data, &top); err != nil {
+	var doc yamlv3.Node
+	if err := yamlv3.Unmarshal(data, &doc); err != nil {
 		return nil
 	}
-	return duplicateKeyIn(top)
+	return duplicateKeyIn(&doc)
 }
 
-// duplicateKeyIn is firstDuplicateYAMLKey's recursive step over one
-// decoded mapping. Keys are compared by type and value through their
-// printed form, so a sequence or a mapping used as a key (legal YAML,
-// never a workflow) cannot panic the walk the way an unhashable map key
-// would, and 1 and "1" stay distinct. The walk descends through nested
-// mappings and through sequences, so a duplicate inside one step of a
-// job's `steps:` list is caught too.
-func duplicateKeyIn(items yaml.MapSlice) error {
-	seen := make(map[string]bool, len(items))
-	for _, item := range items {
-		k := fmt.Sprintf("%T:%v", item.Key, item.Key)
-		if seen[k] {
-			return fmt.Errorf("mapping key %v already defined", item.Key)
+// duplicateKeyIn is firstDuplicateYAMLKey's recursive step over one node.
+// Keys are compared by their source text, the way GitHub's parser sees
+// them, not by the value YAML 1.1 resolves them to: `on` and "on" are the
+// same key, while `no` and `off` stay two keys even though gopkg.in/yaml.v2
+// reads both as false (PR #560 review). The walk descends through
+// nested mappings and through sequences, so a duplicate inside one step of
+// a job's `steps:` list is caught too. An alias is not followed: the node
+// it points to is walked where its anchor is defined, and a `<<` merge key
+// is one ordinary key, so a merge plus an override is not a duplicate.
+func duplicateKeyIn(n *yamlv3.Node) error {
+	switch n.Kind {
+	case yamlv3.DocumentNode, yamlv3.SequenceNode:
+		for _, c := range n.Content {
+			if err := duplicateKeyIn(c); err != nil {
+				return err
+			}
 		}
-		seen[k] = true
-		if err := duplicateKeyInValue(item.Value); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// duplicateKeyInValue walks one decoded value: a mapping is checked, a
-// sequence has each element checked, a scalar carries no keys.
-func duplicateKeyInValue(v interface{}) error {
-	switch t := v.(type) {
-	case yaml.MapSlice:
-		return duplicateKeyIn(t)
-	case []interface{}:
-		for _, e := range t {
-			if err := duplicateKeyInValue(e); err != nil {
+	case yamlv3.MappingNode:
+		seen := make(map[string]bool, len(n.Content)/2)
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			key := n.Content[i]
+			k := yamlKeyIdentity(key)
+			if seen[k] {
+				return fmt.Errorf("line %d: mapping key %q already defined", key.Line, k)
+			}
+			seen[k] = true
+			if err := duplicateKeyIn(n.Content[i+1]); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+// yamlKeyIdentity is the text a mapping key is compared by: a scalar's
+// unquoted source text, an alias's target, and for a sequence or a mapping
+// used as a key (legal YAML, never a workflow) its re-rendered form.
+func yamlKeyIdentity(key *yamlv3.Node) string {
+	if key.Kind == yamlv3.AliasNode && key.Alias != nil {
+		key = key.Alias
+	}
+	if key.Kind == yamlv3.ScalarNode {
+		return key.Value
+	}
+	out, err := yamlv3.Marshal(key)
+	if err != nil {
+		return fmt.Sprintf("%d:%s", key.Kind, key.Value)
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func parseGitHubWorkflowJobs(data []byte, namespace, originFile string) ([]ir.Job, error) {
