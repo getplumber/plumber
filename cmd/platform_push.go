@@ -225,8 +225,11 @@ type platformPipeline struct {
 }
 
 // platformCLI carries the CLI version that produced the push. ComponentVersion
-// is not populated by this build — the GitLab component version is not
-// currently threaded through to the binary at this call site.
+// is the version of the Plumber CI pin that defines the running job, when it
+// is version-like: the component include on GitLab (componentVersionForPush,
+// issue #562), or the getplumber/plumber action's own `uses:` reference on
+// GitHub (componentVersionForGitHubPush, review of PR 563). Omitted when no
+// version-like candidate exists on either provider.
 type platformCLI struct {
 	Version          string `json:"version,omitempty"`
 	ComponentVersion string `json:"component_version,omitempty"`
@@ -1183,6 +1186,18 @@ func buildPlatformPush(p providerPkg.Provider, conf *configuration.Configuration
 		logrus.WithField("bound", bound).Warn("platform push: bill of materials omitted")
 	}
 
+	// Read from the same origin data (GitLab) or IR (GitHub, review of PR
+	// 563) the bill is built from, not from the bill: the bill carries no
+	// job list, and it is dropped whole past a bound while the component
+	// version still holds (issue #562).
+	var componentVersion string
+	if result != nil {
+		componentVersion = pushComponentVersion(p, result.PipelineOriginData)
+		if componentVersion == "" {
+			componentVersion = pushComponentVersionForGitHub(p, result.GitHubPipeline)
+		}
+	}
+
 	push := platformPush{
 		SchemaVersion: 1,
 		Provider:      p.Name(),
@@ -1190,7 +1205,7 @@ func buildPlatformPush(p providerPkg.Provider, conf *configuration.Configuration
 		Project:       platformProject{Path: projectPath, ID: platformProjectID(p, conf)},
 		Ref:           platformRefFor(p),
 		Pipeline:      platformPipelineFor(p),
-		CLI:           platformCLI{Version: strings.TrimPrefix(Version, "v")},
+		CLI:           platformCLI{Version: strings.TrimPrefix(Version, "v"), ComponentVersion: componentVersion},
 		Collection:    platformCollectionFor(conf, result),
 		Evaluation:    evaluation,
 		Results:       results,
