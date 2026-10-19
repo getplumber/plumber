@@ -13,13 +13,19 @@ import (
 // the one call both bills share (the --pbom artifact and the push's bom
 // section), so the two documents never disagree about what the jobs do.
 //
-// The capabilities are the effective list of spec 4.2 (capability.Effective):
-// the declarations a platform run is served on /context, or a standalone
-// run's .plumber.yaml key, with the CLI's built-in list filling in every name
-// they do not declare. In platform mode the served list is the configuration
-// (spec 4.6): the file's key is ignored, with one info line when it is set.
-// A pattern that does not compile is skipped with one warning (Compile).
-// Nil when the run produced no normalized pipeline.
+// The list compiled is spec 4.2 and 4.6's: in platform mode, the declarations
+// served on /context, compiled exactly as served (spec 3 decision 10), with
+// no built-in fill-in, because the platform's own default IS the built-in
+// list; removing a capability on the platform must remove it everywhere,
+// including a served empty list, which recognizes nothing at all. A context
+// without the field (an older platform, a failed /context fetch), or a served
+// list that fails decoding or the bounds, means the built-in list alone
+// (capability.Builtin). Standalone, it is capability.Effective: the
+// .plumber.yaml key's declarations first, the built-in list filling in every
+// name they do not declare. In both modes the file's key is ignored in
+// platform mode, with one info line when it is set. A pattern that does not
+// compile is skipped with one warning (Compile). Nil when the run produced no
+// normalized pipeline.
 //
 // Wrapper scripts are the one rule that reads the disk, and they are read only
 // when the checkout IS the analyzed project (CheckoutIsAnalyzedProject) AND
@@ -38,8 +44,27 @@ func CapabilitiesOf(result *control.AnalysisResult, conf *configuration.Configur
 	if conf != nil {
 		repoRoot = wrapperScriptRoot(conf)
 	}
-	decls := capability.Compile(capability.Effective(declaredCapabilities(conf, l)), func(msg string) { l.Warn(msg) })
+	decls := capability.Compile(capabilityList(conf, l), func(msg string) { l.Warn(msg) })
 	return capability.Recognize(result.Pipeline, repoRoot, decls)
+}
+
+// capabilityList returns the list CapabilitiesOf compiles (spec 3 decision 10, 4.2, 4.6). In
+// platform mode the served list (declaredCapabilities) is used exactly as is when it is not
+// nil, including empty (the organization cleared its setting): there is no merge with the
+// built-in list, since the platform's own default is the built-in list itself. A nil served
+// list (no /context field, a failed fetch, or a served list that failed decoding or the
+// bounds, already warned by declaredCapabilities) falls back to capability.Builtin().
+// Standalone, the behaviour is unchanged: capability.Effective fills in every built-in name
+// the file's list does not declare.
+func capabilityList(conf *configuration.Configuration, l *logrus.Entry) []capability.Declaration {
+	declared := declaredCapabilities(conf, l)
+	if conf != nil && conf.PlatformRun != nil {
+		if declared == nil {
+			return capability.Builtin()
+		}
+		return declared
+	}
+	return capability.Effective(declared)
 }
 
 // declaredCapabilities returns the user's declarations the effective list is
@@ -73,6 +98,13 @@ func declaredCapabilities(conf *configuration.Configuration, l *logrus.Entry) []
 		return nil
 	}
 	served, err := capability.DecodeJSON(conf.PlatformRun.Context.Capabilities)
+	if err == nil && served == nil {
+		// A served JSON null decodes to no declarations at all, the same as an
+		// absent field: nil here, not the empty-but-present list spec 3
+		// decision 10 means (a served `[]`, which PruneEmptyRecognizers would
+		// otherwise turn into a non-nil empty slice indistinguishable from it).
+		return nil
+	}
 	if err == nil {
 		served = capability.PruneEmptyRecognizers(served, func(name string, index int) {
 			l.WithFields(logrus.Fields{"capability": name, "recognizer": index}).

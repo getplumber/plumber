@@ -84,21 +84,23 @@ var (
 
 const servedInForce = "capabilities: the platform's declarations are in force, the .plumber.yaml key is ignored in platform mode"
 
-// Spec 4.2 and 4.6: in platform mode the effective list is built from the served list,
-// the built-in list filling in every name it does not declare.
-func TestCapabilitiesOf_PlatformServedListFilledByBuiltin(t *testing.T) {
+// Spec 3 decision 10 and 4.6: in platform mode the served list is compiled as is, with no
+// built-in fill-in; a served capability that does not name a built-in leaves the built-ins
+// out entirely, so a served [sast] alone never recognizes the built-in secret_detection job
+// (the inverse of the old merge behaviour, which filled every undeclared built-in in).
+func TestCapabilitiesOf_PlatformServedListIsNotFilledByBuiltin(t *testing.T) {
 	got := CapabilitiesOf(capabilityPipeline(), platformConf(sastDecl, nil))
 	want := []capability.Match{
-		{Kind: "secret_detection", Job: "leaks", Tool: "gitleaks", Evidence: "commands"},
 		{Kind: "sast", Job: "sast", Tool: "semgrep", Evidence: "commands"},
 	}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("got %+v, want %+v", got, want)
+		t.Fatalf("got %+v, want %+v (no built-in secret_detection: the served list is the whole list)", got, want)
 	}
 }
 
-// Spec 4.2: a served declaration carrying a built-in's name replaces it whole, so an
-// organization narrows secret_detection to its own tool.
+// Spec 3 decision 10: a served declaration carrying a built-in's name replaces it whole, so
+// an organization narrows secret_detection to its own tool; nothing else is added since the
+// served list is the whole list.
 func TestCapabilitiesOf_PlatformServedReplacesBuiltinByName(t *testing.T) {
 	raw := `[{"name":"secret_detection","recognizers":[{"tool":"in-house","commands":["scan-secrets*"]}]}]`
 	if got := CapabilitiesOf(capabilityPipeline(), platformConf(raw, nil)); !reflect.DeepEqual(got, inHouseOnly) {
@@ -106,13 +108,15 @@ func TestCapabilitiesOf_PlatformServedReplacesBuiltinByName(t *testing.T) {
 	}
 }
 
-// Spec 3 decision 9 and 4.6: in platform mode the served list is the configuration; a
-// .plumber.yaml that also carries the key is ignored and gets one info line saying so.
+// Spec 3 decisions 9 and 10, and 4.6: in platform mode the served list is the
+// configuration, compiled as is; a .plumber.yaml that also carries the key is ignored and
+// gets one info line saying so.
 func TestCapabilitiesOf_PlatformIgnoresTheFileKeyWithOneInfoLine(t *testing.T) {
 	hook := capturedLog(t)
 	got := CapabilitiesOf(capabilityPipeline(), platformConf(sastDecl, inHouseDecl))
-	if len(got) != 2 || got[0].Tool != "gitleaks" || got[1].Kind != "sast" {
-		t.Fatalf("got %+v, want the served list, not the file's", got)
+	want := []capability.Match{{Kind: "sast", Job: "sast", Tool: "semgrep", Evidence: "commands"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v, want the served list, not the file's: %+v", got, want)
 	}
 	if infos := entriesAt(hook, logrus.InfoLevel); !reflect.DeepEqual(infos, []string{servedInForce}) {
 		t.Fatalf("info lines = %q, want exactly %q", infos, servedInForce)
@@ -125,13 +129,11 @@ func TestCapabilitiesOf_PlatformIgnoresTheFileKeyWithOneInfoLine(t *testing.T) {
 	}
 }
 
-// Spec 4.6: a context without the field (an older platform), an empty served list or a
-// failed /context fetch means the built-in list only; the file key stays ignored in
-// platform mode.
+// Spec 4.6: a context without the field (an older platform), a served null or a failed
+// /context fetch means the built-in list only; the file key stays ignored in platform mode.
 func TestCapabilitiesOf_PlatformWithoutServedListUsesBuiltin(t *testing.T) {
 	for name, conf := range map[string]*configuration.Configuration{
 		"older platform":            platformConf("", inHouseDecl),
-		"served empty list":         platformConf(`[]`, nil),
 		"served null":               platformConf(`null`, nil),
 		"failed context":            {PlatformRun: &platform.RunContext{}},
 		"failed context, file list": {PlatformRun: &platform.RunContext{}, PlumberConfig: &configuration.PlumberConfig{Capabilities: inHouseDecl}},
@@ -139,6 +141,22 @@ func TestCapabilitiesOf_PlatformWithoutServedListUsesBuiltin(t *testing.T) {
 		if got := CapabilitiesOf(capabilityPipeline(), conf); !reflect.DeepEqual(got, builtinOnly) {
 			t.Errorf("%s: got %+v, want the built-in list only %+v", name, got, builtinOnly)
 		}
+	}
+}
+
+// Spec 3 decision 10: a served empty list means the organization cleared its setting; the
+// run recognizes nothing at all, built-ins included, and logs nothing (the served list is
+// compiled as is, never falling back).
+func TestCapabilitiesOf_PlatformServedEmptyListMatchesNothing(t *testing.T) {
+	hook := capturedLog(t)
+	if got := CapabilitiesOf(capabilityPipeline(), platformConf(`[]`, nil)); len(got) != 0 {
+		t.Fatalf("got %+v, want nothing: the organization cleared its setting", got)
+	}
+	if warns := entriesAt(hook, logrus.WarnLevel); len(warns) != 0 {
+		t.Fatalf("warnings = %q, want none for a served empty list", warns)
+	}
+	if infos := entriesAt(hook, logrus.InfoLevel); len(infos) != 0 {
+		t.Fatalf("info lines = %q, want none for a served empty list", infos)
 	}
 }
 
@@ -173,11 +191,10 @@ func TestCapabilitiesOf_PlatformServedListToleratesUnknownKeys(t *testing.T) {
 	raw := `[{"name":"sast","future":true,"recognizers":[{"tool":"semgrep","commands":["semgrep *"],"github_actions":["semgrep/semgrep-action@*"]}]}]`
 	got := CapabilitiesOf(capabilityPipeline(), platformConf(raw, nil))
 	want := []capability.Match{
-		{Kind: "secret_detection", Job: "leaks", Tool: "gitleaks", Evidence: "commands"},
 		{Kind: "sast", Job: "sast", Tool: "semgrep", Evidence: "commands"},
 	}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("got %+v, want the known patterns kept %+v", got, want)
+		t.Fatalf("got %+v, want the known patterns kept %+v (no built-in secret_detection)", got, want)
 	}
 	if warns := entriesAt(hook, logrus.WarnLevel); len(warns) != 0 {
 		t.Fatalf("warnings = %q, want none for an unknown served key", warns)
@@ -308,11 +325,10 @@ func TestCapabilitiesOf_PlatformServedRecognizerWithOnlyUnknownFieldsIsPruned(t 
 		raw := `[{"name":"sast","recognizers":[{"tool":"semgrep-action","github_actions":["semgrep/semgrep-action@*"]},{"tool":"semgrep","commands":["semgrep *"]}]}]`
 		got := CapabilitiesOf(capabilityPipeline(), platformConf(raw, nil))
 		want := []capability.Match{
-			{Kind: "secret_detection", Job: "leaks", Tool: "gitleaks", Evidence: "commands"},
 			{Kind: "sast", Job: "sast", Tool: "semgrep", Evidence: "commands"},
 		}
 		if !reflect.DeepEqual(got, want) {
-			t.Fatalf("got %+v, want the known recognizer kept %+v", got, want)
+			t.Fatalf("got %+v, want the known recognizer kept %+v (no built-in secret_detection)", got, want)
 		}
 		if warns := entriesAt(hook, logrus.WarnLevel); len(warns) != 0 {
 			t.Fatalf("warnings = %q, want none", warns)
@@ -340,8 +356,8 @@ func TestCapabilitiesOf_PlatformServedRecognizerWithOnlyUnknownFieldsIsPruned(t 
 	t.Run("a recognizer whose only key is a typo is pruned too", func(t *testing.T) {
 		hook := capturedLog(t)
 		raw := `[{"name":"sast","recognizers":[{"tool":"semgrep","command":["semgrep *"]}]}]`
-		if got := CapabilitiesOf(capabilityPipeline(), platformConf(raw, nil)); !reflect.DeepEqual(got, builtinOnly) {
-			t.Fatalf("got %+v, want sast to match nothing and the built-in secret_detection %+v", got, builtinOnly)
+		if got := CapabilitiesOf(capabilityPipeline(), platformConf(raw, nil)); len(got) != 0 {
+			t.Fatalf("got %+v, want nothing: sast matches nothing and there is no built-in secret_detection (the served list is the whole list)", got)
 		}
 		if warns := entriesAt(hook, logrus.WarnLevel); len(warns) != 0 {
 			t.Fatalf("warnings = %q, want none", warns)
@@ -411,8 +427,9 @@ func TestCapabilitiesOf_PlatformMalformedFileKeyIsIgnored(t *testing.T) {
 	conf.PlatformRun = &platform.RunContext{Context: &platform.ProjectContext{Capabilities: json.RawMessage(sastDecl)}}
 	hook := capturedLog(t)
 	got := CapabilitiesOf(capabilityPipeline(), conf)
-	if len(got) != 2 || got[1].Kind != "sast" {
-		t.Fatalf("got %+v, want the served list", got)
+	want := []capability.Match{{Kind: "sast", Job: "sast", Tool: "semgrep", Evidence: "commands"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v, want the served list %+v", got, want)
 	}
 	if warns := entriesAt(hook, logrus.WarnLevel); len(warns) != 0 {
 		t.Fatalf("warnings = %q, want none", warns)

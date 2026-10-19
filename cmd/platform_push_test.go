@@ -4230,11 +4230,13 @@ func TestPlatformBOMFrom_CapabilitiesCopiedAndBounded(t *testing.T) {
 	}
 }
 
-// Spec 4.4 and 5: the push bill's capabilities section, golden, built through the real
-// path (the served declarations of /context, the built-in list filling in, the recognizer,
-// the bill generator, the push projection). The evidence is the field name that matched
-// (`images`, `commands`), the kind a user-declared name rides as is, the tool the
-// recognizer's declared tool.
+// Spec 3 decision 10 and 4.4, 5: the push bill's capabilities section, golden, built through
+// the real path (the served declarations of /context, compiled exactly as served with no
+// built-in fill-in, the recognizer, the bill generator, the push projection). A served list
+// that does not name secret_detection never recognizes the built-in gitleaks job: the leaks
+// job's image match is absent from the bill. The evidence is the field name that matched
+// (`commands`), the kind a user-declared name rides as is, the tool the recognizer's
+// declared tool.
 func TestPlatformBOMDocument_CapabilitiesGolden(t *testing.T) {
 	result := &control.AnalysisResult{
 		ProjectPath: "group/app",
@@ -4264,7 +4266,7 @@ func TestPlatformBOMDocument_CapabilitiesGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `[{"kind":"secret_detection","job":"leaks","tool":"gitleaks","evidence":"images"},{"kind":"sast","job":"sast","tool":"semgrep","evidence":"commands"}]`
+	want := `[{"kind":"sast","job":"sast","tool":"semgrep","evidence":"commands"}]`
 	if string(raw) != want {
 		t.Fatalf("capabilities = %s\nwant          %s", raw, want)
 	}
