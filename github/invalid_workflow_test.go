@@ -2,7 +2,6 @@ package github
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -94,21 +93,27 @@ func TestScanGitHubWorkflows_UnreadableFileStillPartial(t *testing.T) {
 	}
 }
 
-// TestDedupeYAMLErrorPrefixKeepsOnePrefix pins the message a user reads
-// for an invalid workflow file: parseGitHubWorkflowJobs wraps the yaml
-// library's error with "yaml: " and the library's own syntax errors
-// already start with it, so the doubled prefix is collapsed to one; a
-// single prefix and a message without one are returned verbatim.
-func TestDedupeYAMLErrorPrefixKeepsOnePrefix(t *testing.T) {
-	cases := []struct{ in, want string }{
-		{"yaml: yaml: unknown anchor 'x' referenced", "yaml: unknown anchor 'x' referenced"},
-		{"yaml: some error", "yaml: some error"},
-		{"no prefix at all", "no prefix at all"},
-		{"yaml: yaml: yaml: three", "yaml: yaml: three"},
+// TestParseGitHubWorkflowJobsErrorHasOnePrefix pins the message a user
+// reads for an invalid workflow file: exactly one leading "yaml: ",
+// whether the failure comes from the yaml library itself (an undefined
+// anchor, a tab-indented block, a syntax error) or from the duplicate-key
+// pre-check.
+func TestParseGitHubWorkflowJobsErrorHasOnePrefix(t *testing.T) {
+	cases := map[string]string{
+		"undefined anchor": "on: push\njobs:\n  a:\n    runs-on: *missing\n",
+		"tab indent":       "on: push\njobs:\n\ta:\n\t\truns-on: ubuntu-latest\n",
+		"syntax error":     "on: [push\njobs: {}\n",
+		"duplicate key":    "on: push\njobs:\n  a:\n    runs-on: x\n    runs-on: y\n",
 	}
-	for _, c := range cases {
-		if got := dedupeYAMLErrorPrefix(errors.New(c.in)); got != c.want {
-			t.Errorf("dedupeYAMLErrorPrefix(%q) = %q, want %q", c.in, got, c.want)
+	for name, src := range cases {
+		_, err := parseGitHubWorkflowJobs([]byte(src), "wf", "wf.yml")
+		if err == nil {
+			t.Errorf("%s: expected a parse error", name)
+			continue
+		}
+		msg := err.Error()
+		if !strings.HasPrefix(msg, "yaml: ") || strings.HasPrefix(msg, "yaml: yaml: ") {
+			t.Errorf("%s: want exactly one \"yaml: \" prefix, got %q", name, msg)
 		}
 	}
 }

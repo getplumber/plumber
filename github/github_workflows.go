@@ -47,22 +47,6 @@ const (
 	fmtFileErr = "%s: %w"
 )
 
-// dedupeYAMLErrorPrefix returns err's message with one redundant leading
-// "yaml: " removed. parseGitHubWorkflowJobs wraps every yaml.Unmarshal
-// failure with "yaml: %w", and the yaml library's own message for a
-// syntax-level failure (an undefined anchor, a duplicate key, ...) already
-// starts with "yaml: ", so the unwrapped message would otherwise read
-// "yaml: yaml: unknown anchor ...". Reported to the user with one prefix
-// kept.
-func dedupeYAMLErrorPrefix(err error) string {
-	const prefix = "yaml: "
-	msg := err.Error()
-	if strings.HasPrefix(msg, prefix+prefix) {
-		return strings.TrimPrefix(msg, prefix)
-	}
-	return msg
-}
-
 // collectWorkflowJobs reads every .yml/.yaml file under
 // <rootDir>/.github/workflows/ and returns the parsed jobs, sorted by
 // name. A missing workflows directory — or one that resolves outside
@@ -108,7 +92,7 @@ func collectWorkflowJobs(rootDir string) (jobs []ir.Job, files []ir.AnalyzedWork
 		files = append(files, ir.AnalyzedWorkflow{Path: rel, Content: string(data)})
 		fileJobs, parseErr := parseGitHubWorkflowJobs(data, workflowBaseName(name), path)
 		if parseErr != nil {
-			invalid = append(invalid, ir.InvalidWorkflow{Path: rel, Error: dedupeYAMLErrorPrefix(parseErr)})
+			invalid = append(invalid, ir.InvalidWorkflow{Path: rel, Error: parseErr.Error()})
 			continue
 		}
 		jobs = append(jobs, fileJobs...)
@@ -1178,9 +1162,11 @@ func parseGitHubWorkflowJobs(data []byte, namespace, originFile string) ([]ir.Jo
 	if err := firstDuplicateYAMLKey(data); err != nil {
 		return nil, fmt.Errorf("yaml: %w", err)
 	}
+	// Not wrapped: every gopkg.in/yaml.v2 error already starts with
+	// "yaml: ", which is the message an invalid workflow reports (#517).
 	var wf ghWorkflowHeader
 	if err := yaml.Unmarshal(data, &wf); err != nil {
-		return nil, fmt.Errorf("yaml: %w", err)
+		return nil, err
 	}
 	if len(wf.Jobs) == 0 {
 		return nil, nil

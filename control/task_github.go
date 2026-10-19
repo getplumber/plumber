@@ -74,6 +74,19 @@ var fetchGitHubVisibility = func(host, owner, repo string) (visibility, fullName
 	return githubpkg.FetchGitHubRepoIdentity(host, owner, repo)
 }
 
+// logInvalidWorkflows warns once per workflow file that does not parse,
+// naming what happens to it: an ISSUE-423 finding when
+// workflowsMustBeValid is active, otherwise a degraded run (#517).
+func logInvalidWorkflows(l *logrus.Entry, pipeline *ir.NormalizedPipeline, conf *configuration.Configuration) {
+	msg := "GitHub workflow is not valid, reported as ISSUE-423"
+	if !workflowsMustBeValidActive(conf) {
+		msg = "GitHub workflow is not valid, skipped (workflowsMustBeValid inactive, run degraded)"
+	}
+	for _, inv := range pipeline.InvalidWorkflows {
+		l.WithField("file", inv.Path).Warn(msg)
+	}
+}
+
 // resolveGitHubDefaultBranch overwrites pipeline.DefaultBranch with the
 // forge's answer. The scan seeds the field with the branch being ANALYZED
 // (the --branch flag locally, the fetched ref remotely), which is only a
@@ -490,9 +503,7 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 	for _, perr := range partial {
 		l.WithError(perr).Warn("GitHub workflow read: partial failure (file skipped)")
 	}
-	for _, inv := range pipeline.InvalidWorkflows {
-		l.WithField("file", inv.Path).Warn("GitHub workflow is not valid, reported as ISSUE-423")
-	}
+	logInvalidWorkflows(l, pipeline, conf)
 
 	resolveGitHubDefaultBranch(l, pipeline, conf.GithubAPIHost, conf.ProjectPath)
 	applyGitHubVisibility(pipeline, conf.GithubAPIHost, conf.ProjectPath)
@@ -646,9 +657,7 @@ func RunGitHubAnalysisRemote(conf *configuration.Configuration, owner, repo, ref
 	for _, perr := range partial {
 		l.WithError(perr).Warn("GitHub workflow read: partial failure (file skipped)")
 	}
-	for _, inv := range pipeline.InvalidWorkflows {
-		l.WithField("file", inv.Path).Warn("GitHub workflow is not valid, reported as ISSUE-423")
-	}
+	logInvalidWorkflows(l, pipeline, conf)
 	applyGitHubVisibility(pipeline, conf.GithubAPIHost, owner+"/"+repo)
 
 	resolveGitHubDefaultBranch(l, pipeline, conf.GithubAPIHost, owner+"/"+repo)

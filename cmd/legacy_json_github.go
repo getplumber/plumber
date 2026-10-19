@@ -500,9 +500,10 @@ func buildPermissionsBlock(c legacyCommon, result *control.AnalysisResult, findi
 
 // buildInvalidWorkflowsBlock - ISSUE-423 (#517). The finding has no job;
 // its identity block and url already carry the file, so issues reads
-// with no job key. Denominator is total workflows plus the invalid
-// ones (an invalid file never parsed into a workflow, so it is not
-// among WorkflowsTotal); numerator is the invalid file count.
+// with no job key. The metrics are two separate counts, not a ratio:
+// workflowsTotal counts parsed workflows only (an invalid file never
+// parsed into one, so it is never among them), workflowFilesInvalid
+// counts the invalid files.
 func buildInvalidWorkflowsBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
 	s := statsOf(result)
 	return map[string]any{
