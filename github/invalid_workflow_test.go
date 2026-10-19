@@ -366,3 +366,44 @@ jobs:
 		}
 	}
 }
+
+// TestScanGitHubWorkflows_OutOfScopeFilesAreNotInvalid pins the boundary
+// ISSUE-423's docs draw: only a file the YAML parser refuses is an invalid
+// workflow. An empty file, a comment-only file and a file with no `jobs:`
+// parse fine and simply yield no job; a job without `runs-on` is refused
+// by GitHub's own schema checks, which this control does not repeat
+// (PR #560 review). None of them may be reported as ISSUE-423.
+func TestScanGitHubWorkflows_OutOfScopeFilesAreNotInvalid(t *testing.T) {
+	cases := map[string]struct {
+		src  string
+		jobs int
+	}{
+		"empty.yml":      {"", 0},
+		"blank.yml":      {"\n  \n# placeholder, nothing here yet\n", 0},
+		"no-jobs.yml":    {"name: No Jobs\non: push\n", 0},
+		"no-runs-on.yml": {"name: No Runs-On\non: push\njobs:\n  build:\n    steps:\n      - run: echo hi\n", 1},
+	}
+	for name, c := range cases {
+		tmp := t.TempDir()
+		wfDir := filepath.Join(tmp, ".github", "workflows")
+		if err := os.MkdirAll(wfDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(wfDir, name), []byte(c.src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		pipeline, partial, err := ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
+		if err != nil {
+			t.Fatalf("%s: unexpected hard error: %v", name, err)
+		}
+		if len(partial) != 0 {
+			t.Fatalf("%s: expected no partial errors, got %v", name, partial)
+		}
+		if len(pipeline.InvalidWorkflows) != 0 {
+			t.Errorf("%s: out of scope for ISSUE-423, got %+v", name, pipeline.InvalidWorkflows)
+		}
+		if len(pipeline.Jobs) != c.jobs {
+			t.Errorf("%s: expected %d jobs, got %d", name, c.jobs, len(pipeline.Jobs))
+		}
+	}
+}

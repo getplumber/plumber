@@ -1808,7 +1808,12 @@ repository notices.
 
 Out of scope: an empty file and a file with no `jobs:` block parse fine
 as YAML but still produce nothing GitHub will run; this control does
-not flag them, only a file its own parser refuses outright.
+not flag them, only a file its own parser refuses outright. It also
+does not repeat GitHub's own schema validation, so a file that is
+well-formed YAML but that GitHub still rejects is not flagged: a job
+without `runs-on`, an unterminated `${{ }}` expression, a `needs:`
+naming a job that does not exist. The Actions tab, or a linter such as
+actionlint, reports those.
 
 ```yaml
 # ❌ before: the alias has no matching anchor in this file

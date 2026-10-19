@@ -616,7 +616,7 @@ var controlsMeta = map[string]ControlMeta{
 		DisplayName: "Workflow files must be valid",
 		Category:    CategoryPipelineComposition,
 		ID:          "CTRL-423",
-		Description: "Verifies that every workflow file under .github/workflows can be parsed; GitHub shows a file it cannot read as invalid and does not run it, so that workflow silently does nothing.",
+		Description: "Verifies that every workflow file under .github/workflows can be parsed as YAML; GitHub shows a file it cannot read as invalid and does not run it, so that workflow silently does nothing. GitHub's own schema checks, such as a job without runs-on, are out of scope.",
 	},
 }
 
