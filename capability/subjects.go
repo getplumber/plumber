@@ -146,30 +146,44 @@ func combinedDITFlag(f string) bool {
 	return true
 }
 
-// wrapperPath reports the repository-relative shell script a script entry runs, when it runs
-// one: `./x.sh`, `x.sh`, `sh x.sh`, `bash ./x.bash`, `source x.sh`, `. x.sh`, in any segment
-// the shell operators and newlines split (`make && ./x.sh`, `./x.sh;`, the second line of a
-// `- |` entry), the first one found; a commented-out call is not one. A relative `cd dir`
-// segment before it is applied (`cd ci && ./x.sh` runs ci/x.sh); a cd that is absolute,
-// bare, variable or escapes the root ends the search, since the script is then no longer
-// known to be under the root. Absolute paths and paths with `..` are refused here
-// (ResolveWithinRepo refuses them again at read time).
-func wrapperPath(entry string) (string, bool) {
+// The cd chain the wrapper rule follows is short: a real script changes directory a few
+// times at most. Past maxCdSegments cd segments, or once the directory would exceed
+// maxCdDirBytes, the search ends (no wrapper evidence past that point), which keeps the
+// rule linear on a 256 KiB `cd a && cd a && ...` line.
+const (
+	maxCdSegments = 16
+	maxCdDirBytes = 1024
+)
+
+// wrapperPaths reports the repository-relative shell scripts a script entry runs, in order:
+// `./x.sh`, `x.sh`, `sh x.sh`, `bash ./x.bash`, `source x.sh`, `. x.sh`, in every segment
+// the shell operators and newlines split (`make && ./x.sh`, `./x.sh;`, each line of a `- |`
+// entry); a commented-out call is not one. The launcher's own options are skipped first
+// (`bash -x ci/scan.sh`, `sh -euo pipefail scan.sh`), see segmentWrapperPath. A relative
+// `cd dir` segment before a call is applied (`cd ci && ./x.sh` runs ci/x.sh); a cd that is
+// absolute, bare, variable or escapes the root ends the search, since a later script is then
+// no longer known to be under the root, and so does a cd chain past maxCdSegments or
+// maxCdDirBytes. Absolute paths and paths with `..` are refused here (ResolveWithinRepo
+// refuses them again at read time).
+func wrapperPaths(entry string) []string {
+	var out []string
 	dir := ""
+	cds := 0
 	for _, seg := range splitSegments(entry) {
 		fields := strings.Fields(seg)
 		if len(fields) > 0 && fields[0] == "cd" {
-			if len(fields) != 2 || !safeRelative(fields[1]) {
-				return "", false
+			cds++
+			if len(fields) != 2 || !safeRelative(fields[1]) || cds > maxCdSegments || len(dir)+1+len(fields[1]) > maxCdDirBytes {
+				return out
 			}
 			dir = path.Join(dir, fields[1])
 			continue
 		}
 		if rel, ok := segmentWrapperPath(fields); ok {
-			return path.Join(dir, rel), true
+			out = append(out, path.Join(dir, rel))
 		}
 	}
-	return "", false
+	return out
 }
 
 // safeRelative reports whether p is a plain relative path that stays under its base.
@@ -179,7 +193,14 @@ func safeRelative(p string) bool {
 }
 
 // segmentWrapperPath is wrapperPath for the fields of one segment without shell operators:
-// leading VAR=value assignments skipped, then an optional `sh`, `bash`, `source` or `.`.
+// leading VAR=value assignments skipped, then an optional `sh`, `bash`, `source` or `.`. A
+// launcher may carry options before its script (`bash -x ci/scan.sh`, `sh -euo pipefail
+// scan.sh`): a field starting with `-` is skipped; `-o` and `+o` consume the next field as
+// their value, and so does a combined short option whose last letter is `o` (`-euo` takes
+// `pipefail`); `--` ends the options, and the field right after it is the candidate; `-c`
+// anywhere among the options (an inline command string, read by the commands subject, not
+// this one) still yields no wrapper; running out of fields yields no wrapper. The loop is one
+// linear pass over the options, so a long option list stays linear.
 func segmentWrapperPath(fields []string) (string, bool) {
 	for len(fields) > 0 && isAssignment(fields[0]) {
 		fields = fields[1:]
@@ -190,10 +211,33 @@ func segmentWrapperPath(fields []string) (string, bool) {
 	candidate := fields[0]
 	switch candidate {
 	case "sh", "bash", "source", ".":
-		if len(fields) < 2 || fields[1] == "-c" {
+		rest := fields[1:]
+		i := 0
+		for i < len(rest) {
+			f := rest[i]
+			if f == "--" {
+				i++
+				break
+			}
+			if f == "-o" || f == "+o" {
+				i += 2
+				continue
+			}
+			if !strings.HasPrefix(f, "-") {
+				break
+			}
+			if strings.ContainsRune(f[1:], 'c') {
+				return "", false
+			}
+			i++
+			if strings.HasSuffix(f, "o") {
+				i++ // a combined short option ending in o, e.g. -euo, takes a value too
+			}
+		}
+		if i >= len(rest) {
 			return "", false
 		}
-		candidate = fields[1]
+		candidate = rest[i]
 	}
 	if !strings.HasSuffix(candidate, ".sh") && !strings.HasSuffix(candidate, ".bash") {
 		return "", false

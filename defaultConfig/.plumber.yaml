@@ -1329,3 +1329,20 @@ github:
       forbiddenVariables:
         - ACTIONS_STEP_DEBUG
         - ACTIONS_RUNNER_DEBUG
+
+# ===========================================
+# Pipeline capabilities
+# ===========================================
+# Declare what a job does (for example "runs secret detection") so the
+# dependencies graph can find it across every project. A declared name
+# replaces the built-in of that name whole; run `plumber capabilities
+# defaults` to print the built-ins themselves, and `plumber config view` to
+# see the effective list this run uses (your declarations plus every
+# built-in you did not name).
+#
+# capabilities:
+#   - name: secret_detection
+#     recognizers:
+#       - tool: gitleaks
+#         images: ["*gitleaks*"]
+#         commands: ["*gitleaks*"]

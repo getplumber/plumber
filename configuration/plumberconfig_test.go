@@ -6,6 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v2"
+
+	"github.com/getplumber/plumber/capability/capdecl"
 	"github.com/getplumber/plumber/internal/ir"
 )
 
@@ -655,9 +658,42 @@ capabilities:
 	if len(warnings) != 0 {
 		t.Fatalf("unexpected warnings: %v", warnings)
 	}
-	if len(cfg.Capabilities) != 1 || cfg.Capabilities[0].Name != "secret_detection" ||
-		len(cfg.Capabilities[0].Recognizers) != 1 || cfg.Capabilities[0].Recognizers[0].Tool != "gitleaks" {
-		t.Fatalf("Capabilities = %+v", cfg.Capabilities)
+	decls := decodedCapabilities(t, cfg)
+	if len(decls) != 1 || decls[0].Name != "secret_detection" ||
+		len(decls[0].Recognizers) != 1 || decls[0].Recognizers[0].Tool != "gitleaks" {
+		t.Fatalf("Capabilities = %+v", decls)
+	}
+}
+
+// decodedCapabilities re-encodes the raw capabilities value the load kept and decodes it
+// strictly, the way provider.CapabilitiesOf does.
+func decodedCapabilities(t *testing.T, cfg *PlumberConfig) []capdecl.Declaration {
+	t.Helper()
+	data, err := yaml.Marshal(map[string]interface{}{"capabilities": cfg.Capabilities})
+	if err != nil {
+		t.Fatalf("re-encode: %v", err)
+	}
+	decls, err := capdecl.DecodeYAML(data)
+	if err != nil {
+		t.Fatalf("strict decode: %v", err)
+	}
+	return decls
+}
+
+// Spec 4.2 and 7: the load keeps the capabilities key raw, so a malformed key (a typo, a
+// wrong type, a map instead of a list) never fails the configuration load, in either mode;
+// the strict decode and its one warning happen when the effective list is built.
+func TestLoadPlumberConfigFromBytes_MalformedCapabilitiesNeverFailTheLoad(t *testing.T) {
+	for name, text := range map[string]string{
+		"typo key":          "capabilities:\n  - name: secret_detection\n    recognizers:\n      - image: [\"*gitleaks*\"]\n",
+		"wrong-typed field": "capabilities:\n  - name: secret_detection\n    recognizers:\n      - images: \"*foo*\"\n",
+		"a map, not a list": "capabilities:\n  name: secret_detection\n",
+		"a scalar":          "capabilities: yes\n",
+	} {
+		cfg, _, _, err := LoadPlumberConfigFromBytes([]byte("version: \"2.0\"\n"+text), name)
+		if err != nil || cfg == nil || cfg.Capabilities == nil {
+			t.Errorf("%s: load = %v, %v; want the key kept raw and no error", name, cfg, err)
+		}
 	}
 }
 
@@ -673,40 +709,20 @@ func TestLoadPlumberConfigFromBytes_NoCapabilitiesKeyLeavesNil(t *testing.T) {
 	}
 }
 
-// ValidateKnownKeys refuses an unknown capabilities key by its path, at the capability
-// level and at the recognizer level (spec 4.2: "unknown fields are refused ... so a typo
-// never silently disables a recognizer").
-func TestValidateKnownKeys_Capabilities(t *testing.T) {
+// ValidateKnownKeys no longer walks the capabilities key: the strict decode when the
+// effective list is built names an unknown key in its one warning (provider.CapabilitiesOf),
+// so a load-time walk would warn twice for one typo.
+func TestValidateKnownKeys_CapabilitiesLeftToTheStrictDecode(t *testing.T) {
 	cfg := []byte(`capabilities:
   - name: secret_detection
-    recognizers:
+    recognisers:
       - tool: gitleaks
         image: ["*gitleaks*"]
 `)
-	warnings := ValidateKnownKeys(cfg)
-	found := false
-	for _, w := range warnings {
-		if strings.Contains(w, "capabilities[0].recognizers[0]") && strings.Contains(w, "image") {
-			found = true
+	for _, w := range ValidateKnownKeys(cfg) {
+		if strings.Contains(w, "capabilities") {
+			t.Fatalf("unexpected load-time capabilities warning %q", w)
 		}
-	}
-	if !found {
-		t.Fatalf("expected a warning naming capabilities[0].recognizers[0] and %q, got %v", "image", warnings)
-	}
-
-	capLevel := []byte(`capabilities:
-  - name: secret_detection
-    recognisers: []
-`)
-	warnings = ValidateKnownKeys(capLevel)
-	found = false
-	for _, w := range warnings {
-		if strings.Contains(w, "capabilities[0]") && strings.Contains(w, "recognisers") {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("expected a warning naming capabilities[0] and %q, got %v", "recognisers", warnings)
 	}
 }
 
@@ -726,7 +742,7 @@ capabilities:
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if len(cfg.Capabilities) != 1 || cfg.Capabilities[0].Name != "sast" {
-		t.Fatalf("Capabilities = %+v, want exactly the overlay's own [sast]", cfg.Capabilities)
+	if decls := decodedCapabilities(t, cfg); len(decls) != 1 || decls[0].Name != "sast" {
+		t.Fatalf("Capabilities = %+v, want exactly the overlay's own [sast]", decls)
 	}
 }

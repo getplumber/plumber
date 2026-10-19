@@ -14,6 +14,12 @@ import (
 //go:embed builtin.yaml
 var builtinYAML []byte
 
+// BuiltinYAML returns the embedded builtin.yaml bytes, copied so a caller can never alter
+// the list the CLI runs: what `plumber capabilities defaults` prints verbatim (spec 4.2).
+func BuiltinYAML() []byte {
+	return append([]byte(nil), builtinYAML...)
+}
+
 // Builtin returns the CLI's built-in capability list, decoded once and deep-copied on every
 // call so a caller mutating the result never affects another caller or a later call (spec
 // 4.2). It panics if the embedded builtin.yaml fails to decode: that can only happen if a
@@ -49,6 +55,7 @@ func cloneRecognizers(recs []capdecl.Recognizer) []capdecl.Recognizer {
 			GitlabReportTypes:      append([]string(nil), r.GitlabReportTypes...),
 			GitlabIncludeTemplate:  append([]string(nil), r.GitlabIncludeTemplate...),
 			GitlabIncludeComponent: append([]string(nil), r.GitlabIncludeComponent...),
+			GitlabIncludeProject:   append([]string(nil), r.GitlabIncludeProject...),
 		}
 	}
 	return out

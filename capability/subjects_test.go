@@ -2,6 +2,7 @@ package capability
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/getplumber/plumber/internal/ir"
@@ -73,7 +74,10 @@ func TestContainerRunImage_Spec43(t *testing.T) {
 // Spec 4.3, the wrapper_script subject: a relative .sh/.bash path, after an optional `sh`,
 // `bash`, `source` or `.`, in any segment the shell operators and newlines split; a relative
 // `cd` before it applies, an absolute, bare, variable or escaping one ends the search; an
-// absolute path or one with `..` is refused; a commented-out call is not a wrapper.
+// absolute path or one with `..` is refused; a commented-out call is not a wrapper. The
+// launcher's own options are skipped first: a word starting with `-` is skipped, `-o`/`+o`
+// and a combined short option ending in `o` consume the next field as a value, `--` ends the
+// options, and a `-c` anywhere among them (an inline command string) still yields no wrapper.
 func TestWrapperPath_Spec43(t *testing.T) {
 	cases := []struct {
 		line string
@@ -91,6 +95,16 @@ func TestWrapperPath_Spec43(t *testing.T) {
 		{"gitleaks detect", "", false},
 		{"sh -c \"gitleaks detect\"", "", false},
 		{"python scripts/scan.py", "", false},
+		{"bash -x ci/scan.sh", "ci/scan.sh", true},
+		{"sh -e ci/scan.sh", "ci/scan.sh", true},
+		{"sh -eu scan.sh", "scan.sh", true},
+		{"bash -euo pipefail scan.sh", "scan.sh", true},
+		{"bash -o pipefail scan.sh", "scan.sh", true},
+		{"bash -- scan.sh", "scan.sh", true},
+		{"bash -c \"./scan.sh\"", "", false},
+		{"sh -x -c \"gitleaks detect\"", "", false},
+		{"bash -x", "", false},
+		{"bash -o", "", false},
 		{"cd ci && ./scan.sh", "ci/scan.sh", true},
 		{"make prep && ./scripts/scan.sh", "scripts/scan.sh", true},
 		{"./scripts/scan.sh;", "scripts/scan.sh", true},
@@ -107,9 +121,31 @@ func TestWrapperPath_Spec43(t *testing.T) {
 		{"# old\n./scripts/scan.sh\n", "scripts/scan.sh", true},
 	}
 	for _, c := range cases {
-		got, ok := wrapperPath(c.line)
+		paths := wrapperPaths(c.line)
+		got, ok := "", len(paths) > 0
+		if ok {
+			got = paths[0]
+		}
 		if got != c.want || ok != c.ok {
-			t.Errorf("wrapperPath(%q) = (%q, %v), want (%q, %v)", c.line, got, ok, c.want, c.ok)
+			t.Errorf("wrapperPaths(%q) = %q, want first (%q, %v)", c.line, paths, c.want, c.ok)
+		}
+	}
+	// Every qualifying call of an entry, in order; an unsafe cd ends the search after the
+	// calls before it; a cd chain past 16 segments ends it too.
+	multi := []struct {
+		entry string
+		want  []string
+	}{
+		{"./ci/setup.sh\n./ci/scan.sh\n", []string{"ci/setup.sh", "ci/scan.sh"}},
+		{"./a.sh && cd ci && ./b.sh; sh c.sh", []string{"a.sh", "ci/b.sh", "ci/c.sh"}},
+		{"./a.sh && cd /opt && ./b.sh", []string{"a.sh"}},
+		{strings.Repeat("cd a && ", 16) + "./x.sh", []string{strings.Repeat("a/", 16) + "x.sh"}},
+		{strings.Repeat("cd a && ", 17) + "./x.sh", nil},
+		{"cd " + strings.Repeat("a", 1024) + " && ./x.sh", nil},
+	}
+	for _, c := range multi {
+		if got := wrapperPaths(c.entry); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("wrapperPaths(%q) = %q, want %q", c.entry, got, c.want)
 		}
 	}
 }

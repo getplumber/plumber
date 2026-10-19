@@ -7,6 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sirupsen/logrus"
+	logrustest "github.com/sirupsen/logrus/hooks/test"
+
 	"github.com/getplumber/plumber/capability/capdecl"
 	"github.com/getplumber/plumber/internal/ir"
 )
@@ -179,6 +182,122 @@ func TestRecognize_Spec43_IncludeTemplateAndComponent(t *testing.T) {
 	})
 }
 
+// Spec 4.3 / docs/PBOM.md: the gitlab_include_component subject never carries the version,
+// even when a job's OriginInclude (or the matching ir.Include identity) does. A production
+// component job's OriginInclude is already version-free (the collector strips it before
+// building both the include's Source and the job's OriginInclude, gitlab/collect_pipeline_
+// origin.go), but the matcher stays robust to either shape: a pattern naming the bare
+// host/path/name matches whether or not the identity carries "@<version>", and a pattern
+// naming the version matches nothing, because the subject the recognizer sees never carries
+// it.
+func TestRecognize_Spec43_IncludeComponentVersionNeverInSubject(t *testing.T) {
+	const bare = "gitlab.com/acme/ci/secret-detection"
+	versioned := bare + "@1.0.0"
+	pipe := &ir.NormalizedPipeline{
+		Jobs: []ir.Job{
+			{Name: "comp-job", Scripts: []string{"run"}, OriginInclude: versioned},
+		},
+		Includes: []ir.Include{
+			{Kind: "component", Source: bare, Path: bare, ComponentName: "secret-detection"},
+		},
+	}
+	for _, pattern := range []string{bare, "*/acme/ci/*"} {
+		decls := compiled(t, "secret_detection", capdecl.Recognizer{Tool: "comp", GitlabIncludeComponent: []string{pattern}})
+		assertMatchesByJob(t, Recognize(pipe, "", decls), map[string]Match{
+			"comp-job": {"secret_detection", "comp-job", "comp", EvidenceGitlabIncludeComponent},
+		})
+	}
+	for _, pattern := range []string{"*@1.0.0", "*@~latest"} {
+		decls := compiled(t, "secret_detection", capdecl.Recognizer{Tool: "comp", GitlabIncludeComponent: []string{pattern}})
+		if got := Recognize(pipe, "", decls); len(got) != 0 {
+			t.Fatalf("pattern %q: got %+v, want nothing: the version is never in the subject", pattern, got)
+		}
+	}
+}
+
+// Spec 4.3 / docs/PBOM.md: the same, with the version on the other side, the identity map
+// (pipe.Includes) holding the versioned form and the job's OriginInclude holding the bare
+// form. The lookup tolerates either side carrying the version.
+func TestRecognize_Spec43_IncludeComponentVersionEitherSide(t *testing.T) {
+	const bare = "gitlab.com/acme/ci/secret-detection"
+	versioned := bare + "@1.0.0"
+	pipe := &ir.NormalizedPipeline{
+		Jobs: []ir.Job{
+			{Name: "comp-job", Scripts: []string{"run"}, OriginInclude: bare},
+		},
+		Includes: []ir.Include{
+			{Kind: "component", Source: versioned, Path: versioned, ComponentName: "secret-detection"},
+		},
+	}
+	decls := compiled(t, "secret_detection", capdecl.Recognizer{Tool: "comp", GitlabIncludeComponent: []string{bare}})
+	assertMatchesByJob(t, Recognize(pipe, "", decls), map[string]Match{
+		"comp-job": {"secret_detection", "comp-job", "comp", EvidenceGitlabIncludeComponent},
+	})
+}
+
+// Spec 4.3, the gitlab_include_project subject: the project path of the `include: project:`
+// entry that defines the job, as written, without the ref and without the file. The file
+// path and the ref are never this subject, a template whose text looks like a project is not
+// a project subject, and the built-in list declares no project pattern.
+func TestRecognize_Spec43_IncludeProject(t *testing.T) {
+	const (
+		file    = "templates/secrets.yml"
+		project = "security/ci-templates"
+	)
+	pipe := &ir.NormalizedPipeline{
+		Jobs: []ir.Job{
+			{Name: "proj-job", Scripts: []string{"run"}, OriginInclude: file},
+			{Name: "tpl-job", Scripts: []string{"run"}, OriginInclude: project},
+			{Name: "own", Scripts: []string{"run"}},
+		},
+		Includes: []ir.Include{
+			{Kind: "project", Source: file, Path: file, Ref: "v2", Project: project},
+			{Kind: "template", Source: project},
+		},
+	}
+	for _, pattern := range []string{"security/ci-templates", "*/ci-templates"} {
+		decls := compiled(t, "secret_detection", capdecl.Recognizer{Tool: "corp", GitlabIncludeProject: []string{pattern}})
+		assertMatchesByJob(t, Recognize(pipe, "", decls), map[string]Match{
+			"proj-job": {"secret_detection", "proj-job", "corp", EvidenceGitlabIncludeProject},
+		})
+	}
+	for _, pattern := range []string{"*secrets.yml*", "*v2*", "*@*"} {
+		decls := compiled(t, "secret_detection", capdecl.Recognizer{Tool: "corp", GitlabIncludeProject: []string{pattern}})
+		if got := Recognize(pipe, "", decls); len(got) != 0 {
+			t.Fatalf("pattern %q: got %+v, want nothing: the file and the ref are never the project subject", pattern, got)
+		}
+	}
+	// The kinds never cross: a project pattern never reaches a component or template
+	// subject, and a component pattern never reaches the project.
+	crossed := compiled(t, "secret_detection", capdecl.Recognizer{Tool: "comp", GitlabIncludeComponent: []string{"*"}, GitlabIncludeTemplate: []string{"templates/*"}})
+	if got := Recognize(&ir.NormalizedPipeline{Jobs: pipe.Jobs[:1], Includes: pipe.Includes}, "", crossed); len(got) != 0 {
+		t.Fatalf("got %+v, want nothing: a project include is neither a template nor a component subject", got)
+	}
+	// The built-in list declares no project pattern: a project-defined job is not recognized.
+	if got := Recognize(pipe, "", builtin(t)); len(got) != 0 {
+		t.Fatalf("got %+v, want nothing from the built-in list", got)
+	}
+	for _, r := range Builtin()[0].Recognizers {
+		if len(r.GitlabIncludeProject) != 0 {
+			t.Fatalf("the built-in recognizer %q declares a project pattern", r.Tool)
+		}
+	}
+}
+
+// Spec 4.3: the compiled fields follow the precedence order, gitlab_include_component before
+// gitlab_include_project before gitlab_report_types.
+func TestCompile_Spec43_FieldOrder(t *testing.T) {
+	c := compiled(t, "x", capdecl.Recognizer{Commands: []string{"*"}})
+	var names []string
+	for _, f := range c[0].Recognizers[0].Fields {
+		names = append(names, f.Name)
+	}
+	want := []string{EvidenceImages, EvidenceGitlabIncludeTemplate, EvidenceGitlabIncludeComponent, EvidenceGitlabIncludeProject, EvidenceGitlabReportTypes, EvidenceCommands, EvidenceWrapperScript}
+	if strings.Join(names, ",") != strings.Join(want, ",") {
+		t.Fatalf("fields = %v, want %v", names, want)
+	}
+}
+
 // Spec 4.3, the gitlab_report_types subject: each key of the job's artifacts:reports.
 func TestRecognize_Spec43_ReportTypes(t *testing.T) {
 	pipe := &ir.NormalizedPipeline{Jobs: []ir.Job{
@@ -265,6 +384,20 @@ func TestRecognize_Spec43_WrapperScript(t *testing.T) {
 	}
 }
 
+// Spec 4.3: the launcher's options are skipped before its script path (bash -x ci/scan.sh),
+// so the wrapper rule still finds and reads it.
+func TestRecognize_Spec43_WrapperScript_LauncherWithOptions(t *testing.T) {
+	root := t.TempDir()
+	must(t, os.MkdirAll(filepath.Join(root, "ci"), 0o755))
+	must(t, os.WriteFile(filepath.Join(root, "ci", "scan.sh"), []byte("#!/bin/sh\ngitleaks detect\n"), 0o755))
+	pipe := &ir.NormalizedPipeline{Jobs: []ir.Job{
+		job("flagged", "alpine:3.20", "bash -x ci/scan.sh"),
+	}}
+	assertMatchesByJob(t, Recognize(pipe, root, builtin(t)), map[string]Match{
+		"flagged": {"secret_detection", "flagged", "gitleaks", EvidenceWrapperScript},
+	})
+}
+
 // Spec 4.3 and decision 5: an absent, escaping, unreadable or oversized wrapper script, or a
 // script a wrapper itself calls (a second level), yields no evidence and never an error; a
 // commented-out call is never read.
@@ -285,8 +418,81 @@ func TestRecognize_Spec43_WrapperScript_NeverFails(t *testing.T) {
 		job("commented", "alpine", "# ./ci/scan.sh"),
 		job("commented-after", "alpine", "echo hi # ./ci/scan.sh"),
 	}}
+	hook := capturedLog(t)
 	if got := Recognize(pipe, root, builtin(t)); len(got) != 0 {
 		t.Fatalf("got %+v, want no match: absent, escaping, unreadable, oversized, second-level and commented scripts yield no evidence", got)
+	}
+	assertDebugLinesNameJobAndPathOnly(t, hook, "gitleaks detect")
+}
+
+// capturedLog hooks the standard logger at debug level (the package logger hangs off it)
+// and restores it afterwards.
+func capturedLog(t *testing.T) *logrustest.Hook {
+	t.Helper()
+	std := logrus.StandardLogger()
+	savedLevel, savedHooks := std.GetLevel(), std.Hooks
+	std.SetLevel(logrus.DebugLevel)
+	hook := logrustest.NewLocal(std)
+	t.Cleanup(func() {
+		std.ReplaceHooks(savedHooks)
+		std.SetLevel(savedLevel)
+	})
+	return hook
+}
+
+// assertDebugLinesNameJobAndPathOnly checks the contract's logging rule on the wrapper read:
+// at least one debug line was logged, every one carries the job and the script path, and
+// none carries a byte of the script content (the message, the fields and the error alike).
+func assertDebugLinesNameJobAndPathOnly(t *testing.T, hook *logrustest.Hook, content string) {
+	t.Helper()
+	n := 0
+	for _, e := range hook.AllEntries() {
+		if e.Level != logrus.DebugLevel || !strings.Contains(e.Message, "wrapper script") {
+			continue
+		}
+		n++
+		if e.Data["job"] == nil || e.Data["script"] == nil {
+			t.Errorf("debug line %q fields %v: want the job and the script path", e.Message, e.Data)
+		}
+		line, err := e.String()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(line, content) {
+			t.Errorf("debug line %q carries the script content %q", line, content)
+		}
+	}
+	if n == 0 {
+		t.Fatal("want at least one wrapper-script debug line")
+	}
+}
+
+// Spec 4.3 and decision 5: a wrapper path inside the root that is a symlink to a file
+// outside it is refused by ResolveWithinRepo (the resolved target is compared, not the
+// path as written, unlike the `..` refusal of wrapperPaths): no read, no match, no error,
+// and the debug line names the job and the path, never the target's content.
+func TestRecognize_Spec43_WrapperScript_SymlinkOutsideTheRootIsNotRead(t *testing.T) {
+	outside := t.TempDir()
+	must(t, os.WriteFile(filepath.Join(outside, "scan.sh"), []byte("gitleaks detect --outside-content\n"), 0o755))
+	root := t.TempDir()
+	must(t, os.MkdirAll(filepath.Join(root, "ci"), 0o755))
+	if err := os.Symlink(filepath.Join(outside, "scan.sh"), filepath.Join(root, "ci", "scan.sh")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	pipe := &ir.NormalizedPipeline{Jobs: []ir.Job{job("wrapper", "alpine", "./ci/scan.sh")}}
+	hook := capturedLog(t)
+	if got := Recognize(pipe, root, builtin(t)); len(got) != 0 {
+		t.Fatalf("got %+v, want no match: a symlink out of the root is never read", got)
+	}
+	assertDebugLinesNameJobAndPathOnly(t, hook, "outside-content")
+	var refused bool
+	for _, e := range hook.AllEntries() {
+		if e.Message == "capability: wrapper script not under the repository, skipped" && e.Data["job"] == "wrapper" && e.Data["script"] == "ci/scan.sh" {
+			refused = true
+		}
+	}
+	if !refused {
+		t.Fatal("want the ResolveWithinRepo refusal logged for job wrapper and script ci/scan.sh")
 	}
 }
 
@@ -308,8 +514,8 @@ func TestRecognize_Spec43_WrapperScript_ExactlyAtCapIsRead(t *testing.T) {
 }
 
 // Spec 4.3, precedence inside one recognizer: images, gitlab_include_template,
-// gitlab_include_component, gitlab_report_types, commands, wrapper_script; the first field
-// that matches names the evidence.
+// gitlab_include_component, gitlab_include_project, gitlab_report_types, commands,
+// wrapper_script; the first field that matches names the evidence.
 func TestRecognize_Spec43_FieldPrecedence(t *testing.T) {
 	root := t.TempDir()
 	must(t, os.WriteFile(filepath.Join(root, "w.sh"), []byte("corp-scan\n"), 0o755))
@@ -318,26 +524,29 @@ func TestRecognize_Spec43_FieldPrecedence(t *testing.T) {
 		Images:                 []string{"*corp-scan*"},
 		GitlabIncludeTemplate:  []string{"Jobs/*"},
 		GitlabIncludeComponent: []string{"*/comp/*"},
+		GitlabIncludeProject:   []string{"g/proj"},
 		GitlabReportTypes:      []string{"secret_detection"},
 		Commands:               []string{"*corp-scan*"},
 	}
-	const tpl, comp = "Jobs/x.yml", "gitlab.com/g/comp/c"
+	const tpl, comp, projFile = "Jobs/x.yml", "gitlab.com/g/comp/c", "ci/scan.yml"
 	report := []string{"secret_detection"}
 	pipe := &ir.NormalizedPipeline{
 		Jobs: []ir.Job{
 			{Name: "a-image", Image: imageOf("corp/corp-scan:1"), OriginInclude: tpl, ReportTypes: report, Scripts: []string{"corp-scan"}},
 			{Name: "b-template", Image: imageOf("alpine"), OriginInclude: tpl, ReportTypes: report, Scripts: []string{"corp-scan"}},
 			{Name: "c-component", Image: imageOf("alpine"), OriginInclude: comp, ReportTypes: report, Scripts: []string{"corp-scan"}},
+			{Name: "c2-project", Image: imageOf("alpine"), OriginInclude: projFile, ReportTypes: report, Scripts: []string{"corp-scan"}},
 			{Name: "d-report", Image: imageOf("alpine"), ReportTypes: report, Scripts: []string{"corp-scan"}},
 			{Name: "e-commands", Image: imageOf("alpine"), Scripts: []string{"corp-scan", "./w.sh"}},
 			{Name: "f-wrapper", Image: imageOf("alpine"), Scripts: []string{"./w.sh"}},
 		},
-		Includes: []ir.Include{{Kind: "template", Source: tpl}, {Kind: "component", Source: comp}},
+		Includes: []ir.Include{{Kind: "template", Source: tpl}, {Kind: "component", Source: comp}, {Kind: "project", Source: projFile, Project: "g/proj"}},
 	}
 	assertMatchesByJob(t, Recognize(pipe, root, compiled(t, "secret_detection", rec)), map[string]Match{
 		"a-image":     {"secret_detection", "a-image", "t", EvidenceImages},
 		"b-template":  {"secret_detection", "b-template", "t", EvidenceGitlabIncludeTemplate},
 		"c-component": {"secret_detection", "c-component", "t", EvidenceGitlabIncludeComponent},
+		"c2-project":  {"secret_detection", "c2-project", "t", EvidenceGitlabIncludeProject},
 		"d-report":    {"secret_detection", "d-report", "t", EvidenceGitlabReportTypes},
 		"e-commands":  {"secret_detection", "e-commands", "t", EvidenceCommands},
 		"f-wrapper":   {"secret_detection", "f-wrapper", "t", EvidenceWrapperScript},
@@ -438,16 +647,23 @@ func TestRecognize_NilAndEmpty(t *testing.T) {
 	}
 }
 
-// recognizeWithin fails t unless Recognize returns within 2 s.
+// recognizeWithin fails t unless Recognize, without a repository root, returns within 2 s.
 func recognizeWithin(t *testing.T, pipe *ir.NormalizedPipeline, decls []Compiled) []Match {
+	t.Helper()
+	return recognizeWithinRoot(t, pipe, "", decls)
+}
+
+// recognizeWithinRoot fails t unless Recognize under root (the wrapper_script subject on
+// when root is set) returns within 2 s.
+func recognizeWithinRoot(t *testing.T, pipe *ir.NormalizedPipeline, root string, decls []Compiled) []Match {
 	t.Helper()
 	var got []Match
 	done := make(chan struct{})
-	go func() { got = Recognize(pipe, "", decls); close(done) }()
+	go func() { got = Recognize(pipe, root, decls); close(done) }()
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("Recognize on a 256 KiB script line took over 2 s")
+		t.Fatal("Recognize on a 256 KiB script entry took over 2 s")
 	}
 	return got
 }
@@ -466,4 +682,53 @@ func TestRecognize_Spec43_LongLinesAreBounded(t *testing.T) {
 	if len(got) != 1 || got[0] != (Match{"secret_detection", "long", "trufflehog", EvidenceImages}) {
 		t.Fatalf("got %+v, want one trufflehog match by images", got)
 	}
+}
+
+// Spec 4.3: a pattern is the user's and a subject any developer's script line, so a user
+// pattern with several literal runs never makes matching super-linear: each of these pairs
+// is decided well within 2 s through Recognize.
+func TestRecognize_Spec43_UserPatternsAreBounded(t *testing.T) {
+	const size = 256 << 10
+	for _, c := range []struct{ pattern, line string }{
+		{"*b*a*a*", strings.Repeat("a", size) + "b"},
+		{"*ggshield*secret*", strings.Repeat("ggshield ", size/len("ggshield "))},
+		{"*a*a*a*a*a*a*a*a*", strings.Repeat("b", size)},
+	} {
+		decls := compiled(t, "custom", capdecl.Recognizer{Tool: "t", Commands: []string{c.pattern}})
+		if got := recognizeWithin(t, &ir.NormalizedPipeline{Jobs: []ir.Job{job("j", "alpine", c.line)}}, decls); len(got) != 0 {
+			t.Fatalf("%q: got %+v, want no match", c.pattern, got)
+		}
+	}
+}
+
+// Spec 4.3: the wrapper rule follows a relative `cd` chain, but only a short one (16
+// segments, 1024 bytes of directory): a 256 KiB chain of `cd a&&` before `./x.sh`, on one
+// line or as a `- |` block, is decided well within 2 s and yields no wrapper evidence.
+func TestRecognize_Spec43_LongCdChainIsBounded(t *testing.T) {
+	root := t.TempDir()
+	must(t, os.WriteFile(filepath.Join(root, "x.sh"), []byte("gitleaks detect\n"), 0o755))
+	n := (256 << 10) / len("cd a&&")
+	for name, entry := range map[string]string{
+		"one line": strings.Repeat("cd a&&", n) + "./x.sh",
+		"a block":  strings.Repeat("cd a\n", n) + "./x.sh\n",
+	} {
+		pipe := &ir.NormalizedPipeline{Jobs: []ir.Job{job("chain", "alpine", entry)}}
+		if got := recognizeWithinRoot(t, pipe, root, builtin(t)); len(got) != 0 {
+			t.Fatalf("%s: got %+v, want no wrapper evidence past the cd cap", name, got)
+		}
+	}
+}
+
+// Spec 4.3: every wrapper call of a script entry is a wrapper subject, not only the first:
+// a `- |` block that runs a setup script then a scan script is recognized by the scan
+// script's lines.
+func TestRecognize_Spec43_WrapperScript_EveryLineOfAnEntry(t *testing.T) {
+	root := t.TempDir()
+	must(t, os.MkdirAll(filepath.Join(root, "ci"), 0o755))
+	must(t, os.WriteFile(filepath.Join(root, "ci", "setup.sh"), []byte("apk add git\n"), 0o755))
+	must(t, os.WriteFile(filepath.Join(root, "ci", "scan.sh"), []byte("gitleaks detect --source .\n"), 0o755))
+	pipe := &ir.NormalizedPipeline{Jobs: []ir.Job{job("block", "alpine", "./ci/setup.sh\n./ci/scan.sh\n")}}
+	assertMatchesByJob(t, Recognize(pipe, root, builtin(t)), map[string]Match{
+		"block": {"secret_detection", "block", "gitleaks", EvidenceWrapperScript},
+	})
 }

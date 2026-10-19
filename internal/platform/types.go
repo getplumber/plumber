@@ -443,19 +443,17 @@ type ProjectContext struct {
 	Policies        []Policy         `json:"policies"`
 	Snapshot        Snapshot         `json:"snapshot"`
 	DismissedIssues []DismissedIssue `json:"dismissed_issues"`
-	// CapabilityRecognizers are the org-defined recognizers, merged after the
-	// CLI's shipped defaults. Absent from an older platform's answer, which
-	// decodes to nil and leaves the defaults alone.
-	CapabilityRecognizers []CapabilityRecognizer `json:"capability_recognizers"`
-}
-
-// CapabilityRecognizer is one org-defined recognizer the platform serves on /context
-// (monorepo spec 2026-10-16, section 4.6): merged after the CLI's defaults.
-type CapabilityRecognizer struct {
-	Capability string   `json:"capability"`
-	Tool       string   `json:"tool"`
-	Images     []string `json:"images"`
-	Commands   []string `json:"commands"`
+	// Capabilities is the org's declared capability list, served verbatim in
+	// the declaration schema (capdecl.Declaration, spec 4.2 and 4.6). It is
+	// kept raw here so a malformed list never fails the context decode: the
+	// CLI decodes it tolerantly (an unknown key, a field of a newer platform,
+	// is ignored), prunes a recognizer left without a pattern it knows, and
+	// checks its bounds when it builds the effective list
+	// (provider.CapabilitiesOf), falling back to the built-in list with one
+	// warning when the decode or the bounds fail. Absent from an older
+	// platform's answer, which decodes to nil and means the built-in list
+	// only.
+	Capabilities json.RawMessage `json:"capabilities"`
 }
 
 // ResolveRequest asks the platform to resolve the CI config at a specific

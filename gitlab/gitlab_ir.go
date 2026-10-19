@@ -276,6 +276,7 @@ func buildIncludes(origin *GitlabPipelineOriginData, ciConfigPath string) []ir.I
 			Kind:           o.OriginType,
 			Source:         o.GitlabIncludeOrigin.Location,
 			Ref:            o.Version,
+			Project:        o.GitlabIncludeOrigin.Project,
 			Current:        o.PlumberOrigin.LatestVersion,
 			Nested:         o.Nested,
 			ComponentName:  o.GitlabComponent.ComponentName,

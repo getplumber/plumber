@@ -846,7 +846,15 @@ func writeOutputsWithProvider(p provider.Provider, result *control.AnalysisResul
 	// The JSON report goes to --output when asked, and always to the run
 	// cache, where `plumber explain -a` reads it back. The cache never fails
 	// the run, and keeps nothing when the report could not be built.
-	params := jsonOutputParams{filePath: outputFile, provider: p.Name(), includeOnly: conf.ControlsFilter, skip: conf.SkipControlsFilter, noControls: conf.NoControls}
+	//
+	// capabilities is a second, pure call to the same recognizer the PBOM
+	// writers call below (provider.CapabilitiesOf): cheap, and it keeps this
+	// call site free of threading a PBOM-writer result through just to share
+	// one slice.
+	params := jsonOutputParams{
+		filePath: outputFile, provider: p.Name(), includeOnly: conf.ControlsFilter, skip: conf.SkipControlsFilter,
+		noControls: conf.NoControls, capabilities: provider.CapabilitiesOf(result, conf),
+	}
 	payload, jsonErr := buildAnalysisJSONReport(result, conf.PlumberConfig, s, params, runs, verdict)
 	if jsonErr == nil {
 		cacheReport(p.Name(), result.ProjectPath, payload)
@@ -1026,8 +1034,13 @@ func buildPublishPayload(p provider.Provider, conf *configuration.Configuration,
 	// nil runs / nil verdict: the hosted score service is never the platform
 	// (effectiveScorePush turns the badge push off whenever --platform is on),
 	// so this payload is always a standalone one.
+	//
+	// capabilities is not in the forScorePush exception list above: it is
+	// collected data, not the merged CI config, so it ships to the hosted
+	// service exactly as it ships to --output.
 	payload, err := buildAnalysisJSONReport(result, pc, summary, jsonOutputParams{
 		provider: p.Name(), includeOnly: includeOnly, skip: skip, forScorePush: true,
+		capabilities: provider.CapabilitiesOf(result, conf),
 	}, nil, nil)
 	if err != nil {
 		scoreWarn(fmt.Sprintf("could not build the publish payload: %v", err))

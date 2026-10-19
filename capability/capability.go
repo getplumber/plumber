@@ -2,7 +2,7 @@
 // parsed (the job's image, the include that defined it, its report artifacts, its script
 // lines) and from the wrapper scripts it calls in the checkout. A capability is a name a
 // user declares, or the CLI's built-in list does (builtin.yaml), with glob recognizers over
-// six subjects (spec 4.2, 4.3); the platform's dependencies graph lists the result as the
+// seven subjects (spec 4.2, 4.3); the platform's dependencies graph lists the result as the
 // `capability` resource kind ("which projects run secret detection").
 package capability
 
@@ -12,6 +12,7 @@ const (
 	EvidenceImages                 = "images"
 	EvidenceGitlabIncludeTemplate  = "gitlab_include_template"
 	EvidenceGitlabIncludeComponent = "gitlab_include_component"
+	EvidenceGitlabIncludeProject   = "gitlab_include_project"
 	EvidenceGitlabReportTypes      = "gitlab_report_types"
 	EvidenceCommands               = "commands"
 	EvidenceWrapperScript          = "wrapper_script"

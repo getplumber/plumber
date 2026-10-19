@@ -17,17 +17,19 @@ var logger = logrus.WithField("context", "capability")
 // maxWrapperScriptBytes caps a wrapper script read from the checkout (spec section 4.3).
 const maxWrapperScriptBytes = 256 << 10
 
-// The include kinds whose identity is a subject (ir.Include.Kind).
+// The include kinds that yield a subject (ir.Include.Kind): a template's and a component's
+// identity, a project include's project path.
 const (
 	includeKindTemplate  = "template"
 	includeKindComponent = "component"
+	includeKindProject   = "project"
 )
 
 // Recognize returns one Match per (job, capability) over pipe (spec 4.3), sorted by job then
 // kind. Hidden jobs (a dot-prefixed name) are skipped. For each capability, its recognizers
 // are tried in list order, each recognizer's fields in their precedence order (images,
-// gitlab_include_template, gitlab_include_component, gitlab_report_types, commands,
-// wrapper_script) and each field's patterns in order against the field's subjects; the first
+// gitlab_include_template, gitlab_include_component, gitlab_include_project,
+// gitlab_report_types, commands, wrapper_script) and each field's patterns in order against the field's subjects; the first
 // hit names the tool (the recognizer's, else the pattern's text) and the evidence (the
 // field's name). repoRoot is the checkout root wrapper scripts are read under; the caller
 // passes it only when the checkout is the analyzed project at its ref, and an empty root
@@ -61,22 +63,53 @@ func Recognize(pipe *ir.NormalizedPipeline, repoRoot string, decls []Compiled) [
 	return out
 }
 
-// includeKinds maps the identity of each template or component include (its Source, and its
-// Path, the identity a job's OriginInclude carries when the include has no Source) to its
-// kind; any other include kind is not a subject. The first include of an identity wins.
-func includeKinds(includes []ir.Include) map[string]string {
-	out := map[string]string{}
+// includeOrigin is what a job's include origin resolves to: the include's kind and, for a
+// project include, its project path as written.
+type includeOrigin struct {
+	kind    string
+	project string
+}
+
+// includeKinds maps the identity of each template, component or project include (its Source,
+// and its Path, the identity a job's OriginInclude carries when the include has no Source) to
+// its kind and project; any other include kind is not a subject. The first include of an
+// identity wins. A component identity is also keyed by its version-stripped form (spec 4.3 /
+// docs/PBOM.md: the component subject is host/path/name without "@<version>"), so a job's
+// OriginInclude is found here whichever side, if any, carries the version.
+func includeKinds(includes []ir.Include) map[string]includeOrigin {
+	out := map[string]includeOrigin{}
 	for _, inc := range includes {
-		if inc.Kind != includeKindTemplate && inc.Kind != includeKindComponent {
+		if inc.Kind != includeKindTemplate && inc.Kind != includeKindComponent && inc.Kind != includeKindProject {
 			continue
 		}
+		origin := includeOrigin{kind: inc.Kind, project: inc.Project}
 		for _, key := range []string{inc.Source, inc.Path} {
-			if _, dup := out[key]; key != "" && !dup {
-				out[key] = inc.Kind
+			if key == "" {
+				continue
+			}
+			if _, dup := out[key]; !dup {
+				out[key] = origin
+			}
+			if inc.Kind == includeKindComponent {
+				if stripped := stripComponentVersion(key); stripped != key {
+					if _, dup := out[stripped]; !dup {
+						out[stripped] = origin
+					}
+				}
 			}
 		}
 	}
 	return out
+}
+
+// stripComponentVersion strips a trailing "@<version>" from a component identity (the last
+// "@" and what follows): spec 4.3 / docs/PBOM.md promise the gitlab_include_component subject
+// as host/path/name, never the pinned version. A value with no "@" is returned unchanged.
+func stripComponentVersion(id string) string {
+	if i := strings.LastIndex(id, "@"); i >= 0 {
+		return id[:i]
+	}
+	return id
 }
 
 // jobSubjects holds the subjects of one job, computed once; the wrapper scripts' lines are
@@ -87,6 +120,7 @@ type jobSubjects struct {
 	images    []string
 	templates []string
 	compons   []string
+	projects  []string
 	reports   []string
 	lines     []string
 	entries   []string
@@ -96,7 +130,7 @@ type jobSubjects struct {
 	readDone  bool
 }
 
-func newJobSubjects(j ir.Job, kinds map[string]string, repoRoot string, wrappers map[string][]string) *jobSubjects {
+func newJobSubjects(j ir.Job, kinds map[string]includeOrigin, repoRoot string, wrappers map[string][]string) *jobSubjects {
 	s := &jobSubjects{job: j.Name, reports: j.ReportTypes, entries: j.Scripts, repoRoot: repoRoot, wrappers: wrappers}
 	if j.Image != nil {
 		s.images = append(s.images, imageKey(j.Image))
@@ -108,11 +142,25 @@ func newJobSubjects(j ir.Job, kinds map[string]string, repoRoot string, wrappers
 		}
 	}
 	if id := j.OriginInclude; id != "" {
-		switch kinds[id] {
-		case includeKindTemplate:
-			s.templates = []string{id}
-		case includeKindComponent:
-			s.compons = []string{id}
+		o, found := kinds[id]
+		if !found {
+			if stripped := stripComponentVersion(id); stripped != id {
+				o, found = kinds[stripped]
+			}
+		}
+		if found {
+			switch o.kind {
+			case includeKindTemplate:
+				s.templates = []string{id}
+			case includeKindComponent:
+				// The subject is host/path/name: strip the version whichever side carried it.
+				s.compons = []string{stripComponentVersion(id)}
+			case includeKindProject:
+				// The project path only: the identity is the file, and the ref is never a subject.
+				if o.project != "" {
+					s.projects = []string{o.project}
+				}
+			}
 		}
 	}
 	return s
@@ -150,6 +198,8 @@ func (s *jobSubjects) of(field string) []string {
 		return s.templates
 	case EvidenceGitlabIncludeComponent:
 		return s.compons
+	case EvidenceGitlabIncludeProject:
+		return s.projects
 	case EvidenceGitlabReportTypes:
 		return s.reports
 	case EvidenceCommands:
@@ -160,24 +210,28 @@ func (s *jobSubjects) of(field string) []string {
 	return nil
 }
 
-// wrapperLines returns the lines of every wrapper script the job's entries run, one level
-// only (a script the wrapper itself calls is never followed), read once.
+// wrapperLines returns the lines of every wrapper script the job's entries run (every
+// qualifying call of every entry, each script once per job), one level only (a script the
+// wrapper itself calls is never followed), each file read at most once per Recognize call.
 func (s *jobSubjects) wrapperLines() []string {
 	if s.readDone || s.repoRoot == "" {
 		return s.wrapped
 	}
 	s.readDone = true
+	added := map[string]bool{}
 	for _, e := range s.entries {
-		rel, ok := wrapperPath(e)
-		if !ok {
-			continue
+		for _, rel := range wrapperPaths(e) {
+			if added[rel] {
+				continue
+			}
+			added[rel] = true
+			lines, seen := s.wrappers[rel]
+			if !seen {
+				lines = readWrapper(s.repoRoot, rel, s.job)
+				s.wrappers[rel] = lines
+			}
+			s.wrapped = append(s.wrapped, lines...)
 		}
-		lines, seen := s.wrappers[rel]
-		if !seen {
-			lines = readWrapper(s.repoRoot, rel, s.job)
-			s.wrappers[rel] = lines
-		}
-		s.wrapped = append(s.wrapped, lines...)
 	}
 	return s.wrapped
 }

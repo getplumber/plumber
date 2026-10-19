@@ -758,3 +758,47 @@ func TestBuildJobs_OriginIncludeNamesTheDefiningInclude(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildIncludesCarriesTheProjectOfAProjectInclude encodes spec 4.3, the
+// gitlab_include_project subject: a project include carries the project path
+// as written in its `include: project:` entry, apart from the file (Source)
+// and the ref; any other include kind leaves it empty.
+func TestBuildIncludesCarriesTheProjectOfAProjectInclude(t *testing.T) {
+	origin := &GitlabPipelineOriginData{
+		Origins: []GitlabPipelineOriginDataFull{
+			{
+				GitlabPipelineOriginDataGeneric: GitlabPipelineOriginDataGeneric{
+					OriginType: originProject,
+					GitlabIncludeOrigin: IncludeOriginWithoutRef{
+						Location: "templates/secrets.yml",
+						Type:     glOriginProject,
+						Project:  "security/ci-templates",
+					},
+				},
+				GitlabPipelineOriginDataProjectSpecific: GitlabPipelineOriginDataProjectSpecific{
+					Version: "v2",
+				},
+			},
+			{
+				GitlabPipelineOriginDataGeneric: GitlabPipelineOriginDataGeneric{
+					OriginType: originTemplate,
+					GitlabIncludeOrigin: IncludeOriginWithoutRef{
+						Location: "Jobs/Secret-Detection.gitlab-ci.yml",
+						Type:     glOriginTemplate,
+					},
+				},
+			},
+		},
+	}
+
+	got := buildIncludes(origin, ".gitlab-ci.yml")
+	if len(got) != 2 {
+		t.Fatalf("expected two includes, got %d", len(got))
+	}
+	if got[0].Project != "security/ci-templates" || got[0].Source != "templates/secrets.yml" || got[0].Ref != "v2" {
+		t.Errorf("project include = Project %q Source %q Ref %q, want the project, the file and the ref apart", got[0].Project, got[0].Source, got[0].Ref)
+	}
+	if got[1].Project != "" {
+		t.Errorf("template include Project = %q, want empty", got[1].Project)
+	}
+}

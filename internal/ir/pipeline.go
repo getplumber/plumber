@@ -777,6 +777,10 @@ type Include struct {
 	Current string `json:"current,omitempty"`
 	Path    string `json:"path,omitempty"`
 	AltPath string `json:"altPath,omitempty"`
+	// Project is the project path of a project include, as written in its
+	// `include: project:` entry (`group/project`), without the ref and
+	// without the file (Source carries the file). Empty for the other kinds.
+	Project string `json:"project,omitempty"`
 	// TemplatePath is the template's own identity, read from its pinned
 	// ref rather than from where its file happens to live. A template
 	// repository can tag a file under a name that has nothing to do with

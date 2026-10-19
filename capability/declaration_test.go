@@ -9,8 +9,9 @@ import (
 	"github.com/getplumber/plumber/capability/capdecl"
 )
 
-// Spec 4.2: the schema decodes from YAML and from JSON with the same keys, strictly.
-func TestDeclaration_DecodeYAMLAndJSON_Strict(t *testing.T) {
+// Spec 4.2: the schema decodes from YAML and from JSON with the same keys, the YAML (the
+// file a user types) strictly, the served JSON tolerantly (spec 4.6).
+func TestDeclaration_DecodeYAMLStrict_JSONTolerant(t *testing.T) {
 	y := []byte("capabilities:\n  - name: secret_detection\n    recognizers:\n      - tool: gitleaks\n        images: [\"*gitleaks*\"]\n        commands: [\"*gitleaks*\"]\n      - gitlab_report_types: [secret_detection]\n        gitlab_include_template: [\"Jobs/Secret-Detection*\"]\n        gitlab_include_component: [\"*/secret-detection/*\"]\n")
 	decls, err := DecodeYAML(y)
 	if err != nil || len(decls) != 1 || decls[0].Name != "secret_detection" || len(decls[0].Recognizers) != 2 || decls[0].Recognizers[1].GitlabReportTypes[0] != "secret_detection" {
@@ -23,8 +24,14 @@ func TestDeclaration_DecodeYAMLAndJSON_Strict(t *testing.T) {
 	if _, err := DecodeYAML([]byte("capabilities:\n  - name: a\n    recognisers: []\n")); err == nil || !strings.Contains(err.Error(), "recognisers") {
 		t.Fatalf("an unknown key must be refused by name, got %v", err)
 	}
-	if _, err := DecodeJSON([]byte(`[{"name":"a","recognizers":[{"image":["x"]}]}]`)); err == nil || !strings.Contains(err.Error(), "image") {
-		t.Fatalf("an unknown recognizer key must be refused by name, got %v", err)
+	// Spec 4.6 (ruling): the served JSON is decoded tolerantly, an unknown key ignored and
+	// the known fields kept, so a newer platform's field never drops the list.
+	tolerant, err := DecodeJSON([]byte(`[{"name":"a","future":1,"recognizers":[{"github_actions":["x"],"commands":["y"]}]}]`))
+	if err != nil || len(tolerant) != 1 || tolerant[0].Name != "a" || !reflect.DeepEqual(tolerant[0].Recognizers[0].Commands, []string{"y"}) {
+		t.Fatalf("an unknown JSON key must be ignored and the known fields kept, got %v %+v", err, tolerant)
+	}
+	if _, err := DecodeJSON([]byte(`{"name":"a"}`)); err == nil {
+		t.Fatal("a JSON value that is not an array must be refused")
 	}
 }
 
@@ -245,5 +252,38 @@ func TestCompile_Globs(t *testing.T) {
 	}
 	if !strings.Contains(warnings[0], "secret_detection") || !strings.Contains(warnings[0], "images") || !strings.Contains(warnings[0], "[abc") {
 		t.Fatalf("warn message %q must name the capability, the field and the pattern", warnings[0])
+	}
+}
+
+// Spec 4.2, the gitlab_include_project field: the key decodes from the YAML (strictly) and
+// from the served JSON, a recognizer carrying only this list is valid and survives the
+// pruning of the served list, and its patterns count against the per-field bound, the
+// error naming the field.
+func TestDeclaration_Spec42_GitlabIncludeProject(t *testing.T) {
+	y := []byte("capabilities:\n  - name: secret_detection\n    recognizers:\n      - tool: corp\n        gitlab_include_project: [\"security/ci-templates\"]\n")
+	decls, err := DecodeYAML(y)
+	if err != nil || len(decls) != 1 || !reflect.DeepEqual(decls[0].Recognizers[0].GitlabIncludeProject, []string{"security/ci-templates"}) {
+		t.Fatalf("yaml: %v %+v", err, decls)
+	}
+	j := []byte(`[{"name":"secret_detection","recognizers":[{"gitlab_include_project":["*/ci-templates"]}]}]`)
+	served, err := DecodeJSON(j)
+	if err != nil || !reflect.DeepEqual(served[0].Recognizers[0].GitlabIncludeProject, []string{"*/ci-templates"}) {
+		t.Fatalf("json: %v %+v", err, served)
+	}
+	if err := Validate(decls); err != nil {
+		t.Fatalf("a recognizer with only gitlab_include_project must be valid, got %v", err)
+	}
+	pruned := PruneEmptyRecognizers(served, func(string, int) { t.Fatal("a recognizer with only gitlab_include_project was pruned") })
+	if len(pruned[0].Recognizers) != 1 {
+		t.Fatalf("pruned = %+v, want the recognizer kept", pruned)
+	}
+
+	many := make([]string, 65)
+	for i := range many {
+		many[i] = "*x*"
+	}
+	err = Validate([]Declaration{{Name: "cap", Recognizers: []capdecl.Recognizer{{GitlabIncludeProject: many}}}})
+	if err == nil || !strings.Contains(err.Error(), `field "gitlab_include_project": at most 64 patterns per field`) {
+		t.Fatalf("Validate() = %v, want the 64-pattern bound naming gitlab_include_project", err)
 	}
 }
