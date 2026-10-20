@@ -97,9 +97,10 @@ func buildActionPinningBlock(c legacyCommon, result *control.AnalysisResult, fin
 	return map[string]any{
 		"issues": projectFindings(_sortedFindings(findings), "job"),
 		"metrics": map[string]any{
-			"actionRefsTotal":    s.ActionRefsTotal,
-			"actionRefsUnpinned": s.ActionRefsUnpinned,
-			"actionRefsExempt":   s.ActionRefsExempt,
+			"actionRefsTotal":            s.ActionRefsTotal,
+			"actionRefsUnpinned":         s.ActionRefsUnpinned,
+			"actionRefsExempt":           s.ActionRefsExempt,
+			"actionRefsImmutableRelease": s.ActionRefsImmutableRelease,
 		},
 		"version":   "0.1.0",
 		"ciValid":   c.CiValid,

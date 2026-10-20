@@ -5236,6 +5236,92 @@ func TestIssue104_ActionUnpinned(t *testing.T) {
 	}
 }
 
+// TestIssue701_ActionUnpinnedImmutableRelease locks the immutable-release
+// exemption (plumber issue #421): a tag backed by a GitHub immutable
+// release is accepted as pinned, so ISSUE-701 stays silent on it, the
+// same way it already stays silent on a full commit SHA. Everything else
+// keeps firing: a false or absent flag, a floating major with no
+// metadata at all, and a trusted-owner reference is exempt whichever way
+// the flag reads (that exemption fires first and does not depend on it).
+func TestIssue701_ActionUnpinnedImmutableRelease(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	cfg := map[string]any{"actionsMustBePinnedByCommitSha": map[string]any{"trustedOwners": []any{"actions", "github"}}}
+
+	hits701 := func(t *testing.T, actions []ir.Action) int {
+		t.Helper()
+		pipeline := &ir.NormalizedPipeline{
+			Provider: ir.ProviderGitHub,
+			Jobs:     []ir.Job{{Name: "build", Uses: actions}},
+		}
+		findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
+		if err != nil {
+			t.Fatalf("evaluate: %v", err)
+		}
+		hits := 0
+		for _, f := range findings {
+			if f.Code == "ISSUE-701" {
+				hits++
+			}
+		}
+		return hits
+	}
+
+	t.Run("immutable release tag stays silent", func(t *testing.T) {
+		got := hits701(t, []ir.Action{
+			{Uses: "docker/build-push-action@v7.4.0", Metadata: &ir.ActionMetadata{RefKind: "tag", RefExists: true, ImmutableRelease: true}},
+		})
+		if got != 0 {
+			t.Fatalf("expected no ISSUE-701 for an immutable-release tag, got %d", got)
+		}
+	})
+
+	t.Run("flag false still fires", func(t *testing.T) {
+		got := hits701(t, []ir.Action{
+			{Uses: "docker/build-push-action@v7.4.0", Metadata: &ir.ActionMetadata{RefKind: "tag", RefExists: true, ImmutableRelease: false}},
+		})
+		if got != 1 {
+			t.Fatalf("expected 1 ISSUE-701 for immutableRelease:false, got %d", got)
+		}
+	})
+
+	t.Run("flag absent (no metadata at all) still fires", func(t *testing.T) {
+		got := hits701(t, []ir.Action{
+			{Uses: "docker/build-push-action@v7"},
+		})
+		if got != 1 {
+			t.Fatalf("expected 1 ISSUE-701 for a floating major with no metadata, got %d", got)
+		}
+	})
+
+	t.Run("trusted owner stays exempt whichever way the flag reads", func(t *testing.T) {
+		got := hits701(t, []ir.Action{
+			{Uses: "actions/checkout@v5", Metadata: &ir.ActionMetadata{RefKind: "tag", RefExists: true, ImmutableRelease: false}},
+			{Uses: "github/codeql-action@v3", Metadata: &ir.ActionMetadata{RefKind: "tag", RefExists: true, ImmutableRelease: true}},
+		})
+		if got != 0 {
+			t.Fatalf("expected trusted-owner refs exempt regardless of the flag, got %d", got)
+		}
+	})
+
+	// Second guard for the fix on plumber issue #421 (PR #566 thread): the
+	// collector now never sets both fields together, but the rego itself
+	// must not trust immutableRelease on a redirected reference either.
+	// The guarantee belongs to the repository's current name, not the one
+	// this reference still pins, and that old namespace is free for
+	// anyone to re-register.
+	t.Run("redirected owner is never exempted by the flag", func(t *testing.T) {
+		got := hits701(t, []ir.Action{
+			{Uses: "ask-bonk/ask-bonk@v7.4.0", Metadata: &ir.ActionMetadata{RefKind: "tag", RefExists: true, ImmutableRelease: true, RedirectedOwner: "neworg"}},
+		})
+		if got != 1 {
+			t.Fatalf("expected ISSUE-701 for an immutable-release flag on a redirected reference, got %d", got)
+		}
+	})
+}
+
 // TestIssue210_BotConditions flags workflows that gate behaviour on
 // spoofable identity fields (github.actor, sender.login, etc.).
 // Branch/ref conditions stay silent.
@@ -6998,6 +7084,57 @@ func TestIssue713_ActionAuthorizedSources(t *testing.T) {
 		want := []string{"myorg/internal-action@v1"}
 		if !stringSlicesEqual(got, want) {
 			t.Fatalf("expected flagged with no projectPath, got %v", got)
+		}
+	})
+
+	// An immutable-release tag prices the same way a full commit SHA
+	// does (plumber issue #421): occurrenceSeverity drops to medium and
+	// the finding carries immutableRelease alongside pinnedBySha, for
+	// both the step-level and the reusable-workflow form. The latter
+	// carries no API metadata at all, so it reads false.
+	t.Run("immutable release prices like a sha pin", func(t *testing.T) {
+		job := ir.Job{
+			Name: "build",
+			Uses: []ir.Action{
+				{Uses: "random/evil-action@v7.4.0", Line: 10, Metadata: &ir.ActionMetadata{ImmutableRelease: true}},
+			},
+			ReusableWorkflowUses: "other/repo/.github/workflows/ci.yml@v1",
+		}
+		pipeline := &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{job}}
+		findings, err := evaluateStrict(engine, context.Background(), pipeline, allowlistCfg)
+		if err != nil {
+			t.Fatalf("evaluate: %v", err)
+		}
+		var step, reusable *opaengine.Finding
+		for i := range findings {
+			f := findings[i]
+			if f.Code != "ISSUE-713" {
+				continue
+			}
+			switch f.Data["uses"] {
+			case "random/evil-action@v7.4.0":
+				step = &f
+			case "other/repo/.github/workflows/ci.yml@v1":
+				reusable = &f
+			}
+		}
+		if step == nil || reusable == nil {
+			t.Fatalf("expected both the step and the reusable-workflow findings, got %+v", findings)
+		}
+		if pinned, _ := step.Data["pinnedBySha"].(bool); pinned {
+			t.Error("step: pinnedBySha must stay false for a tag ref, immutable release is a separate signal")
+		}
+		if immut, _ := step.Data["immutableRelease"].(bool); !immut {
+			t.Errorf("step: immutableRelease = %v, want true", step.Data["immutableRelease"])
+		}
+		if sev, _ := step.Data["occurrenceSeverity"].(string); sev != "medium" {
+			t.Errorf("step: occurrenceSeverity = %q, want medium", sev)
+		}
+		if immut, _ := reusable.Data["immutableRelease"].(bool); immut {
+			t.Errorf("reusable: immutableRelease = %v, want false (no API metadata on a reusable-workflow call)", reusable.Data["immutableRelease"])
+		}
+		if sev, _ := reusable.Data["occurrenceSeverity"].(string); sev != "high" {
+			t.Errorf("reusable: occurrenceSeverity = %q, want high", sev)
 		}
 	})
 }

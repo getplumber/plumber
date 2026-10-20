@@ -16,6 +16,15 @@
 # regardless of config — they live in the same repository as the
 # caller, so there is no additional external trust boundary to
 # worry about.
+#
+# Immutable releases: a tag backed by a GitHub release published while
+# the repository's immutable-releases setting was on can never be moved
+# or deleted, so it is accepted as pinned the same way a commit SHA is:
+# no finding fires. This covers only that exact released tag: a floating
+# major with no release behind it, a release predating the setting, and
+# a branch all keep firing. A reusable-workflow reference is judged by
+# its ref alone; it carries no API metadata, so this exemption never
+# applies to it.
 package action_unpinned
 
 import rego.v1
@@ -32,6 +41,7 @@ deny contains finding if {
 	use := job.uses[j]
 	ref := _ref_of(use.uses)
 	not _is_sha(ref)
+	not _immutable_release(use)
 	not _is_local(use.uses)
 	not _is_own_repo(use.uses)
 	not _is_trusted_owner(use.uses)
@@ -69,6 +79,25 @@ _redirected_owner_fields(use) := {"redirectedOwner": owner} if {
 	meta := object.get(use, "metadata", {})
 	owner := object.get(meta, "redirectedOwner", "")
 	owner != ""
+}
+
+# _immutable_release: the pinned tag is backed by a GitHub immutable
+# release (plumber issue #421). GitHub guarantees the tag can never be
+# moved or deleted, so the reference is accepted as pinned exactly like
+# a commit SHA, and no finding fires at all (stronger than the archived-
+# tag case above, which still reports the reference with archivedTag
+# set). Reusable-workflow calls carry no metadata and so never match
+# this: a reusable workflow reference is judged by its ref alone.
+#
+# A reference whose repository was renamed or transferred (redirectedOwner
+# set) is never exempt: the guarantee belongs to the repository's current
+# name, not the one this reference still pins, and that old namespace is
+# free for anyone to re-register. The collector already never sets both
+# fields together (releaseIsImmutable is not even probed for a redirected
+# reference), so this is a second guard, not the fix.
+_immutable_release(use) if {
+	use.metadata.immutableRelease == true
+	object.get(use.metadata, "redirectedOwner", "") == ""
 }
 
 # Job-level reusable-workflow calls (`jobs.<id>.uses:

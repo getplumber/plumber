@@ -20,7 +20,7 @@ func BestFixSummary(score *PlumberScoreResult) string {
 	if fix == nil {
 		return "nothing to fix"
 	}
-	named := findingFix(fix.Code, fix.Subject)
+	named := findingFix(fix.Code, fix.Subject, fix.immutableRelease)
 	if fix.Subject != "" {
 		named += " (" + ShortenCommitSHA(fix.Subject) + ")"
 	}
@@ -75,6 +75,11 @@ type BestFix struct {
 	// tie-break between two paths recovering the same points; -1 for a
 	// finding on no path. Never serialized.
 	rank int
+	// immutableRelease is the candidate finding's Data["immutableRelease"]
+	// (plumber issue #421), false for a path. BestFixSummary reads it so
+	// findingFix never asks an immutable-release tag to be pinned again.
+	// Never serialized.
+	immutableRelease bool
 }
 
 // MarshalJSON writes pointsGained and newPoints rounded to one decimal,
@@ -180,13 +185,13 @@ func ComputeBestFix(in ScoreInputV4, sit *Situation, current PlumberScoreResult)
 	for i, p := range PathsWorstFirst(in.Paths) {
 		rank[p.ID] = i
 	}
-	consider := func(s PlumberScoreResult, code ErrorCode, sev IssueSeverity, hash, job, subject, pathID, named string) {
+	consider := func(s PlumberScoreResult, code ErrorCode, sev IssueSeverity, hash, job, subject, pathID, named string, immutableRelease bool) {
 		r, ok := rank[pathID]
 		if pathID == "" || !ok {
 			r = -1
 		}
 		if recovered := uncappedLoss(&current) - uncappedLoss(&s); bestFixWins(recovered, r, string(code), hash, held) {
-			held = &BestFix{AnchorHash: hash, Code: code, Job: job, Subject: subject, PathID: pathID, PointsGained: recovered, rank: r, severity: sev}
+			held = &BestFix{AnchorHash: hash, Code: code, Job: job, Subject: subject, PathID: pathID, PointsGained: recovered, rank: r, severity: sev, immutableRelease: immutableRelease}
 			heldTrial, heldTier, heldNamed = s, PathTier(sev), named
 			for _, p := range in.Paths {
 				if pathID != "" && p.ID == pathID {
@@ -199,7 +204,7 @@ func ComputeBestFix(in ScoreInputV4, sit *Situation, current PlumberScoreResult)
 			return
 		}
 		best = &BestFix{
-			AnchorHash: hash, Code: code, Job: job, Subject: subject, PathID: pathID,
+			AnchorHash: hash, Code: code, Job: job, Subject: subject, PathID: pathID, immutableRelease: immutableRelease,
 			PointsGained: gain, NewPoints: s.FinalPoints, NewLetter: s.Score, rank: r, severity: sev,
 			Sentence: bestFixSentence(named, "", gain, current.Score, s.Score),
 		}
@@ -215,7 +220,10 @@ func ComputeBestFix(in ScoreInputV4, sit *Situation, current PlumberScoreResult)
 		}
 		trial := dismissedCopy(in.Findings, hashes, oks, drop)
 		s := scoreWithHashes(ScoreInputV4{Findings: trial, Paths: AssemblePaths(trial, sit, in.ProjectPath), DefaultBranch: in.DefaultBranch}, hashes, oks)
-		consider(s, p.AnchorCode, IssueSeverity(p.Tier), p.AnchorHash, p.Jobs[0], p.Entry.Subject, p.ID, pathFixNamed(p))
+		// false: a path's entry fact carries no Data an immutableRelease flag
+		// could live on, and ISSUE-713 (the only code it applies to) never
+		// anchors a path on its own (control/paths.go subjectFindingCodes).
+		consider(s, p.AnchorCode, IssueSeverity(p.Tier), p.AnchorHash, p.Jobs[0], p.Entry.Subject, p.ID, pathFixNamed(p), false)
 	}
 
 	// A finding that is neither a gate nor a privilege finding leaves the
@@ -267,7 +275,8 @@ func ComputeBestFix(in ScoreInputV4, sit *Situation, current PlumberScoreResult)
 			paths = AssemblePaths(trial, sit, in.ProjectPath)
 		}
 		s := scoreWithHashes(ScoreInputV4{Findings: trial, Paths: paths, DefaultBranch: in.DefaultBranch}, hashes, oks)
-		consider(s, ErrorCode(f.Code), IndividualSeverity(f, in.DefaultBranch), h, f.Job, bestFixSubject(f), "", findingNamed(ErrorCode(f.Code), bestFixSubject(f)))
+		immutableRelease, _ := f.Data["immutableRelease"].(bool)
+		consider(s, ErrorCode(f.Code), IndividualSeverity(f, in.DefaultBranch), h, f.Job, bestFixSubject(f), "", findingNamed(ErrorCode(f.Code), bestFixSubject(f)), immutableRelease)
 	}
 	if best != nil {
 		best.Reason = bestFixReason(&current, &bestTrial, best)

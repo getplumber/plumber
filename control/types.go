@@ -257,6 +257,12 @@ type GitHubAnalysisStats struct {
 	// stays aligned with the impostor-commit rego, which only fires on a
 	// 40-char SHA.
 	ActionRefsAbsentUpstream int
+	// ActionRefsImmutableRelease counts step-level refs whose tag is
+	// backed by a GitHub immutable release (plumber issue #421): these
+	// are counted as pinned, not unpinned, the same way a commit SHA is.
+	// The reusable-workflow loop carries no metadata and never adds to
+	// this counter.
+	ActionRefsImmutableRelease int
 
 	// Container images (ISSUE-102 / ISSUE-103).
 	ImagesTotal          int

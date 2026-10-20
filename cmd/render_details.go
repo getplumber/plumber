@@ -886,7 +886,11 @@ func buildGitHubControlStats(controlName string, stats *control.GitHubAnalysisSt
 			{Label: "Using Forbidden Tags", Value: fmt.Sprintf("%d", stats.ImagesUsingForbidden)},
 		}, stats.ImagesExempted)
 	case "actionsMustBePinnedByCommitSha":
-		pinned := stats.ActionRefsTotal - stats.ActionRefsUnpinned
+		// Pinned By SHA counts full commit SHA pins only: an immutable-
+		// release tag is also accepted as pinned (plumber issue #421), but
+		// it gets its own line below rather than being absorbed into this
+		// one, which would otherwise overcount how many SHAs actually exist.
+		pinned := stats.ActionRefsTotal - stats.ActionRefsUnpinned - stats.ActionRefsImmutableRelease
 		if pinned < 0 {
 			pinned = 0
 		}
@@ -894,6 +898,7 @@ func buildGitHubControlStats(controlName string, stats *control.GitHubAnalysisSt
 			{Label: "Total Action Refs", Value: fmt.Sprintf("%d", stats.ActionRefsTotal+stats.ActionRefsExempt)},
 			{Label: "Pinned By SHA", Value: fmt.Sprintf("%d", pinned)},
 			{Label: "Not Pinned By SHA", Value: fmt.Sprintf("%d", stats.ActionRefsUnpinned)},
+			{Label: "Immutable release tags", Value: fmt.Sprintf("%d", stats.ActionRefsImmutableRelease)},
 			{Label: "Trusted-Owner Exempt", Value: fmt.Sprintf("%d", stats.ActionRefsExempt)},
 		}
 	case "githubActionMustComeFromAuthorizedSources":

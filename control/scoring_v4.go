@@ -194,7 +194,12 @@ func IndividualSeverity(f opaengine.Finding, defaultBranch string) IssueSeverity
 			return SeverityHigh
 		}
 	case CodeActionUnauthorizedSource, CodeComponentUnauthorizedSource:
-		if fullCommitSHARef.MatchString(entrySubject(f)) {
+		// immutableRelease (plumber issue #421) is set only on a GitHub
+		// action finding; a type assertion failure (GitLab component, or
+		// absent) reads false, so refIsPinned falls back to the SHA check
+		// exactly as before for CodeComponentUnauthorizedSource.
+		immutableRelease, _ := f.Data["immutableRelease"].(bool)
+		if refIsPinned(entrySubject(f), immutableRelease) {
 			return SeverityMedium
 		}
 		return SeverityHigh

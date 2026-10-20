@@ -98,6 +98,27 @@ func TestProjectFindingOmitsControlName(t *testing.T) {
 	}
 }
 
+// TestBuildActionPinningBlock_ImmutableReleaseMetric pins the legacy JSON
+// metric the immutable-release counter feeds (plumber issue #421):
+// actionPinningResult.metrics.actionRefsImmutableRelease reads straight
+// off the pre-aggregated stat, alongside the existing three metrics.
+func TestBuildActionPinningBlock_ImmutableReleaseMetric(t *testing.T) {
+	result := &control.AnalysisResult{GitHubStats: &control.GitHubAnalysisStats{
+		ActionRefsTotal:            4,
+		ActionRefsUnpinned:         1,
+		ActionRefsExempt:           1,
+		ActionRefsImmutableRelease: 1,
+	}}
+	block := buildActionPinningBlock(legacyCommon{}, result, nil)
+	metrics, ok := block["metrics"].(map[string]any)
+	if !ok {
+		t.Fatalf("metrics is not a map[string]any: %T", block["metrics"])
+	}
+	if metrics["actionRefsImmutableRelease"] != 1 {
+		t.Errorf("actionRefsImmutableRelease = %v, want 1", metrics["actionRefsImmutableRelease"])
+	}
+}
+
 func TestWithControlMeta(t *testing.T) {
 	entry := control.ControlEntry{ControlName: "actionsMustBePinnedByCommitSha"}
 	healthy := &control.AnalysisResult{CiValid: true}

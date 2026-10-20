@@ -54,7 +54,8 @@ deny contains finding if {
 		# full commit SHA (the owner can no longer change what runs), high
 		# on a ref the owner can move.
 		"pinnedBySha":        _pinned_by_sha(action.uses),
-		"occurrenceSeverity": _occurrence_severity(action.uses),
+		"immutableRelease":   _immutable_release(action),
+		"occurrenceSeverity": _occurrence_severity(action.uses, _immutable_release(action)),
 	}, provenance.fields(action))
 }
 
@@ -76,7 +77,8 @@ deny contains finding if {
 		"job":      job.name,
 		"uses":     use,
 		"pinnedBySha":        _pinned_by_sha(use),
-		"occurrenceSeverity": _occurrence_severity(use),
+		"immutableRelease":   _immutable_release({"uses": use}),
+		"occurrenceSeverity": _occurrence_severity(use, _immutable_release({"uses": use})),
 	}, provenance.fields(job))
 }
 
@@ -88,7 +90,14 @@ _pinned_by_sha(uses) if {
 	regex.match(`^[0-9a-fA-F]{40}$`, parts[count(parts) - 1])
 } else := false
 
-_occurrence_severity(uses) := "medium" if _pinned_by_sha(uses) else := "high"
+_occurrence_severity(uses, immutable) := "medium" if _pinned_by_sha(uses) else := "medium" if immutable else := "high"
+
+# _immutable_release: the reference's tag is backed by a GitHub immutable
+# release (plumber issue #421). Reusable-workflow calls carry no API
+# metadata at all, so this reads false for them, same as pinnedBySha.
+default _immutable_release(_) := false
+
+_immutable_release(action) := true if object.get(action, "metadata", {}).immutableRelease == true
 
 # An action is authorized when ANY trust condition holds.
 _authorized(action) if _is_official(action.uses)

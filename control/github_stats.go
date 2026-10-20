@@ -171,7 +171,14 @@ func AggregateGitHubStats(pipeline *ir.NormalizedPipeline, pc *configuration.Plu
 				continue
 			}
 			stats.ActionRefsTotal++
-			if !isShaPinned(ref) {
+			// ActionRefsImmutableRelease counts only in-scope, still-mutable
+			// refs this exemption did not already skip above: an exempt
+			// trusted-owner ref is never judged by ISSUE-701, and a ref
+			// already SHA-pinned does not need the immutable-release signal
+			// to read as pinned (plumber issue #421 fix round 1, M1).
+			if !isShaPinned(ref) && refIsImmutableRelease(use) {
+				stats.ActionRefsImmutableRelease++
+			} else if !isShaPinned(ref) {
 				stats.ActionRefsUnpinned++
 			}
 		}
@@ -346,6 +353,13 @@ func isTrustedOwner(ref string, trustedOwners []string) bool {
 
 func isShaPinned(ref string) bool {
 	return shaRefRegex.MatchString(ref)
+}
+
+// refIsImmutableRelease reports whether use's tag is backed by a GitHub
+// immutable release (plumber issue #421): accepted as pinned the same
+// way a commit SHA is. Safe on a nil Metadata.
+func refIsImmutableRelease(use *ir.Action) bool {
+	return use.Metadata != nil && use.Metadata.ImmutableRelease
 }
 
 // countCacheWriteExemption lists a job ISSUE-705 would flag (cache write

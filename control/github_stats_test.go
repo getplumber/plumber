@@ -107,6 +107,46 @@ func TestAggregate_UppercaseShaCountsAsPinned(t *testing.T) {
 	}
 }
 
+// TestAggregate_ImmutableReleaseCountsAsPinned locks the Go-side mirror
+// of the ISSUE-701 immutable-release exemption (plumber issue #421): a
+// tag backed by a GitHub immutable release is counted as pinned, same
+// as a commit SHA, and the new ActionRefsImmutableRelease counter
+// reports exactly how many. The reusable-workflow loop carries no
+// metadata at all and stays untouched by this change.
+func TestAggregate_ImmutableReleaseCountsAsPinned(t *testing.T) {
+	pipeline := &ir.NormalizedPipeline{
+		Jobs: []ir.Job{
+			{
+				Name: "build",
+				Uses: []ir.Action{
+					{Uses: "docker/build-push-action@v7.4.0", Metadata: &ir.ActionMetadata{ImmutableRelease: true}},
+					{Uses: "docker/build-push-action@v7", Metadata: &ir.ActionMetadata{ImmutableRelease: false}},
+					{Uses: "lycheeverse/lychee-action@v2.9.0"}, // no metadata at all, still mutable
+					// A trusted-owner ref with the flag set: exempt refs are
+					// never judged, so this must not add to the counter
+					// (plumber issue #421 fix round 1, M1).
+					{Uses: "actions/checkout@v5", Metadata: &ir.ActionMetadata{ImmutableRelease: true}},
+				},
+			},
+		},
+	}
+	pc := &configuration.PlumberConfig{GitHub: &configuration.ProviderConfig{}}
+	stats := AggregateGitHubStats(pipeline, pc)
+
+	if stats.ActionRefsImmutableRelease != 1 {
+		t.Fatalf("ActionRefsImmutableRelease = %d, want 1 (the exempt trusted-owner ref must not count)", stats.ActionRefsImmutableRelease)
+	}
+	if stats.ActionRefsUnpinned != 2 {
+		t.Fatalf("ActionRefsUnpinned = %d, want 2 (the immutable-release tag must not count as unpinned, the other two must)", stats.ActionRefsUnpinned)
+	}
+	if stats.ActionRefsTotal != 3 {
+		t.Fatalf("ActionRefsTotal = %d, want 3", stats.ActionRefsTotal)
+	}
+	if stats.ActionRefsExempt != 1 {
+		t.Fatalf("ActionRefsExempt = %d, want 1 (the trusted-owner ref)", stats.ActionRefsExempt)
+	}
+}
+
 // TestAggregate_ActionRefsAbsentUpstreamCounter locks the ISSUE-707
 // "Impostor Refs Found" metric to what the rego actually flags. The
 // counter is deliberately guarded by isShaPinned — unlike its sibling

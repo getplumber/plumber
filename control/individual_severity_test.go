@@ -30,6 +30,11 @@ func TestIndividualSeverityFollowsTheBranchAndThePin(t *testing.T) {
 		{"pinned action", opaengine.Finding{Code: string(CodeActionUnauthorizedSource), Data: map[string]any{"uses": "o/a@" + pinnedSHA}}, "main", SeverityMedium},
 		{"pinned action subject", opaengine.Finding{Code: string(CodeActionUnauthorizedSource), Subject: "o/a@" + pinnedSHA}, "main", SeverityMedium},
 		{"action on a tag", opaengine.Finding{Code: string(CodeActionUnauthorizedSource), Data: map[string]any{"uses": "o/a@v1"}}, "main", SeverityHigh},
+		// plumber issue #421: no occurrenceSeverity on the finding (as a
+		// hand-built one would lack), immutableRelease alone must still
+		// price the fallback at Medium, same as a full commit SHA.
+		{"immutable release action, no occurrenceSeverity", opaengine.Finding{Code: string(CodeActionUnauthorizedSource), Data: map[string]any{"uses": "o/random-evil@v7.4.0", "immutableRelease": true}}, "main", SeverityMedium},
+		{"mutable action, immutableRelease false", opaengine.Finding{Code: string(CodeActionUnauthorizedSource), Data: map[string]any{"uses": "o/random-evil@v7.4.0", "immutableRelease": false}}, "main", SeverityHigh},
 		{"pinned component", opaengine.Finding{Code: string(CodeComponentUnauthorizedSource), Subject: "gitlab.example.com/g/c/x@" + pinnedSHA, Data: map[string]any{"componentPath": "gitlab.example.com/g/c/x"}}, "main", SeverityMedium},
 		{"pinned component path", opaengine.Finding{Code: string(CodeComponentUnauthorizedSource), Data: map[string]any{"componentPath": "gitlab.example.com/g/c/x@" + pinnedSHA}}, "main", SeverityMedium},
 		{"component on a version", opaengine.Finding{Code: string(CodeComponentUnauthorizedSource), Subject: "gitlab.example.com/g/c/x@1.0.0", Data: map[string]any{"componentPath": "gitlab.example.com/g/c/x"}}, "main", SeverityHigh},

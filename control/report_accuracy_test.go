@@ -198,28 +198,63 @@ func TestBestFixPricesEveryFindingOnItsSubject(t *testing.T) {
 	}
 }
 
+// TestBestFixSummary_ImmutableReleaseReadsAsPinned is the end-to-end lock
+// for fix round 1's Minor nit 2 (plumber issue #421): an ISSUE-713
+// finding whose tag is backed by a GitHub immutable release must price
+// and phrase exactly like a full commit SHA pin, through ComputeBestFix
+// and BestFixSummary together, not only through the lower-level
+// findingFix and IndividualSeverity units already locked elsewhere.
+func TestBestFixSummary_ImmutableReleaseReadsAsPinned(t *testing.T) {
+	findings := []opaengine.Finding{
+		{Code: string(CodeActionUnauthorizedSource), Job: "ci/build", File: ".github/workflows/ci.yml", Line: 10,
+			Data: map[string]any{"uses": "random/evil-action@v7.4.0", "immutableRelease": true}},
+	}
+	sit := &Situation{Exposure: ir.VisibilityPublic, Provider: "github", Jobs: map[string]JobSituation{}}
+	in := ScoreInputV4{Findings: findings}
+	cur := ComputePlumberScoreV4(in)
+	cur.BestFix = ComputeBestFix(in, sit, cur)
+	if cur.BestFix == nil {
+		t.Fatal("BestFix is nil")
+	}
+	got := BestFixSummary(&cur)
+	if !strings.Contains(got, "use an action from a trusted source") {
+		t.Fatalf("summary %q, want the pinned fix sentence (no SHA pin asked of an immutable-release tag)", got)
+	}
+	if strings.Contains(got, "pin the version on the commit SHA") {
+		t.Fatalf("summary %q asks for a pin ISSUE-701 no longer requires on an immutable-release tag", got)
+	}
+}
+
 // Every code reads as something to do in a best fix, never as its title,
 // and a fix never asks a pinned reference to be pinned.
 func TestEveryCodeHasAnActionSentence(t *testing.T) {
 	for c, info := range errorCodeRegistry {
-		for _, s := range []string{findingFix(c, ""), pathFix(c, "")} {
+		for _, s := range []string{findingFix(c, "", false), pathFix(c, "", false)} {
 			if s == info.Title || s == "" || s == "see the issue reference" {
 				t.Errorf("%s: fix %q is no action", c, s)
 			}
 		}
 	}
 	pinned := "dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582"
-	if got := pathFix(CodeActionMutableRemoteExec, pinned); got != "pin what the action downloads, or vendor it" {
+	if got := pathFix(CodeActionMutableRemoteExec, pinned, false); got != "pin what the action downloads, or vendor it" {
 		t.Errorf("714 pinned: %q", got)
 	}
-	if got := findingFix(CodeActionArchivedRepo, pinned); got != "replace the archived action" {
+	if got := findingFix(CodeActionArchivedRepo, pinned, false); got != "replace the archived action" {
 		t.Errorf("702: %q", got)
 	}
-	if got := findingFix(CodeActionUnauthorizedSource, pinned); got != "use an action from a trusted source" {
+	if got := findingFix(CodeActionUnauthorizedSource, pinned, false); got != "use an action from a trusted source" {
 		t.Errorf("713 pinned: %q", got)
 	}
-	if got := findingFix(CodeActionUnauthorizedSource, "o/a@v1"); got != "use an action from a trusted source and pin the version on the commit SHA" {
+	if got := findingFix(CodeActionUnauthorizedSource, "o/a@v1", false); got != "use an action from a trusted source and pin the version on the commit SHA" {
 		t.Errorf("713 unpinned: %q", got)
+	}
+	// plumber issue #421: a tag backed by a GitHub immutable release reads
+	// as pinned even though the ref itself is not a commit SHA.
+	if got := findingFix(CodeActionUnauthorizedSource, "o/a@v7.4.0", true); got != "use an action from a trusted source" {
+		t.Errorf("713 immutable release: %q", got)
+	}
+	if got := findingFix(CodeActionUnauthorizedSource, "o/a@v7.4.0", false); got != "use an action from a trusted source and pin the version on the commit SHA" {
+		t.Errorf("713 mutable, no immutable release: %q", got)
 	}
 }
 

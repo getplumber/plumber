@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -188,5 +189,30 @@ func TestRenderFindingGroups_passedControlCaveatFromRealStatsBuilder(t *testing.
 	// Non-caveat stats from the same real builder must still be suppressed.
 	if strings.Contains(out, "Total Branches") {
 		t.Fatalf("only caveat stat lines should survive the collapse, got:\n%s", out)
+	}
+}
+
+// TestBuildGitHubControlStats_ImmutableReleaseLine pins the stat line the
+// actionsMustBePinnedByCommitSha block adds for immutable-release tags
+// (plumber issue #421): it is reported right after "Not Pinned By SHA",
+// its count is read straight off the pre-aggregated counter, never
+// recomputed, and "Pinned By SHA" counts only full commit SHA pins (the
+// immutable-release count is subtracted out, not absorbed into it).
+func TestBuildGitHubControlStats_ImmutableReleaseLine(t *testing.T) {
+	stats := buildGitHubControlStats("actionsMustBePinnedByCommitSha", &control.GitHubAnalysisStats{
+		ActionRefsTotal:            4,
+		ActionRefsUnpinned:         1,
+		ActionRefsExempt:           1,
+		ActionRefsImmutableRelease: 2,
+	}, nil)
+	want := []statLine{
+		{Label: "Total Action Refs", Value: "5"},
+		{Label: "Pinned By SHA", Value: "1"},
+		{Label: "Not Pinned By SHA", Value: "1"},
+		{Label: "Immutable release tags", Value: "2"},
+		{Label: "Trusted-Owner Exempt", Value: "1"},
+	}
+	if !reflect.DeepEqual(stats, want) {
+		t.Fatalf("stats = %+v, want %+v", stats, want)
 	}
 }

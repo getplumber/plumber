@@ -1277,6 +1277,17 @@ func FindingFixFor(code ErrorCode) (string, bool) {
 // fullCommitSHARef is a reference pinned to a full commit SHA.
 var fullCommitSHARef = regexp.MustCompile(`@[0-9a-f]{40}$`)
 
+// refIsPinned is the one reading of "is this reference pinned" every site
+// in this package that prices or phrases a finding on its pin must use: a
+// full commit SHA, or (plumber issue #421) a tag backed by a GitHub
+// immutable release, which GitHub guarantees can never be moved or
+// deleted. immutableRelease is read off the finding's own
+// Data["immutableRelease"] by the caller, since the two signals live on
+// different shapes (a bare subject string here, a finding elsewhere).
+func refIsPinned(subject string, immutableRelease bool) bool {
+	return fullCommitSHARef.MatchString(subject) || immutableRelease
+}
+
 // entryFix is the fix of a path code reads, from its row.
 func entryFix(code ErrorCode) string {
 	if row, ok := entryCodes[code]; ok {
@@ -1316,7 +1327,10 @@ func entryPathFix(p AttackPath) string {
 	case row.actionFix != "" && (kind == "action" || kind == "reusable workflow"):
 		return row.actionFix
 	}
-	return pathFix(code, p.Entry.Subject)
+	// false: an entry's own fact (control/situation.go EntryFact) carries no
+	// Data map an immutableRelease flag could live on, and the anchor code
+	// reaching here is never ISSUE-713 (see pathFix).
+	return pathFix(code, p.Entry.Subject, false)
 }
 
 // nestedFix is the fix of an entry reached through via (spec 2026-10-16
@@ -1406,31 +1420,35 @@ func runTimeExpression(subject string) string {
 	return subject
 }
 
-// pinnedFix is the fix of code when subject is already pinned to a full
-// commit SHA, so the fix never asks for that pin again; false when the
-// code has none or subject is not pinned.
-func pinnedFix(code ErrorCode, subject string) (string, bool) {
+// pinnedFix is the fix of code when subject is already pinned (refIsPinned),
+// so the fix never asks for that pin again; false when the code has none
+// or the reference is not pinned.
+func pinnedFix(code ErrorCode, subject string, immutableRelease bool) (string, bool) {
 	row := entryCodes[code]
-	return row.pinnedFix, row.pinnedFix != "" && fullCommitSHARef.MatchString(subject)
+	return row.pinnedFix, row.pinnedFix != "" && refIsPinned(subject, immutableRelease)
 }
 
 // pathFix is the fix of a path its anchoring code and subject read: the
-// pinned form when the subject is already pinned, else the code's entry
-// fix, else the code's fix as a finding.
-func pathFix(code ErrorCode, subject string) string {
-	if do, ok := pinnedFix(code, subject); ok {
+// pinned form when the reference is already pinned, else the code's entry
+// fix, else the code's fix as a finding. immutableRelease is always false
+// here: ISSUE-713, the only code this flag can apply to, never anchors a
+// path on its own (control/paths.go subjectFindingCodes), so the anchor
+// code reaching this function is never one refIsPinned's immutable-
+// release half can change the answer for.
+func pathFix(code ErrorCode, subject string, immutableRelease bool) string {
+	if do, ok := pinnedFix(code, subject, immutableRelease); ok {
 		return do
 	}
 	if row, ok := entryCodes[code]; ok {
 		return row.fix
 	}
-	return findingFix(code, subject)
+	return findingFix(code, subject, immutableRelease)
 }
 
 // findingFix is the fix of a finding read on its own, as a best fix:
 // always something to do, never the code's title.
-func findingFix(code ErrorCode, subject string) string {
-	if do, ok := pinnedFix(code, subject); ok {
+func findingFix(code ErrorCode, subject string, immutableRelease bool) string {
+	if do, ok := pinnedFix(code, subject, immutableRelease); ok {
 		return do
 	}
 	if do, ok := findingFixes[code]; ok {
