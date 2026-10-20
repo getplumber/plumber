@@ -79,7 +79,7 @@
       "providers": [
         "github"
       ],
-      "description": "Requires third-party GitHub Actions to be pinned to a full commit SHA instead of a mutable tag or branch reference.",
+      "description": "Requires third-party GitHub Actions to be pinned by a 40-character commit SHA or by a tag backed by an immutable release.",
       "requiresConfig": false,
       "configSchema": {
         "control": "actionsMustBePinnedByCommitSha",
@@ -2897,8 +2897,8 @@
       "code": "ISSUE-701",
       "severity": "high",
       "title": "Third-party action reference is not pinned by commit SHA",
-      "description": "A GitHub Actions workflow references a third-party action with a mutable ref (tag or branch) instead of a 40-character commit SHA. Tag and branch refs can be reassigned by the action's maintainer, or by an attacker who compromises the action's repository, to point at arbitrary code, which then runs inside the caller workflow with its secrets. The March 2025 tj-actions/changed-files compromise (CVE-2025-30066) propagated this way to hundreds of repositories, including aquasecurity/trivy.",
-      "remediation": "Replace `uses: owner/action@v4` with `uses: owner/action@\u003c40-char-sha\u003e` and add a `# vX.Y.Z` comment to document the version. Tools like Dependabot's `version-update-strategy: sha-and-version` can automate the update flow. Official GitHub-owned actions (actions/*, github/*) can be excluded if they are in the workflow's trusted boundary.",
+      "description": "A GitHub Actions workflow references a third-party action with a mutable ref (tag or branch) instead of a 40-character commit SHA. Tag and branch refs can be reassigned by the action's maintainer, or by an attacker who compromises the action's repository, to point at arbitrary code, which then runs inside the caller workflow with its secrets. The March 2025 tj-actions/changed-files compromise (CVE-2025-30066) propagated this way to hundreds of repositories, including aquasecurity/trivy. A tag backed by a GitHub immutable release is accepted as pinned: GitHub guarantees that exact tag can never be moved or deleted.",
+      "remediation": "Replace `uses: owner/action@v4` with `uses: owner/action@\u003c40-char-sha\u003e` and add a `# vX.Y.Z` comment to document the version. Tools like Dependabot's `version-update-strategy: sha-and-version` can automate the update flow. Official GitHub-owned actions (actions/*, github/*) can be excluded if they are in the workflow's trusted boundary. A tag already backed by a GitHub immutable release needs no SHA pin.",
       "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-701",
       "controlName": "actionsMustBePinnedByCommitSha"
     },

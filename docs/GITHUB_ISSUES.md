@@ -209,6 +209,24 @@ surface. Pair with Dependabot
 (`version-update-strategy: sha-and-version`) to keep pins fresh, or
 set `enabled: false` on projects that are not yet ready to migrate.
 
+**Immutable releases.** A tag is also accepted as pinned when it names
+the exact released tag of a GitHub release published while the
+repository's immutable-releases setting was on: GitHub guarantees that
+tag can never be moved or deleted. This does not cover a floating
+major with no release behind it, a release published before the
+setting was enabled, a branch, or a reusable-workflow reference (judged
+by its ref alone). A reference whose repository was renamed or
+transferred is never exempt either: the guarantee belongs to the
+repository's current name, not the one still pinned, and the old
+namespace is free for anyone to re-register. A lookup that fails for
+any reason keeps the finding. The JSON report counts how many refs this
+applied to under `actionPinningResult.metrics.actionRefsImmutableRelease`.
+
+```yaml
+# ✅ also accepted: tag backed by a GitHub immutable release
+- uses: docker/build-push-action@v7.4.0 # immutable release
+```
+
 **Nested references.** A reference pulled in by a composite action or
 by a workflow called in another repository is judged like a direct one,
 at the same severity. Its message ends its finding part with

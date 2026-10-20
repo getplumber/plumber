@@ -328,7 +328,7 @@ var controlsMeta = map[string]ControlMeta{
 		DisplayName: "Third-party actions must be pinned by commit SHA",
 		Category:    CategoryThirdPartyActions,
 		ID:          "CTRL-701",
-		Description: "Requires third-party GitHub Actions to be pinned to a full commit SHA instead of a mutable tag or branch reference.",
+		Description: "Requires third-party GitHub Actions to be pinned by a 40-character commit SHA or by a tag backed by an immutable release.",
 	},
 	"actionsMustNotBeArchived": {
 		Providers:   []string{ProviderGitHub},
