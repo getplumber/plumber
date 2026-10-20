@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -89,6 +90,158 @@ func Test_resolveTag_dereferencesAnAnnotatedTag(t *testing.T) {
 	}
 	if sha, ok := c.resolveTag("foo", "bar", "v8"); !ok || sha != lightSha {
 		t.Fatalf("resolveTag(v8) = %q %v, want %q", sha, ok, lightSha)
+	}
+}
+
+// Test_releaseIsImmutable pins the GitHub-guaranteed immutable-release
+// read (plumber issue #421): the releases/tags/<tag> lookup answers
+// true only on an explicit `"immutable":true`, and reads as mutable
+// (false) on anything else: a false field, a 404 (the normal answer
+// for a tag with no release behind it at all), or a server error. The
+// control fails closed: nothing here should ever turn a lookup failure
+// into a positive signal.
+func Test_releaseIsImmutable(t *testing.T) {
+	t.Run("immutable true sets the flag", func(t *testing.T) {
+		c := stubbedMetadataClient(t, func(r *http.Request) (string, int) {
+			if r.URL.Path == "/repos/acme/widget/releases/tags/v1.0.0" {
+				return `{"tag_name":"v1.0.0","immutable":true}`, http.StatusOK
+			}
+			return `{}`, http.StatusNotFound
+		})
+		if got := c.releaseIsImmutable("acme", "widget", "v1.0.0"); !got {
+			t.Fatal("releaseIsImmutable = false, want true for immutable:true")
+		}
+	})
+
+	t.Run("immutable false does not set the flag", func(t *testing.T) {
+		c := stubbedMetadataClient(t, func(r *http.Request) (string, int) {
+			if r.URL.Path == "/repos/acme/widget/releases/tags/v1.0.0" {
+				return `{"tag_name":"v1.0.0","immutable":false}`, http.StatusOK
+			}
+			return `{}`, http.StatusNotFound
+		})
+		if got := c.releaseIsImmutable("acme", "widget", "v1.0.0"); got {
+			t.Fatal("releaseIsImmutable = true, want false for immutable:false")
+		}
+	})
+
+	t.Run("a 404 does not set the flag", func(t *testing.T) {
+		c := stubbedMetadataClient(t, func(r *http.Request) (string, int) {
+			return `{"message":"Not Found"}`, http.StatusNotFound
+		})
+		if got := c.releaseIsImmutable("acme", "widget", "v7"); got {
+			t.Fatal("releaseIsImmutable = true, want false on a 404 (no release behind the tag)")
+		}
+	})
+
+	t.Run("a 500 does not set the flag", func(t *testing.T) {
+		c := stubbedMetadataClient(t, func(r *http.Request) (string, int) {
+			return `{"message":"Internal Server Error"}`, http.StatusInternalServerError
+		})
+		if got := c.releaseIsImmutable("acme", "widget", "v7"); got {
+			t.Fatal("releaseIsImmutable = true, want false on a server error")
+		}
+	})
+
+	// M2: a response naming a different tag than the one asked for must
+	// never read as immutable, the same guard branchExists already applies
+	// to its own endpoint. No wrong-tag answer was found live on
+	// 2026-10-20, but a proxy, a GHES variant or a future redirect could
+	// still answer 200 for another release.
+	t.Run("a response naming a different tag does not set the flag", func(t *testing.T) {
+		c := stubbedMetadataClient(t, func(r *http.Request) (string, int) {
+			if r.URL.Path == "/repos/acme/widget/releases/tags/v1.0.0" {
+				return `{"tag_name":"v2.0.0","immutable":true}`, http.StatusOK
+			}
+			return `{}`, http.StatusNotFound
+		})
+		if got := c.releaseIsImmutable("acme", "widget", "v1.0.0"); got {
+			t.Fatal("releaseIsImmutable = true, want false when tag_name does not match the tag asked for")
+		}
+	})
+
+	// M3: a GHES or proxy host that answers 200 without the "immutable"
+	// field at all must read as mutable (the zero value), not crash or
+	// panic on a missing field.
+	t.Run("a 200 without the immutable field does not set the flag", func(t *testing.T) {
+		c := stubbedMetadataClient(t, func(r *http.Request) (string, int) {
+			if r.URL.Path == "/repos/acme/widget/releases/tags/v1.0.0" {
+				return `{"tag_name":"v1.0.0"}`, http.StatusOK
+			}
+			return `{}`, http.StatusNotFound
+		})
+		if got := c.releaseIsImmutable("acme", "widget", "v1.0.0"); got {
+			t.Fatal("releaseIsImmutable = true, want false when the immutable field is absent")
+		}
+	})
+}
+
+// Test_resolveUncached_immutableReleaseOnlyProbedForTags locks the scope
+// of the releases/tags/<tag> call: it is made only when the reference
+// resolves as a tag. A branch reference must never trigger it.
+func Test_resolveUncached_immutableReleaseOnlyProbedForTags(t *testing.T) {
+	var releasesCalls int
+	c := stubbedMetadataClient(t, func(r *http.Request) (string, int) {
+		switch {
+		case strings.Contains(r.URL.Path, "/releases/tags/"):
+			releasesCalls++
+			return `{"immutable":true}`, http.StatusOK
+		case strings.HasSuffix(r.URL.Path, "/repos/acme/widget"):
+			return `{"archived":false,"stargazers_count":0}`, http.StatusOK
+		case strings.Contains(r.URL.Path, "/releases"):
+			return `[]`, http.StatusOK
+		case strings.HasPrefix(r.URL.Path, "/advisories"):
+			return `[]`, http.StatusOK
+		case r.URL.Path == "/repos/acme/widget/git/ref/tags/main":
+			return `{}`, http.StatusNotFound
+		case strings.Contains(r.URL.Path, "/branches/main"):
+			return `{"name":"main"}`, http.StatusOK
+		}
+		return `{}`, http.StatusNotFound
+	})
+	meta := c.resolveUncached("acme", "widget", "main")
+	if meta.RefKind != "branch" {
+		t.Fatalf("RefKind = %q, want branch", meta.RefKind)
+	}
+	if meta.ImmutableRelease {
+		t.Fatal("ImmutableRelease must stay false for a branch reference")
+	}
+	if releasesCalls != 0 {
+		t.Fatalf("releases/tags/<tag> was called %d times for a branch ref, want 0", releasesCalls)
+	}
+}
+
+// Test_Resolve_immutableReleaseCached locks the per-reference cache
+// Resolve already keeps: the second call for the same owner/repo@ref
+// returns the identical answer without a second round of requests.
+func Test_Resolve_immutableReleaseCached(t *testing.T) {
+	var releasesCalls int
+	c := stubbedMetadataClient(t, func(r *http.Request) (string, int) {
+		switch {
+		case strings.Contains(r.URL.Path, "/releases/tags/"):
+			releasesCalls++
+			return `{"tag_name":"v7.4.0","immutable":true}`, http.StatusOK
+		case strings.HasSuffix(r.URL.Path, "/repos/acme/widget"):
+			return `{"archived":false,"stargazers_count":0}`, http.StatusOK
+		case strings.Contains(r.URL.Path, "/releases"):
+			return `[]`, http.StatusOK
+		case strings.HasPrefix(r.URL.Path, "/advisories"):
+			return `[]`, http.StatusOK
+		case r.URL.Path == "/repos/acme/widget/git/ref/tags/v7.4.0":
+			return `{"object":{"type":"commit","sha":"1111111111111111111111111111111111111111"}}`, http.StatusOK
+		}
+		return `{}`, http.StatusNotFound
+	})
+	first := c.Resolve("acme/widget@v7.4.0")
+	if !first.ImmutableRelease {
+		t.Fatal("first Resolve: ImmutableRelease = false, want true")
+	}
+	second := c.Resolve("acme/widget@v7.4.0")
+	if !reflect.DeepEqual(second, first) {
+		t.Fatalf("second Resolve returned a different answer: %+v vs %+v", second, first)
+	}
+	if releasesCalls != 1 {
+		t.Fatalf("releases/tags/<tag> was called %d times across two Resolve calls, want 1 (cached)", releasesCalls)
 	}
 }
 
@@ -508,6 +661,16 @@ func Test_isZeroMetadata_stargazers(t *testing.T) {
 	}
 }
 
+// Test_isZeroMetadata_immutableRelease pins that a reference whose only
+// signal is ImmutableRelease still gets its metadata attached: the
+// enrichment skip in enrichActions (isZeroMetadata(meta) && no comment
+// && no mutable-exec signal) must not drop this one true fact.
+func Test_isZeroMetadata_immutableRelease(t *testing.T) {
+	if isZeroMetadata(GitHubMetadata{ImmutableRelease: true}) {
+		t.Error("metadata whose only signal is ImmutableRelease must not be treated as zero")
+	}
+}
+
 // Test_isZeroMetadata_refKnownAbsent guards the ISSUE-707 enrichment
 // linchpin. For an impostor commit on a readable but zero/low-star repo
 // the resolved metadata is all-zero EXCEPT RefKnownAbsent=true. If
@@ -642,6 +805,49 @@ func Test_resolveUncached_redirectedOwner(t *testing.T) {
 			t.Fatalf("RedirectedOwner = %q, want empty (same owner)", m.RedirectedOwner)
 		}
 	})
+}
+
+// Test_resolveUncached_redirectedOwnerNeverImmutable pins PR #566's gate
+// thread: the immutable-releases guarantee belongs to the repository's
+// CURRENT name, not the one a stale `uses:` pin still names. A renamed or
+// transferred repository's release lookup would otherwise follow GitHub's
+// own redirect and read the new owner's immutable release, so a reference
+// to the OLD, now-unowned namespace (anyone can re-register it) would
+// wrongly read as pinned. The releases/tags/<tag> endpoint must not even
+// be called once RedirectedOwner is known.
+func Test_resolveUncached_redirectedOwnerNeverImmutable(t *testing.T) {
+	const (
+		owner = "ask-bonk"
+		repo  = "ask-bonk"
+		tag   = "v7.4.0"
+	)
+	var releasesCalls int
+	c := stubbedMetadataClient(t, func(r *http.Request) (string, int) {
+		switch {
+		case r.URL.Path == "/repos/"+owner+"/"+repo:
+			return `{"archived":false,"stargazers_count":0,"full_name":"Cloudflare-Studio/` + repo + `"}`, http.StatusOK
+		case strings.Contains(r.URL.Path, "/releases/tags/"):
+			releasesCalls++
+			return `{"tag_name":"` + tag + `","immutable":true}`, http.StatusOK
+		case strings.Contains(r.URL.Path, "/releases"):
+			return `[]`, http.StatusOK
+		case strings.HasPrefix(r.URL.Path, "/advisories"):
+			return `[]`, http.StatusOK
+		case r.URL.Path == "/repos/"+owner+"/"+repo+"/git/ref/tags/"+tag:
+			return `{"object":{"type":"commit","sha":"1111111111111111111111111111111111111111"}}`, http.StatusOK
+		}
+		return `{}`, http.StatusNotFound
+	})
+	m := c.resolveUncached(owner, repo, tag)
+	if m.RedirectedOwner != "Cloudflare-Studio" {
+		t.Fatalf("RedirectedOwner = %q, want Cloudflare-Studio", m.RedirectedOwner)
+	}
+	if m.ImmutableRelease {
+		t.Fatal("ImmutableRelease must stay false for a redirected (renamed/transferred) repository: the guarantee belongs to the new name, not the one pinned")
+	}
+	if releasesCalls != 0 {
+		t.Fatalf("releases/tags/<tag> was called %d times for a redirected reference, want 0 (never probed)", releasesCalls)
+	}
 }
 
 // Test_tagObjectResolves covers the ISSUE-401 dereference step. A pin

@@ -718,6 +718,14 @@ type ActionMetadata struct {
 	// names. Empty when the names agree or the repository could not be
 	// read.
 	RedirectedOwner string `json:"redirectedOwner,omitempty"`
+	// ImmutableRelease is true when the pinned tag is the exact tag of a
+	// GitHub release published while the repository's immutable-releases
+	// setting was on: GitHub guarantees that tag can never be moved or
+	// deleted, so a reference pinned to it is treated as pinned the same
+	// way a commit SHA pin is (plumber issue #421). False for a floating
+	// major with no release behind it, a release predating the setting,
+	// a branch, or when the lookup could not be completed.
+	ImmutableRelease bool `json:"immutableRelease,omitempty"`
 }
 
 // MutableRemoteExec describes a mutable-remote-code signal found inside

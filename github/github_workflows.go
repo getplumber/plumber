@@ -354,6 +354,7 @@ func enrichActions(pipeline *ir.NormalizedPipeline, client *GitHubMetadataClient
 				StargazersCount:    meta.StargazersCount,
 				MutableRemoteExec:  mre,
 				RedirectedOwner:    meta.RedirectedOwner,
+				ImmutableRelease:   meta.ImmutableRelease,
 			}
 			if action.Comment != "" {
 				amd.CommentVersion = extractVersionFromComment(action.Comment)

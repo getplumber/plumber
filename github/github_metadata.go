@@ -86,6 +86,24 @@ type GitHubMetadata struct {
 	// code. Empty when the names agree or the repository could not be
 	// read.
 	RedirectedOwner string
+	// ImmutableRelease is true when the pinned tag is the exact tag of a
+	// GitHub release published with its repository's immutable-releases
+	// setting on (GET repos/{owner}/{repo}/releases/tags/{tag} answered
+	// "immutable": true). GitHub guarantees that tag's name can never be
+	// moved or deleted and its assets never change, so a reference pinned
+	// to it is as immutable in practice as a commit SHA pin (plumber
+	// issue #421). Only that exact released tag is covered: a floating
+	// major with no release behind it, a release published before the
+	// setting was enabled, and a branch all read as false. A lookup
+	// that fails for any reason (404, rate limit, no token, a network
+	// error) also reads as false: the control fails closed rather than
+	// ever turning a missed check into a positive signal. A GHES host
+	// without the field is not a failure: it answers 200 and decodes to
+	// false, the same zero value. A reference whose repository was
+	// renamed or transferred (RedirectedOwner) is never exempt either:
+	// the guarantee belongs to the repository's current name, not the
+	// one this reference still pins.
+	ImmutableRelease bool
 }
 
 // GitHubMetadataClient resolves `owner/repo@ref` references against
@@ -322,6 +340,15 @@ func (c *GitHubMetadataClient) resolveUncached(owner, repo, ref string) GitHubMe
 		m.RefKind = "tag"
 		m.TagSha = sha
 		m.RefExists = true
+		// A renamed or transferred repository (RedirectedOwner) is never
+		// probed for an immutable release: the guarantee belongs to the
+		// repository's CURRENT name, not the one this reference still
+		// pins, and the old namespace is free for anyone to re-register
+		// (plumber issue #421). The releases/tags/<tag> endpoint is not
+		// even called in this case.
+		if m.RedirectedOwner == "" {
+			m.ImmutableRelease = c.releaseIsImmutable(owner, repo, ref)
+		}
 		if c.branchExists(owner, repo, ref) {
 			m.RefIsAmbiguous = true
 		}
@@ -985,6 +1012,31 @@ func (c *GitHubMetadataClient) ResolveTagSha(ownerRepo, tag string) string {
 	return sha
 }
 
+// releaseIsImmutable reports whether tag is the exact tag of a GitHub
+// release published while the repository's immutable-releases setting
+// was on (GET repos/{owner}/{repo}/releases/tags/{tag}, field
+// "immutable"), and the response actually names the tag asked for
+// (branchExists applies the same guard to its own endpoint): a proxy, a
+// GHES variant or a future redirect could otherwise answer 200 for a
+// different release. A 404 is the ordinary answer for a tag with no
+// release behind it at all and is not logged as a degraded check; any
+// other error (rate limit, network) is treated the same quiet way
+// resolveTag and latestReleaseTag treat theirs: the lookup simply
+// answers false, never recorded as degraded, so a mutable-by-default
+// read never masquerades as a missing-data warning. A host that answers
+// 200 without the "immutable" field (a GHES variant, a proxy) is not an
+// error at all: it decodes to the zero value, false.
+func (c *GitHubMetadataClient) releaseIsImmutable(owner, repo, tag string) bool {
+	var resp struct {
+		TagName   string `json:"tag_name"`
+		Immutable bool   `json:"immutable"`
+	}
+	if err := c.rest.Get(fmt.Sprintf("repos/%s/%s/releases/tags/%s", owner, repo, tag), &resp); err != nil {
+		return false
+	}
+	return resp.Immutable && resp.TagName == tag
+}
+
 // resolveTag returns (sha, true) when ref is a tag on the repo and
 // we can read the SHA it points at. Returns ("", false) otherwise.
 func (c *GitHubMetadataClient) resolveTag(owner, repo, ref string) (string, bool) {
@@ -1197,6 +1249,9 @@ func isZeroMetadata(meta GitHubMetadata) bool {
 		return false
 	}
 	if meta.RedirectedOwner != "" {
+		return false
+	}
+	if meta.ImmutableRelease {
 		return false
 	}
 	return true

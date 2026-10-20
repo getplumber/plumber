@@ -570,3 +570,64 @@ func Test_enrichActionsWithClient_carriesTagObjectMetadata(t *testing.T) {
 		t.Fatalf("Metadata.RefCommitSha = %q for an absent SHA, want empty", absent.Metadata.RefCommitSha)
 	}
 }
+
+// Test_enrichActionsWithClient_carriesImmutableRelease locks the same
+// collector-to-IR bridge (plumber issue #421): a tag-object pin's ONLY
+// signal can be ImmutableRelease (every other field zero), and
+// isZeroMetadata must not let the enrichment loop drop it, nor the
+// literal copy in enrichActions silently omit the field.
+func Test_enrichActionsWithClient_carriesImmutableRelease(t *testing.T) {
+	const (
+		owner = "docker"
+		repo  = "build-push-action"
+		tag   = "v7.4.0"
+	)
+	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		p := r.URL.Path
+		body, status := `{}`, http.StatusNotFound
+		switch {
+		case strings.Count(p, "/") == 3 && strings.HasPrefix(p, "/repos/"):
+			body, status = `{"archived":false,"stargazers_count":900}`, http.StatusOK
+		case strings.HasSuffix(p, "/releases/tags/"+tag):
+			body, status = `{"tag_name":"`+tag+`","immutable":true}`, http.StatusOK
+		case strings.Contains(p, "/releases"):
+			body, status = `[]`, http.StatusOK
+		case strings.HasPrefix(p, "/advisories"):
+			body, status = `[]`, http.StatusOK
+		case strings.HasSuffix(p, "/git/ref/tags/"+tag):
+			body, status = `{"object":{"type":"commit","sha":"1111111111111111111111111111111111111111"}}`, http.StatusOK
+		case strings.Contains(p, "/branches/"+tag):
+			body, status = `{}`, http.StatusNotFound
+		}
+		return &http.Response{
+			StatusCode: status,
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Header:     make(http.Header),
+			Request:    r,
+		}, nil
+	})
+	client := NewGitHubMetadataClientForHost("")
+	client.disabled = false
+	rest, err := api.NewRESTClient(api.ClientOptions{AuthToken: "x", Transport: rt})
+	if err != nil {
+		t.Fatalf("new rest client: %v", err)
+	}
+	client.rest = rest
+
+	pipeline := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitHub,
+		Jobs: []ir.Job{{
+			Name: "build",
+			Uses: []ir.Action{{Uses: owner + "/" + repo + "@" + tag}},
+		}},
+	}
+	enrichActionsWithClient(pipeline, client, false, nil)
+
+	pin := pipeline.Jobs[0].Uses[0]
+	if pin.Metadata == nil {
+		t.Fatal("enrichment dropped the metadata for an immutable-release tag pin")
+	}
+	if !pin.Metadata.ImmutableRelease {
+		t.Fatal("Metadata.ImmutableRelease = false, want true: the collector signal did not cross into the IR")
+	}
+}
