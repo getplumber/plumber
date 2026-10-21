@@ -252,9 +252,19 @@ workflow gap, and in the JSON report under
 `"pinnedVia": "workflow_lockfile"`, next to
 `actionPinningResult.workflowLockfile` and
 `metrics.actionRefsWorkflowLockfile`. A reusable-workflow call reported
-on such a branch says `which workflow lockfiles do not cover`. Only the
-lockfile's presence is read for now: a workflow it does not onboard or
-a dependency missing from it is not reported. Lockfiles are not
+on such a branch says `which workflow lockfiles do not cover`. Plumber
+reads only the lockfile's presence, because GitHub enforces its
+coverage once the file exists: a workflow the lockfile does not list
+(shell-only ones included), a stale or missing entry, a removed
+transitive entry and a malformed file all stop the run before it starts
+(`startup_failure`; see the
+[lockfile test bed](https://github.com/Exypte/lock-file-consumer), labs
+03 to 08 and 17). A one-line or hand-written `actions.lock` therefore
+blocks every workflow it does not cover instead of letting a mutable
+reference through. What GitHub does not check, such as an exact tag
+locked to an older commit of its history (labs 10, 11 and 20), is about
+the lockfile's own content and belongs to the consistency control
+planned in #542. Lockfiles are not
 available on GitHub Enterprise Server, and workflows using local-path
 actions cannot be onboarded yet, so SHA pinning stays the first
 remediation.
@@ -264,8 +274,9 @@ of the lockfile schema
 ([deferred by the gh-actions-lock maintainers](https://github.com/github/gh-actions-lock/issues/194#issuecomment-6293973418)),
 so the ref of a reusable-workflow call is never locked: it runs at
 whatever its tag or branch points to. A workflow that calls a reusable
-workflow can also fail to run when the reusable workflow has no lockfile
-of its own. That makes the callee's lockfile a run-time requirement, not
+workflow also fails to start when the called tag ships no lockfile of
+its own (`startup_failure` "missing a lockfile: …hello.yml@v3.0.0",
+[lab 28](https://github.com/Exypte/lock-file-consumer/pull/31)). That makes the callee's lockfile a run-time requirement, not
 a pin of the call, so every reusable-workflow reference is still checked
 on its own. The steps of a reusable workflow from another repository
 fall under that repository's lockfile, which Plumber does not read yet,
