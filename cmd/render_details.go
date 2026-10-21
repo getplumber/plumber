@@ -36,6 +36,12 @@ const (
 	// of), so an exemption stays visible in review instead of silently
 	// hiding what it covers.
 	statExempted = "Exempted By Configuration"
+	// statPinnedByImmutableRelease / statImmutableReleaseRefs count and
+	// name the ISSUE-701 tag refs accepted because the tag is backed by an
+	// immutable GitHub release, so a ref that looks unpinned shows why it
+	// passed.
+	statPinnedByImmutableRelease = "Pinned By Immutable Release"
+	statImmutableReleaseRefs     = "Immutable Release Refs"
 )
 
 // statLine is an alias for control.StatLine used within the cmd package.
@@ -313,10 +319,20 @@ func renderFindingGroupsV4(groups []findingGroup, score *control.PlumberScoreRes
 // note it would leave no trace in the default report. A passing control carries the same
 // line under its ✓ (renderPassedControlsSummary).
 func renderExemptedNote(groups []findingGroup) {
+	renderStatNote(groups, statExempted, "Exempted by configuration (not checked)")
+	// The ISSUE-701 tag refs an immutable release lets through raise no
+	// finding either; they are judged, not exempted, so they get a heading
+	// of their own.
+	renderStatNote(groups, statImmutableReleaseRefs, "Accepted as pinned by an immutable release")
+}
+
+// renderStatNote prints, under heading, the label stat line of every group
+// that carries one, prefixed by the group's title.
+func renderStatNote(groups []findingGroup, label, heading string) {
 	var lines []string
 	for _, g := range groups {
 		for _, s := range g.Stats {
-			if s.Label == statExempted {
+			if s.Label == label {
 				lines = append(lines, fmt.Sprintf("    %s•%s %s: %s", colorDim, colorReset, g.Title, s.Value))
 			}
 		}
@@ -325,7 +341,7 @@ func renderExemptedNote(groups []findingGroup) {
 		return
 	}
 	fmt.Println()
-	fmt.Printf("  %sℹ Exempted by configuration (not checked):%s\n", colorDim, colorReset)
+	fmt.Printf("  %sℹ %s:%s\n", colorDim, heading, colorReset)
 	for _, l := range lines {
 		fmt.Println(l)
 	}
@@ -410,9 +426,9 @@ func renderPassedControlsSummary(groups []findingGroup) {
 		}
 		// An exemption is a deliberate decision rather than a caveat, but
 		// it hides what it covers from the check all the same, so it stays
-		// visible.
+		// visible; so do the tags an immutable release let through.
 		for _, s := range g.Stats {
-			if s.Label == statExempted {
+			if s.Label == statExempted || s.Label == statImmutableReleaseRefs {
 				fmt.Printf("      %s%s: %s%s\n", colorDim, s.Label, s.Value, colorReset)
 			}
 		}
@@ -886,16 +902,27 @@ func buildGitHubControlStats(controlName string, stats *control.GitHubAnalysisSt
 			{Label: "Using Forbidden Tags", Value: fmt.Sprintf("%d", stats.ImagesUsingForbidden)},
 		}, stats.ImagesExempted)
 	case "actionsMustBePinnedByCommitSha":
-		pinned := stats.ActionRefsTotal - stats.ActionRefsUnpinned
+		immutable := len(stats.ActionRefsImmutableRelease)
+		pinned := stats.ActionRefsTotal - stats.ActionRefsUnpinned - immutable
 		if pinned < 0 {
 			pinned = 0
 		}
-		return []statLine{
+		lines := []statLine{
 			{Label: "Total Action Refs", Value: fmt.Sprintf("%d", stats.ActionRefsTotal+stats.ActionRefsExempt)},
 			{Label: "Pinned By SHA", Value: fmt.Sprintf("%d", pinned)},
+			{Label: statPinnedByImmutableRelease, Value: fmt.Sprintf("%d", immutable)},
 			{Label: "Not Pinned By SHA", Value: fmt.Sprintf("%d", stats.ActionRefsUnpinned)},
 			{Label: "Trusted-Owner Exempt", Value: fmt.Sprintf("%d", stats.ActionRefsExempt)},
 		}
+		if immutable > 0 {
+			refs := make([]string, 0, immutable)
+			for _, r := range stats.ActionRefsImmutableRelease {
+				refs = append(refs, r.Uses)
+			}
+			slices.Sort(refs)
+			lines = append(lines, statLine{Label: statImmutableReleaseRefs, Value: strings.Join(slices.Compact(refs), ", ")})
+		}
+		return lines
 	case "githubActionMustComeFromAuthorizedSources":
 		// findings is the per-control list (one per unauthorized ref,
 		// including job-level reusable-workflow calls). Authorized =

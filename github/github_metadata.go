@@ -73,7 +73,14 @@ type GitHubMetadata struct {
 	LatestTag        string
 	LatestReleaseSha string
 	RefIsAmbiguous   bool
-	Advisories       []string
+	// RefIsImmutableRelease is true ONLY when the ref is a tag and the
+	// GitHub release for that exact tag reports immutable=true: the tag
+	// can then never be moved or deleted, so ISSUE-701 treats it as
+	// pinned (#421). A tag without a release (a floating major such as
+	// v4), a mutable release and a lookup that failed all leave it false,
+	// so the ref keeps being flagged.
+	RefIsImmutableRelease bool
+	Advisories            []string
 	// AdvisorySeverities maps each id of Advisories to its severity
 	// (low, medium, high or critical), read off the same listing; an id
 	// whose severity the listing did not give is absent.
@@ -325,6 +332,7 @@ func (c *GitHubMetadataClient) resolveUncached(owner, repo, ref string) GitHubMe
 		if c.branchExists(owner, repo, ref) {
 			m.RefIsAmbiguous = true
 		}
+		m.RefIsImmutableRelease = c.releaseIsImmutable(owner, repo, ref)
 		return m
 	}
 	if c.branchExists(owner, repo, ref) {
@@ -1177,11 +1185,37 @@ func (c *GitHubMetadataClient) commitResolves(owner, repo, ref string) (exists, 
 	return false, false
 }
 
+// releaseIsImmutable reports whether the GitHub release published for
+// tag is immutable. It fails closed: a 404 (the tag has no release, the
+// normal answer for a floating major such as v4) is a definitive "no";
+// any other failure is also "no", but is recorded as a degraded check
+// so the run says why a possibly-immutable tag was still flagged.
+// Callers cache the answer per owner/repo@ref through Resolve.
+func (c *GitHubMetadataClient) releaseIsImmutable(owner, repo, tag string) bool {
+	var resp struct {
+		Immutable bool `json:"immutable"`
+	}
+	err := c.rest.Get(fmt.Sprintf("repos/%s/%s/releases/tags/%s", owner, repo, tag), &resp)
+	if err == nil {
+		return resp.Immutable
+	}
+	var httpErr *api.HTTPError
+	if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusNotFound {
+		return false
+	}
+	key := owner + "/" + repo + "@" + tag
+	c.recordDegradedMessage("release:"+key, fmt.Sprintf(
+		"%s: the release for this tag could not be read (%v), so the immutable-release exemption of ISSUE-701 was not applied",
+		key, err,
+	))
+	return false
+}
+
 // isZeroMetadata reports whether meta has no content. GitHubMetadata
 // now carries a slice field, which Go refuses to compare with `==`,
 // so we spell the zero-check out field by field.
 func isZeroMetadata(meta GitHubMetadata) bool {
-	if meta.RepoArchived || meta.RefExists || meta.RefIsAmbiguous || meta.RefKnownAbsent {
+	if meta.RepoArchived || meta.RefExists || meta.RefIsAmbiguous || meta.RefKnownAbsent || meta.RefIsImmutableRelease {
 		return false
 	}
 	if meta.RefKind != "" || meta.TagSha != "" || meta.LatestTag != "" || meta.LatestReleaseSha != "" {

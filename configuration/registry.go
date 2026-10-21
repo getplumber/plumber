@@ -744,6 +744,7 @@ var benchedControls = map[string]map[string]struct{}{
 // `input.pipeline.jobs[*].uses[*].metadata`.
 var actionMetadataConsumers = []string{
 	"actionPinCommentsMustMatchSha",
+	"actionsMustBePinnedByCommitSha",
 	"actionPinsMustNotBeStale",
 	"actionRefsMustExistUpstream",
 	"externalRefsMustNotCollide",

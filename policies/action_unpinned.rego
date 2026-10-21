@@ -16,6 +16,8 @@
 # regardless of config — they live in the same repository as the
 # caller, so there is no additional external trust boundary to
 # worry about.
+# A tag backed by an immutable GitHub release is accepted as pinned
+# (see _is_immutable_release_tag), for steps and reusable workflows.
 package action_unpinned
 
 import rego.v1
@@ -35,6 +37,7 @@ deny contains finding if {
 	not _is_local(use.uses)
 	not _is_own_repo(use.uses)
 	not _is_trusted_owner(use.uses)
+	not _is_immutable_release_tag(object.get(use, "metadata", {}))
 	base := {
 		"code":     "ISSUE-701",
 		"severity": "high",
@@ -63,6 +66,20 @@ _is_archived_tag(use) if {
 	object.get(meta, "refKind", "") == "tag"
 }
 
+# _is_immutable_release_tag: the ref is a tag backed by an immutable
+# GitHub release (#421). Such a tag can never be moved or deleted, so
+# it carries the same integrity guarantee as a commit SHA. Only the
+# exact released tag qualifies: a floating major (v4) has no release
+# behind it and keeps being flagged. A same-named branch disqualifies
+# the tag (refIsAmbiguous): the branch could win resolution and it is
+# mutable. No metadata (no token, API disabled, lookup failed) means
+# the exemption never applies, so the control fails closed.
+_is_immutable_release_tag(meta) if {
+	object.get(meta, "refKind", "") == "tag"
+	object.get(meta, "refIsImmutableRelease", false) == true
+	not object.get(meta, "refIsAmbiguous", false)
+}
+
 default _redirected_owner_fields(_) := {}
 
 _redirected_owner_fields(use) := {"redirectedOwner": owner} if {
@@ -88,6 +105,7 @@ deny contains finding if {
 	not _is_local(use)
 	not _is_own_repo(use)
 	not _is_trusted_owner(use)
+	not _is_immutable_release_tag(object.get(job, "reusableWorkflowMetadata", {}))
 	finding := object.union({
 		"code":     "ISSUE-701",
 		"severity": "high",

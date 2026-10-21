@@ -471,6 +471,13 @@ type Job struct {
 	// job type.
 	ReusableWorkflowUses string `json:"reusableWorkflowUses,omitempty"`
 
+	// ReusableWorkflowMetadata is the GitHub API metadata of
+	// ReusableWorkflowUses, resolved like a step's Action.Metadata. Nil
+	// when the call is local, enrichment did not run, or nothing was
+	// learned. Consumed by the pin-by-SHA control (ISSUE-701) to accept
+	// a tag backed by an immutable release.
+	ReusableWorkflowMetadata *ActionMetadata `json:"reusableWorkflowMetadata,omitempty"`
+
 	// SecretsInherit is true when a reusable-workflow call forwards
 	// every caller-visible secret to the callee via `secrets: inherit`.
 	// Only meaningful when ReusableWorkflowUses is set.
@@ -683,14 +690,19 @@ type ActionMetadata struct {
 	// annotated tag OBJECT: it carries the commit that tag object
 	// dereferences to. Empty for every other ref shape, including a
 	// plain commit pin (there the ref already IS the commit).
-	RefCommitSha     string   `json:"refCommitSha,omitempty"`
-	TagSha           string   `json:"tagSha,omitempty"`
-	LatestTag        string   `json:"latestTag,omitempty"`
-	LatestReleaseSha string   `json:"latestReleaseSha,omitempty"`
-	CommentVersion   string   `json:"commentVersion,omitempty"`
-	CommentTagSha    string   `json:"commentTagSha,omitempty"`
-	RefIsAmbiguous   bool     `json:"refIsAmbiguous,omitempty"`
-	Advisories       []string `json:"advisories,omitempty"`
+	RefCommitSha     string `json:"refCommitSha,omitempty"`
+	TagSha           string `json:"tagSha,omitempty"`
+	LatestTag        string `json:"latestTag,omitempty"`
+	LatestReleaseSha string `json:"latestReleaseSha,omitempty"`
+	CommentVersion   string `json:"commentVersion,omitempty"`
+	CommentTagSha    string `json:"commentTagSha,omitempty"`
+	RefIsAmbiguous   bool   `json:"refIsAmbiguous,omitempty"`
+	// RefIsImmutableRelease is true when the ref is a tag whose GitHub
+	// release is immutable: the tag can never move again, so the
+	// pin-by-SHA control (ISSUE-701) treats it as pinned. False when the
+	// tag has no release, the release is mutable, or the lookup failed.
+	RefIsImmutableRelease bool     `json:"refIsImmutableRelease,omitempty"`
+	Advisories            []string `json:"advisories,omitempty"`
 	// AdvisorySeverities maps a GHSA id of Advisories to the severity the
 	// GitHub Advisory Database rates it with, lower-cased (low, medium,
 	// high, critical); an id it did not rate is absent. The path assembly

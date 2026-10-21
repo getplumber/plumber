@@ -171,7 +171,13 @@ func AggregateGitHubStats(pipeline *ir.NormalizedPipeline, pc *configuration.Plu
 				continue
 			}
 			stats.ActionRefsTotal++
-			if !isShaPinned(ref) {
+			switch {
+			case isShaPinned(ref):
+			case isImmutableReleaseTag(use.Metadata):
+				stats.ActionRefsImmutableRelease = append(stats.ActionRefsImmutableRelease, ImmutableReleaseRef{
+					Job: job.Name, Uses: ref, Line: use.Line, PinnedVia: PinnedViaImmutableRelease,
+				})
+			default:
 				stats.ActionRefsUnpinned++
 			}
 		}
@@ -189,7 +195,13 @@ func AggregateGitHubStats(pipeline *ir.NormalizedPipeline, pc *configuration.Plu
 				stats.ActionRefsExempt++
 			} else {
 				stats.ActionRefsTotal++
-				if !isShaPinned(ref) {
+				switch {
+				case isShaPinned(ref):
+				case isImmutableReleaseTag(job.ReusableWorkflowMetadata):
+					stats.ActionRefsImmutableRelease = append(stats.ActionRefsImmutableRelease, ImmutableReleaseRef{
+						Job: job.Name, Uses: ref, PinnedVia: PinnedViaImmutableRelease,
+					})
+				default:
 					stats.ActionRefsUnpinned++
 				}
 			}
@@ -326,6 +338,14 @@ var defaultSecurityJobPatterns = []string{
 // lowercases before matching) so the ActionRefsAbsentUpstream counter
 // cannot drift from the findings.
 var shaRefRegex = regexp.MustCompile(`@[0-9a-fA-F]{40}$`)
+
+// isImmutableReleaseTag mirrors _is_immutable_release_tag in
+// action_unpinned.rego: a tag backed by an immutable release, not
+// shadowed by a same-named branch. Nil metadata (enrichment did not run
+// or learned nothing) is never accepted.
+func isImmutableReleaseTag(md *ir.ActionMetadata) bool {
+	return md != nil && md.RefKind == "tag" && md.RefIsImmutableRelease && !md.RefIsAmbiguous
+}
 
 func ownerOf(ref string) string {
 	if i := strings.IndexByte(ref, '/'); i > 0 {

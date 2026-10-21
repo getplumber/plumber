@@ -311,6 +311,9 @@ func enrichActions(pipeline *ir.NormalizedPipeline, client *GitHubMetadataClient
 				uniqueRefs[a.Uses] = struct{}{}
 			}
 		}
+		if ref := pipeline.Jobs[i].ReusableWorkflowUses; ref != "" {
+			uniqueRefs[ref] = struct{}{}
+		}
 	}
 	total := len(uniqueRefs)
 	seen := map[string]struct{}{}
@@ -339,22 +342,8 @@ func enrichActions(pipeline *ir.NormalizedPipeline, client *GitHubMetadataClient
 			if isZeroMetadata(meta) && action.Comment == "" && mre == nil {
 				continue
 			}
-			amd := &ir.ActionMetadata{
-				RepoArchived:       meta.RepoArchived,
-				RefExists:          meta.RefExists,
-				RefKnownAbsent:     meta.RefKnownAbsent,
-				RefKind:            meta.RefKind,
-				RefCommitSha:       meta.RefCommitSha,
-				TagSha:             meta.TagSha,
-				LatestTag:          meta.LatestTag,
-				LatestReleaseSha:   meta.LatestReleaseSha,
-				RefIsAmbiguous:     meta.RefIsAmbiguous,
-				Advisories:         meta.Advisories,
-				AdvisorySeverities: meta.AdvisorySeverities,
-				StargazersCount:    meta.StargazersCount,
-				MutableRemoteExec:  mre,
-				RedirectedOwner:    meta.RedirectedOwner,
-			}
+			amd := toActionMetadata(meta)
+			amd.MutableRemoteExec = mre
 			if action.Comment != "" {
 				amd.CommentVersion = extractVersionFromComment(action.Comment)
 				if amd.CommentVersion != "" {
@@ -365,12 +354,48 @@ func enrichActions(pipeline *ir.NormalizedPipeline, client *GitHubMetadataClient
 			}
 			action.Metadata = amd
 		}
+		// A job-level reusable-workflow call is pinned by the same rule
+		// as a step (ISSUE-701), so it is resolved the same way; only the
+		// pin-by-SHA control reads its metadata today. Local calls fail
+		// splitActionRef and come back zero.
+		if ref := job.ReusableWorkflowUses; ref != "" {
+			if _, already := seen[ref]; !already {
+				done++
+				seen[ref] = struct{}{}
+				report(progressFn, done, total, fmt.Sprintf("Resolving reusable workflow %s", ref))
+			}
+			if meta := client.Resolve(ref); !isZeroMetadata(meta) {
+				job.ReusableWorkflowMetadata = toActionMetadata(meta)
+			}
+		}
 	}
 	// Surface any action whose known-CVE check could not be completed
 	// (pinned commit unresolvable, tag list blocked) so the renderer and
 	// output writers can show a "could not verify" warning instead of a
 	// silent pass (ISSUE-228).
 	pipeline.AdvisoryWarnings = append(pipeline.AdvisoryWarnings, client.DegradedChecks()...)
+}
+
+// toActionMetadata copies the API answer into the IR shape the policies
+// read. Every field a rule consumes must cross here: one left out
+// silently disables that rule (see enrichActions).
+func toActionMetadata(meta GitHubMetadata) *ir.ActionMetadata {
+	return &ir.ActionMetadata{
+		RepoArchived:          meta.RepoArchived,
+		RefExists:             meta.RefExists,
+		RefKnownAbsent:        meta.RefKnownAbsent,
+		RefKind:               meta.RefKind,
+		RefCommitSha:          meta.RefCommitSha,
+		TagSha:                meta.TagSha,
+		LatestTag:             meta.LatestTag,
+		LatestReleaseSha:      meta.LatestReleaseSha,
+		RefIsAmbiguous:        meta.RefIsAmbiguous,
+		RefIsImmutableRelease: meta.RefIsImmutableRelease,
+		Advisories:            meta.Advisories,
+		AdvisorySeverities:    meta.AdvisorySeverities,
+		StargazersCount:       meta.StargazersCount,
+		RedirectedOwner:       meta.RedirectedOwner,
+	}
 }
 
 // ownerRepoFromUses extracts "owner/repo" from a uses: value,

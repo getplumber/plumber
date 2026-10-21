@@ -202,6 +202,32 @@ repos.
 - uses: peaceiris/actions-gh-pages@4f9cc6602b3c52e6dd3ff78e1a74bbf0d0a45c9a # v3.9.3
 ```
 
+**Immutable releases.** When the action's maintainer publishes
+[immutable releases](https://docs.github.com/en/code-security/supply-chain-security/understanding-your-software-supply-chain/immutable-releases),
+the tag of such a release can never be moved or deleted, so it carries
+the same guarantee as a commit SHA. Plumber reads the release of the
+exact tag (`GET /repos/{owner}/{repo}/releases/tags/{tag}`, once per
+`owner/repo@tag` per run) and accepts the reference when it reports
+`immutable: true`. This applies to step `uses:` and to job-level
+reusable-workflow calls.
+
+```yaml
+# ✅ accepted — v7.4.0 is an immutable release
+- uses: docker/build-push-action@v7.4.0
+# ❌ still reported — the floating major has no release behind it
+- uses: docker/build-push-action@v7
+```
+
+Everything else is still reported: a mutable release, a tag without a
+release, a branch, and a tag that a same-named branch shadows. The
+check fails closed: without a GitHub token, or when the release cannot
+be read (the run lists it as a check that could not be completed), the
+reference is reported. Accepted references show in the terminal under
+"Pinned By Immutable Release" and in the JSON report under
+`actionPinningResult.immutableReleaseRefs`, each with
+`"pinnedVia": "immutable_release"`, and are counted in
+`metrics.actionRefsImmutableRelease`.
+
 **Config.** Enabled by default in the generated `.plumber.yaml`.
 `trustedOwners: [actions, github]` exempts first-party GitHub-owned
 actions so the initial signal stays focused on the third-party

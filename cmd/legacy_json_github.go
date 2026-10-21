@@ -91,20 +91,32 @@ func statsOf(result *control.AnalysisResult) control.GitHubAnalysisStats {
 
 // buildActionPinningBlock — ISSUE-701. Total = third-party action
 // references in scope (i.e. excluding trustedOwners). Findings are
-// the unpinned subset.
+// the unpinned subset. immutableReleaseRefs lists the tag refs accepted
+// because an immutable release backs the tag, each with the reason it
+// passed (pinnedVia), since no finding carries it.
 func buildActionPinningBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
 	s := statsOf(result)
+	immutableRefs := make([]map[string]any, 0, len(s.ActionRefsImmutableRelease))
+	for _, r := range s.ActionRefsImmutableRelease {
+		ref := map[string]any{"job": r.Job, "uses": r.Uses, "pinnedVia": r.PinnedVia}
+		if r.Line > 0 {
+			ref["line"] = r.Line
+		}
+		immutableRefs = append(immutableRefs, ref)
+	}
 	return map[string]any{
 		"issues": projectFindings(_sortedFindings(findings), "job"),
 		"metrics": map[string]any{
-			"actionRefsTotal":    s.ActionRefsTotal,
-			"actionRefsUnpinned": s.ActionRefsUnpinned,
-			"actionRefsExempt":   s.ActionRefsExempt,
+			"actionRefsTotal":            s.ActionRefsTotal,
+			"actionRefsUnpinned":         s.ActionRefsUnpinned,
+			"actionRefsExempt":           s.ActionRefsExempt,
+			"actionRefsImmutableRelease": len(s.ActionRefsImmutableRelease),
 		},
-		"version":   "0.1.0",
-		"ciValid":   c.CiValid,
-		"ciMissing": c.CiMissing,
-		"skipped":   c.Skipped,
+		"immutableReleaseRefs": immutableRefs,
+		"version":              "0.1.0",
+		"ciValid":              c.CiValid,
+		"ciMissing":            c.CiMissing,
+		"skipped":              c.Skipped,
 	}
 }
 
