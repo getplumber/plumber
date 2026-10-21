@@ -40,6 +40,30 @@ func TestBuildGitHubControlStats_ImmutableReleaseRefs(t *testing.T) {
 	}
 }
 
+// TestBuildGitHubControlStats_ImmutableReleaseRefsSortedAndDeduped: the
+// same immutable-release tag used by two jobs counts twice but is named
+// once, and the names are sorted whatever order the jobs came in.
+func TestBuildGitHubControlStats_ImmutableReleaseRefsSortedAndDeduped(t *testing.T) {
+	stats := &control.GitHubAnalysisStats{
+		ActionRefsTotal: 3,
+		ActionRefsImmutableRelease: []control.ImmutableReleaseRef{
+			{Job: "ci/call", Uses: "octo/shared/.github/workflows/ci.yml@v1.2.0", PinnedVia: control.PinnedViaImmutableRelease},
+			{Job: "ci/build", Uses: "docker/build-push-action@v7.4.0", Line: 12, PinnedVia: control.PinnedViaImmutableRelease},
+			{Job: "ci/test", Uses: "docker/build-push-action@v7.4.0", Line: 20, PinnedVia: control.PinnedViaImmutableRelease},
+		},
+	}
+	got := map[string]string{}
+	for _, s := range buildGitHubControlStats("actionsMustBePinnedByCommitSha", stats, nil) {
+		got[s.Label] = s.Value
+	}
+	if got[statPinnedByImmutableRelease] != "3" {
+		t.Errorf("%s = %q, want \"3\" (every occurrence counts)", statPinnedByImmutableRelease, got[statPinnedByImmutableRelease])
+	}
+	if want := "docker/build-push-action@v7.4.0, octo/shared/.github/workflows/ci.yml@v1.2.0"; got[statImmutableReleaseRefs] != want {
+		t.Errorf("%s = %q, want %q (sorted, each ref once)", statImmutableReleaseRefs, got[statImmutableReleaseRefs], want)
+	}
+}
+
 // TestRenderFindingGroupsV4_ImmutableReleaseNote: the contextual report
 // prints no stat block, so the accepted refs get their own note, under a
 // heading of their own (they are not a configuration exemption).
