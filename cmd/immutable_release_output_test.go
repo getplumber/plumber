@@ -14,7 +14,7 @@ func immutableReleaseStats() *control.GitHubAnalysisStats {
 		ActionRefsTotal:    5,
 		ActionRefsUnpinned: 2,
 		ActionRefsExempt:   1,
-		ActionRefsImmutableRelease: []control.ImmutableReleaseRef{
+		ActionRefsImmutableRelease: []control.PinnedRef{
 			{Job: "ci/build", Uses: "docker/build-push-action@v7.4.0", Line: 12, PinnedVia: control.PinnedViaImmutableRelease},
 			{Job: "ci/call", Uses: "octo/shared/.github/workflows/ci.yml@v1.2.0", PinnedVia: control.PinnedViaImmutableRelease},
 		},
@@ -46,7 +46,7 @@ func TestBuildGitHubControlStats_ImmutableReleaseRefs(t *testing.T) {
 func TestBuildGitHubControlStats_ImmutableReleaseRefsSortedAndDeduped(t *testing.T) {
 	stats := &control.GitHubAnalysisStats{
 		ActionRefsTotal: 3,
-		ActionRefsImmutableRelease: []control.ImmutableReleaseRef{
+		ActionRefsImmutableRelease: []control.PinnedRef{
 			{Job: "ci/call", Uses: "octo/shared/.github/workflows/ci.yml@v1.2.0", PinnedVia: control.PinnedViaImmutableRelease},
 			{Job: "ci/build", Uses: "docker/build-push-action@v7.4.0", Line: 12, PinnedVia: control.PinnedViaImmutableRelease},
 			{Job: "ci/test", Uses: "docker/build-push-action@v7.4.0", Line: 20, PinnedVia: control.PinnedViaImmutableRelease},

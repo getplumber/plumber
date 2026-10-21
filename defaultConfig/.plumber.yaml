@@ -787,7 +787,11 @@ github:
     # Pair with Dependabot (`version-update-strategy: sha-and-version`) to
     # keep pins fresh. The exact tag of an immutable GitHub release is
     # accepted as pinned (it can never move); floating majors like @v4 are
-    # still reported.
+    # still reported. On a branch that commits a workflow dependency
+    # lockfile (.github/workflows/actions.lock, from `gh actions-lock`), the
+    # repository's own steps are accepted: the runner executes the commits
+    # the lockfile records. Reusable workflow calls are not covered by
+    # lockfiles and still need a commit SHA.
     actionsMustBePinnedByCommitSha:
       enabled: true
       # Action-owner prefixes exempt from the pin-by-SHA requirement.

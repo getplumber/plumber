@@ -125,6 +125,14 @@ type NormalizedPipeline struct {
 	// …). Empty when no Renovate config is present.
 	RenovateConfigPath string `json:"renovateConfigPath,omitempty"`
 
+	// WorkflowLockfilePath is ".github/workflows/actions.lock" when the
+	// analyzed branch commits a GitHub workflow dependency lockfile (a
+	// regular file, not a directory or symlink), empty otherwise. The
+	// runner then executes the commits the lockfile records, so
+	// ISSUE-701 (SHA pinning in the workflow file) is skipped (#542).
+	// Only presence is recorded: the file's entries are not read yet.
+	WorkflowLockfilePath string `json:"workflowLockfilePath,omitempty"`
+
 	// SecurityPolicyPath is the path of the repository's SECURITY.md
 	// (root, .github/, or docs/). Empty when the file is absent.
 	SecurityPolicyPath string `json:"securityPolicyPath,omitempty"`

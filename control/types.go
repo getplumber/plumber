@@ -233,10 +233,16 @@ type AnalysisResult struct {
 // GitHub release.
 const PinnedViaImmutableRelease = "immutable_release"
 
-// ImmutableReleaseRef is one `uses:` reference (a step's, or a job-level
+// PinnedViaWorkflowLockfile is the reason a step ref that is not a commit
+// SHA still counts as pinned: the scanned branch commits a workflow
+// lockfile (.github/workflows/actions.lock) and the runner executes the
+// commit it records (#542). Never set on a reusable-workflow call.
+const PinnedViaWorkflowLockfile = "workflow_lockfile"
+
+// PinnedRef is one `uses:` reference (a step's, or a job-level
 // reusable-workflow call's) that ISSUE-701 accepted as pinned without a
-// commit SHA. Line is 0 for a reusable-workflow call.
-type ImmutableReleaseRef struct {
+// commit SHA, PinnedVia saying why. Line is 0 for a reusable-workflow call.
+type PinnedRef struct {
 	Job       string
 	Uses      string
 	Line      int
@@ -258,7 +264,15 @@ type GitHubAnalysisStats struct {
 	// because the tag is backed by an immutable GitHub release (#421):
 	// not unpinned, and listed so the report says why a ref that looks
 	// unpinned passed.
-	ActionRefsImmutableRelease []ImmutableReleaseRef
+	ActionRefsImmutableRelease []PinnedRef
+	// WorkflowLockfilePath is the scanned branch's workflow lockfile
+	// (".github/workflows/actions.lock"), empty when it has none.
+	WorkflowLockfilePath string
+	// ActionRefsWorkflowLockfile lists the step refs ISSUE-701 accepted
+	// because that lockfile locks them (#542). Reusable-workflow calls and
+	// the steps of another repository's reusable workflow never appear:
+	// lockfiles do not cover reusable workflows.
+	ActionRefsWorkflowLockfile []PinnedRef
 	// ActionRefsNested counts the entries a composite action or a called
 	// workflow pulled in (monorepo spec 2026-10-16 section 8), trusted
 	// owners included: they are part of the closure the rules read.

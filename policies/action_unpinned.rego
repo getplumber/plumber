@@ -18,6 +18,12 @@
 # worry about.
 # A tag backed by an immutable GitHub release is accepted as pinned
 # (see _is_immutable_release_tag), for steps and reusable workflows.
+# When the branch commits a workflow dependency lockfile
+# (.github/workflows/actions.lock), the runner executes the commits it
+# records for the repository's own steps, so those are accepted (#542,
+# see _lockfile_covers). Reusable workflows are not in the lockfile
+# schema: a reusable-workflow call is always judged, and so are the
+# steps of a job appended from another repository's reusable workflow.
 package action_unpinned
 
 import rego.v1
@@ -38,6 +44,7 @@ deny contains finding if {
 	not _is_own_repo(use.uses)
 	not _is_trusted_owner(use.uses)
 	not _is_immutable_release_tag(object.get(use, "metadata", {}))
+	not _lockfile_covers(job)
 	base := {
 		"code":     "ISSUE-701",
 		"severity": "high",
@@ -80,6 +87,24 @@ _is_immutable_release_tag(meta) if {
 	not object.get(meta, "refIsAmbiguous", false)
 }
 
+# _lockfile_covers: the steps of this job run at the commits the scanned
+# branch's workflow lockfile records (#542). Only the repository's own
+# jobs qualify, its same-repo reusable workflows included: a job appended
+# from another repository's reusable workflow (nested) is governed by that
+# repository's lockfile, which is not read yet, so its steps keep being
+# judged. The Go counter (control/github_stats.go lockfileCovers) mirrors
+# this predicate.
+_lockfile_covers(job) if {
+	input.pipeline.workflowLockfilePath
+	not object.get(job, "nested", false)
+}
+
+# _reusable_call_suffix names the gap on a reusable-workflow call when the
+# branch has a lockfile: the call itself is never locked.
+default _reusable_call_suffix := ""
+
+_reusable_call_suffix := ", which workflow lockfiles do not cover" if input.pipeline.workflowLockfilePath
+
 default _redirected_owner_fields(_) := {}
 
 _redirected_owner_fields(use) := {"redirectedOwner": owner} if {
@@ -93,7 +118,9 @@ _redirected_owner_fields(use) := {"redirectedOwner": owner} if {
 # pin-by-SHA rule: a mutable ref on a reusable workflow has the same
 # supply-chain blast radius as a step-level action ref. The IR field
 # reusableWorkflowUses (omitempty) carries the raw string when the
-# job is a reusable-workflow call.
+# job is a reusable-workflow call. A workflow lockfile never covers the
+# call (reusable workflows are not in its schema), so this rule has no
+# lockfile exemption.
 deny contains finding if {
 	input.config.actionsMustBePinnedByCommitSha
 	some i
@@ -109,7 +136,7 @@ deny contains finding if {
 	finding := object.union({
 		"code":     "ISSUE-701",
 		"severity": "high",
-		"message":  provenance.message(sprintf("job %q calls reusable workflow %q with a mutable ref \u2014 pin by commit SHA instead", [job.name, use]), job),
+		"message":  provenance.message(sprintf("job %q calls reusable workflow %q with a mutable ref%s \u2014 pin by commit SHA instead", [job.name, use, _reusable_call_suffix]), job),
 		"job":      job.name,
 		"uses":     use,
 	}, provenance.fields(job))

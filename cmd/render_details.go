@@ -42,6 +42,11 @@ const (
 	// passed.
 	statPinnedByImmutableRelease = "Pinned By Immutable Release"
 	statImmutableReleaseRefs     = "Immutable Release Refs"
+	// statPinnedByWorkflowLockfile / statWorkflowLockfile count the step
+	// refs the branch's workflow lockfile locks and say what it leaves out
+	// (reusable workflows, #542). Both appear only when the branch has one.
+	statPinnedByWorkflowLockfile = "Pinned By Workflow Lockfile"
+	statWorkflowLockfile         = "Workflow Lockfile"
 )
 
 // statLine is an alias for control.StatLine used within the cmd package.
@@ -324,6 +329,7 @@ func renderExemptedNote(groups []findingGroup) {
 	// finding either; they are judged, not exempted, so they get a heading
 	// of their own.
 	renderStatNote(groups, statImmutableReleaseRefs, "Accepted as pinned by an immutable release")
+	renderStatNote(groups, statWorkflowLockfile, "Accepted as pinned by a workflow lockfile")
 }
 
 // renderStatNote prints, under heading, the label stat line of every group
@@ -426,9 +432,10 @@ func renderPassedControlsSummary(groups []findingGroup) {
 		}
 		// An exemption is a deliberate decision rather than a caveat, but
 		// it hides what it covers from the check all the same, so it stays
-		// visible; so do the tags an immutable release let through.
+		// visible; so do the tags an immutable release let through and the
+		// steps a workflow lockfile locks.
 		for _, s := range g.Stats {
-			if s.Label == statExempted || s.Label == statImmutableReleaseRefs {
+			if s.Label == statExempted || s.Label == statImmutableReleaseRefs || s.Label == statWorkflowLockfile {
 				fmt.Printf("      %s%s: %s%s\n", colorDim, s.Label, s.Value, colorReset)
 			}
 		}
@@ -903,7 +910,8 @@ func buildGitHubControlStats(controlName string, stats *control.GitHubAnalysisSt
 		}, stats.ImagesExempted)
 	case "actionsMustBePinnedByCommitSha":
 		immutable := len(stats.ActionRefsImmutableRelease)
-		pinned := stats.ActionRefsTotal - stats.ActionRefsUnpinned - immutable
+		locked := len(stats.ActionRefsWorkflowLockfile)
+		pinned := stats.ActionRefsTotal - stats.ActionRefsUnpinned - immutable - locked
 		if pinned < 0 {
 			pinned = 0
 		}
@@ -911,8 +919,18 @@ func buildGitHubControlStats(controlName string, stats *control.GitHubAnalysisSt
 			{Label: "Total Action Refs", Value: fmt.Sprintf("%d", stats.ActionRefsTotal+stats.ActionRefsExempt)},
 			{Label: "Pinned By SHA", Value: fmt.Sprintf("%d", pinned)},
 			{Label: statPinnedByImmutableRelease, Value: fmt.Sprintf("%d", immutable)},
-			{Label: "Not Pinned By SHA", Value: fmt.Sprintf("%d", stats.ActionRefsUnpinned)},
-			{Label: "Trusted-Owner Exempt", Value: fmt.Sprintf("%d", stats.ActionRefsExempt)},
+		}
+		if stats.WorkflowLockfilePath != "" {
+			lines = append(lines, statLine{Label: statPinnedByWorkflowLockfile, Value: fmt.Sprintf("%d", locked)})
+		}
+		lines = append(lines,
+			statLine{Label: "Not Pinned By SHA", Value: fmt.Sprintf("%d", stats.ActionRefsUnpinned)},
+			statLine{Label: "Trusted-Owner Exempt", Value: fmt.Sprintf("%d", stats.ActionRefsExempt)},
+		)
+		if stats.WorkflowLockfilePath != "" {
+			lines = append(lines, statLine{Label: statWorkflowLockfile, Value: fmt.Sprintf(
+				"%s locks %d step reference(s); reusable workflow calls are not covered by lockfiles and still need a commit SHA",
+				stats.WorkflowLockfilePath, locked)})
 		}
 		if immutable > 0 {
 			refs := make([]string, 0, immutable)

@@ -37,6 +37,21 @@ func scanRenovateConfig(rootDir string) string {
 	return ""
 }
 
+// scanWorkflowLockfile returns githubWorkflowLockfile when the checkout
+// holds .github/workflows/actions.lock as a regular file, the empty string
+// otherwise. A directory or a symlink does not count, the same rule the
+// workflow reader applies to the files beside it.
+func scanWorkflowLockfile(rootDir string) string {
+	p, ok := resolveWithinRoot(rootDir, githubWorkflowsSubdir, githubWorkflowLockfileName)
+	if !ok {
+		return ""
+	}
+	if fi, err := os.Lstat(p); err != nil || !fi.Mode().IsRegular() {
+		return ""
+	}
+	return githubWorkflowLockfile
+}
+
 // scanSecurityPolicy returns the path of the first SECURITY.md-like
 // file found at the repository root, under .github/, or under
 // docs/. GitHub itself recognises those three locations for the

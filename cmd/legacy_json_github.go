@@ -104,7 +104,7 @@ func buildActionPinningBlock(c legacyCommon, result *control.AnalysisResult, fin
 		}
 		immutableRefs = append(immutableRefs, ref)
 	}
-	return map[string]any{
+	block := map[string]any{
 		"issues": projectFindings(_sortedFindings(findings), "job"),
 		"metrics": map[string]any{
 			"actionRefsTotal":            s.ActionRefsTotal,
@@ -118,6 +118,23 @@ func buildActionPinningBlock(c legacyCommon, result *control.AnalysisResult, fin
 		"ciMissing":            c.CiMissing,
 		"skipped":              c.Skipped,
 	}
+	// A branch with a workflow lockfile (#542) also names the file and the
+	// step refs it locks, each with pinnedVia, and counts them. Absent
+	// otherwise, so a report without a lockfile reads exactly as before.
+	if s.WorkflowLockfilePath != "" {
+		lockedRefs := make([]map[string]any, 0, len(s.ActionRefsWorkflowLockfile))
+		for _, r := range s.ActionRefsWorkflowLockfile {
+			ref := map[string]any{"job": r.Job, "uses": r.Uses, "pinnedVia": r.PinnedVia}
+			if r.Line > 0 {
+				ref["line"] = r.Line
+			}
+			lockedRefs = append(lockedRefs, ref)
+		}
+		block["workflowLockfile"] = s.WorkflowLockfilePath
+		block["workflowLockfileRefs"] = lockedRefs
+		block["metrics"].(map[string]any)["actionRefsWorkflowLockfile"] = len(s.ActionRefsWorkflowLockfile)
+	}
+	return block
 }
 
 // buildImageForbiddenTagsBlockGitHub mirrors the GitLab block but

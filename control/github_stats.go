@@ -24,7 +24,7 @@ func AggregateGitHubStats(pipeline *ir.NormalizedPipeline, pc *configuration.Plu
 	if pipeline == nil {
 		return &GitHubAnalysisStats{}
 	}
-	stats := &GitHubAnalysisStats{}
+	stats := &GitHubAnalysisStats{WorkflowLockfilePath: pipeline.WorkflowLockfilePath}
 
 	gh := pc.ControlsFor("github")
 	trustedOwners := defaultTrustedActionOwners
@@ -174,8 +174,12 @@ func AggregateGitHubStats(pipeline *ir.NormalizedPipeline, pc *configuration.Plu
 			switch {
 			case isShaPinned(ref):
 			case isImmutableReleaseTag(use.Metadata):
-				stats.ActionRefsImmutableRelease = append(stats.ActionRefsImmutableRelease, ImmutableReleaseRef{
+				stats.ActionRefsImmutableRelease = append(stats.ActionRefsImmutableRelease, PinnedRef{
 					Job: job.Name, Uses: ref, Line: use.Line, PinnedVia: PinnedViaImmutableRelease,
+				})
+			case lockfileCovers(pipeline, job) && !isLocalRef(ref):
+				stats.ActionRefsWorkflowLockfile = append(stats.ActionRefsWorkflowLockfile, PinnedRef{
+					Job: job.Name, Uses: ref, Line: use.Line, PinnedVia: PinnedViaWorkflowLockfile,
 				})
 			default:
 				stats.ActionRefsUnpinned++
@@ -198,7 +202,7 @@ func AggregateGitHubStats(pipeline *ir.NormalizedPipeline, pc *configuration.Plu
 				switch {
 				case isShaPinned(ref):
 				case isImmutableReleaseTag(job.ReusableWorkflowMetadata):
-					stats.ActionRefsImmutableRelease = append(stats.ActionRefsImmutableRelease, ImmutableReleaseRef{
+					stats.ActionRefsImmutableRelease = append(stats.ActionRefsImmutableRelease, PinnedRef{
 						Job: job.Name, Uses: ref, PinnedVia: PinnedViaImmutableRelease,
 					})
 				default:
@@ -366,6 +370,28 @@ func isTrustedOwner(ref string, trustedOwners []string) bool {
 
 func isShaPinned(ref string) bool {
 	return shaRefRegex.MatchString(ref)
+}
+
+// lockfileCovers mirrors _lockfile_covers in action_unpinned.rego: the
+// scanned branch commits a workflow lockfile and the job is one of the
+// repository's own (its same-repo reusable workflows included). A job
+// appended from another repository's reusable workflow is governed by that
+// repository's lockfile, which is not read yet (#542).
+func lockfileCovers(pipeline *ir.NormalizedPipeline, job *ir.Job) bool {
+	return pipeline.WorkflowLockfilePath != "" && !job.Nested
+}
+
+// isLocalRef is the reference forms _is_local in action_unpinned.rego
+// exempts (./, /, $/, docker://). The counter has never exempted them; it
+// only keeps them out of the lockfile list, which would otherwise name a
+// same-repo `$/` action (the form `gh actions-lock` writes) as locked.
+func isLocalRef(ref string) bool {
+	for _, p := range []string{"./", "/", "$/", "docker://"} {
+		if strings.HasPrefix(ref, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // countCacheWriteExemption lists a job ISSUE-705 would flag (cache write

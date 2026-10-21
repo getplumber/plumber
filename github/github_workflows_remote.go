@@ -60,9 +60,12 @@ func ScanGitHubWorkflowsRemote(host, owner, repo, ref string, enrichActionMetada
 		return nil, nil, fmt.Errorf("github api client: %w", err)
 	}
 
-	listing, err := listWorkflowFiles(rest, owner, repo, ref)
+	listing, hasLockfile, err := listWorkflowFiles(rest, owner, repo, ref)
 	if err != nil {
 		return nil, nil, fmt.Errorf("list workflows: %w", err)
+	}
+	if hasLockfile {
+		pipeline.WorkflowLockfilePath = githubWorkflowLockfile
 	}
 
 	// Record the file count on the pipeline so the caller can use
@@ -220,7 +223,12 @@ type remoteContentFile struct {
 	Encoding string `json:"encoding"`
 }
 
-func listWorkflowFiles(rest *api.RESTClient, owner, repo, ref string) ([]remoteContentEntry, error) {
+// listWorkflowFiles returns the .yml/.yaml files under .github/workflows at
+// ref, sorted by name. hasLockfile reports whether the same listing holds
+// the workflow dependency lockfile as a regular file (a "dir" or "symlink"
+// entry does not count, like the local scanner), so detecting it costs no
+// extra request.
+func listWorkflowFiles(rest *api.RESTClient, owner, repo, ref string) (files []remoteContentEntry, hasLockfile bool, err error) {
 	endpoint := fmt.Sprintf("repos/%s/%s/contents/%s", owner, repo, githubWorkflowsSubdir)
 	if ref != "" {
 		endpoint += "?ref=" + ref
@@ -237,15 +245,19 @@ func listWorkflowFiles(rest *api.RESTClient, owner, repo, ref string) ([]remoteC
 		// rate-limit) propagates.
 		if isNotFound(err) {
 			if verr := verifyRepoAndRefExist(rest, owner, repo, ref); verr != nil {
-				return nil, verr
+				return nil, false, verr
 			}
-			return nil, nil
+			return nil, false, nil
 		}
-		return nil, err
+		return nil, false, err
 	}
 	out := entries[:0]
 	for _, e := range entries {
 		if e.Type != "file" {
+			continue
+		}
+		if e.Name == githubWorkflowLockfileName {
+			hasLockfile = true
 			continue
 		}
 		if !strings.HasSuffix(e.Name, ".yml") && !strings.HasSuffix(e.Name, ".yaml") {
@@ -254,7 +266,7 @@ func listWorkflowFiles(rest *api.RESTClient, owner, repo, ref string) ([]remoteC
 		out = append(out, e)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return out, nil
+	return out, hasLockfile, nil
 }
 
 // verifyRepoAndRefExist probes the repository and, when ref is non-empty, the

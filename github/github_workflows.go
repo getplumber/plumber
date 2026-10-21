@@ -19,6 +19,14 @@ import (
 
 const githubWorkflowsSubdir = ".github/workflows"
 
+// githubWorkflowLockfileName is the workflow dependency lockfile the
+// `gh actions-lock` extension commits beside the workflows (#542).
+const githubWorkflowLockfileName = "actions.lock"
+
+// githubWorkflowLockfile is its repo-relative path, the value recorded on
+// NormalizedPipeline.WorkflowLockfilePath.
+const githubWorkflowLockfile = githubWorkflowsSubdir + "/" + githubWorkflowLockfileName
+
 // maxWorkflowFileBytes bounds a single workflow / dependabot file read.
 const maxWorkflowFileBytes = 1 << 20 // 1 MiB
 
@@ -167,6 +175,7 @@ func ScanGitHubWorkflowsWithProgress(projectPath, defaultBranch, rootDir, apiHos
 	}
 	pipeline.RenovateConfigPath = scanRenovateConfig(rootDir)
 	pipeline.SecurityPolicyPath = scanSecurityPolicy(rootDir)
+	pipeline.WorkflowLockfilePath = scanWorkflowLockfile(rootDir)
 	pipeline.Dockerfiles = scanDockerfiles(rootDir)
 	// Reserve 3 leading/trailing steps around the per-action phase:
 	// "Scanning" at step 1, "Evaluating policies" at step (total-1)

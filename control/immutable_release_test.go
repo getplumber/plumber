@@ -54,7 +54,7 @@ func TestAggregate_ImmutableReleaseTagsArePinned(t *testing.T) {
 	if stats.ActionRefsUnpinned != 5 {
 		t.Errorf("ActionRefsUnpinned = %d, want 5 (every ref but the two immutable-release tags)", stats.ActionRefsUnpinned)
 	}
-	want := []ImmutableReleaseRef{
+	want := []PinnedRef{
 		{Job: "ci/build", Uses: "docker/build-push-action@v7.4.0", Line: 12, PinnedVia: PinnedViaImmutableRelease},
 		{Job: "ci/call", Uses: "octo/shared/.github/workflows/ci.yml@v1.2.0", PinnedVia: PinnedViaImmutableRelease},
 	}
