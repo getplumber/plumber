@@ -102,7 +102,7 @@ Before opening an issue, please:
 
 ### Prerequisites
 
-- Go 1.25 or later (`go.mod` requests toolchain `go1.26.5`; run with `GOTOOLCHAIN=auto` so it is honoured)
+- Go 1.25 or later (`go.mod` requests toolchain `go1.26.10`; run with `GOTOOLCHAIN=auto` so it is honoured)
 - Make
 - Git
 - For testing against a real GitLab project: a GitLab token with `read_api` + `read_repository` scopes. Required even for a local checkout — GitLab "local mode" only resolves `include:local` from disk, and the config merge, per-include job harvest, variable scopes and branch protections all still go through the API.
