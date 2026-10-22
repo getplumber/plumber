@@ -10,6 +10,7 @@ Thank you for your interest in contributing to Plumber! This guide will help you
 - [How to Contribute](#how-to-contribute)
   - [Reporting Issues](#reporting-issues)
   - [Submitting Pull Requests](#submitting-pull-requests)
+  - [Changing GitHub workflows](#changing-github-workflows)
 - [Development Setup](#development-setup)
   - [Prerequisites](#prerequisites)
   - [Building](#building)
@@ -97,6 +98,16 @@ Before opening an issue, please:
    - Reference to related issues (e.g., "Fixes #123")
    - Screenshots/output examples if applicable
    - **"Allow edits from maintainers" enabled** (checked by default on GitHub). This lets maintainers push fixes or rebases directly to your branch, which speeds up the review process.
+
+### Changing GitHub workflows
+
+Every action our workflows use is locked in `.github/workflows/actions.lock`: its commit, its owner and repository ids, and the actions it calls in turn. The `Lockfile` check fails a PR whose workflows the lockfile doesn't fully cover.
+
+- After adding a workflow or changing any `uses:`, run `gh actions-lock` from the repository root (install it with `gh extension install github/gh-actions-lock`) and commit the updated lockfile with the workflow change.
+- Never edit `actions.lock` by hand.
+- Dependabot doesn't onboard a new workflow: that one needs `gh actions-lock` by hand. If a Dependabot bump PR fails the `Lockfile` check, run `gh actions-lock` on its branch.
+- Optional, before committing: `gh actions-lock --verify-local --no-fix` checks coverage offline. CI runs the full `gh actions-lock --verify`.
+- Review a lockfile change as a dependency change: a changed `commit` is new code that will run, and a changed `owner_id` or `repo_id` means the repository behind the name is not the one we locked.
 
 ## Development Setup
 
