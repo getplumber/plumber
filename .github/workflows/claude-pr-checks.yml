@@ -60,7 +60,7 @@ jobs:
             prompt_file: .github/claude-prompts/new-control-check.md
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@v7.0.1
         with:
           # Check out the PR head (not the default merge ref) so the files and
           # line numbers the agent sees match head.sha, which review comments
@@ -84,7 +84,7 @@ jobs:
         # finishes without calling the structured-output tool, and a review
         # with zero findings reliably ends exactly that way.
         continue-on-error: true
-        uses: anthropics/claude-code-action@f27be6b65a4652f08a2ba3cff79114829b588967 # v1.0.252
+        uses: anthropics/claude-code-action@v1.0.252
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           # Without this the action exchanges an OIDC token for a GitHub App
@@ -222,7 +222,7 @@ jobs:
 
       - name: Upload report
         if: steps.review.outputs.structured_output != ''
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: claude-review-${{ matrix.control }}
           path: ${{ runner.temp }}/report-${{ matrix.control }}.json
@@ -251,7 +251,7 @@ jobs:
       # download-artifact — checkout's clean step would otherwise wipe the
       # downloaded reports/ directory.
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -262,14 +262,14 @@ jobs:
       # "control did not complete".
       - name: Download reports
         continue-on-error: true
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        uses: actions/download-artifact@v8.0.2
         with:
           pattern: claude-review-*
           merge-multiple: true
           path: reports
 
       - name: Post finding comments
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        uses: actions/github-script@v9.0.0
         env:
           # Used only for the semantic dedup pass below. This step
           # never handles untrusted PR content directly (the review agents do,

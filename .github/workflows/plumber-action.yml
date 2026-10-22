@@ -25,11 +25,11 @@ jobs:
       security-events: write
       id-token: write          # mint the OIDC id-token for the Plumber Score push
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version: '1.26.10'
 
@@ -63,7 +63,7 @@ jobs:
 
       - name: Upload SARIF to Code Scanning
         if: ${{ always() && hashFiles('plumber.sarif') != '' }}
-        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        uses: github/codeql-action/upload-sarif@v4.39.0
         with:
           sarif_file: plumber.sarif
 
@@ -73,7 +73,7 @@ jobs:
       # even when --fail-warnings fails the job.
       - name: Upload Plumber reports
         if: ${{ always() }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: plumber-reports
           path: |
