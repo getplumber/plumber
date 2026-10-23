@@ -34,7 +34,7 @@ deny contains finding if {
 		"value":           v,
 		"valueProvenance": "ci_file",
 		"location":        job.name,
-		"line":            location.variable_line(job, k),
+		"line":            _debug_line(job, k),
 	}
 }
 
@@ -92,7 +92,7 @@ deny contains finding if {
 		"value":           v,
 		"valueProvenance": "ci_file",
 		"location":        job.name,
-		"line":            location.variable_line(job, k),
+		"line":            _debug_line(job, k),
 	}
 }
 
@@ -115,17 +115,33 @@ deny contains finding if {
 		"job":          job.name,
 		"variableName": var_name,
 		"location":     job.name,
-		"line":         _github_env_line(job, var_name),
+		"line":         _debug_line(job, var_name),
 	}
 }
 
-# _github_env_line: the first script line writing var_name to $GITHUB_ENV.
-_github_env_line(job, var_name) := location.first({location.script_line(job, j, li) |
+# _debug_line: where the job sets the debug variable name (#572), the
+# first of its env: entry and its $GITHUB_ENV writes. The env and the
+# $GITHUB_ENV branches share one identity, so they must report one line.
+_debug_line(job, name) := location.first({location.variable_line(job, name), _github_env_line(job, name)})
+
+# _github_env_line: the first script line writing var_name to $GITHUB_ENV,
+# the script's own first line when the write and the name sit on
+# different lines (a heredoc).
+_github_env_line(job, var_name) := location.first({n |
 	some j, script in job.scripts
-	some li, l in split(script, "\n")
-	_writes_to_github_env(l)
-	_script_mentions_var(l, var_name)
+	_writes_to_github_env(script)
+	_script_mentions_var(script, var_name)
+	n := _github_env_script_line(job, j, script, var_name)
 })
+
+_github_env_script_line(job, j, script, var_name) := n if {
+	n := location.first({location.script_line(job, j, li) |
+		some li, l in split(script, "\n")
+		_writes_to_github_env(l)
+		_script_mentions_var(l, var_name)
+	})
+	n > 0
+} else := location.script_line(job, j, 0)
 
 _is_expression(v) if regex.match(`\$\{\{`, v)
 

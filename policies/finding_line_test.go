@@ -3,6 +3,8 @@ package policies_test
 import (
 	"context"
 	"testing"
+
+	"github.com/getplumber/plumber/internal/ir"
 )
 
 // lineWorkflow's line numbers are what TestFindingLine_GitHub expects:
@@ -51,6 +53,7 @@ func TestFindingLine_GitHub(t *testing.T) {
 		"securityJobsWeakened":                      map[string]any{"securityJobPatterns": []any{"*codeql*"}, "allowFailureMustBeFalse": true},
 		"actionsMustBePinnedByCommitSha":            map[string]any{"trustedOwners": []any{"actions", "github"}},
 		"githubActionMustComeFromAuthorizedSources": map[string]any{"trustGithubOfficialActions": true},
+		"imageAuthorizedSources":                    map[string]any{"trustedUrls": []any{}},
 	}
 	findings, err := evaluateStrict(loadPolicies(t), context.Background(), scanWorkflow(t, lineWorkflow), cfg)
 	if err != nil {
@@ -65,6 +68,7 @@ func TestFindingLine_GitHub(t *testing.T) {
 		code, job string
 		line      int
 	}{
+		{"ISSUE-101", "repro/build", 8},
 		{"ISSUE-102", "repro/build", 8},
 		{"ISSUE-103", "repro/build", 8},
 		{"ISSUE-203", "repro/build", 10},
@@ -85,4 +89,97 @@ func TestFindingLine_GitHub(t *testing.T) {
 			t.Errorf("%s on %s: lines %v, want [%d]", w.code, w.job, lines, w.line)
 		}
 	}
+}
+
+// sharedIdentityWorkflow's line numbers are what
+// TestFindingLine_OneLinePerIdentity expects.
+const sharedIdentityWorkflow = `on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    env:
+      ACTIONS_STEP_DEBUG: true
+    steps:
+      - run: echo "ACTIONS_STEP_DEBUG=true" >> $GITHUB_ENV
+  h:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          cat >> $GITHUB_ENV <<EOF
+          ACTIONS_STEP_DEBUG=true
+          EOF
+  k:
+    runs-on: ubuntu-latest
+    env:
+      BODY: ${{ github.event.pull_request.body }}
+    steps:
+      - run: |
+          echo "B=$BODY" >> "$GITHUB_ENV"
+          cat <<EOF >> "$GITHUB_ENV"
+          $BODY
+          EOF
+`
+
+// TestFindingLine_OneLinePerIdentity pins that the branches of one rule
+// sharing an identity report one line: ISSUE-203 set in env: and written
+// to $GITHUB_ENV, ISSUE-209 written inline and through a heredoc. Two
+// lines for one fingerprint would make two results of one issue. A
+// $GITHUB_ENV write whose name sits on a later heredoc line points at
+// the script's first line.
+func TestFindingLine_OneLinePerIdentity(t *testing.T) {
+	cfg := map[string]any{"debugTrace": map[string]any{"forbiddenVariables": []any{"ACTIONS_STEP_DEBUG"}}}
+	findings, err := evaluateStrict(loadPolicies(t), context.Background(), scanWorkflow(t, sharedIdentityWorkflow), cfg)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	type key struct{ code, job string }
+	got := map[key]map[int]int{}
+	for _, f := range findings {
+		k := key{f.Code, f.Job}
+		if got[k] == nil {
+			got[k] = map[int]int{}
+		}
+		got[k][f.Line]++
+	}
+	want := []struct {
+		code, job string
+		line, n   int
+	}{
+		{"ISSUE-203", "repro/j", 6, 2},
+		{"ISSUE-203", "repro/h", 13, 1},
+		{"ISSUE-209", "repro/k", 22, 2},
+	}
+	for _, w := range want {
+		lines := got[key{w.code, w.job}]
+		if len(lines) != 1 || lines[w.line] != w.n {
+			t.Errorf("%s on %s: %v (line: count), want %d findings at line %d", w.code, w.job, lines, w.n, w.line)
+		}
+	}
+}
+
+// TestFindingLine_GitLabKeepsTheJobHeader pins that a collector recording
+// no construct line (GitLab, until #573) keeps the job-header fallback on
+// the shared rules.
+func TestFindingLine_GitLabKeepsTheJobHeader(t *testing.T) {
+	p := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitLab,
+		Jobs: []ir.Job{{
+			Name: "build", OriginFile: ".gitlab-ci.yml", OriginLine: 6,
+			Image: &ir.Image{Name: "alpine", Tag: "latest"},
+		}},
+	}
+	cfg := map[string]any{"imageMutableTag": map[string]any{"forbiddenTags": []any{"latest"}}}
+	findings, err := evaluateStrict(loadPolicies(t), context.Background(), p, cfg)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	for _, f := range findings {
+		if f.Code == "ISSUE-102" {
+			if f.Line != 6 {
+				t.Fatalf("ISSUE-102 line = %d, want the job header 6", f.Line)
+			}
+			return
+		}
+	}
+	t.Fatalf("no ISSUE-102 in %+v", findings)
 }

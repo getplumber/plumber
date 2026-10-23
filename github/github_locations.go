@@ -2,6 +2,7 @@ package github
 
 import (
 	"maps"
+	"slices"
 	"strings"
 
 	yamlv3 "gopkg.in/yaml.v3"
@@ -18,8 +19,10 @@ type jobLocations struct {
 	variables map[string]int
 	// scripts is the line of every "\n"-split line of each non-empty
 	// run: string, steps in order: the same walk extractGitHubRunScripts
-	// does, so the two pair index for index when they agree in length.
-	scripts [][]int
+	// does. scriptValues holds the strings themselves, so the two lists
+	// pair only when they agree script for script.
+	scripts      [][]int
+	scriptValues []string
 }
 
 // scanGitHubJobLocations returns the locations of every job of a
@@ -63,6 +66,7 @@ func scanGitHubJobLocations(data []byte) map[string]jobLocations {
 				maps.Copy(loc.variables, envLines(mappingValue(step, "env")))
 				if run := mappingValue(step, "run"); isNonEmptyString(run) {
 					loc.scripts = append(loc.scripts, scalarLines(run))
+					loc.scriptValues = append(loc.scriptValues, run.Value)
 				}
 			}
 		}
@@ -72,10 +76,10 @@ func scanGitHubJobLocations(data []byte) map[string]jobLocations {
 }
 
 // applyJobLocations copies a job's locations onto it. ScriptLines is
-// set only when the scan found exactly as many run: scripts as the
-// decoder did: the two read the same steps with different YAML
-// versions (`run: yes` is a boolean to one, a string to the other), and
-// a list that does not pair index for index would name wrong lines.
+// set only when the scan found the very scripts the decoder did, in the
+// same order: the two read the same steps with different YAML versions
+// (`run: yes` is a boolean to one, a string to the other), and a list
+// that does not pair index for index would name wrong lines.
 func applyJobLocations(job *ir.Job, loc jobLocations) {
 	if len(loc.keys) > 0 {
 		job.KeyLines = loc.keys
@@ -83,7 +87,7 @@ func applyJobLocations(job *ir.Job, loc jobLocations) {
 	if len(loc.variables) > 0 && len(job.Variables) > 0 {
 		job.VariableLines = loc.variables
 	}
-	if len(loc.scripts) > 0 && len(loc.scripts) == len(job.Scripts) {
+	if len(loc.scripts) > 0 && slices.Equal(loc.scriptValues, job.Scripts) {
 		job.ScriptLines = loc.scripts
 	}
 	if loc.image > 0 {

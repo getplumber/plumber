@@ -102,7 +102,7 @@ deny contains finding if {
 	_matches(line, env_sink_patterns)
 	_dereferences(line, varname)
 	not _base64_of(line, varname)
-	finding := _finding(job.name, varname, _value_subject(job.variables[varname]), _sink_line(job, varname, env_sink_patterns), sprintf("binds an untrusted multiline value to $%s and writes it to $GITHUB_ENV; a newline still opens a second variable (base64-encode or use a heredoc delimiter)", [varname]))
+	finding := _finding(job.name, varname, _value_subject(job.variables[varname]), _var_line(job, varname), sprintf("binds an untrusted multiline value to $%s and writes it to $GITHUB_ENV; a newline still opens a second variable (base64-encode or use a heredoc delimiter)", [varname]))
 }
 
 # 3. ENV-BOUND poisoning of $GITHUB_PATH: any untrusted value bound in env: and
@@ -118,7 +118,7 @@ deny contains finding if {
 	_matches(line, path_sink_patterns)
 	_dereferences(line, varname)
 	not _base64_of(line, varname)
-	finding := _finding(job.name, varname, _value_subject(job.variables[varname]), _sink_line(job, varname, path_sink_patterns), sprintf("binds an untrusted value to $%s and writes it to $GITHUB_PATH; an attacker controls a directory placed on PATH", [varname]))
+	finding := _finding(job.name, varname, _value_subject(job.variables[varname]), _var_line(job, varname), sprintf("binds an untrusted value to $%s and writes it to $GITHUB_PATH; an attacker controls a directory placed on PATH", [varname]))
 }
 
 # 4. ENV-BOUND poisoning of $GITHUB_ENV through a HEREDOC / split redirect. The
@@ -134,7 +134,7 @@ deny contains finding if {
 	not _tojson_wrapped(job.variables[varname])
 	some j
 	_heredoc_to_sink(job.scripts[j], varname, env_sink_patterns)
-	finding := _finding(job.name, varname, _value_subject(job.variables[varname]), _heredoc_line(job, varname, env_sink_patterns), sprintf("writes $%s into $GITHUB_ENV through a heredoc/redirect; the multiline value still opens a second variable (base64-encode or use a randomised heredoc delimiter)", [varname]))
+	finding := _finding(job.name, varname, _value_subject(job.variables[varname]), _var_line(job, varname), sprintf("writes $%s into $GITHUB_ENV through a heredoc/redirect; the multiline value still opens a second variable (base64-encode or use a randomised heredoc delimiter)", [varname]))
 }
 
 # 5. Same, for $GITHUB_PATH — any untrusted value written through a heredoc
@@ -147,7 +147,7 @@ deny contains finding if {
 	not _tojson_wrapped(job.variables[varname])
 	some j
 	_heredoc_to_sink(job.scripts[j], varname, path_sink_patterns)
-	finding := _finding(job.name, varname, _value_subject(job.variables[varname]), _heredoc_line(job, varname, path_sink_patterns), sprintf("writes $%s into $GITHUB_PATH through a heredoc/redirect; an attacker controls a directory placed on PATH", [varname]))
+	finding := _finding(job.name, varname, _value_subject(job.variables[varname]), _var_line(job, varname), sprintf("writes $%s into $GITHUB_PATH through a heredoc/redirect; an attacker controls a directory placed on PATH", [varname]))
 }
 
 _matches(s, patterns) if regex.match(patterns[_], s)
@@ -201,6 +201,22 @@ _direct_line(job) := location.first({location.script_line(job, j, li) |
 	_matches(line, unsafe_patterns)
 	not _tojson_wrapped(line)
 })
+
+# _var_line: the line of an env-bound finding (#572), the first write of
+# $varname into a sink that fires for its value. The four env-bound
+# branches share one identity (job, variableName), so they must report
+# one line whichever of them fired.
+_var_line(job, varname) := location.first(env | path) if {
+	value := job.variables[varname]
+	env := {n |
+		_matches(value, newline_unsafe_patterns)
+		some n in {_sink_line(job, varname, env_sink_patterns), _heredoc_line(job, varname, env_sink_patterns)}
+	}
+	path := {n |
+		_matches(value, unsafe_patterns)
+		some n in {_sink_line(job, varname, path_sink_patterns), _heredoc_line(job, varname, path_sink_patterns)}
+	}
+} else := 0
 
 # _sink_line: the first line writing $varname into one of the sinks.
 _sink_line(job, varname, sinkpatterns) := location.first({location.script_line(job, j, li) |
