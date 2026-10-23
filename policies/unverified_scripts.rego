@@ -24,6 +24,8 @@ package unverified_scripts
 
 import rego.v1
 
+import data.lib.location
+
 # Shell interpreters commonly used as pipe targets in CI attacks.
 _shell := `bash|sh|zsh|python[23]?|perl|ruby|dash|ksh`
 
@@ -63,9 +65,27 @@ deny contains finding if {
 		"message":    sprintf("Job `%s` runs a script fetched from the network: `%s`.", [job.name, _quoted_script_line(line)]),
 		"job":        job.name,
 		"scriptLine": line,
+		"line":       _script_location(job, line),
 	}
 	finding := object.union(base, _first_party_fields(line))
 }
+
+# _script_location: the first line of the script that fetches or carries
+# the payload (#572), the script's own first line when no single line
+# does, across every step running the same script, so the finding keeps
+# one location.
+_script_location(job, script) := n if {
+	n := location.first({location.script_line(job, j, li) |
+		some j, s in job.scripts
+		s == script
+		some li, l in split(s, "\n")
+		_fetched_or_inline_payload(_visible_line(l), l)
+	})
+	n > 0
+} else := location.first({location.script_line(job, j, 0) |
+	some j, s in job.scripts
+	s == script
+})
 
 # _first_party_fields is additive: a script line that is not first-party
 # keeps the finding exactly as it read before trust followed the party

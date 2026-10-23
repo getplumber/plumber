@@ -340,7 +340,25 @@ type Job struct {
 	// declared none. Set only when at least one run step in the job is
 	// conditional, so the field stays absent in the common unconditional
 	// case. Read by the situation facts alongside the job's texts.
-	ScriptIfs    []string          `json:"scriptIfs,omitempty"`
+	ScriptIfs []string `json:"scriptIfs,omitempty"`
+	// ScriptLines carries, for each Scripts entry in the same order, the
+	// 1-based source line of every line of that script as split on "\n",
+	// so a rule that fires on line li of script j reports
+	// scriptLines[j][li]. The collector owns the mapping: a literal block
+	// maps line for line, a scalar whose lines fold or join reports its
+	// start line for every line. Nil when the collector cannot pair the
+	// scripts with their source (rules then fall back to the job line).
+	ScriptLines [][]int `json:"scriptLines,omitempty"`
+	// VariableLines is the source line of the key that sets each
+	// variable's effective value (GitHub: the winning env: entry, step
+	// over job over workflow). Absent for a variable whose line is unknown.
+	VariableLines map[string]int `json:"variableLines,omitempty"`
+	// KeyLines is the source line of each job-level key, by key name as
+	// written (GitHub: permissions, secrets, uses, continue-on-error, ...).
+	// permissions holds the workflow-level key's line when the job
+	// inherits it. Lets a job-level finding point at the key it is about
+	// rather than at the job header.
+	KeyLines     map[string]int    `json:"keyLines,omitempty"`
 	AllowFailure bool              `json:"allowFailure,omitempty"`
 	When         string            `json:"when,omitempty"`
 	Variables    map[string]string `json:"variables,omitempty"`
@@ -788,6 +806,9 @@ type Image struct {
 	// The zero value is "resolved", so every hand-built fixture and every
 	// provider that does not set it behaves exactly as before.
 	Unresolved bool `json:"unresolved,omitempty"`
+	// Line is the 1-based source line of the image reference, 0 when
+	// unknown. Image rules report it instead of the job header.
+	Line int `json:"line,omitempty"`
 }
 
 // Include models an external pipeline fragment pulled into the current one.

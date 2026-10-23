@@ -18,6 +18,8 @@ package template_injection
 
 import rego.v1
 
+import data.lib.location
+
 # Regex patterns matching template expressions whose value is
 # attacker-controlled FREE TEXT — the genuine template-injection
 # sinks. A pull-request author, issue/comment author or fork owner
@@ -73,8 +75,19 @@ deny contains finding if {
 		"message":  sprintf("job %q interpolates a user-controlled template expression into an inline script (template-injection risk)", [job.name]),
 		"job":      job.name,
 		"subject":  _job_subject(job),
+		"line":     _job_line(job),
 	}
 }
+
+# _job_line: the line of the first script line that fires, so the job's
+# one finding points at it (#572) whichever line the iteration bound.
+_job_line(job) := location.first({location.script_line(job, j, li) |
+	some j, script in job.scripts
+	lines := split(script, "\n")
+	some li, line in lines
+	_line_controlled(job, line)
+	not _safe_sink(lines, li, line)
+})
 
 # _job_subject: the untrusted expression this job's finding names, "${{"
 # and surrounding spaces removed, the smallest one when several lines

@@ -31,6 +31,8 @@ package dangerous_triggers
 
 import rego.v1
 
+import data.lib.location
+
 dangerous_events := {
 	# pull_request_target is intentionally omitted — see ISSUE-804.
 	"workflow_run",
@@ -94,8 +96,19 @@ deny contains finding if {
 		"message":  sprintf("job %q runs under dangerous trigger(s) %s and checks out fork-controlled code — untrusted code executes with the base repo's secrets (CVE-2025-30066 pattern)", [job.name, concat(", ", triggers)]),
 		"job":      job.name,
 		"subject":  _untrusted_ref_subject(job),
+		"line":     _untrusted_checkout_line(job),
 	}
 }
+
+# _untrusted_checkout_line: the line of the checkout step whose ref is the
+# finding's subject (#572), the first one when several check it out.
+_untrusted_checkout_line(job) := location.first({object.get(action, "line", 0) |
+	some action in job.uses
+	startswith(action.uses, "actions/checkout@")
+	ref := action.with.ref
+	is_string(ref)
+	trim_space(trim_suffix(trim_prefix(ref, "${{"), "}}")) == _untrusted_ref_subject(job)
+})
 
 # _trusted_trigger: a workflow_run trigger whose upstream workflows
 # (on.workflow_run.workflows) are all in the scan and none can run on a
