@@ -10,6 +10,8 @@ package excessive_permissions
 
 import rego.v1
 
+import data.lib.location
+
 deny contains finding if {
 	some i
 	job := input.pipeline.jobs[i]
@@ -23,5 +25,6 @@ deny contains finding if {
 		"severity": "high",
 		"message":  sprintf("job %q runs with overly broad permissions: \"write-all\"", [job.name]),
 		"job":      job.name,
+		"line":     location.key_line(job, ["permissions"]),
 	}
 }

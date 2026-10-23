@@ -533,6 +533,7 @@ type workflowContext struct {
 	jobLines             map[string]int
 	usesLines            map[string][]int
 	usesComments         map[string]string
+	locations            map[string]jobLocations
 }
 
 // mergedEnv combines workflow-level, job-level, and step-level env maps into
@@ -1080,6 +1081,7 @@ func buildJob(jobName string, section map[string]any, wfCtx workflowContext, nam
 			job.ReusableWith = m
 		}
 	}
+	applyJobLocations(&job, wfCtx.locations[jobName])
 	if conds := collectGitHubJobConditions(section); len(conds) > 0 {
 		job.Conditions = conds
 	}
@@ -1243,6 +1245,7 @@ func parseGitHubWorkflowJobs(data []byte, namespace, originFile string) ([]ir.Jo
 		jobLines:             scanGitHubJobLines(data),
 		usesLines:            scanGitHubUsesLines(data),
 		usesComments:         scanGitHubUsesComments(data),
+		locations:            scanGitHubJobLocations(data),
 	}
 
 	jobs := make([]ir.Job, 0, len(wf.Jobs))

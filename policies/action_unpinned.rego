@@ -27,6 +27,7 @@
 package action_unpinned
 
 import rego.v1
+import data.lib.location
 import data.lib.provenance
 
 deny contains finding if {
@@ -139,6 +140,7 @@ deny contains finding if {
 		"message":  provenance.message(sprintf("job %q calls reusable workflow %q with a mutable ref%s \u2014 pin by commit SHA instead", [job.name, use, _reusable_call_suffix]), job),
 		"job":      job.name,
 		"uses":     use,
+		"line":     location.key_line(job, ["uses"]),
 	}, provenance.fields(job))
 }
 
