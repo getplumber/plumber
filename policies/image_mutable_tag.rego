@@ -31,6 +31,7 @@ deny contains finding if {
 		"job":      job.name,
 		"tag":      tag,
 		"link":     _full_ref(img),
+		"line":     object.get(img, "line", 0),
 	}
 }
 

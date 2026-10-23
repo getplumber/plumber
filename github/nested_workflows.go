@@ -194,6 +194,10 @@ func (w *nestedWalk) resolveWorkflows(pipeline *ir.NormalizedPipeline) {
 			for _, cj := range callees {
 				cj.Nested, cj.Via = true, slices.Clone(via)
 				takeCallerEvents(&cj, caller)
+				// Its script, image, variable and key lines are lines of
+				// the callee, outside the scan: its findings land at the
+				// outermost call (R9), as its uses entries do below.
+				clearJobLocations(&cj)
 				if cj.CacheMode != nil {
 					// The declaration sits in the callee, outside the scan:
 					// ISSUE-705 lands at the outermost call (R9).

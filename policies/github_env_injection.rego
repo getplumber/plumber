@@ -35,6 +35,8 @@ package github_env_injection
 
 import rego.v1
 
+import data.lib.location
+
 # KEEP IN SYNC with policies/template_injection.rego::unsafe_patterns
 # (byte-for-byte; enforced by TestIssue209UnsafePatternsMatchTemplateInjection).
 unsafe_patterns := [
@@ -83,7 +85,7 @@ deny contains finding if {
 	_matches(line, sink_patterns)
 	_matches(line, unsafe_patterns)
 	not _tojson_wrapped(line)
-	finding := _finding(job.name, "", _direct_subject(job), "writes a user-controlled template expression into $GITHUB_ENV or $GITHUB_PATH; an attacker can hijack later steps")
+	finding := _finding(job.name, "", _direct_subject(job), _direct_line(job), "writes a user-controlled template expression into $GITHUB_ENV or $GITHUB_PATH; an attacker can hijack later steps")
 }
 
 # 2. ENV-BOUND poisoning of $GITHUB_ENV: a multiline untrusted value bound in
@@ -100,7 +102,7 @@ deny contains finding if {
 	_matches(line, env_sink_patterns)
 	_dereferences(line, varname)
 	not _base64_of(line, varname)
-	finding := _finding(job.name, varname, _value_subject(job.variables[varname]), sprintf("binds an untrusted multiline value to $%s and writes it to $GITHUB_ENV; a newline still opens a second variable (base64-encode or use a heredoc delimiter)", [varname]))
+	finding := _finding(job.name, varname, _value_subject(job.variables[varname]), _sink_line(job, varname, env_sink_patterns), sprintf("binds an untrusted multiline value to $%s and writes it to $GITHUB_ENV; a newline still opens a second variable (base64-encode or use a heredoc delimiter)", [varname]))
 }
 
 # 3. ENV-BOUND poisoning of $GITHUB_PATH: any untrusted value bound in env: and
@@ -116,7 +118,7 @@ deny contains finding if {
 	_matches(line, path_sink_patterns)
 	_dereferences(line, varname)
 	not _base64_of(line, varname)
-	finding := _finding(job.name, varname, _value_subject(job.variables[varname]), sprintf("binds an untrusted value to $%s and writes it to $GITHUB_PATH; an attacker controls a directory placed on PATH", [varname]))
+	finding := _finding(job.name, varname, _value_subject(job.variables[varname]), _sink_line(job, varname, path_sink_patterns), sprintf("binds an untrusted value to $%s and writes it to $GITHUB_PATH; an attacker controls a directory placed on PATH", [varname]))
 }
 
 # 4. ENV-BOUND poisoning of $GITHUB_ENV through a HEREDOC / split redirect. The
@@ -132,7 +134,7 @@ deny contains finding if {
 	not _tojson_wrapped(job.variables[varname])
 	some j
 	_heredoc_to_sink(job.scripts[j], varname, env_sink_patterns)
-	finding := _finding(job.name, varname, _value_subject(job.variables[varname]), sprintf("writes $%s into $GITHUB_ENV through a heredoc/redirect; the multiline value still opens a second variable (base64-encode or use a randomised heredoc delimiter)", [varname]))
+	finding := _finding(job.name, varname, _value_subject(job.variables[varname]), _heredoc_line(job, varname, env_sink_patterns), sprintf("writes $%s into $GITHUB_ENV through a heredoc/redirect; the multiline value still opens a second variable (base64-encode or use a randomised heredoc delimiter)", [varname]))
 }
 
 # 5. Same, for $GITHUB_PATH — any untrusted value written through a heredoc
@@ -145,7 +147,7 @@ deny contains finding if {
 	not _tojson_wrapped(job.variables[varname])
 	some j
 	_heredoc_to_sink(job.scripts[j], varname, path_sink_patterns)
-	finding := _finding(job.name, varname, _value_subject(job.variables[varname]), sprintf("writes $%s into $GITHUB_PATH through a heredoc/redirect; an attacker controls a directory placed on PATH", [varname]))
+	finding := _finding(job.name, varname, _value_subject(job.variables[varname]), _heredoc_line(job, varname, path_sink_patterns), sprintf("writes $%s into $GITHUB_PATH through a heredoc/redirect; an attacker controls a directory placed on PATH", [varname]))
 }
 
 _matches(s, patterns) if regex.match(patterns[_], s)
@@ -180,14 +182,44 @@ _heredoc_to_sink(script, varname, sinkpatterns) if {
 
 _tojson_wrapped(s) if regex.match(`(?i)\$\{\{[^}]*\btojson\s*\(`, s)
 
-_finding(jobname, varname, subject, msg) := {
+_finding(jobname, varname, subject, line, msg) := {
 	"code":         "ISSUE-209",
 	"severity":     "high",
 	"message":      sprintf("job %q %s", [jobname, msg]),
 	"job":          jobname,
 	"variableName": varname,
 	"subject":      subject,
+	"line":         line,
 }
+
+# _direct_line: the first line writing an untrusted expression into a sink,
+# so the job's one direct finding points at it (#572).
+_direct_line(job) := location.first({location.script_line(job, j, li) |
+	some j, script in job.scripts
+	some li, line in split(script, "\n")
+	_matches(line, sink_patterns)
+	_matches(line, unsafe_patterns)
+	not _tojson_wrapped(line)
+})
+
+# _sink_line: the first line writing $varname into one of the sinks.
+_sink_line(job, varname, sinkpatterns) := location.first({location.script_line(job, j, li) |
+	some j, script in job.scripts
+	some li, line in split(script, "\n")
+	_matches(line, sinkpatterns)
+	_dereferences(line, varname)
+	not _base64_of(line, varname)
+})
+
+# _heredoc_line: the heredoc header redirecting into one of the sinks, in a
+# script that writes $varname through it.
+_heredoc_line(job, varname, sinkpatterns) := location.first({location.script_line(job, j, li) |
+	some j, script in job.scripts
+	_heredoc_to_sink(script, varname, sinkpatterns)
+	some li, line in split(script, "\n")
+	regex.match(`<<-?\s*["']?\w+`, line)
+	_matches(line, sinkpatterns)
+})
 
 # _direct_subject: the untrusted expression a direct write names, the
 # smallest one across the job, so the job keeps one direct finding.

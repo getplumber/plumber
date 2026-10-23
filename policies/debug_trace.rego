@@ -15,6 +15,8 @@ package debug_trace
 
 import rego.v1
 
+import data.lib.location
+
 deny contains finding if {
 	count(input.config.debugTrace.forbiddenVariables) > 0
 	some i
@@ -32,6 +34,7 @@ deny contains finding if {
 		"value":           v,
 		"valueProvenance": "ci_file",
 		"location":        job.name,
+		"line":            location.variable_line(job, k),
 	}
 }
 
@@ -89,6 +92,7 @@ deny contains finding if {
 		"value":           v,
 		"valueProvenance": "ci_file",
 		"location":        job.name,
+		"line":            location.variable_line(job, k),
 	}
 }
 
@@ -111,8 +115,17 @@ deny contains finding if {
 		"job":          job.name,
 		"variableName": var_name,
 		"location":     job.name,
+		"line":         _github_env_line(job, var_name),
 	}
 }
+
+# _github_env_line: the first script line writing var_name to $GITHUB_ENV.
+_github_env_line(job, var_name) := location.first({location.script_line(job, j, li) |
+	some j, script in job.scripts
+	some li, l in split(script, "\n")
+	_writes_to_github_env(l)
+	_script_mentions_var(l, var_name)
+})
 
 _is_expression(v) if regex.match(`\$\{\{`, v)
 

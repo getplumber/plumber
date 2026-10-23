@@ -32,6 +32,7 @@
 package action_authorized_sources
 
 import rego.v1
+import data.lib.location
 import data.lib.provenance
 
 # Step-level actions (`jobs.<id>.steps[].uses`).
@@ -77,6 +78,7 @@ deny contains finding if {
 		"uses":     use,
 		"pinnedBySha":        _pinned_by_sha(use),
 		"occurrenceSeverity": _occurrence_severity(use),
+		"line":               location.key_line(job, ["uses"]),
 	}, provenance.fields(job))
 }
 

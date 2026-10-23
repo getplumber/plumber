@@ -56,7 +56,8 @@ jobs:
 // TestContainerImageResolvesMatrixLiterals pins that a container image
 // built from `${{ matrix.X }}` resolves to the image of each combination
 // the matrix runs (its lists crossed, then its include entries), while the
-// image as written stays the job's image. A matrix computed at
+// image as written stays the job's image, every resolved image at the
+// container reference's line. A matrix computed at
 // run time, an expression other than a matrix value, or a plain image
 // resolves to nothing.
 func TestContainerImageResolvesMatrixLiterals(t *testing.T) {
@@ -70,12 +71,12 @@ func TestContainerImageResolvesMatrixLiterals(t *testing.T) {
 	}
 	want := map[string][]ir.Image{
 		"release/zsh": {
-			{Name: "arm64v8/ubuntu", Tag: "24.04"},
-			{Name: "ubuntu", Tag: "24.04"},
+			{Name: "arm64v8/ubuntu", Tag: "24.04", Line: 7},
+			{Name: "ubuntu", Tag: "24.04", Line: 7},
 		},
 		"release/cuda": {
-			{Name: "nvidia/cuda", Tag: "12.4.0-devel-ubuntu24.04"},
-			{Name: "nvidia/cuda", Tag: "12.8.1-devel-ubuntu24.04"},
+			{Name: "nvidia/cuda", Tag: "12.4.0-devel-ubuntu24.04", Line: 19},
+			{Name: "nvidia/cuda", Tag: "12.8.1-devel-ubuntu24.04", Line: 19},
 		},
 		"release/computed": nil,
 		"release/mixed":    nil,

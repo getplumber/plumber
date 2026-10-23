@@ -12,6 +12,8 @@ package security_jobs_weakened
 
 import rego.v1
 
+import data.lib.location
+
 # A single security job can be weakened in more than one way at once
 # (e.g. job-level `when: manual` AND a `rules:` override that pins
 # `when: manual`). Each weakening signal is its own deny rule so the
@@ -36,6 +38,7 @@ deny contains finding if {
 		# keying identity on the sentence would re-key every finding on a
 		# copy-edit. The wording lives in message only.
 		"detail": "allow_failure",
+		"line":   location.key_line(job, ["continue-on-error", "allow_failure"]),
 	}
 }
 

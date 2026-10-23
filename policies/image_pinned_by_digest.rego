@@ -33,6 +33,7 @@ deny contains finding if {
 		# (still digestless) must not re-key it. link/tag stay as data.
 		"imageRepo": _image_repo(img),
 		"tag":       _image_tag(img),
+		"line":      object.get(img, "line", 0),
 	}
 }
 

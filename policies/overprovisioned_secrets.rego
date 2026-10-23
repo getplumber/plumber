@@ -20,6 +20,8 @@ package overprovisioned_secrets
 
 import rego.v1
 
+import data.lib.location
+
 # Matches `toJson(secrets)`, `toJSON(secrets)`, and their whitespace-
 # permissive variants. The wrapping `${{ }}` is not required for the
 # match — some workflows build the string with `fromJSON(toJson(...))`
@@ -35,7 +37,29 @@ deny contains finding if {
 		"severity": "critical",
 		"message":  sprintf("job %q exposes all its secrets at once via toJson(secrets) — pass secrets by name instead", [job.name]),
 		"job":      job.name,
+		"line":     _dump_line(job),
 	}
+}
+
+# _dump_line: the first script line, env: entry or step input that dumps
+# the secrets context (#572).
+_dump_line(job) := location.first(lines) if {
+	scripts := {location.script_line(job, j, li) |
+		some j, script in job.scripts
+		some li, l in split(script, "\n")
+		regex.match(secrets_dump_pattern, l)
+	}
+	vars := {location.variable_line(job, name) |
+		some name, value in job.variables
+		regex.match(secrets_dump_pattern, value)
+	}
+	actions := {object.get(action, "line", 0) |
+		some action in job.uses
+		some _, value in action.with
+		is_string(value)
+		regex.match(secrets_dump_pattern, value)
+	}
+	lines := (scripts | vars) | actions
 }
 
 _job_dumps_secrets(job) if {

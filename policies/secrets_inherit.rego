@@ -17,6 +17,8 @@ package secrets_inherit
 
 import rego.v1
 
+import data.lib.location
+
 deny contains finding if {
 	some i
 	job := input.pipeline.jobs[i]
@@ -28,5 +30,6 @@ deny contains finding if {
 		"message":  sprintf("job %q calls reusable workflow %q with `secrets: inherit` — forward only the secrets the callee needs", [job.name, job.reusableWorkflowUses]),
 		"job":      job.name,
 		"uses":     job.reusableWorkflowUses,
+		"line":     location.key_line(job, ["secrets"]),
 	}
 }
