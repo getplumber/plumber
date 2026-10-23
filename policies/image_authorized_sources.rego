@@ -41,6 +41,7 @@ deny contains finding if {
 		# it. link stays as informational data / trusted-URL matching.
 		"imageRepo": _image_repo(img),
 		"status":    "unauthorized",
+		"line":      object.get(img, "line", 0),
 	}
 }
 
