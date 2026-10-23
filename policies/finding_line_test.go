@@ -183,3 +183,89 @@ func TestFindingLine_GitLabKeepsTheJobHeader(t *testing.T) {
 	}
 	t.Fatalf("no ISSUE-102 in %+v", findings)
 }
+
+// branchLineWorkflow gives every line source of ISSUE-209's env-bound
+// rules and of ISSUE-309 a job of its own, so each source alone decides
+// its finding's line. Its line numbers are what
+// TestFindingLine_EachSource expects.
+const branchLineWorkflow = `on: pull_request
+jobs:
+  envbound:
+    runs-on: ubuntu-latest
+    env:
+      BODY: ${{ github.event.pull_request.body }}
+    steps:
+      - run: echo "B=$BODY" >> "$GITHUB_ENV"
+  pathbound:
+    runs-on: ubuntu-latest
+    env:
+      REF: ${{ github.event.pull_request.head.ref }}
+    steps:
+      - run: echo "$REF" >> "$GITHUB_PATH"
+  envheredoc:
+    runs-on: ubuntu-latest
+    env:
+      BODY: ${{ github.event.pull_request.body }}
+    steps:
+      - run: |
+          echo start
+          cat <<EOF >> "$GITHUB_ENV"
+          B=$BODY
+          EOF
+  pathheredoc:
+    runs-on: ubuntu-latest
+    env:
+      REF: ${{ github.event.pull_request.head.ref }}
+    steps:
+      - run: |
+          echo start
+          cat <<EOF >> "$GITHUB_PATH"
+          $REF
+          EOF
+  dumpenv:
+    runs-on: ubuntu-latest
+    env:
+      ALL: ${{ toJSON(secrets) }}
+    steps:
+      - run: echo hi
+  dumpwith:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: some/action@v1
+        with:
+          data: ${{ toJSON(secrets) }}
+`
+
+// TestFindingLine_EachSource pins every line source the table test does
+// not reach: ISSUE-209's env-bound write to $GITHUB_ENV and $GITHUB_PATH,
+// inline (the redirect line) and through a heredoc (its header line), and
+// ISSUE-309's secrets dump in env: (the entry) and in a step input (the
+// step's uses: line).
+func TestFindingLine_EachSource(t *testing.T) {
+	findings, err := evaluateStrict(loadPolicies(t), context.Background(), scanWorkflow(t, branchLineWorkflow), nil)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	type key struct{ code, job string }
+	got := map[key][]int{}
+	for _, f := range findings {
+		got[key{f.Code, f.Job}] = append(got[key{f.Code, f.Job}], f.Line)
+	}
+	want := []struct {
+		code, job string
+		line      int
+	}{
+		{"ISSUE-209", "repro/envbound", 8},
+		{"ISSUE-209", "repro/pathbound", 14},
+		{"ISSUE-209", "repro/envheredoc", 22},
+		{"ISSUE-209", "repro/pathheredoc", 32},
+		{"ISSUE-309", "repro/dumpenv", 38},
+		{"ISSUE-309", "repro/dumpwith", 44},
+	}
+	for _, w := range want {
+		lines := got[key{w.code, w.job}]
+		if len(lines) != 1 || lines[0] != w.line {
+			t.Errorf("%s on %s: lines %v, want [%d]", w.code, w.job, lines, w.line)
+		}
+	}
+}
