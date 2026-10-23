@@ -143,3 +143,43 @@ func TestResolveNested_CalleeKeepsNoLocations(t *testing.T) {
 	}
 	t.Fatalf("callee not appended: %v", jobNames(p.Jobs))
 }
+
+// TestResolveNested_CalleeMatrixImagesKeepNoLine pins the same guarantee
+// for the images a called job's container resolves to. A container built
+// from the callee's matrix literals takes the callee's container line
+// when parsed, a line of another file, which the resolution drops; one
+// built from the call's inputs is resolved from the caller and never
+// carries a line.
+func TestResolveNested_CalleeMatrixImagesKeepNoLine(t *testing.T) {
+	const matrixCallee = "on:\n  workflow_call:\njobs:\n  build:\n    runs-on: ubuntu-latest\n    container:\n      image: ${{ matrix.image }}\n    strategy:\n      matrix:\n        image: [alpine:3, node:20]\n    steps:\n      - run: echo hi\n"
+	parsed, err := parseGitHubWorkflowJobs([]byte(matrixCallee), "shared", "build.yml")
+	if err != nil || len(parsed) != 1 || len(parsed[0].MatrixImages) != 2 || parsed[0].MatrixImages[0].Line != 7 {
+		t.Fatalf("parsed callee = %+v (err %v), want two matrix images at the container line 7", parsed, err)
+	}
+	const inputsCallee = "on:\n  workflow_call:\n    inputs:\n      image:\n        type: string\njobs:\n  build:\n    runs-on: ubuntu-latest\n    container:\n      image: ${{ inputs.image }}\n    steps:\n      - run: echo hi\n"
+	stub := newStub(map[string]string{
+		"acme/matrix@v1:.github/workflows/build.yml": matrixCallee,
+		"acme/inputs@v1:.github/workflows/build.yml": inputsCallee,
+	})
+	p := resolveWith(t, stub, nestedScope{},
+		ir.Job{Name: "ci/matrix", OriginFile: ".github/workflows/ci.yml", OriginLine: 9, ReusableWorkflowUses: "acme/matrix/.github/workflows/build.yml@v1"},
+		ir.Job{Name: "ci/inputs", OriginFile: ".github/workflows/ci.yml", OriginLine: 12, ReusableWorkflowUses: "acme/inputs/.github/workflows/build.yml@v1", ReusableWith: map[string]any{"image": "alpine:3"}},
+	)
+	linkReusableCallers(p.Jobs, p.ProjectPath)
+	for _, name := range []string{"ci/matrix/build", "ci/inputs/build"} {
+		var job *ir.Job
+		for i := range p.Jobs {
+			if p.Jobs[i].Name == name {
+				job = &p.Jobs[i]
+			}
+		}
+		if job == nil || len(job.MatrixImages) == 0 {
+			t.Fatalf("%s: no resolved images in %v", name, jobNames(p.Jobs))
+		}
+		for _, img := range job.MatrixImages {
+			if img.Line != 0 {
+				t.Errorf("%s: image %s:%s kept line %d, want 0", name, img.Name, img.Tag, img.Line)
+			}
+		}
+	}
+}
