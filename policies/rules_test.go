@@ -69,6 +69,8 @@ func TestIssue102_ImageMutableTag(t *testing.T) {
 				{"violation_wildcards.workflow.yml", []string{"ci"}},
 				{"clean.workflow.yml", nil},
 				{"clean_exempt_image.workflow.yml", []string{"deploy"}},
+				{"violation_docker_step.workflow.yml", []string{"container-no-tag", "latest-tag", "no-tag"}},
+				{"clean_docker_step.workflow.yml", nil},
 			},
 		},
 	}
@@ -634,6 +636,8 @@ func TestIssue103_ImagePinnedByDigest(t *testing.T) {
 				{"violation_tagged.workflow.yml", []string{"build"}},
 				{"clean_pinned.workflow.yml", nil},
 				{"clean_exempt_image.workflow.yml", []string{"deploy", "report-release"}},
+				{"violation_docker_step.workflow.yml", []string{"docker-ghcr", "docker-no-tag", "docker-tag"}},
+				{"clean_docker_step_digest.workflow.yml", nil},
 			},
 		},
 	}

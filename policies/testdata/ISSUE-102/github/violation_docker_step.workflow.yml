@@ -1,0 +1,35 @@
+# GitHub Actions workflow — `uses: docker://` steps are images of their job
+# (#571): a forbidden tag fires, and so does a step with no tag, which
+# Docker pulls as `latest`; so does a tagless container.
+# Expected: 1 finding each on latest-tag, no-tag and container-no-tag.
+name: CI
+on: push
+
+jobs:
+  latest-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker://alpine:latest
+        with:
+          args: echo latest
+
+  no-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker://ghcr.io/owner/tool
+        with:
+          args: echo no tag
+
+  container-no-tag:
+    runs-on: ubuntu-latest
+    container: alpine
+    steps:
+      - run: echo container
+
+  pinned:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker://alpine:3.20
+        with:
+          args: echo pinned

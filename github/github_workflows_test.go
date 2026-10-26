@@ -456,12 +456,12 @@ func TestScanGitHubWorkflows_ParseErrorReportedAsInvalidWorkflow(t *testing.T) {
 	}
 }
 
-// TestSplitImageRef_FoldsHubAliases pins the Docker Hub registry-host
-// alias fold in the container-image parser used by the workflow
-// collector (parseGitHubContainer -> splitImageRef): aliases like
-// registry.hub.docker.com and index.docker.io are canonicalized to
-// docker.io so trustedUrls patterns match regardless of Hub hostname.
-func TestSplitImageRef_FoldsHubAliases(t *testing.T) {
+// TestSplitImageRef pins the image parser used by the workflow collector
+// (parseGitHubContainer, dockerStepImages -> splitImageRef): Docker Hub
+// aliases like registry.hub.docker.com and index.docker.io are
+// canonicalized to docker.io so trustedUrls patterns match regardless of
+// Hub hostname, and a reference without tag or digest reads as `latest`.
+func TestSplitImageRef(t *testing.T) {
 	cases := []struct {
 		ref      string
 		wantName string
@@ -471,6 +471,17 @@ func TestSplitImageRef_FoldsHubAliases(t *testing.T) {
 		{"index.docker.io/python:3.12", "docker.io/python", "3.12"},
 		{"ghcr.io/astral-sh/uv:latest", "ghcr.io/astral-sh/uv", "latest"},
 		{"alpine:3.20", "alpine", "3.20"},
+		// No tag: Docker pulls `latest` (#571).
+		{"alpine", "alpine", "latest"},
+		{"ghcr.io/owner/image", "ghcr.io/owner/image", "latest"},
+		// The colon before the last slash is a registry port, not a tag.
+		{"localhost:5000/app", "localhost:5000/app", "latest"},
+		{"localhost:5000/app:1.2", "localhost:5000/app", "1.2"},
+		// A digest is the pin: no tag is made up.
+		{"alpine@sha256:abc", "alpine", ""},
+		// An expression is only known at run time: no tag is made up.
+		{"${{ matrix.image }}", "${{ matrix.image }}", ""},
+		{"${{ inputs.image }}", "${{ inputs.image }}", ""},
 	}
 	for _, tc := range cases {
 		got := splitImageRef(tc.ref)

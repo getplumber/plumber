@@ -1,0 +1,18 @@
+# GitHub Actions workflow — `uses: docker://` steps on a version tag, by
+# digest, and through a registry port (the `:5000` of `localhost:5000` is no
+# tag). Expected: 0 findings.
+name: CI
+on: push
+
+jobs:
+  versioned:
+    runs-on: ubuntu-latest
+    container: node:20.10.0
+    steps:
+      - uses: docker://alpine:3.20
+        with:
+          args: echo versioned
+      - uses: docker://alpine@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+        with:
+          args: echo digest
+      - uses: docker://localhost:5000/tool:1.2.3

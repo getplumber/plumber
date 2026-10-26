@@ -1,6 +1,8 @@
 package pbom
 
 import (
+	"slices"
+
 	"github.com/getplumber/plumber/control"
 	"github.com/getplumber/plumber/gitlab"
 	"github.com/getplumber/plumber/internal/ir"
@@ -196,7 +198,7 @@ func collectGitHubPinnedImages(result *control.AnalysisResult, out *GitHubCompli
 		if j.Image != nil && j.Image.Digest != "" {
 			out.ImagesPinnedByDigest[normalizeIRImageRef(*j.Image)] = true
 		}
-		for _, s := range j.Services {
+		for _, s := range slices.Concat(j.StepImages, j.Services) {
 			if s.Digest != "" {
 				out.ImagesPinnedByDigest[normalizeIRImageRef(s)] = true
 			}

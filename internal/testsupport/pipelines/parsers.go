@@ -242,6 +242,7 @@ func ParseGitHubWorkflow(t *testing.T, data []byte, originFile string) *ir.Norma
 		uses, scripts := parseGitHubSteps(section["steps"])
 		if len(uses) > 0 {
 			job.Uses = uses
+			job.StepImages = dockerStepImages(uses)
 			job.Artifacts = parseGitHubArtifacts(uses)
 		}
 		if len(scripts) > 0 {
@@ -574,16 +575,44 @@ func splitNameTag(ref string) ir.Image {
 	return ir.Image{Name: ref}
 }
 
+// splitGitHubImageRef mirrors the GitHub collector's splitImageRef: the tag
+// colon comes after the last slash, and a reference with neither tag nor
+// digest (and no `${{ }}` expression) gets `latest`, the tag Docker pulls.
+func splitGitHubImageRef(ref string) ir.Image {
+	if at := strings.Index(ref, "@"); at > 0 {
+		return ir.Image{Name: ref[:at], Digest: ref[at+1:]}
+	}
+	if idx := strings.LastIndex(ref, ":"); idx > 0 && idx > strings.LastIndex(ref, "/") {
+		return ir.Image{Name: ref[:idx], Tag: ref[idx+1:]}
+	}
+	if ref == "" || strings.Contains(ref, "${{") {
+		return ir.Image{Name: ref}
+	}
+	return ir.Image{Name: ref, Tag: "latest"}
+}
+
+// dockerStepImages mirrors the GitHub collector's: the images the job's
+// `uses: docker://` steps run.
+func dockerStepImages(uses []ir.Action) []ir.Image {
+	var out []ir.Image
+	for _, u := range uses {
+		if ref, ok := strings.CutPrefix(u.Uses, "docker://"); ok && ref != "" {
+			out = append(out, splitGitHubImageRef(ref))
+		}
+	}
+	return out
+}
+
 // parseGitHubContainer accepts both `container: "name:tag"` and
 // `container: { image: "name:tag" }`.
 func parseGitHubContainer(v any) (ir.Image, bool) {
 	switch c := v.(type) {
 	case string:
-		return splitNameTag(c), true
+		return splitGitHubImageRef(c), true
 	case map[any]any:
 		m, _ := toStringMap(c)
 		if img, ok := m["image"].(string); ok {
-			return splitNameTag(img), true
+			return splitGitHubImageRef(img), true
 		}
 	}
 	return ir.Image{}, false

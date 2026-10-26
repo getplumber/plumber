@@ -106,8 +106,11 @@ reading the upstream docs.
 
 **Severity:** `high` • **Control:** `containerImageMustNotUseForbiddenTags`
 
-A job's `container.image` uses a tag that appears in the configured
-forbidden list (`latest`, `dev`, `main`, glob patterns). Mutable tags
+A job's `container.image`, or the image of one of its `uses: docker://…`
+steps, uses a tag that appears in the configured forbidden list
+(`latest`, `dev`, `main`, glob patterns). An image written without a tag
+(`container: node`, `uses: docker://alpine`) is the `latest` Docker
+pulls, and is judged as such. Mutable tags
 let the registry maintainer — or an attacker who compromises the
 registry — swap the image under the job's feet.
 
@@ -155,15 +158,19 @@ still raises ISSUE-103.
 **Severity:** `high` • **Control:** `containerImageMustNotUseForbiddenTags`
 
 When `containerImagesMustBePinnedByDigest: true`, every `container:`
-image must carry a `@sha256:…` digest. Even a version tag like
-`20.11.0` can be re-pushed by the registry owner; only the digest is
-cryptographically stable.
+image and every `uses: docker://…` step image must carry a `@sha256:…`
+digest. Even a version tag like `20.11.0` can be re-pushed by the
+registry owner; only the digest is cryptographically stable. A workflow
+lockfile (`.github/workflows/actions.lock`) pins action commits, not
+images, so it changes nothing here.
 
 ```yaml
 # ❌ before
 jobs:
   build:
     container: node:20.11.0
+    steps:
+      - uses: docker://alpine:3.20
 ```
 
 ```yaml
@@ -171,6 +178,8 @@ jobs:
 jobs:
   build:
     container: node:20.11.0@sha256:8b9bc5f36ba5c7c4b3f1e6d0c7a2e9f8b3d1c0a9b2e3c4d5f6a7b8c9d0e1f2a3
+    steps:
+      - uses: docker://alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
 ```
 
 Tip: `docker inspect --format='{{index .RepoDigests 0}}' node:20.11.0`

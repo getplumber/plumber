@@ -35,10 +35,14 @@ deny contains finding if {
 	}
 }
 
-# _job_images: the images the job's container reference resolves to
+# _job_images: the job's container images, then the images its own
+# `uses: docker://` steps run (stepImages, #571).
+_job_images(job) := array.concat(_container_images(job), object.get(job, "stepImages", []))
+
+# _container_images: the images the job's container reference resolves to
 # through its matrix literals (matrixImages) when it has them, the image
 # as written otherwise.
-_job_images(job) := job.matrixImages if {
+_container_images(job) := job.matrixImages if {
 	count(object.get(job, "matrixImages", [])) > 0
 } else := [job.image] if {
 	job.image

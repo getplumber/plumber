@@ -301,3 +301,39 @@ func TestAggregate_CacheWriteExemptionsListTheAcceptedRisk(t *testing.T) {
 		t.Errorf("CacheWriteExempted = %v, want %v", s.CacheWriteExempted, want)
 	}
 }
+
+// TestAggregate_DockerStepsCountAsImages pins the counters to the #571
+// split: a `uses: docker://` step runs an image, so it counts toward the
+// image counters (ISSUE-102/103) through StepImages and stays out of the
+// action-pinning ones (ISSUE-701 never judges it).
+func TestAggregate_DockerStepsCountAsImages(t *testing.T) {
+	digest := "sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc"
+	pipeline := &ir.NormalizedPipeline{Jobs: []ir.Job{{
+		Name:  "ci/build",
+		Image: &ir.Image{Name: "alpine", Tag: "3.20"},
+		Uses: []ir.Action{
+			{Uses: "someowner/somerepo@v4"},
+			{Uses: "docker://alpine"},
+			{Uses: "docker://alpine:3.20@" + digest},
+		},
+		StepImages: []ir.Image{
+			{Name: "alpine", Tag: "latest"},
+			{Name: "alpine:3.20", Digest: digest},
+		},
+	}}}
+	pc := &configuration.PlumberConfig{GitHub: &configuration.ProviderConfig{}}
+	s := AggregateGitHubStats(pipeline, pc)
+
+	if s.ActionRefsTotal != 1 || s.ActionRefsUnpinned != 1 {
+		t.Errorf("ActionRefsTotal/Unpinned = %d/%d, want 1/1 (docker:// steps are images)", s.ActionRefsTotal, s.ActionRefsUnpinned)
+	}
+	if s.ImagesTotal != 3 {
+		t.Errorf("ImagesTotal = %d, want 3 (container + 2 docker:// steps)", s.ImagesTotal)
+	}
+	if s.ImagesPinnedByDigest != 1 {
+		t.Errorf("ImagesPinnedByDigest = %d, want 1", s.ImagesPinnedByDigest)
+	}
+	if s.ImagesUsingForbidden != 1 {
+		t.Errorf("ImagesUsingForbidden = %d, want 1 (the tagless step, on latest)", s.ImagesUsingForbidden)
+	}
+}

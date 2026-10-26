@@ -192,7 +192,8 @@ _is_own_repo(uses) if {
 }
 
 # Docker-image action refs ("docker://gcr.io/…") are covered by the
-# container-image policies, not this one.
+# container-image policies, not this one: they judge them through
+# job.stepImages (#571).
 _is_local(uses) if {
 	startswith(uses, "docker://")
 }
