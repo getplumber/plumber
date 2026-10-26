@@ -1065,6 +1065,7 @@ func buildJob(jobName string, section map[string]any, wfCtx workflowContext, nam
 	if uses := extractGitHubUses(section["steps"]); len(uses) > 0 {
 		annotateUses(uses, wfCtx.usesLines[jobName], wfCtx.usesComments)
 		job.Uses = uses
+		job.StepImages = dockerStepImages(uses)
 	}
 	if jobUses, ok := section["uses"].(string); ok && jobUses != "" {
 		job.ReusableWorkflowUses = jobUses
@@ -1702,7 +1703,10 @@ func parseGitHubContainer(v any) (ir.Image, bool) {
 }
 
 // splitImageRef parses a GitHub Actions image reference into an ir.Image,
-// folding Docker Hub registry-host aliases to docker.io.
+// folding Docker Hub registry-host aliases to docker.io. A reference with
+// neither tag nor digest gets the tag `latest`, the one Docker pulls for it;
+// one still holding a `${{ }}` expression keeps no tag, since the value is
+// only known at run time.
 func splitImageRef(ref string) ir.Image {
 	// Fold Docker Hub registry-host aliases (registry.hub.docker.com,
 	// index.docker.io, registry-1.docker.io) to docker.io so trustedUrls
@@ -1713,10 +1717,31 @@ func splitImageRef(ref string) ir.Image {
 	if at := strings.Index(ref, "@"); at > 0 {
 		return ir.Image{Name: ref[:at], Digest: ref[at+1:]}
 	}
-	if colon := strings.LastIndex(ref, ":"); colon > 0 {
+	// The tag colon comes after the last slash: the one in
+	// `localhost:5000/app` is a registry port.
+	if colon := strings.LastIndex(ref, ":"); colon > 0 && colon > strings.LastIndex(ref, "/") {
 		return ir.Image{Name: ref[:colon], Tag: ref[colon+1:]}
 	}
-	return ir.Image{Name: ref}
+	if ref == "" || strings.Contains(ref, "${{") {
+		return ir.Image{Name: ref}
+	}
+	return ir.Image{Name: ref, Tag: "latest"}
+}
+
+// dockerStepImages are the images the job's own `uses: docker://` steps
+// run. A docker:// step a composite action pulls in (Nested) is left out.
+// GitHub allows no expression in `uses:`, so each reference is a literal.
+func dockerStepImages(uses []ir.Action) []ir.Image {
+	var out []ir.Image
+	for _, u := range uses {
+		if u.Nested {
+			continue
+		}
+		if ref, ok := strings.CutPrefix(u.Uses, "docker://"); ok && ref != "" {
+			out = append(out, splitImageRef(ref))
+		}
+	}
+	return out
 }
 
 func ghCastStringMap(v any) (map[string]any, bool) {

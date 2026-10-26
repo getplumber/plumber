@@ -1,0 +1,27 @@
+# GitHub Actions workflow — `uses: docker://` steps are images of their job
+# (#571) and must be pinned by digest like `container:`, whatever the
+# registry and with or without a tag.
+# Expected: 1 finding each on docker-tag, docker-no-tag and docker-ghcr.
+name: CI
+on: push
+
+jobs:
+  docker-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker://alpine:3.20
+        with:
+          args: echo tag
+
+  docker-no-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker://alpine
+        with:
+          args: echo no tag
+
+  docker-ghcr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker://ghcr.io/owner/image:1.0

@@ -134,6 +134,9 @@ func (g *Generator) processGitHubImages(pipeline *ir.NormalizedPipeline) []Conta
 		if j.Image != nil {
 			addImage(*j.Image, j.Name)
 		}
+		for _, s := range j.StepImages {
+			addImage(s, j.Name)
+		}
 		for _, s := range j.Services {
 			addImage(s, j.Name)
 		}

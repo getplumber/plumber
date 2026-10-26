@@ -105,9 +105,12 @@ func AggregateGitHubStats(pipeline *ir.NormalizedPipeline, pc *configuration.Plu
 			}
 		}
 
-		// Container images: job-level + services.
+		// Container images: job-level, the job's docker:// steps, services.
 		if job.Image != nil {
 			countJobImage(stats, *job.Image, forbiddenTags, exempt)
+		}
+		for j := range job.StepImages {
+			countJobImage(stats, job.StepImages[j], forbiddenTags, exempt)
 		}
 		for j := range job.Services {
 			countJobImage(stats, job.Services[j], forbiddenTags, exempt)
@@ -149,6 +152,11 @@ func AggregateGitHubStats(pipeline *ir.NormalizedPipeline, pc *configuration.Plu
 		for k := range job.Uses {
 			use := &job.Uses[k]
 			ref := use.Uses
+			// A docker:// step runs an image, not an action: ISSUE-701
+			// skips it and the image counters below count it (#571).
+			if strings.HasPrefix(ref, "docker://") {
+				continue
+			}
 			if use.Metadata != nil {
 				if use.Metadata.RepoArchived {
 					stats.ActionRefsArchived++
@@ -382,8 +390,9 @@ func lockfileCovers(pipeline *ir.NormalizedPipeline, job *ir.Job) bool {
 }
 
 // isLocalRef is the reference forms _is_local in action_unpinned.rego
-// exempts (./, /, $/, docker://). The counter has never exempted them; it
-// only keeps them out of the lockfile list, which would otherwise name a
+// exempts (./, /, $/, docker://). The counter does not exempt the local
+// forms (a docker:// step is skipped earlier, as an image); it only keeps
+// them out of the lockfile list, which would otherwise name a
 // same-repo `$/` action (the form `gh actions-lock` writes) as locked.
 func isLocalRef(ref string) bool {
 	for _, p := range []string{"./", "/", "$/", "docker://"} {

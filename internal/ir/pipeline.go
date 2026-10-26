@@ -320,6 +320,11 @@ type Job struct {
 	// Empty when the reference holds no matrix value, holds another
 	// expression, or the matrix is computed at run time.
 	MatrixImages []Image `json:"matrixImages,omitempty"`
+	// StepImages are the images the job's own `uses: docker://` steps run
+	// (GitHub), in step order. The image policies judge them alongside the
+	// container image. A docker:// step a composite action pulls in is not
+	// listed. Empty when the job writes no docker:// step.
+	StepImages []Image `json:"stepImages,omitempty"`
 	// Tags are the job's runner tags (GitLab's `tags:` keyword), read off
 	// the merged configuration so a tag inherited from `default:` counts
 	// exactly as a job-level one does. Sorted and de-duplicated, so the

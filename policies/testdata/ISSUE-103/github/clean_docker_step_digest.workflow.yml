@@ -1,0 +1,15 @@
+# GitHub Actions workflow — `uses: docker://` steps pinned by digest, with
+# and without the tag written next to it, in a job whose container is
+# pinned too. Expected: 0 findings.
+name: CI
+on: push
+
+jobs:
+  docker-digest:
+    runs-on: ubuntu-latest
+    container: alpine@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+    steps:
+      - uses: docker://alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+        with:
+          args: echo digest
+      - uses: docker://ghcr.io/owner/image@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
