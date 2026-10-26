@@ -31,6 +31,6 @@ jobs:
         with:
           persist-credentials: false
       - name: Install gh-actions-lock
-        run: gh extension install github/gh-actions-lock --pin v0.3.0
+        run: gh extension install github/gh-actions-lock --pin v0.4.0
       - name: Verify the lockfile
         run: gh actions-lock --verify
