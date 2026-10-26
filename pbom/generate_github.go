@@ -223,7 +223,8 @@ func (g *Generator) processGitHubIncludes(pipeline *ir.NormalizedPipeline) []Inc
 			note(reusables, j.ReusableWorkflowUses, "", j.Nested, j.Via)
 		}
 		for _, u := range j.Uses {
-			if u.Uses == "" {
+			// A docker:// step runs an image, listed under containerImages (#571).
+			if u.Uses == "" || strings.HasPrefix(u.Uses, "docker://") {
 				continue
 			}
 			note(actions, u.Uses, u.Comment, u.Nested, u.Via)
