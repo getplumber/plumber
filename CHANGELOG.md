@@ -1,3 +1,17 @@
+## [0.7.12](https://github.com/getplumber/plumber/compare/v0.7.11...v0.7.12) (2026-10-26)
+
+
+### 🐛 Bug Fixes
+
+* **github,policies:** point GitHub findings at the line that fired ([ad8f505](https://github.com/getplumber/plumber/commit/ad8f5054d31433c006519fed570365ea4097ab18)), closes [#572](https://github.com/getplumber/plumber/issues/572) [#573](https://github.com/getplumber/plumber/issues/573)
+* **policies:** one line per identity, and the image line for ISSUE-101 ([d872c33](https://github.com/getplumber/plumber/commit/d872c3352d9bd6bb13298ce2b21493dbb619f107)), closes [#572](https://github.com/getplumber/plumber/issues/572) [#572](https://github.com/getplumber/plumber/issues/572)
+
+
+### ✅ Tests
+
+* **github:** a called job's resolved images keep no line ([7c3effa](https://github.com/getplumber/plumber/commit/7c3effa624b2111466d5c39fc2a1a0803d0b35b5)), closes [#572](https://github.com/getplumber/plumber/issues/572)
+* **policies:** pin each line source of ISSUE-209 and ISSUE-309 ([b974fd6](https://github.com/getplumber/plumber/commit/b974fd6d5e58e881dcf3bbaef25c10bbc57fa4c6)), closes [#572](https://github.com/getplumber/plumber/issues/572)
+
 ## [0.7.11](https://github.com/getplumber/plumber/compare/v0.7.10...v0.7.11) (2026-10-21)
 
 
