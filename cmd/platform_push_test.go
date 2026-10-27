@@ -4434,6 +4434,82 @@ func TestBuildPlatformPush_GitHubIncludesCarryNoCurrencyVerdict(t *testing.T) {
 	}
 }
 
+// githubPushedBOM builds a standalone GitHub push over result and returns the
+// raw bom section, nil when the push carries none.
+func githubPushedBOM(t *testing.T, result *control.AnalysisResult) map[string]any {
+	t.Helper()
+	body, err := buildPlatformPush(githubTestProvider(t), &configuration.Configuration{Branch: "main"}, result, nil, ".plumber.yaml", nil)
+	if err != nil {
+		t.Fatalf("buildPlatformPush: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("push does not parse as JSON: %v", err)
+	}
+	bom, _ := raw["bom"].(map[string]any)
+	return bom
+}
+
+// TestBuildPlatformPush_GitHubNoBOMWhenAWorkflowDoesNotParse covers the run
+// that is NOT degraded yet knows nothing about the dependencies: a commit
+// breaks a workflow file while workflowsMustBeValid is active, so the run
+// reports the file as a finding (ISSUE-423) and stays clean, and the model
+// holds no job of that file. Pushing the bill would have the platform
+// replace the project's dependency edges with a set missing everything the
+// broken file declared (all of them when it was the only workflow) until
+// the next good run. A parse failure anywhere means no section at all.
+func TestBuildPlatformPush_GitHubNoBOMWhenAWorkflowDoesNotParse(t *testing.T) {
+	invalid := []ir.InvalidWorkflow{{Path: ".github/workflows/ci.yml", Error: "yaml: line 3: found character that cannot start any token"}}
+
+	t.Run("the only workflow is broken", func(t *testing.T) {
+		result := &control.AnalysisResult{
+			ProjectPath:    "getplumber/plumber-lab-github",
+			GitHubPipeline: &ir.NormalizedPipeline{InvalidWorkflows: invalid},
+		}
+		if bom := githubPushedBOM(t, result); bom != nil {
+			t.Errorf("a run whose only workflow does not parse pushed a bill: %v", bom)
+		}
+	})
+	t.Run("one workflow of several is broken", func(t *testing.T) {
+		result := githubBOMResult()
+		result.GitHubPipeline.InvalidWorkflows = invalid
+		if bom := githubPushedBOM(t, result); bom != nil {
+			t.Errorf("a run with an unparsed workflow pushed a partial bill: %v", bom)
+		}
+	})
+}
+
+// TestBuildPlatformPush_GitHubDependencyFreeRunSendsTheEmptyBill is the other
+// side of the same line: a run whose workflows all parse and declare no
+// action, no reusable workflow and no image KNOWS it has no dependencies,
+// and so does a repository with no workflow at all. Both push the section
+// with empty inventories, so the platform clears edges that no longer exist.
+func TestBuildPlatformPush_GitHubDependencyFreeRunSendsTheEmptyBill(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		jobs []ir.Job
+	}{
+		{name: "jobs with run steps only", jobs: []ir.Job{{Name: "ci/test"}}},
+		{name: "no workflow at all"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result := &control.AnalysisResult{
+				ProjectPath:    "getplumber/plumber-lab-github",
+				GitHubPipeline: &ir.NormalizedPipeline{Jobs: tc.jobs},
+			}
+			bom := githubPushedBOM(t, result)
+			if bom == nil {
+				t.Fatal("a dependency-free run pushed no bill: the platform would keep edges that no longer exist")
+			}
+			for _, key := range []string{"includes", "images"} {
+				if arr, ok := bom[key].([]any); !ok || len(arr) != 0 {
+					t.Errorf("bom.%s = %#v, want an empty array", key, bom[key])
+				}
+			}
+		})
+	}
+}
+
 // TestBuildPlatformPush_GitHubNoBOMOnADegradedCollection is the GitHub twin
 // of the GitLab honesty rule: the platform replaces a project's dependency
 // edges with the pushed bill as ONE set, so a GitHub run that could not
