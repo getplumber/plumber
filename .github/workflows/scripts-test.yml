@@ -46,3 +46,4 @@ jobs:
           bash scripts/release-template-digest.test.sh
           bash scripts/release-bump-version.test.sh
           bash scripts/release-plan.test.sh
+          bash scripts/release-component-notes.test.sh

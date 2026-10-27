@@ -3,7 +3,9 @@ name: Propagate Release
 # Pushes a published release out to the repos that reference it:
 #  - gitlab.com/getplumber/plumber (CI/CD Catalog component): sync
 #    templates/plumber.yml, rewrite "pinned plumber version" marked README
-#    lines, write RELEASE_NOTES.md, commit to main and tag v${VERSION}. The
+#    lines, write RELEASE_NOTES.md (the component's own changes, built by
+#    scripts/release-component-notes.sh; the GitHub release keeps the full
+#    CLI changelog), commit to main and tag v${VERSION}. The
 #    GitLab tag pipeline then creates the release (Catalog publish requires
 #    a CI-created release, so the tag pipeline is the only valid path).
 #    Two commits land on main: the content sync (untagged), then a
@@ -77,7 +79,7 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
           DIGEST_INPUT: ${{ inputs.digest }}
-          GH_TOKEN: ${{ github.token }}
+          CLI_URL: ${{ github.server_url }}/${{ github.repository }}
         run: |
           set -euo pipefail
           SHA="$(git rev-parse "v${VERSION}^{commit}")"
@@ -86,7 +88,9 @@ jobs:
             echo "digest mismatch: docker job says ${DIGEST_INPUT}, template has ${DIGEST}" >&2
             exit 1
           fi
-          gh release view "v${VERSION}" --json body --jq .body > /tmp/release-notes.md
+          # Not the GitHub release body: component users only need what
+          # changed in templates/plumber.yml, plus a link to the CLI release.
+          bash scripts/release-component-notes.sh "$VERSION" "$DIGEST" > /tmp/release-notes.md
           test -s /tmp/release-notes.md
           { echo "sha=${SHA}"; echo "digest=${DIGEST}"; } >> "$GITHUB_OUTPUT"
 
