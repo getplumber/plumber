@@ -1,3 +1,12 @@
+## [0.7.13](https://github.com/getplumber/plumber/compare/v0.7.12...v0.7.13) (2026-10-27)
+
+
+### 🐛 Bug Fixes
+
+* **control,github:** judge `uses: docker://` step images like container images ([c4a2e9a](https://github.com/getplumber/plumber/commit/c4a2e9ada476bb2916d95533e7c066c89014cda5)), closes [#571](https://github.com/getplumber/plumber/issues/571)
+* **pbom:** a docker:// step is an image, not an action include ([124fae4](https://github.com/getplumber/plumber/commit/124fae42b3c829c565e7d3f0618308b5fb5dcaa6)), closes [#575](https://github.com/getplumber/plumber/issues/575) [#571](https://github.com/getplumber/plumber/issues/571) [#571](https://github.com/getplumber/plumber/issues/571)
+* **pbom:** list the images of nested docker:// steps ([b7db988](https://github.com/getplumber/plumber/commit/b7db988e6748e5b742efa34cdb80335b157cdb5d)), closes [#575](https://github.com/getplumber/plumber/issues/575) [#571](https://github.com/getplumber/plumber/issues/571)
+
 ## [0.7.12](https://github.com/getplumber/plumber/compare/v0.7.11...v0.7.12) (2026-10-26)
 
 
