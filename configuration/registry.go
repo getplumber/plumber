@@ -112,7 +112,9 @@ const (
 // list both. A new GitLab-only control gets {ProviderGitLab}; a new
 // GitHub-only control gets {ProviderGitHub}.
 var controlsMeta = map[string]ControlMeta{
-	// Cross-provider (same control name + rego logic, provider-specific values).
+	// Cross-provider (same control name + rego logic, provider-specific values),
+	// interleaved with GitLab-shaped pipeline controls (includes, components,
+	// templates, job variables, image sources) that declare GitLab only.
 	"branchMustBeProtected": {
 		Providers:      []string{ProviderGitLab, ProviderGitHub},
 		DisplayName:    "Branch must be protected",
@@ -178,7 +180,7 @@ var controlsMeta = map[string]ControlMeta{
 		Tier:        TierUltimate,
 	},
 	"containerImageMustComeFromAuthorizedSources": {
-		Providers:   []string{ProviderGitLab, ProviderGitHub},
+		Providers:   []string{ProviderGitLab},
 		DisplayName: "Container images must come from authorized sources",
 		Category:    CategoryContainerImages,
 		ID:          "CTRL-101",
@@ -200,14 +202,14 @@ var controlsMeta = map[string]ControlMeta{
 		Description: "Flags external CI references pinned to a name that exists upstream as both a tag and a branch, since the ambiguity can silently switch which revision runs.",
 	},
 	"includesMustBeUpToDate": {
-		Providers:   []string{ProviderGitLab, ProviderGitHub},
+		Providers:   []string{ProviderGitLab},
 		DisplayName: "Includes must be up to date",
 		Category:    CategoryPipelineComposition,
 		ID:          "CTRL-403",
 		Description: "Verifies that included CI/CD components and templates use the latest available version.",
 	},
 	"includesMustNotUseForbiddenVersions": {
-		Providers:      []string{ProviderGitLab, ProviderGitHub},
+		Providers:      []string{ProviderGitLab},
 		DisplayName:    "Includes must not use forbidden versions",
 		Category:       CategoryPipelineComposition,
 		ID:             "CTRL-404",
@@ -215,7 +217,7 @@ var controlsMeta = map[string]ControlMeta{
 		RequiresConfig: true,
 	},
 	"pipelineMustIncludeComponent": {
-		Providers:      []string{ProviderGitLab, ProviderGitHub},
+		Providers:      []string{ProviderGitLab},
 		DisplayName:    "Pipeline must include required components",
 		Category:       CategoryPipelineComposition,
 		ID:             "CTRL-408",
@@ -223,7 +225,7 @@ var controlsMeta = map[string]ControlMeta{
 		RequiresConfig: true,
 	},
 	"pipelineMustIncludeTemplate": {
-		Providers:      []string{ProviderGitLab, ProviderGitHub},
+		Providers:      []string{ProviderGitLab},
 		DisplayName:    "Pipeline must include required templates",
 		Category:       CategoryPipelineComposition,
 		ID:             "CTRL-405",
@@ -246,14 +248,14 @@ var controlsMeta = map[string]ControlMeta{
 		Description: "Detects pipeline jobs that execute a script without integrity verification, such as piping a remote download directly into a shell.",
 	},
 	"pipelineMustNotIncludeHardcodedJobs": {
-		Providers:   []string{ProviderGitLab, ProviderGitHub},
+		Providers:   []string{ProviderGitLab},
 		DisplayName: "Pipeline must not include hardcoded jobs",
 		Category:    CategoryPipelineComposition,
 		ID:          "CTRL-401",
 		Description: "Flags pipeline jobs defined directly in the CI configuration instead of sourced from an approved CI/CD component or include.",
 	},
 	"pipelineMustNotOverrideJobVariables": {
-		Providers:      []string{ProviderGitLab, ProviderGitHub},
+		Providers:      []string{ProviderGitLab},
 		DisplayName:    "Pipeline must not override job variables",
 		Category:       CategoryCICDVariables,
 		ID:             "CTRL-205",
@@ -268,7 +270,7 @@ var controlsMeta = map[string]ControlMeta{
 		Description: "Flags CI/CD jobs that use a Docker-in-Docker service, or that configure it with an insecure, TLS-disabled daemon.",
 	},
 	"pipelineMustNotUseUnsafeVariableExpansion": {
-		Providers:      []string{ProviderGitLab, ProviderGitHub},
+		Providers:      []string{ProviderGitLab},
 		DisplayName:    "Pipeline must not use unsafe variable expansion",
 		Category:       CategoryCICDVariables,
 		ID:             "CTRL-204",
@@ -670,15 +672,17 @@ var RenamedControls = map[string]string{
 // on/off, also add a typed struct in configuration/plumberconfig.go
 // and wire it through buildEngineConfig.
 //
-// As of 2026-08-05 (v0.4.28), counted from this file and control/catalog.go:
-//   - controlsMeta declares 59 controls: 15 cross-provider, 44
-//     GitHub-only, 0 GitLab-only.
-//   - GitLab: zero benched. All 15 GitLab-applicable controls ship, and
-//     GitLabControls returns exactly those 15.
-//   - GitHub: 36 benched, so only 23 of the 59 GitHub-applicable controls
-//     reach users, and GitHubControls returns exactly those 23. Eight of
-//     the 36 are cross-provider controls benched on the GitHub side only,
-//     i.e. they still fire on GitLab.
+// As of 2026-10-27 (after v0.7.14), counted from this file and control/catalog.go:
+//   - controlsMeta declares 69 controls: 7 cross-provider, 45
+//     GitHub-only, 17 GitLab-only.
+//   - GitLab: zero benched. All 24 GitLab-applicable controls ship, and
+//     GitLabControls returns exactly those 24.
+//   - GitHub: 27 benched, so 25 of the 52 GitHub-applicable controls
+//     reach users, and GitHubControls returns exactly those 25. None of
+//     the 27 is cross-provider: the eight GitLab-shaped controls that
+//     used to sit here (includes, components, templates, hardcoded jobs,
+//     job variables, unsafe expansion, image sources) now declare
+//     GitLab only, so a catalog consumer never offers them on GitHub.
 //
 // Keep these numbers honest when you bench or unbench something; they are
 // the fastest way to see how much of the GitHub catalog is actually live.
@@ -717,18 +721,6 @@ var benchedControls = map[string]map[string]struct{}{
 		"workflowMustPinPackageInstalls":            {},
 		"workflowsMustDeclareConcurrency":           {},
 		"workflowsMustHaveExplicitName":             {},
-
-		// Cross-provider controls whose GitHub side needs collector
-		// or test work before it ships. They continue to fire
-		// findings on GitLab: they're only benched on GitHub.
-		"includesMustBeUpToDate":                      {},
-		"includesMustNotUseForbiddenVersions":         {},
-		"pipelineMustIncludeComponent":                {},
-		"pipelineMustIncludeTemplate":                 {},
-		"pipelineMustNotIncludeHardcodedJobs":         {},
-		"pipelineMustNotOverrideJobVariables":         {},
-		"pipelineMustNotUseUnsafeVariableExpansion":   {},
-		"containerImageMustComeFromAuthorizedSources": {},
 	},
 }
 

@@ -503,8 +503,7 @@
       "displayName": "Container images must come from authorized sources",
       "category": "CI/CD Container Images",
       "providers": [
-        "gitlab",
-        "github"
+        "gitlab"
       ],
       "description": "Verifies that container images referenced in the pipeline are pulled only from an authorized registry.",
       "requiresConfig": false,
@@ -876,8 +875,7 @@
       "displayName": "Includes must be up to date",
       "category": "Pipeline Composition",
       "providers": [
-        "gitlab",
-        "github"
+        "gitlab"
       ],
       "description": "Verifies that included CI/CD components and templates use the latest available version.",
       "requiresConfig": false,
@@ -908,8 +906,7 @@
       "displayName": "Includes must not use forbidden versions",
       "category": "Pipeline Composition",
       "providers": [
-        "gitlab",
-        "github"
+        "gitlab"
       ],
       "description": "Flags included CI/CD components and templates that use a version forbidden by the configuration, such as a mutable branch reference.",
       "requiresConfig": true,
@@ -1196,8 +1193,7 @@
       "displayName": "Pipeline must include required components",
       "category": "Pipeline Composition",
       "providers": [
-        "gitlab",
-        "github"
+        "gitlab"
       ],
       "description": "Verifies that every CI/CD component required by the configuration is included in the pipeline and that its job keys are not overridden.",
       "requiresConfig": true,
@@ -1250,8 +1246,7 @@
       "displayName": "Pipeline must include required templates",
       "category": "Pipeline Composition",
       "providers": [
-        "gitlab",
-        "github"
+        "gitlab"
       ],
       "description": "Verifies that every CI/CD template required by the configuration is included in the pipeline and that its job keys are not overridden.",
       "requiresConfig": true,
@@ -1390,8 +1385,7 @@
       "displayName": "Pipeline must not include hardcoded jobs",
       "category": "Pipeline Composition",
       "providers": [
-        "gitlab",
-        "github"
+        "gitlab"
       ],
       "description": "Flags pipeline jobs defined directly in the CI configuration instead of sourced from an approved CI/CD component or include.",
       "requiresConfig": false,
@@ -1422,8 +1416,7 @@
       "displayName": "Pipeline must not override job variables",
       "category": "CI/CD Variables",
       "providers": [
-        "gitlab",
-        "github"
+        "gitlab"
       ],
       "description": "Detects pipeline configuration that redefines a CI/CD variable that should only be set in CI/CD Settings.",
       "requiresConfig": true,
@@ -1507,8 +1500,7 @@
       "displayName": "Pipeline must not use unsafe variable expansion",
       "category": "CI/CD Variables",
       "providers": [
-        "gitlab",
-        "github"
+        "gitlab"
       ],
       "description": "Detects CI variables expanded in a shell re-interpretation context such as eval or sh -c, where an attacker-controlled value could execute as code.",
       "requiresConfig": true,
