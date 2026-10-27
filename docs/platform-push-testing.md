@@ -61,6 +61,20 @@ never resolved is left out of the section entirely
 (`TestPlatformBOMFrom_UnresolvedImagesAreOmitted` and its services sibling);
 the PBOM artifact still lists it.
 
+A GitHub push carries the same section, built by the generator the GitHub
+`--pbom` artifact is written from: the actions as `action` includes, the
+job-level reusable workflow calls as `reusableWorkflow` includes, and the job
+containers, services and `docker://` steps as images
+(`TestBuildPlatformPush_GitHubCarriesTheBOM`). A GitHub include never carries
+`up_to_date`: the contract defines it as the CLI's verdict on currency,
+absent when none, and the CLI reaches none on GitHub (the artifact's
+pinning indicator stays in the artifact,
+`TestBuildPlatformPush_GitHubIncludesCarryNoCurrencyVerdict`). A degraded GitHub run sends no
+section (`TestBuildPlatformPush_GitHubNoBOMOnADegradedCollection`), and in
+platform mode its flags come from the policy runs' union, never the local
+configuration's findings
+(`TestBuildPlatformPush_GitHubPlatformModeFlagsComeFromThePolicyUnion`).
+
 ## Capturing the bytes that actually go over the wire
 
 The rest of `platform_push_test.go` (`TestMaybePushPlatform_PostsThePush`

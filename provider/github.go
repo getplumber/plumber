@@ -92,15 +92,31 @@ func noControlsAwareGitHubCompliance(result *control.AnalysisResult, conf *confi
 	return pbom.BuildGitHubPBOMCompliance(result)
 }
 
-func (p *GitHubProvider) WritePBOM(result *control.AnalysisResult, conf *configuration.Configuration, filePath string, score *control.PlumberScoreResult, scoreMode bool, platform *pbom.PlatformSummary) error {
+// GitHubPBOMDocument builds the GitHub bill of materials of a run: the
+// container images, the actions and the reusable-workflow calls of the
+// normalized workflow model, each enriched with the flags the run's findings
+// assert. It is the one composition of the GitHub generator, shared by the
+// --pbom artifacts (which stamp the score and the platform block on top) and
+// the platform push's bom section, so the two can never disagree about what
+// the pipeline uses. The findings are read from result as given: a
+// platform-mode caller passes the policy runs' union. A nil conf reads as
+// an empty configuration (github.com, no branch, controls on).
+func GitHubPBOMDocument(result *control.AnalysisResult, conf *configuration.Configuration) *pbom.PBOM {
+	if conf == nil {
+		conf = &configuration.Configuration{}
+	}
 	host := conf.GithubAPIHost
 	if host == "" {
 		host = "github.com"
 	}
-	gen := pbom.NewGitHubGenerator(result.ProjectPath, host, conf.Branch).
+	return pbom.NewGitHubGenerator(result.ProjectPath, host, conf.Branch).
 		WithGitHubComplianceData(noControlsAwareGitHubCompliance(result, conf)).
-		WithCommit(result.ArtifactCommitSHA, result.ArtifactRef)
-	bom := gen.GenerateFromGitHubIR(result.GitHubPipeline)
+		WithCommit(result.ArtifactCommitSHA, result.ArtifactRef).
+		GenerateFromGitHubIR(result.GitHubPipeline)
+}
+
+func (p *GitHubProvider) WritePBOM(result *control.AnalysisResult, conf *configuration.Configuration, filePath string, score *control.PlumberScoreResult, scoreMode bool, platform *pbom.PlatformSummary) error {
+	bom := GitHubPBOMDocument(result, conf)
 	bom.PlumberScore = pbom.BuildPlumberScoreSummary(score, scoreMode)
 	bom.ApplyPlatformSummary(platform)
 
@@ -115,14 +131,7 @@ func (p *GitHubProvider) WritePBOM(result *control.AnalysisResult, conf *configu
 }
 
 func (p *GitHubProvider) WritePBOMCycloneDX(result *control.AnalysisResult, conf *configuration.Configuration, filePath string, score *control.PlumberScoreResult, scoreMode bool, platform *pbom.PlatformSummary) error {
-	host := conf.GithubAPIHost
-	if host == "" {
-		host = "github.com"
-	}
-	gen := pbom.NewGitHubGenerator(result.ProjectPath, host, conf.Branch).
-		WithGitHubComplianceData(noControlsAwareGitHubCompliance(result, conf)).
-		WithCommit(result.ArtifactCommitSHA, result.ArtifactRef)
-	bom := gen.GenerateFromGitHubIR(result.GitHubPipeline)
+	bom := GitHubPBOMDocument(result, conf)
 	bom.PlumberScore = pbom.BuildPlumberScoreSummary(score, scoreMode)
 	bom.ApplyPlatformSummary(platform)
 	cdx := bom.ToCycloneDX("")

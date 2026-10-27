@@ -3482,7 +3482,7 @@ func TestPlatformBOMDocument_EveryRefusal(t *testing.T) {
 	}
 	if p, ok := providerPkg.Get("github"); ok {
 		if doc := platformBOMDocument(p, conf, collected(), nil); doc != nil {
-			t.Error("the GitHub path produced a bill: the platform models no GitHub resource and this generator reads GitLab collections")
+			t.Error("the GitHub path produced a bill from GitLab collections: the GitHub generator reads the workflow model, and this run has none")
 		}
 	}
 	if doc := platformBOMDocument(testProvider(t), conf, nil, nil); doc != nil {
@@ -4270,4 +4270,253 @@ func TestPlatformBOMDocument_CapabilitiesGolden(t *testing.T) {
 	if string(raw) != want {
 		t.Fatalf("capabilities = %s\nwant          %s", raw, want)
 	}
+}
+
+// githubTestProvider returns the registered GitHub provider, the one a run
+// against a GitHub repository pushes with.
+func githubTestProvider(t *testing.T) providerPkg.Provider {
+	t.Helper()
+	p, ok := providerPkg.Get("github")
+	if !ok {
+		t.Skip("github provider not registered")
+	}
+	return p
+}
+
+// githubBOMResult is a completely collected GitHub run: one job with a
+// SHA-pinned action step and a container image, one job calling a reusable
+// workflow of another repository. The GitHub generator reads the normalized
+// workflow model (result.GitHubPipeline), not the GitLab collections.
+func githubBOMResult() *control.AnalysisResult {
+	return &control.AnalysisResult{
+		ProjectPath: "getplumber/plumber-lab-github",
+		GitHubPipeline: &ir.NormalizedPipeline{
+			Jobs: []ir.Job{
+				{
+					Name:  "test",
+					Image: &ir.Image{Registry: "docker.io", Name: "postgres", Tag: "17"},
+					Uses: []ir.Action{
+						{Uses: "actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955", Comment: "v4.3.0"},
+					},
+				},
+				{
+					Name:                 "release",
+					ReusableWorkflowUses: "getplumber/workflows/.github/workflows/release.yml@v1",
+				},
+			},
+		},
+	}
+}
+
+// TestBuildPlatformPush_GitHubCarriesTheBOM is the GitHub half of the
+// dependencies graph: a GitHub push used to arrive with no bom section at
+// all, so the platform's dependencies inventory stayed empty on every GitHub
+// installation. The section now carries what the --pbom artifact lists for
+// the same run: the actions as `action` includes, the job-level reusable
+// workflow calls as `reusableWorkflow` includes, and the container images.
+func TestBuildPlatformPush_GitHubCarriesTheBOM(t *testing.T) {
+	conf := &configuration.Configuration{Branch: "main"}
+
+	body, err := buildPlatformPush(githubTestProvider(t), conf, githubBOMResult(), nil, ".plumber.yaml", nil)
+	if err != nil {
+		t.Fatalf("buildPlatformPush: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("push does not parse as JSON: %v", err)
+	}
+	bom, ok := raw["bom"].(map[string]any)
+	if !ok {
+		t.Fatalf("the GitHub push carries no bom section: %s", body)
+	}
+	if bom["version"] != float64(platformBOMSchemaVersion) {
+		t.Errorf("bom.version = %v, want %d", bom["version"], platformBOMSchemaVersion)
+	}
+	for _, key := range []string{"includes", "images", "jobs", "capabilities"} {
+		if _, isArray := bom[key].([]any); !isArray {
+			t.Errorf("bom.%s = %#v, want an array", key, bom[key])
+		}
+	}
+
+	includes, _ := bom["includes"].([]any)
+	if len(includes) != 2 {
+		t.Fatalf("bom.includes = %#v, want the action and the reusable workflow", includes)
+	}
+	byType := map[string]map[string]any{}
+	for _, entry := range includes {
+		inc, _ := entry.(map[string]any)
+		typ, _ := inc["type"].(string)
+		byType[typ] = inc
+	}
+	action := byType["action"]
+	if action == nil || action["location"] != "actions/checkout" || action["version"] != "08eba0b27e820071cde6df949e0beb9ba4906955" {
+		t.Errorf("action include = %#v, want actions/checkout at its SHA", action)
+	}
+	if action != nil && action["latest_version"] != "v4.3.0" {
+		t.Errorf("action include latest_version = %#v, want the version comment v4.3.0", action["latest_version"])
+	}
+	reusable := byType["reusableWorkflow"]
+	if reusable == nil || reusable["location"] != "getplumber/workflows/.github/workflows/release.yml" || reusable["version"] != "v1" {
+		t.Errorf("reusableWorkflow include = %#v, want getplumber/workflows/.github/workflows/release.yml at v1", reusable)
+	}
+
+	images, _ := bom["images"].([]any)
+	if len(images) != 1 {
+		t.Fatalf("bom.images = %#v, want the job container image", images)
+	}
+	img, _ := images[0].(map[string]any)
+	if name, _ := img["name"].(string); !strings.HasSuffix(name, "postgres") || img["tag"] != "17" {
+		t.Errorf("bom.images[0] = %#v, want postgres:17", img)
+	}
+	if jobs, _ := img["jobs"].([]any); len(jobs) != 1 || jobs[0] != "test" {
+		t.Errorf("bom.images[0].jobs = %#v, want [test]", img["jobs"])
+	}
+	// No control judged this image: the three-state keys stay off the wire.
+	for _, flag := range []string{"forbidden_tag", "authorized"} {
+		if _, present := img[flag]; present {
+			t.Errorf("bom.images[0].%s = %#v reached the bill although no finding judged the image", flag, img[flag])
+		}
+	}
+}
+
+// TestBuildPlatformPush_GitHubIncludesCarryNoCurrencyVerdict pins the one
+// field the GitHub generator gives another meaning: it sets an action's
+// up_to_date to false when the action is not pinned by SHA, while the
+// contract defines up_to_date as the CLI's verdict on whether the include is
+// at its latest version, absent when it reached none. The platform stores it
+// verbatim as the include edge's currency flag and counts false as outdated,
+// and the CLI reaches no currency verdict on GitHub, so every GitHub include
+// on the wire leaves the key out. latest_version (the version comment) stays.
+func TestBuildPlatformPush_GitHubIncludesCarryNoCurrencyVerdict(t *testing.T) {
+	result := githubBOMResult()
+	unpinned := "actions/setup-go@v5"
+	result.GitHubPipeline.Jobs[0].Uses = append(result.GitHubPipeline.Jobs[0].Uses, ir.Action{Uses: unpinned})
+	result.Findings = []opaengine.Finding{{
+		Code: string(control.CodeActionUnpinned), Severity: "medium", Message: "not pinned", Job: "test",
+		Data: map[string]any{"uses": unpinned},
+	}}
+
+	// The generator does set the pinning indicator: the absence below is the
+	// push projection's doing, not a fixture that never produced the value.
+	doc := providerPkg.GitHubPBOMDocument(result, &configuration.Configuration{Branch: "main"})
+	setByGenerator := false
+	for _, inc := range doc.Includes {
+		if inc.Location == "actions/setup-go" && inc.UpToDate != nil && !*inc.UpToDate {
+			setByGenerator = true
+		}
+	}
+	if !setByGenerator {
+		t.Fatalf("the generator set no up_to_date=false on the unpinned action: %#v", doc.Includes)
+	}
+
+	body, err := buildPlatformPush(githubTestProvider(t), &configuration.Configuration{Branch: "main"}, result, nil, ".plumber.yaml", nil)
+	if err != nil {
+		t.Fatalf("buildPlatformPush: %v", err)
+	}
+	var raw struct {
+		BOM *struct {
+			Includes []map[string]any `json:"includes"`
+		} `json:"bom"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("push does not parse as JSON: %v", err)
+	}
+	if raw.BOM == nil || len(raw.BOM.Includes) != 3 {
+		t.Fatalf("bom = %s, want the two actions and the reusable workflow", body)
+	}
+	for _, inc := range raw.BOM.Includes {
+		if v, present := inc["up_to_date"]; present {
+			t.Errorf("include %v@%v carries up_to_date = %#v: the CLI reaches no currency verdict on GitHub", inc["location"], inc["version"], v)
+		}
+		if inc["location"] == "actions/checkout" && inc["latest_version"] != "v4.3.0" {
+			t.Errorf("actions/checkout latest_version = %#v, want the version comment kept", inc["latest_version"])
+		}
+	}
+}
+
+// TestBuildPlatformPush_GitHubNoBOMOnADegradedCollection is the GitHub twin
+// of the GitLab honesty rule: the platform replaces a project's dependency
+// edges with the pushed bill as ONE set, so a GitHub run that could not
+// collect completely sends no section and the edges stay as they were.
+func TestBuildPlatformPush_GitHubNoBOMOnADegradedCollection(t *testing.T) {
+	result := githubBOMResult()
+	result.DataCollectionDegraded = true
+
+	body, err := buildPlatformPush(githubTestProvider(t), &configuration.Configuration{Branch: "main"}, result, nil, ".plumber.yaml", nil)
+	if err != nil {
+		t.Fatalf("buildPlatformPush: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("push does not parse as JSON: %v", err)
+	}
+	if _, present := raw["bom"]; present {
+		t.Errorf("a degraded GitHub run pushed a partial bill of materials: %v", raw["bom"])
+	}
+}
+
+// TestPlatformBOMDocument_GitHubRefusals pins the GitHub branch's guards: no
+// normalized workflow model means the run knows nothing about the pipeline's
+// dependencies (no bill rather than an empty one), and a nil conf still gets
+// the bill, as on the GitLab branch.
+func TestPlatformBOMDocument_GitHubRefusals(t *testing.T) {
+	p := githubTestProvider(t)
+	if doc := platformBOMDocument(p, nil, &control.AnalysisResult{ProjectPath: "o/r"}, nil); doc != nil {
+		t.Error("a GitHub run with no workflow model produced a bill: it knows nothing about the pipeline rather than knowing it depends on nothing")
+	}
+	if doc := platformBOMDocument(p, nil, nil, nil); doc != nil {
+		t.Error("a nil result produced a bill")
+	}
+	if doc := platformBOMDocument(p, nil, githubBOMResult(), nil); doc == nil {
+		t.Error("a collected GitHub run with no conf produced no bill")
+	}
+}
+
+// TestBuildPlatformPush_GitHubPlatformModeFlagsComeFromThePolicyUnion pins
+// the findings source of the GitHub bill in platform mode: the policy runs'
+// union, never the local configuration's findings, exactly as the PBOM
+// artifacts read them. A forbidden-tag finding only the local evaluation
+// produced reaches no flag; one an applied policy produced does.
+func TestBuildPlatformPush_GitHubPlatformModeFlagsComeFromThePolicyUnion(t *testing.T) {
+	finding := opaengine.Finding{
+		Code: string(control.CodeImageForbiddenTag), Severity: "high", Message: "floating tag", Job: "test",
+		Data: map[string]any{"link": "docker.io/postgres:17"},
+	}
+	pushedImage := func(t *testing.T, result *control.AnalysisResult, runs []policyRun) map[string]any {
+		t.Helper()
+		body, err := buildPlatformPush(githubTestProvider(t), &configuration.Configuration{Branch: "main"}, result, nil, ".plumber.yaml", runs)
+		if err != nil {
+			t.Fatalf("buildPlatformPush: %v", err)
+		}
+		var raw struct {
+			BOM *struct {
+				Images []map[string]any `json:"images"`
+			} `json:"bom"`
+		}
+		if err := json.Unmarshal(body, &raw); err != nil {
+			t.Fatalf("push does not parse as JSON: %v", err)
+		}
+		if raw.BOM == nil || len(raw.BOM.Images) != 1 {
+			t.Fatalf("bom = %s, want one image", body)
+		}
+		return raw.BOM.Images[0]
+	}
+	policies := []platform.Policy{{ID: "1111", Name: "p", Enforcement: platform.EnforcementReport}}
+
+	t.Run("local finding only", func(t *testing.T) {
+		result := githubBOMResult()
+		result.Findings = []opaengine.Finding{finding}
+		run := policyRun{Policies: policies, Result: &control.AnalysisResult{}, Applied: true}
+		img := pushedImage(t, result, []policyRun{run})
+		if _, present := img["forbidden_tag"]; present {
+			t.Errorf("forbidden_tag = %#v came from the local configuration's findings, which platform mode does not publish", img["forbidden_tag"])
+		}
+	})
+	t.Run("policy finding", func(t *testing.T) {
+		run := policyRun{Policies: policies, Result: &control.AnalysisResult{Findings: []opaengine.Finding{finding}}, Applied: true}
+		img := pushedImage(t, githubBOMResult(), []policyRun{run})
+		if img["forbidden_tag"] != true {
+			t.Errorf("forbidden_tag = %#v, want true: an applied policy reported the image", img["forbidden_tag"])
+		}
+	})
 }
