@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/getplumber/plumber/internal/ir"
+	"github.com/getplumber/plumber/utils"
 )
 
 // GitHubComplianceData carries the GitHub-side compliance lookups
@@ -93,52 +94,72 @@ func (g *Generator) GenerateFromGitHubIR(pipeline *ir.NormalizedPipeline) *PBOM 
 	return pbom
 }
 
-// processGitHubImages walks every job's image and services list,
-// dedupes by full image reference, aggregates the jobs that use each
-// image, and produces the ContainerImage shape consumers expect.
-// Mirrors processImages on the GitLab path so downstream tooling
+// processGitHubImages walks every job's image, docker:// steps and
+// services list, dedupes by full image reference, aggregates the jobs
+// that use each image, and produces the ContainerImage shape consumers
+// expect. Mirrors processImages on the GitLab path so downstream tooling
 // reads the same fields regardless of which provider produced the
-// PBOM.
+// PBOM. A docker:// step a composite action pulls in is listed too,
+// flagged nested with its chain, by the rule of processGitHubIncludes:
+// an image any job uses directly is direct, otherwise the first chain
+// seen is kept.
 func (g *Generator) processGitHubImages(pipeline *ir.NormalizedPipeline) []ContainerImage {
 	type entry struct {
 		ref      string
 		registry string
 		name     string
 		tag      string
+		nested   bool
+		via      []string
 	}
 	jobsByRef := map[string][]string{}
 	infoByRef := map[string]entry{}
 
-	addImage := func(img ir.Image, jobName string) {
+	addImage := func(img ir.Image, jobName string, nested bool, via []string) {
 		ref := normalizeImageRef(img)
 		if ref == "" {
 			return
 		}
 		jobsByRef[ref] = append(jobsByRef[ref], jobName)
-		if _, ok := infoByRef[ref]; !ok {
+		e, ok := infoByRef[ref]
+		if !ok {
 			tag := img.Tag
 			if img.Digest != "" {
 				tag = img.Digest
 			}
-			infoByRef[ref] = entry{
+			e = entry{
 				ref:      ref,
 				registry: img.Registry,
 				name:     img.Name,
 				tag:      tag,
+				nested:   nested,
 			}
+			if nested {
+				e.via = slices.Clone(via)
+			}
+		} else if !nested && e.nested {
+			e.nested, e.via = false, nil
 		}
+		infoByRef[ref] = e
 	}
 
 	for i := range pipeline.Jobs {
 		j := &pipeline.Jobs[i]
 		if j.Image != nil {
-			addImage(*j.Image, j.Name)
+			addImage(*j.Image, j.Name, false, nil)
 		}
 		for _, s := range j.StepImages {
-			addImage(s, j.Name)
+			addImage(s, j.Name, false, nil)
+		}
+		// The job's own docker:// steps are in StepImages; the nested
+		// ones are only in Uses.
+		for _, u := range j.Uses {
+			if ref, ok := strings.CutPrefix(u.Uses, "docker://"); ok && u.Nested && ref != "" {
+				addImage(utils.SplitGitHubImageRef(ref), j.Name, true, u.Via)
+			}
 		}
 		for _, s := range j.Services {
-			addImage(s, j.Name)
+			addImage(s, j.Name, false, nil)
 		}
 	}
 
@@ -157,6 +178,8 @@ func (g *Generator) processGitHubImages(pipeline *ir.NormalizedPipeline) []Conta
 			Name:     info.name,
 			Tag:      info.tag,
 			Jobs:     uniqueSortedStrings(jobsByRef[r]),
+			Nested:   info.nested,
+			Via:      info.via,
 		}
 		if g.githubData != nil {
 			if v, ok := g.githubData.ForbiddenTagImages[r]; ok {
@@ -223,7 +246,9 @@ func (g *Generator) processGitHubIncludes(pipeline *ir.NormalizedPipeline) []Inc
 			note(reusables, j.ReusableWorkflowUses, "", j.Nested, j.Via)
 		}
 		for _, u := range j.Uses {
-			// A docker:// step runs an image, listed under containerImages (#571).
+			// A docker:// step, the job's own or a nested one, runs an
+			// image: processGitHubImages lists it under containerImages
+			// (#571).
 			if u.Uses == "" || strings.HasPrefix(u.Uses, "docker://") {
 				continue
 			}

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/getplumber/plumber/internal/ir"
+	"github.com/getplumber/plumber/utils"
 )
 
 // maxReusableDepth bounds a chain of reusable workflow calls, past GitHub's
@@ -306,7 +307,7 @@ func (l *reusableLinker) resolveImages(i int) {
 	}
 	sort.Strings(refs)
 	for _, ref := range refs {
-		j.MatrixImages = append(j.MatrixImages, splitImageRef(ref))
+		j.MatrixImages = append(j.MatrixImages, utils.SplitGitHubImageRef(ref))
 	}
 }
 

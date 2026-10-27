@@ -149,6 +149,14 @@ func (p *PBOM) ToCycloneDX(plumberVersion string) *CycloneDX {
 			component.Properties = append(component.Properties,
 				CycloneDXProperty{Name: "plumber:forbidden-tag", Value: fmt.Sprintf("%t", *img.ForbiddenTag)})
 		}
+		if img.Nested {
+			component.Properties = append(component.Properties,
+				CycloneDXProperty{Name: "plumber:nested", Value: "true"})
+		}
+		if len(img.Via) > 0 {
+			component.Properties = append(component.Properties,
+				CycloneDXProperty{Name: "plumber:via", Value: ir.ViaText(img.Via)})
+		}
 
 		cdx.Components = append(cdx.Components, component)
 	}

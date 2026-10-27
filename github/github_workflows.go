@@ -1684,14 +1684,14 @@ func normalizeGitHubPermissions(v any) any {
 func parseGitHubContainer(v any) (ir.Image, bool) {
 	switch c := v.(type) {
 	case string:
-		return splitImageRef(c), true
+		return utils.SplitGitHubImageRef(c), true
 	case map[any]any:
 		m, _ := ghCastStringMap(c)
 		img, ok := m["image"].(string)
 		if !ok {
 			return ir.Image{}, false
 		}
-		out := splitImageRef(img)
+		out := utils.SplitGitHubImageRef(img)
 		if creds, ok := ghCastStringMap(m["credentials"]); ok {
 			if pw, ok := creds["password"].(string); ok {
 				out.CredentialsPassword = pw
@@ -1700,32 +1700,6 @@ func parseGitHubContainer(v any) (ir.Image, bool) {
 		return out, true
 	}
 	return ir.Image{}, false
-}
-
-// splitImageRef parses a GitHub Actions image reference into an ir.Image,
-// folding Docker Hub registry-host aliases to docker.io. A reference with
-// neither tag nor digest gets the tag `latest`, the one Docker pulls for it;
-// one still holding a `${{ }}` expression keeps no tag, since the value is
-// only known at run time.
-func splitImageRef(ref string) ir.Image {
-	// Fold Docker Hub registry-host aliases (registry.hub.docker.com,
-	// index.docker.io, registry-1.docker.io) to docker.io so trustedUrls
-	// patterns match regardless of which Hub hostname was used. GitHub refs
-	// keep the registry host inside Name, so we normalise the name string.
-	ref = utils.FoldDockerHubAliasInName(ref)
-	// Digest form takes precedence: "alpine@sha256:..."
-	if at := strings.Index(ref, "@"); at > 0 {
-		return ir.Image{Name: ref[:at], Digest: ref[at+1:]}
-	}
-	// The tag colon comes after the last slash: the one in
-	// `localhost:5000/app` is a registry port.
-	if colon := strings.LastIndex(ref, ":"); colon > 0 && colon > strings.LastIndex(ref, "/") {
-		return ir.Image{Name: ref[:colon], Tag: ref[colon+1:]}
-	}
-	if ref == "" || strings.Contains(ref, "${{") {
-		return ir.Image{Name: ref}
-	}
-	return ir.Image{Name: ref, Tag: "latest"}
 }
 
 // dockerStepImages are the images the job's own `uses: docker://` steps
@@ -1738,7 +1712,7 @@ func dockerStepImages(uses []ir.Action) []ir.Image {
 			continue
 		}
 		if ref, ok := strings.CutPrefix(u.Uses, "docker://"); ok && ref != "" {
-			out = append(out, splitImageRef(ref))
+			out = append(out, utils.SplitGitHubImageRef(ref))
 		}
 	}
 	return out
