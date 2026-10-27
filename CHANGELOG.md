@@ -1,3 +1,15 @@
+## [0.7.14](https://github.com/getplumber/plumber/compare/v0.7.13...v0.7.14) (2026-10-27)
+
+
+### 🐛 Bug Fixes
+
+* **release:** only file a remove/drop first word under Removed ([f16eafd](https://github.com/getplumber/plumber/commit/f16eafd3d8dfdd6a2d79f64008a5b04d0cdbf41f))
+
+
+### 👷 CI/CD
+
+* **release:** GitLab component notes only list what changed in the component ([2ebb420](https://github.com/getplumber/plumber/commit/2ebb4204b56d7d0304040b70ec757dcb72208eed)), closes [#569](https://github.com/getplumber/plumber/issues/569)
+
 ## [0.7.13](https://github.com/getplumber/plumber/compare/v0.7.12...v0.7.13) (2026-10-27)
 
 
