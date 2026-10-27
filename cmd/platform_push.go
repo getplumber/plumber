@@ -92,7 +92,10 @@ type platformPush struct {
 	// service whose reference is unresolved or empty. The PBOM artifact still
 	// lists them: it is an inventory of what the pipeline declares.
 	//
-	// GitLab pushes only, and only from a run that collected completely. The
+	// GitLab and GitHub pushes alike (on GitHub the includes are the actions
+	// and the reusable-workflow calls, the images the job containers,
+	// services and docker:// steps), and only from a run that collected
+	// completely. The
 	// platform replaces a project's dependency edges with the pushed bill as
 	// ONE set, so a bill built on a degraded collection would delete the
 	// edges the run merely failed to read. Such a run sends no section at
@@ -1066,32 +1069,78 @@ func bomProjectedEdges(out *platformBOM) int {
 // the generator is the same one the --pbom artifact is written from, so the
 // two documents can never disagree about what the pipeline uses.
 //
+// Both providers are described: a GitLab run by the GitLab generator over its
+// origin and image collections, a GitHub run by the GitHub generator over its
+// normalized workflow model (actions, reusable-workflow calls, container
+// images).
+//
 // Nil in three cases, each of which would otherwise have the platform replace
 // a project's dependency edges with a wrong set:
-//   - the GitHub path, whose resources the platform does not model (and whose
-//     collections this GitLab generator cannot read anyway),
-//   - a run that collected neither includes nor images, which knows nothing
-//     about the pipeline's dependencies rather than knowing it has none,
+//   - a provider with no bill (none other than the two above),
+//   - a run that collected nothing to describe (on GitLab neither includes
+//     nor images, on GitHub no workflow model), which knows nothing about the
+//     pipeline's dependencies rather than knowing it has none,
 //   - a run whose collection degraded, whose bill would be partial: the
 //     platform replaces the project's edges with the pushed set in one go, so
 //     a partial bill deletes the dependencies the run merely failed to read.
 func platformBOMDocument(p providerPkg.Provider, conf *configuration.Configuration, result *control.AnalysisResult, runs []policyRun) *pbom.PBOM {
-	if p == nil || p.Name() != "gitlab" || result == nil {
+	if p == nil || result == nil {
 		return nil
 	}
 	if result.DataCollectionDegraded {
 		return nil
 	}
-	if result.PipelineOriginData == nil && result.PipelineImageData == nil {
-		return nil
-	}
-
-	// In platform mode the findings the image flags are read from are the
-	// policy runs' union, never the local configuration's, exactly as the
-	// PBOM artifacts read them.
+	// In platform mode the findings the flags are read from are the policy
+	// runs' union, never the local configuration's, exactly as the PBOM
+	// artifacts read them.
 	source := result
 	if len(runs) > 0 {
 		source = platformUnionResult(result, runs)
+	}
+	switch p.Name() {
+	case "gitlab":
+		return gitlabBOMDocument(p, conf, result, source, runs)
+	case "github":
+		return githubBOMDocument(conf, result, source)
+	}
+	return nil
+}
+
+// githubBOMDocument is the GitHub branch of platformBOMDocument: the document
+// the --pbom artifact is written from (provider.GitHubPBOMDocument), over the
+// findings source the caller chose.
+//
+// Unlike the GitLab branch it needs no per-control evaluated gate
+// (platformImageControlsEvaluated): every flag the GitHub generator sets is a
+// NEGATIVE claim read from a finding (forbidden tag, not pinned, archived,
+// known advisory) and an entry no finding names keeps its three-state key
+// out, so a control nobody evaluated, which produced no finding in the
+// union, claims nothing. The platform summary carries only the policies and
+// the global score, which the section does not publish.
+//
+// One field is dropped: the generator reuses an action's UpToDate as a
+// pinning indicator (false = not pinned by SHA), while the contract defines
+// up_to_date as the CLI's verdict on whether the include is at its latest
+// version, absent when it reached none. The platform stores it verbatim as
+// the include edge's currency flag and counts false as outdated, and the CLI
+// reaches no currency verdict on GitHub, so every GitHub include goes out
+// without it. The document is this push's own copy: the --pbom artifact and
+// its CycloneDX mapping keep the indicator.
+func githubBOMDocument(conf *configuration.Configuration, result, source *control.AnalysisResult) *pbom.PBOM {
+	if result.GitHubPipeline == nil {
+		return nil
+	}
+	doc := providerPkg.GitHubPBOMDocument(source, conf)
+	for i := range doc.Includes {
+		doc.Includes[i].UpToDate = nil
+	}
+	return doc
+}
+
+// gitlabBOMDocument is the GitLab branch of platformBOMDocument.
+func gitlabBOMDocument(p providerPkg.Provider, conf *configuration.Configuration, result, source *control.AnalysisResult, runs []policyRun) *pbom.PBOM {
+	if result.PipelineOriginData == nil && result.PipelineImageData == nil {
+		return nil
 	}
 	summary := platformPBOMSummary(runs, nil)
 	if summary != nil {
