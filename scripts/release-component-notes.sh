@@ -16,7 +16,7 @@
 # subjects map to sections:
 #   security type or scope        -> Security
 #   subject saying deprecate      -> Deprecated
-#   subject starting remove/drop  -> Removed
+#   first word remove/drop        -> Removed
 #   feat                          -> Added
 #   fix                           -> Fixed
 #   anything else                 -> Changed
@@ -71,7 +71,7 @@ while IFS= read -r sha; do
     security+=("$entry")
   elif printf '%s' "$desc" | grep -qi 'deprecat'; then
     deprecated+=("$entry")
-  elif printf '%s' "$desc" | grep -qiE '^(remove|drop)'; then
+  elif printf '%s' "$desc" | grep -qiE '^(remov(e|es|ed|ing)|drop(s|ped|ping)?)([^[:alnum:]_-]|$)'; then
     removed+=("$entry")
   elif [ "$type" = "feat" ]; then
     added+=("$entry")

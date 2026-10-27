@@ -36,6 +36,8 @@ check() { # check <name> <output> <grep -F needle>
 check_not() {
   if printf '%s\n' "$2" | grep -qF -- "$3"; then echo "FAIL: $1 (unexpected: $3)"; fails=$((fails+1)); else echo "ok: $1"; fi
 }
+# section <output> <title>: the entries of one "### <title>" section.
+section() { printf '%s\n' "$1" | awk -v t="### $2" '$0 == t {on=1; next} /^### / {on=0} on && /^- /'; }
 
 # v0.7.9: first release, no previous tag.
 commit templates/plumber.yml "feat(component): initial template"
@@ -63,27 +65,29 @@ commit templates/plumber.yml "fix(component): quote the threshold"
 commit templates/plumber.yml "feat(component)!: rename the config input"
 commit templates/plumber.yml "refactor: split the script" "BREAKING CHANGE: the job name changed"
 commit templates/plumber.yml "feat(component): deprecate the legacy input"
+commit templates/plumber.yml "feat(component): dropdown selector for the report"
+commit templates/plumber.yml "feat(component): drop-in replacement for the job"
 commit templates/plumber.yml "feat(component): remove the verbose input"
 commit templates/plumber.yml "fix(component,security): do not echo the token"
+commit templates/plumber.yml "security: patch the token leak"
 commit templates/plumber.yml "docs(component): explain the inputs"
 commit templates/plumber.yml "Tweak the rules ordering"
 commit templates/plumber.yml "ci(release): pin v0.7.11 refs [skip ci]"
 commit control/x.go "fix(github): a GitHub-only fix"
 release 0.8.0
 out="$(bash "$script" 0.8.0 "$DIGEST" "$repo")"
-check "feat -> Added" "$out" "- Add a report_format input."
-check "fix -> Fixed" "$out" "- Quote the threshold."
+check "feat -> Added" "$(section "$out" Added)" "- Add a report_format input."
+check "fix -> Fixed" "$(section "$out" Fixed)" "- Quote the threshold."
 check "bang marks breaking" "$out" "- **Breaking:** Rename the config input."
 check "footer marks breaking" "$out" "- **Breaking:** Split the script."
-check "deprecate -> Deprecated" "$out" "### Deprecated
-
-- Deprecate the legacy input."
-check "remove -> Removed" "$out" "### Removed
-
-- Remove the verbose input."
-check "security scope -> Security" "$out" "### Security
-
-- Do not echo the token."
+check "deprecate -> Deprecated" "$(section "$out" Deprecated)" "- Deprecate the legacy input."
+check "remove -> Removed" "$(section "$out" Removed)" "- Remove the verbose input."
+check "dropdown -> Added" "$(section "$out" Added)" "- Dropdown selector for the report."
+check "drop-in -> Added" "$(section "$out" Added)" "- Drop-in replacement for the job."
+check_not "dropdown is not a removal" "$(section "$out" Removed)" "Dropdown"
+check_not "drop-in is not a removal" "$(section "$out" Removed)" "Drop-in"
+check "security scope -> Security" "$(section "$out" Security)" "- Do not echo the token."
+check "security type -> Security" "$(section "$out" Security)" "- Patch the token leak."
 check "other types -> Changed" "$out" "- Explain the inputs."
 check "non-conventional subject -> Changed, capitalized" "$out" "- Tweak the rules ordering."
 check_not "ci(release) commit left out" "$out" "Pin v0.7.11"
