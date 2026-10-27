@@ -52,6 +52,70 @@ func TestGenerateFromGitHubIR_DockerStepsAreImagesNotActions(t *testing.T) {
 	}
 }
 
+// TestGenerateFromGitHubIR_NestedDockerStepsAreNestedImages pins the review
+// of PR 575: a docker:// step a composite action pulls in is not one of the
+// job's own images (the policies do not judge it), but it runs, so the PBOM
+// lists it as a container image flagged nested with its chain, and never as
+// an action include. An image another job also runs directly is direct.
+func TestGenerateFromGitHubIR_NestedDockerStepsAreNestedImages(t *testing.T) {
+	via := []string{"owner/composite@v1", "owner/inner@v2"}
+	p := &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{
+		{Name: "ci/a", Uses: []ir.Action{
+			{Uses: "owner/composite@v1"},
+			{Uses: "owner/inner@v2", Nested: true, Via: via[:1]},
+			{Uses: "docker://busybox:1.36", Nested: true, Via: via},
+			{Uses: "docker://alpine", Nested: true, Via: via[:1]},
+		}},
+		{Name: "ci/b", Uses: []ir.Action{
+			{Uses: "docker://alpine:latest"},
+		}, StepImages: []ir.Image{{Name: "alpine", Tag: "latest"}}},
+	}}
+	doc := NewGenerator("acme/app", 0, "", "main").GenerateFromGitHubIR(p)
+
+	images := map[string]ContainerImage{}
+	for _, img := range doc.ContainerImages {
+		images[img.Image] = img
+	}
+	if len(images) != 2 {
+		t.Fatalf("ContainerImages = %+v, want busybox:1.36 and alpine:latest", doc.ContainerImages)
+	}
+	busybox := images["busybox:1.36"]
+	if !busybox.Nested || !slices.Equal(busybox.Via, via) || !slices.Equal(busybox.Jobs, []string{"ci/a"}) {
+		t.Errorf("busybox:1.36 is nested via %v in ci/a: %+v", via, busybox)
+	}
+	// The tagless nested `docker://alpine` is alpine:latest, which ci/b runs
+	// directly: one direct entry for both jobs.
+	alpine := images["alpine:latest"]
+	if alpine.Nested || alpine.Via != nil || !slices.Equal(alpine.Jobs, []string{"ci/a", "ci/b"}) {
+		t.Errorf("alpine:latest is direct, used by ci/a and ci/b: %+v", alpine)
+	}
+
+	var includes []string
+	for _, inc := range doc.Includes {
+		includes = append(includes, inc.Location+"@"+inc.Version)
+	}
+	if want := []string{"owner/composite@v1", "owner/inner@v2"}; !slices.Equal(includes, want) {
+		t.Errorf("Includes = %v, want %v (a docker:// step is no action)", includes, want)
+	}
+
+	props := map[string]string{}
+	for _, c := range doc.ToCycloneDX("v0.0.0-test").Components {
+		if c.Type != "container" {
+			continue
+		}
+		for _, pr := range c.Properties {
+			if pr.Name == "plumber:full-image" && pr.Value == "busybox:1.36" {
+				for _, q := range c.Properties {
+					props[q.Name] = q.Value
+				}
+			}
+		}
+	}
+	if props["plumber:nested"] != "true" || props["plumber:via"] != "owner/composite@v1 > owner/inner@v2" {
+		t.Errorf("CycloneDX busybox:1.36 properties = %v, want plumber:nested and plumber:via", props)
+	}
+}
+
 // TestBuildGitHubPBOMCompliance_PinnedStepImages: a digest-pinned docker://
 // step image is recorded as pinned by digest, like a pinned service, and a
 // tag-only one is not.

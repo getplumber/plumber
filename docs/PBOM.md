@@ -148,7 +148,7 @@ Top-level keys are emitted in this order (human-readable flow: context → aggre
 
 ### `containerImages[]` Array
 
-Each entry represents a Docker/OCI image used in a pipeline job.
+Each entry represents a Docker/OCI image used in a pipeline job. On GitHub, that covers a job's `container:` image and the images its `uses: docker://…` steps run, including the ones a composite action pulls in (flagged `nested`).
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -158,6 +158,8 @@ Each entry represents a Docker/OCI image used in a pipeline job.
 | `tag` | string | Image tag (e.g., `1.22`, `latest`). Omitted if no tag specified. |
 | `jobs` | string[] | Pipeline jobs using this image |
 | `unresolved` | bool | `true` when the reference still held a `$VARIABLE` after substitution (`image: $CI_REGISTRY_IMAGE:$TAG`), so `registry`, `name` and `tag` describe a placeholder rather than an image. Omitted when the reference resolved. The entry is still listed: the pipeline does declare it. Controls already abstain on such an image, which is why `authorized` and `forbiddenTag` are absent from it. |
+| `nested` | bool | GitHub only. `true` when no job runs the image itself: every use is a `uses: docker://` step inside a composite action (an image also run directly stays direct). Omitted on a direct image. |
+| `via` | string[] | GitHub only, on a nested image: the chain of actions it was reached through, outermost first (the first path seen when it is reached on several). Omitted on a direct image. |
 | `authorized` | bool | Whether the image passes the authorized sources control. Only present when the control is enabled. |
 | `forbiddenTag` | bool | Whether the image uses a forbidden tag. Only present when the control is enabled. |
 
@@ -531,8 +533,8 @@ CycloneDX components carry Plumber-specific metadata as properties:
 | `plumber:up-to-date` | includes | `"true"` / `"false"` |
 | `plumber:component-name` | includes | Component name |
 | `plumber:from-catalog` | includes | `"true"` if from GitLab CI/CD Catalog |
-| `plumber:nested` | includes | `"true"` if nested include (GitLab and GitHub, see `nested` above) |
-| `plumber:via` | includes | GitHub only. The chain of a nested include, `" > "` separated, outermost first |
+| `plumber:nested` | includes, containers | `"true"` if nested include (GitLab and GitHub) or nested image (GitHub), see `nested` above |
+| `plumber:via` | includes, containers | GitHub only. The chain of a nested include or image, `" > "` separated, outermost first |
 | `plumber:overridden` | includes | GitLab only. `"true"` if the include's jobs are overridden with forbidden keywords |
 | `plumber:overridden-job` | includes | GitLab only. `"jobName:key1,key2"` — one property per overridden job with its forbidden keys |
 | `plumber:archived` | includes | GitHub `action` only. `"true"` / `"false"` — upstream repository archived state (ISSUE-702). |

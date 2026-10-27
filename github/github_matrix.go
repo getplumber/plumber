@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/getplumber/plumber/internal/ir"
+	"github.com/getplumber/plumber/utils"
 )
 
 // maxMatrixCombinations bounds the expansion of a reference built from
@@ -49,7 +50,7 @@ func matrixImages(ref string, section map[string]any) []ir.Image {
 	}
 	out := make([]ir.Image, 0, len(refs))
 	for _, r := range refs {
-		out = append(out, splitImageRef(r))
+		out = append(out, utils.SplitGitHubImageRef(r))
 	}
 	return out
 }

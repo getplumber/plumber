@@ -456,42 +456,6 @@ func TestScanGitHubWorkflows_ParseErrorReportedAsInvalidWorkflow(t *testing.T) {
 	}
 }
 
-// TestSplitImageRef pins the image parser used by the workflow collector
-// (parseGitHubContainer, dockerStepImages -> splitImageRef): Docker Hub
-// aliases like registry.hub.docker.com and index.docker.io are
-// canonicalized to docker.io so trustedUrls patterns match regardless of
-// Hub hostname, and a reference without tag or digest reads as `latest`.
-func TestSplitImageRef(t *testing.T) {
-	cases := []struct {
-		ref      string
-		wantName string
-		wantTag  string
-	}{
-		{"registry.hub.docker.com/library/node:alpine", "docker.io/library/node", "alpine"},
-		{"index.docker.io/python:3.12", "docker.io/python", "3.12"},
-		{"ghcr.io/astral-sh/uv:latest", "ghcr.io/astral-sh/uv", "latest"},
-		{"alpine:3.20", "alpine", "3.20"},
-		// No tag: Docker pulls `latest` (#571).
-		{"alpine", "alpine", "latest"},
-		{"ghcr.io/owner/image", "ghcr.io/owner/image", "latest"},
-		// The colon before the last slash is a registry port, not a tag.
-		{"localhost:5000/app", "localhost:5000/app", "latest"},
-		{"localhost:5000/app:1.2", "localhost:5000/app", "1.2"},
-		// A digest is the pin: no tag is made up.
-		{"alpine@sha256:abc", "alpine", ""},
-		// An expression is only known at run time: no tag is made up.
-		{"${{ matrix.image }}", "${{ matrix.image }}", ""},
-		{"${{ inputs.image }}", "${{ inputs.image }}", ""},
-	}
-	for _, tc := range cases {
-		got := splitImageRef(tc.ref)
-		if got.Name != tc.wantName || got.Tag != tc.wantTag {
-			t.Errorf("splitImageRef(%q) = {name:%q tag:%q}, want {name:%q tag:%q}",
-				tc.ref, got.Name, got.Tag, tc.wantName, tc.wantTag)
-		}
-	}
-}
-
 // Test_enrichActionsWithClient_carriesTagObjectMetadata locks the
 // collector-to-IR handoff for ISSUE-401. Every field the rego rules read
 // crosses from GitHubMetadata into ir.ActionMetadata inside the

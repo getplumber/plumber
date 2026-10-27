@@ -208,6 +208,16 @@ type ContainerImage struct {
 	// the document's job is to say what the pipeline declares.
 	Unresolved bool `json:"unresolved,omitempty"`
 
+	// Nested reports a GitHub image no job runs itself: a `uses: docker://`
+	// step a composite action pulls in. An image some job also runs directly
+	// is not nested.
+	Nested bool `json:"nested,omitempty"`
+
+	// Via is the chain a nested image was pulled in through, outermost
+	// first, the first one seen when it is reached on several paths (as for
+	// Include.Via). Empty on a direct image.
+	Via []string `json:"via,omitempty"`
+
 	// Compliance status (from analysis, if available)
 	Authorized   *bool `json:"authorized,omitempty"`
 	ForbiddenTag *bool `json:"forbiddenTag,omitempty"`

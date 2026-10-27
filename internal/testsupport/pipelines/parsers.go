@@ -9,6 +9,7 @@ import (
 	"gopkg.in/yaml.v2"
 
 	"github.com/getplumber/plumber/internal/ir"
+	"github.com/getplumber/plumber/utils"
 )
 
 // reservedTopLevelKeys are GitLab CI top-level keys that must not be
@@ -575,29 +576,13 @@ func splitNameTag(ref string) ir.Image {
 	return ir.Image{Name: ref}
 }
 
-// splitGitHubImageRef mirrors the GitHub collector's splitImageRef: the tag
-// colon comes after the last slash, and a reference with neither tag nor
-// digest (and no `${{ }}` expression) gets `latest`, the tag Docker pulls.
-func splitGitHubImageRef(ref string) ir.Image {
-	if at := strings.Index(ref, "@"); at > 0 {
-		return ir.Image{Name: ref[:at], Digest: ref[at+1:]}
-	}
-	if idx := strings.LastIndex(ref, ":"); idx > 0 && idx > strings.LastIndex(ref, "/") {
-		return ir.Image{Name: ref[:idx], Tag: ref[idx+1:]}
-	}
-	if ref == "" || strings.Contains(ref, "${{") {
-		return ir.Image{Name: ref}
-	}
-	return ir.Image{Name: ref, Tag: "latest"}
-}
-
 // dockerStepImages mirrors the GitHub collector's: the images the job's
 // `uses: docker://` steps run.
 func dockerStepImages(uses []ir.Action) []ir.Image {
 	var out []ir.Image
 	for _, u := range uses {
 		if ref, ok := strings.CutPrefix(u.Uses, "docker://"); ok && ref != "" {
-			out = append(out, splitGitHubImageRef(ref))
+			out = append(out, utils.SplitGitHubImageRef(ref))
 		}
 	}
 	return out
@@ -608,11 +593,11 @@ func dockerStepImages(uses []ir.Action) []ir.Image {
 func parseGitHubContainer(v any) (ir.Image, bool) {
 	switch c := v.(type) {
 	case string:
-		return splitGitHubImageRef(c), true
+		return utils.SplitGitHubImageRef(c), true
 	case map[any]any:
 		m, _ := toStringMap(c)
 		if img, ok := m["image"].(string); ok {
-			return splitGitHubImageRef(img), true
+			return utils.SplitGitHubImageRef(img), true
 		}
 	}
 	return ir.Image{}, false
