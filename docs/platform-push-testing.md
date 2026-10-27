@@ -69,7 +69,11 @@ containers, services and `docker://` steps as images
 `up_to_date`: the contract defines it as the CLI's verdict on currency,
 absent when none, and the CLI reaches none on GitHub (the artifact's
 pinning indicator stays in the artifact,
-`TestBuildPlatformPush_GitHubIncludesCarryNoCurrencyVerdict`). A degraded GitHub run sends no
+`TestBuildPlatformPush_GitHubIncludesCarryNoCurrencyVerdict`). A GitHub run
+with a workflow file that did not parse sends no section either, degraded or
+not, while a run whose workflows parse and declare no dependency sends the
+empty one (`TestBuildPlatformPush_GitHubNoBOMWhenAWorkflowDoesNotParse`,
+`TestBuildPlatformPush_GitHubDependencyFreeRunSendsTheEmptyBill`). A degraded GitHub run sends no
 section (`TestBuildPlatformPush_GitHubNoBOMOnADegradedCollection`), and in
 platform mode its flags come from the policy runs' union, never the local
 configuration's findings

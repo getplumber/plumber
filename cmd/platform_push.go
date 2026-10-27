@@ -1078,8 +1078,9 @@ func bomProjectedEdges(out *platformBOM) int {
 // a project's dependency edges with a wrong set:
 //   - a provider with no bill (none other than the two above),
 //   - a run that collected nothing to describe (on GitLab neither includes
-//     nor images, on GitHub no workflow model), which knows nothing about the
-//     pipeline's dependencies rather than knowing it has none,
+//     nor images, on GitHub no workflow model or a workflow file that did not
+//     parse), which knows nothing about the pipeline's dependencies rather
+//     than knowing it has none,
 //   - a run whose collection degraded, whose bill would be partial: the
 //     platform replaces the project's edges with the pushed set in one go, so
 //     a partial bill deletes the dependencies the run merely failed to read.
@@ -1126,8 +1127,18 @@ func platformBOMDocument(p providerPkg.Provider, conf *configuration.Configurati
 // reaches no currency verdict on GitHub, so every GitHub include goes out
 // without it. The document is this push's own copy: the --pbom artifact and
 // its CycloneDX mapping keep the indicator.
+//
+// Nil when the run knows nothing about the dependencies: no workflow model,
+// or a workflow file that did not parse. The latter is not a degraded run
+// while workflowsMustBeValid is active (the file is a finding of its own),
+// yet the model holds none of that file's jobs, so its bill would have the
+// platform drop every edge the broken file declares (all of them when it is
+// the only workflow) until the next good run. Emptiness alone is no reason:
+// workflows that parse and declare no action and no image, or no workflow
+// at all, are a run that knows it has no dependencies, and its empty bill
+// clears edges that no longer exist.
 func githubBOMDocument(conf *configuration.Configuration, result, source *control.AnalysisResult) *pbom.PBOM {
-	if result.GitHubPipeline == nil {
+	if result.GitHubPipeline == nil || len(result.GitHubPipeline.InvalidWorkflows) > 0 {
 		return nil
 	}
 	doc := providerPkg.GitHubPBOMDocument(source, conf)
