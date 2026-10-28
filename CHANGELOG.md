@@ -1,3 +1,10 @@
+## [0.7.15](https://github.com/getplumber/plumber/compare/v0.7.14...v0.7.15) (2026-10-28)
+
+
+### 🐛 Bug Fixes
+
+* **configuration:** eight GitLab-shaped controls declare GitLab only, their GitHub bench entries go ([5c78ee5](https://github.com/getplumber/plumber/commit/5c78ee57bdf743115e2a9c6f0c64603c8f232159))
+
 ## [0.7.14](https://github.com/getplumber/plumber/compare/v0.7.13...v0.7.14) (2026-10-27)
 
 

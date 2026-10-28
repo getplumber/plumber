@@ -66,7 +66,7 @@ spec:
       default: .pre
     image:
       description: "Docker image to use for the job"
-      default: "getplumber/plumber@sha256:ad7ea097b06b9da2d9bfa194a0370c1cced07e936866fde2ef92e773b103116f" #v0.7.14
+      default: "getplumber/plumber@sha256:0b16df131386e3fec4b768a56de1a570aa90e95e548ef2843fd6297de1cdb7fc" #v0.7.15
     environment_name:
       description: "GitLab environment the job is attached to."
       default: plumber
