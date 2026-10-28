@@ -1,1 +1,4 @@
 * @coconux3 @thomasboni @Joseph94m @Totara-thib
+
+# Lockfile changes are dependency changes: a changed commit is new code that will run.
+.github/workflows/actions.lock @coconux3 @thomasboni @Joseph94m @Totara-thib
