@@ -1,3 +1,15 @@
+## [0.7.16](https://github.com/getplumber/plumber/compare/v0.7.15...v0.7.16) (2026-10-28)
+
+
+### ✨ Features
+
+* **cmd:** the platform push carries the GitHub bill of materials ([a2bcd78](https://github.com/getplumber/plumber/commit/a2bcd7899e180000b6099578d87bd38a5f518728))
+
+
+### 🐛 Bug Fixes
+
+* **cmd:** no GitHub bill of materials when a workflow file does not parse ([a88ce02](https://github.com/getplumber/plumber/commit/a88ce02911c61d7f3038020febb94bde8ce9e631))
+
 ## [0.7.15](https://github.com/getplumber/plumber/compare/v0.7.14...v0.7.15) (2026-10-28)
 
 
