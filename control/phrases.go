@@ -1249,6 +1249,7 @@ var findingFixes = map[ErrorCode]string{
 	"ISSUE-503": "fix the merge request approval settings",
 	"ISSUE-504": "cover every protected branch with an approval rule",
 	"ISSUE-506": "fix the merge request settings",
+	"ISSUE-507": "protect the tag pattern",
 	"ISSUE-601": "link the security policy project",
 	"ISSUE-702": "replace the archived action",
 	"ISSUE-704": "move the registry password into a secret",

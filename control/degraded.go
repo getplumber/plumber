@@ -81,6 +81,12 @@ const degradedReasonVariablesPrefix = "CI/CD variables could not be fetched"
 // keeps every unrelated control from flipping to error over it.
 const degradedReasonSecurityPolicyPrefix = "security policy project could not be fetched"
 
+// degradedReasonTagProtectionPrefix is the shared prefix of the tag
+// protection fetch degraded reason, on both providers. Same contract as the
+// prefixes above: StatusFor's degradedReasonIsTagProtection carve-out keeps
+// a failed tag fetch from flipping every unrelated control to error.
+const degradedReasonTagProtectionPrefix = "tag protection could not be fetched"
+
 // invalidWorkflowDegradedSuffix is the fixed tail of the "could not be
 // parsed" degraded reason, after the varying file count. It is the
 // contract between invalidWorkflowDegradedReason (the one writer, used

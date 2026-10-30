@@ -75,6 +75,8 @@ func buildLegacyResultGitHub(e control.ControlEntry, result *control.AnalysisRes
 		return "debugTraceResult", buildDebugTraceBlockGitHub(common, result, findings)
 	case "pipelineMustNotExecuteUnverifiedScripts":
 		return "unverifiedScriptsResult", buildUnverifiedScriptsBlockGitHub(common, result, findings)
+	case "tagMustBeProtected":
+		return "tagProtectionResult", buildTagProtectionBlock(common, result, findings)
 	}
 	return "", nil
 }

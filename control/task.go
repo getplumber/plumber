@@ -156,6 +156,25 @@ func mrSettingsPremiumFieldsNeedingUpgrade(conf *configuration.Configuration, pr
 
 const controlSecurityPolicy = "projectMustHaveSecurityPolicySource"
 
+// controlTagMustBeProtected is referenced directly to decide whether to
+// collect the tag protection rules and tag names (ISSUE-507) before
+// invoking the Rego engine. The collection reads no control field, so a
+// plain gate is enough: there is no per-policy scope to merge.
+const controlTagMustBeProtected = "tagMustBeProtected"
+
+// tagProtectionControlEnabledFor returns the gate reporting whether
+// tagMustBeProtected is active on provider for a configuration, for
+// anyCollectionConfig.
+func tagProtectionControlEnabledFor(provider string) func(*configuration.Configuration) bool {
+	return func(conf *configuration.Configuration) bool {
+		if conf == nil || conf.PlumberConfig == nil {
+			return false
+		}
+		c := conf.PlumberConfig.ControlsFor(provider).TagMustBeProtected
+		return c != nil && c.IsEnabled() && shouldRunControl(controlTagMustBeProtected, conf)
+	}
+}
+
 // securityPolicyControlEnabled reports whether the security-policy-project
 // linkage control (ISSUE-601) is active for this run. Its linkage is read by
 // its own GraphQL collection, independent of the REST protection endpoints, so
@@ -361,6 +380,7 @@ func runRegoEngine(
 	protectionData *gitlab.GitlabProtectionAnalysisData,
 	variablesData *gitlab.GitlabVariablesAnalysisData,
 	securityPolicyData *gitlab.SecurityPolicyData,
+	tagData *gitlab.GitlabTagProtectionData,
 	result *AnalysisResult,
 ) []opaengine.Finding {
 	pipeline := gitlab.ToNormalizedPipeline(
@@ -375,6 +395,7 @@ func runRegoEngine(
 	)
 	applyGitLabVisibility(pipeline, project)
 	applyGitLabRegistryHost(pipeline, project, conf.GitlabURL)
+	pipeline.TagProtection = gitlab.BuildTagProtection(tagData)
 	// Retained so a later per-policy evaluation can re-run the rules over the
 	// SAME collected data under a different policy's parameters, without
 	// re-collecting anything from the git host.
@@ -594,6 +615,13 @@ func buildEngineConfig(controls *configuration.ControlsConfig, gitlabURL string)
 			entry["minMergeAccessLevel"] = *c.MinMergeAccessLevel
 		}
 		cfg["branchMustBeProtected"] = entry
+	}
+
+	if c := controls.TagMustBeProtected; c != nil {
+		cfg["tagMustBeProtected"] = map[string]any{
+			"namePatterns":              c.EffectiveNamePatterns(),
+			"requireCreationRestricted": c.IsCreationRestrictionRequired(),
+		}
 	}
 
 	if c := controls.MergeRequestApprovalRulesMustRequireMinimumApprovals; c != nil {
@@ -1251,10 +1279,34 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 		}
 	}
 
+	// Tag protection (ISSUE-507) is read on its own, outside the protection
+	// collection, for the same reason as the security-policy linkage: a
+	// failure there must not cost the branch and approval controls their
+	// data, nor theirs this one. The platform snapshot carries no tag lane
+	// yet, so platform mode never fetches it (a CI job token holds no rights
+	// to it either): the control reports lane_not_served through
+	// controlsWithNoPlatformLane instead.
+	var tagData *gitlab.GitlabTagProtectionData
+	if anyCollectionConfig(conf, tagProtectionControlEnabledFor(configuration.ProviderGitLab)) {
+		result.markLaneCollected(laneGitLabTagProtection)
+		if !conf.PlatformRun.Engaged() {
+			var tErr error
+			tagData, tErr = gitlab.CollectGitlabTagProtection(conf.ProjectPath, conf.GitlabToken, conf)
+			if tErr != nil {
+				if isNetworkError(tErr) {
+					// Same split as the collectors above: a network failure degrades
+					// the run, a permission failure leaves the control not evaluated.
+					markDegraded(result, degradedReasonTagProtectionPrefix+" (network or timeout)")
+				}
+				l.WithError(tErr).Warn("Tag protection could not be read; tagMustBeProtected will report not evaluated")
+			}
+		}
+	}
+
 	// Rego/OPA rule engine evaluation — the single authoritative
 	// compliance path (the legacy Go controls were retired in
 	// docs/REFACTOR_MULTI_PROVIDER.md §8 Phase A).
-	result.Findings = runRegoEngine(l, conf, project, pipelineOriginData, pipelineImageData, protectionData, variablesData, securityPolicyData, result)
+	result.Findings = runRegoEngine(l, conf, project, pipelineOriginData, pipelineImageData, protectionData, variablesData, securityPolicyData, tagData, result)
 	result.ProtectionData = protectionData
 	// An approval-rule control that ran but saw zero rules is the ambiguous
 	// GitLab-Free-vs-premium-with-no-rules case (the approvals API 200-empties
@@ -1290,6 +1342,7 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	// Likewise unconditional: these are checks this run makes itself, and a
 	// standalone run that could not complete one was reporting a pass on it.
 	MarkOwnCollectionGaps(result, GitLabControls(conf.PlumberConfig))
+	markTagProtectionGap(result, GitLabControls(conf.PlumberConfig))
 
 	markPlatformLaneGaps(result, conf)
 

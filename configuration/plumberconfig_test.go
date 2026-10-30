@@ -437,6 +437,7 @@ func TestValidControlNames(t *testing.T) {
 		"pullRequestTargetMustNotCheckoutHead",
 		"reusableWorkflowsMustNotInheritSecrets",
 		"securityJobsMustNotBeWeakened",
+		"tagMustBeProtected",
 		"untrustedTriggersMustNotWriteCache",
 		"workflowMustIncludeRequiredActions",
 		"workflowMustNotExportEntireSecretsContext",
@@ -456,6 +457,39 @@ func TestValidControlNames(t *testing.T) {
 		if names[i] != expected[i] {
 			t.Fatalf("ValidControlNames()[%d] = %q, want %q", i, names[i], expected[i])
 		}
+	}
+}
+
+// tagMustBeProtected falls back to ["v*"] only when namePatterns is unset:
+// an explicit empty list means "workflow trigger patterns only" and must
+// not be silently widened. requireCreationRestricted defaults to on.
+func TestTagProtectionControlConfigDefaults(t *testing.T) {
+	var nilCfg *TagProtectionControlConfig
+	if got := nilCfg.EffectiveNamePatterns(); len(got) != 1 || got[0] != "v*" {
+		t.Errorf("nil config EffectiveNamePatterns() = %v, want [v*]", got)
+	}
+	if !nilCfg.IsCreationRestrictionRequired() {
+		t.Error("nil config must require creation to be restricted")
+	}
+
+	unset := &TagProtectionControlConfig{}
+	if got := unset.EffectiveNamePatterns(); len(got) != 1 || got[0] != "v*" {
+		t.Errorf("unset namePatterns EffectiveNamePatterns() = %v, want [v*]", got)
+	}
+
+	empty := &TagProtectionControlConfig{NamePatterns: []string{}}
+	if got := empty.EffectiveNamePatterns(); len(got) != 0 {
+		t.Errorf("explicit empty namePatterns EffectiveNamePatterns() = %v, want []", got)
+	}
+
+	custom := &TagProtectionControlConfig{NamePatterns: []string{"release-*"}}
+	if got := custom.EffectiveNamePatterns(); len(got) != 1 || got[0] != "release-*" {
+		t.Errorf("custom namePatterns EffectiveNamePatterns() = %v, want [release-*]", got)
+	}
+
+	off := false
+	if (&TagProtectionControlConfig{RequireCreationRestricted: &off}).IsCreationRestrictionRequired() {
+		t.Error("requireCreationRestricted: false must turn the creation requirement off")
 	}
 }
 

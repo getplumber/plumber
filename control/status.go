@@ -43,6 +43,12 @@ func degradedReasonIsSecurityPolicy(reason string) bool {
 	return strings.HasPrefix(reason, degradedReasonSecurityPolicyPrefix)
 }
 
+// degradedReasonIsTagProtection classifies a DegradedReasons entry as the
+// tag protection fetch failure, so it taints only tagMustBeProtected.
+func degradedReasonIsTagProtection(reason string) bool {
+	return strings.HasPrefix(reason, degradedReasonTagProtectionPrefix)
+}
+
 // StatusFor derives a control's evaluation status for a run.
 //
 // Order matters: findings trump degradation — when a control found real
@@ -185,6 +191,22 @@ func StatusFor(e ControlEntry, result *AnalysisResult, findingCount int) string 
 		}
 		return StatusError
 	}
+	if e.ControlName == controlTagMustBeProtected {
+		// Reached only with zero findings. Like the branch control it reads
+		// the provider's API, not the CI file, so CiMissing / CiValid do not
+		// apply. A failed fetch, or rules and tags this token could not read
+		// (Known false), or no collection at all (platform mode on GitLab)
+		// means the control never truly evaluated.
+		for _, r := range result.DegradedReasons {
+			if degradedReasonIsTagProtection(r) {
+				return StatusError
+			}
+		}
+		if tp := result.evaluatedPipeline().TagProtectionOrNil(); tp == nil || !tp.Known {
+			return StatusError
+		}
+		return StatusPassed
+	}
 	if result.CiMissing || !result.CiValid {
 		return StatusError
 	}
@@ -195,7 +217,7 @@ func StatusFor(e ControlEntry, result *AnalysisResult, findingCount int) string 
 			}
 			continue
 		}
-		if !degradedReasonIsBranchProtection(r) && !degradedReasonIsVariables(r) && !degradedReasonIsSecurityPolicy(r) && !degradedReasonIsPolicyFailure(r) {
+		if !degradedReasonIsBranchProtection(r) && !degradedReasonIsVariables(r) && !degradedReasonIsSecurityPolicy(r) && !degradedReasonIsTagProtection(r) && !degradedReasonIsPolicyFailure(r) {
 			return StatusError
 		}
 	}
