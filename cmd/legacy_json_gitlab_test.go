@@ -368,3 +368,81 @@ func TestAuthorizedSourcesJSONBlocks(t *testing.T) {
 		})
 	}
 }
+
+// TestTagProtectionJSONBlock locks the tagMustBeProtected (ISSUE-507)
+// results.json block on both providers. An unrouted control falls through
+// to ("", nil) and its block silently leaves results.json; the metrics
+// must also come from whichever pipeline carries the collection and stay
+// 0 when the provider could not be read.
+func TestTagProtectionJSONBlock(t *testing.T) {
+	entry := control.ControlEntry{DisplayName: "Tag pattern must be protected", ControlName: "tagMustBeProtected"}
+	findings := []opaengine.Finding{{
+		Code: "ISSUE-507",
+		Data: map[string]any{"tagPattern": "v*", "missingProtections": []any{"update", "deletion", "creation"}},
+	}}
+	known := func() *ir.TagProtection {
+		return &ir.TagProtection{
+			Known: true,
+			Rules: []ir.TagProtectionRule{{ID: "1"}, {ID: "2"}},
+			Tags:  []string{"v1", "v2", "v3"},
+		}
+	}
+	cases := map[string]struct {
+		build  func(*control.AnalysisResult, []opaengine.Finding) (string, any)
+		result func(*ir.TagProtection) *control.AnalysisResult
+	}{
+		"gitlab": {
+			build: func(r *control.AnalysisResult, f []opaengine.Finding) (string, any) {
+				return buildLegacyResult(entry, r, nil, f)
+			},
+			result: func(tp *ir.TagProtection) *control.AnalysisResult {
+				return &control.AnalysisResult{CiValid: true, Pipeline: &ir.NormalizedPipeline{TagProtection: tp}}
+			},
+		},
+		"github": {
+			build: func(r *control.AnalysisResult, f []opaengine.Finding) (string, any) {
+				return buildLegacyResultGitHub(entry, r, nil, f)
+			},
+			result: func(tp *ir.TagProtection) *control.AnalysisResult {
+				return &control.AnalysisResult{CiValid: true, GitHubPipeline: &ir.NormalizedPipeline{TagProtection: tp}}
+			},
+		},
+	}
+	for provider, tc := range cases {
+		t.Run(provider, func(t *testing.T) {
+			name, block := tc.build(tc.result(known()), findings)
+			if name != "tagProtectionResult" {
+				t.Fatalf("block name = %q, want tagProtectionResult (dispatch dropped the block)", name)
+			}
+			m, ok := block.(map[string]any)
+			if !ok {
+				t.Fatalf("block is %T, want map[string]any", block)
+			}
+			issues, ok := m["issues"].([]map[string]any)
+			if !ok || len(issues) != 1 || issues[0]["code"] != "ISSUE-507" {
+				t.Fatalf("issues = %v, want the one ISSUE-507 finding", m["issues"])
+			}
+			if issues[0]["tagPattern"] != "v*" {
+				t.Errorf("issue lost tagPattern; got keys %v", issues[0])
+			}
+			metrics := m["metrics"].(map[string]any)
+			if metrics["unprotectedTagPatterns"] != 1 || metrics["tagRules"] != 2 || metrics["tagsChecked"] != 3 {
+				t.Errorf("metrics = %v, want 1 unprotected pattern, 2 rules, 3 tags", metrics)
+			}
+
+			// An unreadable collection reports no counts.
+			_, unknownBlock := tc.build(tc.result(&ir.TagProtection{Known: false, Tags: []string{"v1"}}), findings)
+			um := unknownBlock.(map[string]any)["metrics"].(map[string]any)
+			if um["tagRules"] != 0 || um["tagsChecked"] != 0 {
+				t.Errorf("unknown collection metrics = %v, want tagRules and tagsChecked at 0", um)
+			}
+
+			// A clean run still emits the block: a missing block reads as a
+			// control that never ran.
+			cleanName, cleanBlock := tc.build(tc.result(known()), nil)
+			if cleanName != "tagProtectionResult" || cleanBlock == nil {
+				t.Fatalf("clean run: name=%q block=%v, want tagProtectionResult with a non-nil block", cleanName, cleanBlock)
+			}
+		})
+	}
+}
