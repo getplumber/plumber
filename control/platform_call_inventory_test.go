@@ -48,6 +48,19 @@ type gitlabRecorder struct {
 	// than answer, which is what a token that can read this project but not
 	// the include's SOURCE project produces.
 	failRefProbes bool
+	// tags and protectedTags are the JSON bodies of the tag listing and the
+	// protected tags listing. Empty serves `[]`, which leaves no tag
+	// pattern in use.
+	tags          string
+	protectedTags string
+}
+
+// jsonOrEmptyList returns body, or `[]` when it is empty.
+func jsonOrEmptyList(body string) []byte {
+	if body == "" {
+		return []byte(`[]`)
+	}
+	return []byte(body)
 }
 
 // A ledger has to name ENDPOINTS, not URLs, or the same run against a
@@ -139,7 +152,7 @@ func (g *gitlabRecorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasSuffix(path, "/repository/branches"):
 		_, _ = w.Write([]byte(`[{"name":"main"}]`))
 	case strings.HasSuffix(path, "/repository/tags"):
-		_, _ = w.Write([]byte(`[]`))
+		_, _ = w.Write(jsonOrEmptyList(g.tags))
 	case strings.Contains(path, "/repository/tags/"), strings.Contains(path, "/repository/branches/"):
 		if g.failRefProbes {
 			// NOT a 404. A 404 means "not that kind of ref", which is an
@@ -157,7 +170,7 @@ func (g *gitlabRecorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasSuffix(path, "/protected_branches"):
 		_, _ = w.Write([]byte(`[]`))
 	case strings.HasSuffix(path, "/protected_tags"):
-		_, _ = w.Write([]byte(`[]`))
+		_, _ = w.Write(jsonOrEmptyList(g.protectedTags))
 	case strings.HasSuffix(path, "/approval_rules"):
 		_, _ = w.Write([]byte(`[]`))
 	case strings.HasSuffix(path, "/approvals"):

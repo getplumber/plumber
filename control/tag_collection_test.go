@@ -13,6 +13,7 @@ import (
 
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/gitlab"
+	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 	"github.com/getplumber/plumber/internal/ir"
 	"github.com/getplumber/plumber/internal/platform"
 )
@@ -159,6 +160,52 @@ func TestCollectGitLabTagProtection(t *testing.T) {
 	})
 }
 
+// tagFindingPatterns returns the tagPattern of every ISSUE-510 finding.
+func tagFindingPatterns(findings []opaengine.Finding) []string {
+	var out []string
+	for _, f := range findings {
+		if f.Code == "ISSUE-510" {
+			p, _ := f.Data["tagPattern"].(string)
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// The collected GitLab tags reach the policy through RunAnalysis: an
+// unprotected v* tag is a finding, a protected one is not. Without the
+// pipeline wiring in runRegoEngine the policy reads no tag data and both
+// cases come out clean.
+func TestRunAnalysis_TagProtectionReachesThePolicy(t *testing.T) {
+	cases := []struct {
+		name          string
+		protectedTags string
+		want          []string
+	}{
+		{name: "unprotected tag pattern", want: []string{"v*"}},
+		{name: "protected tag pattern", protectedTags: `[{"name":"v*","create_access_levels":[{"access_level":40}]}]`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &gitlabRecorder{
+				sha:           "0123456789abcdef0123456789abcdef01234567",
+				tags:          `[{"name":"v1.0.0"}]`,
+				protectedTags: tc.protectedTags,
+			}
+			srv := httptest.NewServer(rec)
+			defer srv.Close()
+
+			result, err := RunAnalysis(inventoryConf(t, srv.URL))
+			if err != nil {
+				t.Fatalf("analysis failed: %v", err)
+			}
+			if got := tagFindingPatterns(result.Findings); strings.Join(got, ",") != strings.Join(tc.want, ",") {
+				t.Fatalf("ISSUE-510 patterns = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // swapTagFetch replaces the GitHub tag protection fetch so the remote
 // analysis tests never need network or auth. Restores via t.Cleanup.
 func swapTagFetch(t *testing.T, fn func(host, owner, repo string) (*ir.TagProtection, error)) {
@@ -219,6 +266,75 @@ func TestRunGitHubAnalysisRemote_TagProtection(t *testing.T) {
 			tp := result.GitHubPipeline.TagProtectionOrNil()
 			if tp == nil || tp.Known != tc.wantKnown {
 				t.Fatalf("pipeline tag protection = %+v, want Known=%v", tp, tc.wantKnown)
+			}
+			if got := result.DataCollectionDegraded && hasTagDegradedReason(result); got != tc.wantDegraded {
+				t.Errorf("degraded with a tag reason = %v, want %v (reasons %v)", got, tc.wantDegraded, result.DegradedReasons)
+			}
+			reason, gap := result.NotEvaluable[controlTagMustBeProtected]
+			if gap != tc.wantGap || (gap && reason != ReasonCollectionFailed) {
+				t.Errorf("not evaluable = %v (%q), want %v (%s)", gap, reason, tc.wantGap, ReasonCollectionFailed)
+			}
+		})
+	}
+}
+
+// The local GitHub path (RunGitHubAnalysis, a checkout on disk) runs its
+// own copy of the tag enrichment, degrade and gap wiring: an unprotected
+// tag is a finding, a failed fetch degrades the run, an unreadable answer
+// only leaves tagMustBeProtected not evaluated.
+func TestRunGitHubAnalysis_TagProtection(t *testing.T) {
+	cases := []struct {
+		name         string
+		tp           *ir.TagProtection
+		err          error
+		wantPatterns []string
+		wantDegraded bool
+		wantGap      bool
+	}{
+		{
+			name:         "unprotected tag pattern",
+			tp:           &ir.TagProtection{Known: true, Tags: []string{"v1.0.0"}},
+			wantPatterns: []string{"v*"},
+		},
+		{
+			name:         "fetch failure",
+			tp:           &ir.TagProtection{Known: false},
+			err:          errors.New("tag rulesets: HTTP 500"),
+			wantDegraded: true,
+			wantGap:      true,
+		},
+		{
+			name:    "unreadable answer",
+			tp:      &ir.TagProtection{Known: false},
+			wantGap: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var asked string
+			swapTagFetch(t, func(host, owner, repo string) (*ir.TagProtection, error) {
+				asked = owner + "/" + repo
+				return tc.tp, tc.err
+			})
+
+			conf := &configuration.Configuration{
+				ProjectPath:   "owner/repo",
+				Branch:        "main",
+				GitRepoRoot:   writeMinimalGitHubWorkflowRow62(t),
+				PlumberConfig: tagControlOn(configuration.ProviderGitHub),
+			}
+			result, err := RunGitHubAnalysis(conf)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if asked != "owner/repo" {
+				t.Fatalf("tag fetch asked for %q, want owner/repo", asked)
+			}
+			if got := tagFindingPatterns(result.Findings); strings.Join(got, ",") != strings.Join(tc.wantPatterns, ",") {
+				t.Errorf("ISSUE-510 patterns = %v, want %v", got, tc.wantPatterns)
+			}
+			if tp := result.GitHubPipeline.TagProtectionOrNil(); tp == nil || tp.Known != tc.tp.Known {
+				t.Errorf("pipeline tag protection = %+v, want Known=%v", tp, tc.tp.Known)
 			}
 			if got := result.DataCollectionDegraded && hasTagDegradedReason(result); got != tc.wantDegraded {
 				t.Errorf("degraded with a tag reason = %v, want %v (reasons %v)", got, tc.wantDegraded, result.DegradedReasons)
