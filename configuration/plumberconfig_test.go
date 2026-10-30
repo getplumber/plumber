@@ -1,7 +1,9 @@
 package configuration
 
 import (
+	"bytes"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -29,6 +31,35 @@ func TestLoadPlumberConfig_MissingFileWrapsErrConfigNotFound(t *testing.T) {
 	_, _, _, perr := LoadPlumberConfigFromBytes([]byte(":\tnot: valid: ["), "test")
 	if perr == nil || errors.Is(perr, ErrConfigNotFound) {
 		t.Fatalf("a parse error must not match ErrConfigNotFound, got: %v", perr)
+	}
+}
+
+// FileBytes must hold the bytes on disk exactly, never the overlay merge, so
+// that hashing it against the committed file (sha256sum .plumber.yaml) stays
+// valid for an `extends: plumber:default` config too. Raw keeps the resolved
+// (merged) YAML the run actually evaluated: the two must differ here, or
+// this test would not be exercising the overlay path at all.
+func TestLoadPlumberConfig_OverlayFileBytesIsTheFileRawIsTheMerge(t *testing.T) {
+	content := []byte(`extends: plumber:default
+github:
+  controls:
+    githubActionMustComeFromAuthorizedSources:
+      trustedGithubActions:
+        - myorg
+`)
+	path := filepath.Join(t.TempDir(), ".plumber.yaml")
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		t.Fatalf("write temp config: %v", err)
+	}
+	cfg, _, _, err := LoadPlumberConfig(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if !bytes.Equal(cfg.FileBytes, content) {
+		t.Fatalf("FileBytes = %q, want the file's own bytes %q", cfg.FileBytes, content)
+	}
+	if cfg.Raw == string(content) {
+		t.Fatal("Raw equals the file's own bytes; this test needs the overlay merge to actually change it")
 	}
 }
 
