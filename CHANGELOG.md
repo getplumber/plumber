@@ -1,3 +1,10 @@
+## [0.7.17](https://github.com/getplumber/plumber/compare/v0.7.16...v0.7.17) (2026-10-30)
+
+
+### 🐛 Bug Fixes
+
+* **cmd:** the SARIF names a nested finding's container in its message, never in a location outside the checkout ([5b53f2b](https://github.com/getplumber/plumber/commit/5b53f2b22df4c14fdf23cea4e00b3c525548bbc1))
+
 ## [0.7.16](https://github.com/getplumber/plumber/compare/v0.7.15...v0.7.16) (2026-10-28)
 
 
