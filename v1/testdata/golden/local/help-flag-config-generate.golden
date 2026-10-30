@@ -1,0 +1,28 @@
+$ plumber config generate --help
+exit: 0
+--- stdout
+Write the official default .plumber.yaml to disk: the same file shipped
+with Plumber, including comments and every control documented inline.
+
+Use this when you want the full reference template (for example the first
+commit in a repo, or CI that copies a known baseline).
+
+Examples:
+  plumber config generate
+  plumber config generate --output my-plumber.yaml
+  plumber config generate --force
+
+Usage:
+  plumber config generate [flags]
+
+Flags:
+  -f, --force           Overwrite existing file
+  -h, --help            help for generate
+  -o, --output string   Output file path (default ".plumber.yaml")
+      --overlay         Write a minimal overlay starter (extends: plumber:default) instead of the full template
+
+Global Flags:
+  -v, --verbose   Enable debug logging on stderr (level=debug); replaces the progress bar
+
+--- stderr
+

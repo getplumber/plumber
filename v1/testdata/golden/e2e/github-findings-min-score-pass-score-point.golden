@@ -1,0 +1,243 @@
+$ plumber analyze github.com/getplumber-examples/plumber-cli-e2e --branch findings --min-score E --score-point
+exit: 0
+--- stdout
+
+  ██████╗ ██╗     ██╗   ██╗ ███╗   ███╗██████╗ ███████╗██████╗
+  ██╔══██╗██║     ██║   ██║ ████╗ ████║██╔══██╗██╔════╝██╔══██╗
+  ██████╔╝██║     ██║   ██║ ██╔████╔██║██████╔╝█████╗  ██████╔╝
+  ██╔═══╝ ██║     ██║   ██║ ██║╚██╔╝██║██╔══██╗██╔══╝  ██╔══██╗
+  ██║     ███████╗╚██████╔╝ ██║ ╚═╝ ██║██████╔╝███████╗██║  ██║
+  ╚═╝     ╚══════╝ ╚═════╝  ╚═╝     ╚═╝╚═════╝ ╚══════╝╚═╝  ╚═╝
+  CI/CD Security Scanner  vdev
+  Share your feedback: https://getplumber.io/discord
+
+
+  Project    getplumber-examples/plumber-cli-e2e
+  Platform   GitHub
+  Auth       GITHUB_TOKEN env var
+  Config     built-in default
+  CI config  fetched from GitHub
+
+────────────────────
+✓ Passed Controls (8)
+────────────────────
+
+  ✓ Branch must be protected
+  ✓ Workflows must not use Docker-in-Docker
+  ✓ Reusable workflows must not inherit secrets
+  ✓ Workflows must declare permissions
+  ✓ Workflow files must be valid
+  ✓ Actions must not use ambiguous tag/branch refs
+  ✓ Actions must not execute mutable remote code
+  ✓ Untrusted triggers must not write the cache
+
+────────────────────
+• Skipped Controls (1)
+────────────────────
+
+  • Workflows must include required actions (disabled in configuration)
+
+────────────────────
+✗ Individual findings (6)
+────────────────────
+
+ LOW   ISSUE-307  Checkout persists credentials in .git/config (latent)
+       │
+       └──▶ job `publish` from workflow `release.yml`: runs "actions/checkout@v4" without
+            `persist-credentials: false`
+            ↳ at https://github.com/getplumber-examples/plumber-cli-e2e/blob/findings/.github/workflows/release.yml#L15
+
+       So     GITHUB_TOKEN lingers in .git/config (latent; becomes a leak if a later step packs .git
+              into an artifact or runs fork-controlled code)
+       Fix    set persist-credentials: false on the checkout
+       ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-307
+
+  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+
+ HIGH  ISSUE-702  Action is hosted in an archived repository
+       │
+       └──▶ job `release-notes` from workflow `build.yml`: references "actions/create-release@v1"
+            whose upstream repository is archived
+            ↳ at https://github.com/getplumber-examples/plumber-cli-e2e/blob/findings/.github/workflows/build.yml#L27
+
+       So     no security patches are coming
+       Fix    replace the archived action
+       ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-702
+
+  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+
+ HIGH  ISSUE-803  Excessive workflow permissions (2 findings)
+       │
+       ├──▶ job `auto-approve` from workflow `ci.yml`: runs with overly broad permissions:
+       │    "write-all"
+       │    ↳ at https://github.com/getplumber-examples/plumber-cli-e2e/blob/findings/.github/workflows/ci.yml#L9
+       └──▶ job `publish` from workflow `release.yml`: runs with overly broad permissions:
+            "write-all"
+            ↳ at https://github.com/getplumber-examples/plumber-cli-e2e/blob/findings/.github/workflows/release.yml#L8
+
+       Fix    narrow the permissions to what the job needs
+       ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-803
+
+  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+
+ CRIT  ISSUE-203  Pipeline enables CI debug trace
+       │
+       └──▶ job `auto-approve` from workflow `ci.yml`: sets the debug variable `ACTIONS_STEP_DEBUG`
+            to "true".
+            ↳ at https://github.com/getplumber-examples/plumber-cli-e2e/blob/findings/.github/workflows/ci.yml#L13
+
+       Fix    turn off the CI debug trace
+       ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-203
+
+  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+
+ CRIT  ISSUE-410  Security job weakened
+       │
+       └──▶ Security job `build/security-scan` is weakened by `allow_failure: true`, which masks
+            scan failures.
+            ↳ at https://github.com/getplumber-examples/plumber-cli-e2e/blob/findings/.github/workflows/build.yml#L35
+
+       Fix    restore the security job's settings
+       ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-410
+
+────────────────────
+✗ Attack paths (7)
+────────────────────
+
+ LOW   Attack path 7
+       Entry  github.event.pull_request.title (user-controlled input injected in a script)
+       │
+       └──▶ runs in job `build` from workflow `ci.yml`
+            └─▶ reaches code execution on the runner, no secret and no write token
+
+       So     as anyone who can open a pull request, an attacker can execute code on the runner
+              and poison what it caches or uploads
+       Fix    pass the input through an environment variable
+       ↳ details: run `plumber explain -a 7`
+
+  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+
+ LOW   Attack path 6
+       Entry  github.event.workflow_run.head_sha (code of another workflow's run checked out)
+       │
+       └──▶ runs in job `comment` from workflow `dangerous.yml` (on workflow_run)
+            └─▶ reaches code execution on the runner; nothing else proven
+
+       So     as anyone who opens a pull request,
+              an attacker can execute code on an ephemeral runner
+       Fix    never check out the pull request head in a privileged workflow
+       ↳ details: run `plumber explain -a 6`
+
+  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+
+ MED   Attack path 5
+       Entry  node:latest (mutable image tag, source not checked on GitHub)
+       │
+       └──▶ runs in job `build` from workflow `ci.yml`
+            └─▶ reaches every secret of the repository,
+                        a token with push, publish and deploy access and write access to actions,
+                        pull requests and security events and an OIDC token
+
+       So     if this image is compromised or malicious,
+              an attacker can read every secret of the repository, push in your repository,
+              publish packages and deploy
+       Note   Capped at Medium: it needs a dependency compromise first
+       Fix    pin the image by digest
+       ↳ details: run `plumber explain -a 5`
+
+  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+
+ HIGH  Attack path 4
+       Entry  https://get.example.com/install.sh (script downloaded and run at build time)
+       │
+       └──▶ runs in job `build` from workflow `ci.yml`
+            └─▶ reaches every secret of the repository,
+                        a token with push, publish and deploy access and write access to actions,
+                        pull requests and security events and an OIDC token
+
+       So     if this script is compromised or malicious,
+              an attacker can read every secret of the repository, push in your repository,
+              publish packages and deploy
+       Note   Capped at High: it needs a dependency compromise first
+       Fix    download the script, check its checksum, then run it
+       ↳ details: run `plumber explain -a 4`
+
+  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+
+ HIGH  Attack path 3 (unverified)
+       Entry  dorny/paths-filter@1c9b1f1aaa22 (external action pinned to a commit that is not in its
+              repository)
+       │
+       └──▶ runs in job `build` from workflow `ci.yml` (unverified)
+            └─▶ reaches every secret of the repository,
+                        a token with push, publish and deploy access and write access to actions,
+                        pull requests and security events and an OIDC token
+
+       So     through the commit this action is pinned to, which is not in its repository,
+              an attacker can read every secret, push in your repository, publish packages
+              and deploy
+       Note   Plumber could not check what it runs
+       Fix    pin a commit that exists in the action's repository
+       ↳ details: run `plumber explain -a 3`
+
+  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+
+ CRIT  Attack path 2
+       Entry  github.event.pull_request.head.sha (pull request code checked out in a privileged
+              workflow)
+       │
+       └──▶ runs in job `preview` from workflow `pr-preview.yml` (on pull_request_target)
+            └─▶ reaches a token with write access to pull requests
+
+       So     as anyone who opens a pull request,
+              an attacker can execute code to write to pull requests
+       Fix    never check out the pull request head in a privileged workflow
+       ↳ details: run `plumber explain -a 2`
+
+  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+
+ CRIT  Attack path 1
+       Entry  tj-actions/changed-files@v45.0.0 (external action with a known vulnerability)
+       │
+       └──▶ runs in job `build` from workflow `ci.yml`
+            └─▶ reaches every secret of the repository,
+                        a token with push, publish and deploy access and write access to actions,
+                        pull requests and security events and an OIDC token
+
+       So     through the known vulnerability of this action,
+              an attacker can read every secret of the repository, push in your repository,
+              publish packages and deploy
+       Fix    move to a version without the advisory
+       ↳ details: run `plumber explain -a 1`
+
+────────────────────
+Score
+────────────────────
+
+ ███████╗  Plumber Score  0 / 100  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+ ██╔════╝  Status: PASSED (gate at grade E)
+ █████╗    100 - 102 (attack paths) - 30 (individual findings)
+ ██╔══╝    individual findings count for 30 at most
+ ███████╗  The score does not go below 0.
+ ╚══════╝
+           Worst case: through the known vulnerability of this action, an attacker can read every
+           secret of the repository, push in your repository, publish packages and deploy (attack
+           path 1: tj-actions/changed-files@v45.0.0)
+           Best fix: move to a version without the advisory (action
+           tj-actions/changed-files@v45.0.0).
+           The score stays at 0 while the rest takes it below 0.
+
+           ISSUE-203  critical x1   -15
+           ISSUE-307  low      x1   -0
+           ISSUE-410  critical x1   -15
+           ISSUE-702  high     x1   -0
+           ISSUE-803  high     x2   -0
+           critical paths      x2   -60
+           high paths          x2   -30
+           medium paths        x1   -6
+           low paths           x2   -6
+
+--- stderr
+No .plumber.yaml found; using Plumber's built-in default configuration.
+Generate your own with 'plumber config generate' ('plumber config init' for the interactive wizard); see the default with 'plumber config view'.
+

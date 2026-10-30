@@ -1,0 +1,24 @@
+$ plumber capabilities defaults --help
+exit: 0
+--- stdout
+Print the CLI's built-in capability list, in the schema of the capabilities key
+of .plumber.yaml (and of the platform's capabilities setting).
+
+Copy it into .plumber.yaml to edit it: a capability you declare with a built-in's
+name replaces that built-in whole, the others stay in force.
+
+Examples:
+  plumber capabilities defaults
+  plumber capabilities defaults > capabilities.yaml
+
+Usage:
+  plumber capabilities defaults [flags]
+
+Flags:
+  -h, --help   help for defaults
+
+Global Flags:
+  -v, --verbose   Enable debug logging on stderr (level=debug); replaces the progress bar
+
+--- stderr
+

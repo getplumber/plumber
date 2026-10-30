@@ -1,0 +1,20 @@
+$ plumber analyze github.com/getplumber-examples/plumber-cli-e2e --branch clean
+exit: 2
+--- stdout
+
+  ██████╗ ██╗     ██╗   ██╗ ███╗   ███╗██████╗ ███████╗██████╗
+  ██╔══██╗██║     ██║   ██║ ████╗ ████║██╔══██╗██╔════╝██╔══██╗
+  ██████╔╝██║     ██║   ██║ ██╔████╔██║██████╔╝█████╗  ██████╔╝
+  ██╔═══╝ ██║     ██║   ██║ ██║╚██╔╝██║██╔══██╗██╔══╝  ██╔══██╗
+  ██║     ███████╗╚██████╔╝ ██║ ╚═╝ ██║██████╔╝███████╗██║  ██║
+  ╚═╝     ╚══════╝ ╚═════╝  ╚═╝     ╚═╝╚═════╝ ╚══════╝╚═╝  ╚═╝
+  CI/CD Security Scanner  vdev
+  Share your feedback: https://getplumber.io/discord
+
+
+--- stderr
+No .plumber.yaml found; using Plumber's built-in default configuration.
+Generate your own with 'plumber config generate' ('plumber config init' for the interactive wizard); see the default with 'plumber config view'.
+time="<TIME>" level=error msg="Failed to fetch GitHub workflows" action=RunGitHubAnalysisRemote error="list workflows: HTTP 401: Bad credentials (https://api.github.com/repos/getplumber-examples/plumber-cli-e2e/contents/.github/workflows?ref=clean)" host= projectPath=getplumber-examples/plumber-cli-e2e ref=clean
+Error: analysis failed: list workflows: HTTP 401: Bad credentials (https://api.github.com/repos/getplumber-examples/plumber-cli-e2e/contents/.github/workflows?ref=clean)
+

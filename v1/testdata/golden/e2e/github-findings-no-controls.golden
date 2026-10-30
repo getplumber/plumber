@@ -1,0 +1,168 @@
+$ plumber analyze github.com/getplumber-examples/plumber-cli-e2e --branch findings --no-controls --pbom pbom.json
+exit: 0
+--- stdout
+
+  ██████╗ ██╗     ██╗   ██╗ ███╗   ███╗██████╗ ███████╗██████╗
+  ██╔══██╗██║     ██║   ██║ ████╗ ████║██╔══██╗██╔════╝██╔══██╗
+  ██████╔╝██║     ██║   ██║ ██╔████╔██║██████╔╝█████╗  ██████╔╝
+  ██╔═══╝ ██║     ██║   ██║ ██║╚██╔╝██║██╔══██╗██╔══╝  ██╔══██╗
+  ██║     ███████╗╚██████╔╝ ██║ ╚═╝ ██║██████╔╝███████╗██║  ██║
+  ╚═╝     ╚══════╝ ╚═════╝  ╚═╝     ╚═╝╚═════╝ ╚══════╝╚═╝  ╚═╝
+  CI/CD Security Scanner  vdev
+  Share your feedback: https://getplumber.io/discord
+
+
+  Project    getplumber-examples/plumber-cli-e2e
+  Platform   GitHub
+  Auth       GITHUB_TOKEN env var
+  Config     built-in default
+  CI config  fetched from GitHub
+  Controls   none (--no-controls)
+
+────────────────────
+Summary
+────────────────────
+
+  Status: PASSED ✓ (no controls requested, nothing to score)
+
+
+ ──────────────────────────────────────────────────────────────────────────────
+ Plumber Score
+
+ No control was run (--no-controls)
+ No Plumber Score: nothing was evaluated, so this run makes no claim
+ about the pipeline.
+ The artifacts it wrote contain the collected inventory only.
+
+ ──────────────────────────────────────────────────────────────────────────────
+
+
+--- stderr
+No .plumber.yaml found; using Plumber's built-in default configuration.
+Generate your own with 'plumber config generate' ('plumber config init' for the interactive wizard); see the default with 'plumber config view'.
+PBOM written to: pbom.json
+
+--- file pbom.json
+{
+  "pbomVersion": "1.0.0",
+  "generatedAt": "<TIME>",
+  "project": {
+    "path": "getplumber-examples/plumber-cli-e2e",
+    "provider": "github",
+    "url": "github.com",
+    "branch": "findings",
+    "ref": "findings"
+  },
+  "summary": {
+    "totalImages": 1,
+    "uniqueRegistries": 0,
+    "totalIncludes": 12,
+    "components": 0,
+    "projectIncludes": 0,
+    "localIncludes": 0,
+    "remoteIncludes": 0,
+    "templates": 0,
+    "actions": 12,
+    "reusableWorkflows": 0
+  },
+  "containerImages": [
+    {
+      "image": "node:latest",
+      "registry": "",
+      "name": "node",
+      "tag": "latest",
+      "jobs": [
+        "ci/build"
+      ]
+    }
+  ],
+  "includes": [
+    {
+      "type": "action",
+      "location": "actions/cache",
+      "project": "actions",
+      "version": "v4"
+    },
+    {
+      "type": "action",
+      "location": "actions/checkout",
+      "project": "actions",
+      "version": "df4cb1c069e1874edd31b4311f1884172cec0e10",
+      "latestVersion": "v6.0.3"
+    },
+    {
+      "type": "action",
+      "location": "actions/checkout",
+      "project": "actions",
+      "version": "v4",
+      "latestVersion": "persists credentials. ISSUE-307 (high)."
+    },
+    {
+      "type": "action",
+      "location": "actions/create-release",
+      "project": "actions",
+      "version": "v1"
+    },
+    {
+      "type": "action",
+      "location": "actions/setup-node",
+      "project": "actions",
+      "version": "v4"
+    },
+    {
+      "type": "action",
+      "location": "actions/upload-artifact",
+      "project": "actions",
+      "version": "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+      "latestVersion": "v7.0.1",
+      "nested": true,
+      "via": [
+        "getplumber/plumber@f84005b69dc57965d192feedd08b4a20fa6e52cc"
+      ]
+    },
+    {
+      "type": "action",
+      "location": "actions/upload-artifact",
+      "project": "actions",
+      "version": "v4"
+    },
+    {
+      "type": "action",
+      "location": "dorny/paths-filter",
+      "project": "dorny",
+      "version": "1c9b1f1aaa2222bbbb3333cccc4444dddd5555ee"
+    },
+    {
+      "type": "action",
+      "location": "getplumber/plumber",
+      "project": "getplumber",
+      "version": "f84005b69dc57965d192feedd08b4a20fa6e52cc",
+      "latestVersion": "v0.4.60"
+    },
+    {
+      "type": "action",
+      "location": "github/codeql-action/upload-sarif",
+      "project": "github",
+      "version": "f205ea1c3313d32999d8d6a48b4f6530d4437b38",
+      "latestVersion": "v4.37.4",
+      "nested": true,
+      "via": [
+        "getplumber/plumber@f84005b69dc57965d192feedd08b4a20fa6e52cc"
+      ]
+    },
+    {
+      "type": "action",
+      "location": "github/codeql-action/upload-sarif",
+      "project": "github",
+      "version": "v2",
+      "latestVersion": "Actions must not use ambiguous tag/branch refs. ISSUE-710 (Medium)"
+    },
+    {
+      "type": "action",
+      "location": "tj-actions/changed-files",
+      "project": "tj-actions",
+      "version": "v45.0.0"
+    }
+  ]
+}
+

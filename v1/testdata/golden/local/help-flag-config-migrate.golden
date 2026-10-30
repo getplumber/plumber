@@ -1,0 +1,45 @@
+$ plumber config migrate --help
+exit: 0
+--- stdout
+Rewrite a legacy .plumber.yaml that uses the top-level controls: block
+(schema v1) into the per-provider v2.0 schema, where controls live under
+gitlab.controls: or github.controls:, and rename controls that were
+renamed since. Comments and ordering are preserved.
+
+By default the migrated file is written to <input>.v2 so you can review
+before replacing the original. Use --in-place to overwrite directly; the
+original is backed up to <input>.bak.
+
+The migration:
+  - Wraps the existing top-level 'controls:' under 'gitlab.controls:'.
+  - Drops the deprecated top-level 'engine:' block (the Rego engine is now
+    the only engine and runs unconditionally).
+  - Sets 'version: "2.0"' at the top (or upgrades an existing 'version: "1.0"').
+  - Leaves any pre-existing 'gitlab:' or 'github:' blocks alone.
+  - Renames github.controls.releaseWorkflowsMustNotRestoreUntrustedCache to
+    untrustedTriggersMustNotWriteCache, keeping 'enabled' and dropping the
+    fields the new control does not carry (each one is listed).
+
+If the file is already on v2.0 (no legacy keys, no renamed control, version
+is "2.0"), the command is a no-op and exits with a friendly message.
+
+Examples:
+  plumber config migrate                          # writes .plumber.yaml.v2 alongside the original
+  plumber config migrate --in-place               # overwrites .plumber.yaml, backs up to .plumber.yaml.bak
+  plumber config migrate --input ./conf.yaml      # explicit input path
+  plumber config migrate --output /tmp/new.yaml   # explicit output path
+
+Usage:
+  plumber config migrate [flags]
+
+Flags:
+  -h, --help            help for migrate
+      --in-place        Overwrite the input file in place (the original is backed up to <input>.bak)
+      --input string    Input config path (default: .plumber.yaml)
+      --output string   Output path (default: <input>.v2 unless --in-place is set)
+
+Global Flags:
+  -v, --verbose   Enable debug logging on stderr (level=debug); replaces the progress bar
+
+--- stderr
+

@@ -1,0 +1,7 @@
+$ plumber analyze --provider github --project a/b --min-score Z
+exit: 2
+--- stdout
+
+--- stderr
+Error: min-score must be one of A, B, C, D, E
+

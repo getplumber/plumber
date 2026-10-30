@@ -1,0 +1,6 @@
+# Case includes-local: the jobs live in local include files, one of them
+# nested, so Plumber must follow the include chain to see them.
+stages: [build, test]
+
+include:
+  - local: ci/build.yml

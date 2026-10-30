@@ -2,9 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, v1]
   pull_request:
-    branches: [main]
+    # v1: the CLI refactoring branch (v1/AGENTS.md).
+    branches: [main, v1]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -83,6 +84,46 @@ jobs:
           name: coverage
           path: coverage.out
           retention-days: 14
+
+  # CLI suite of the refactoring (v1/cli_test.go). Local rows: every input that
+  # makes no backend request, run offline with no token.
+  cli-local:
+    name: CLI suite (local)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.10'
+
+      - name: Run the local rows
+        run: make test-integration
+
+  # E2E rows: every input that calls GitHub or GitLab, on the plumber-cli-e2e
+  # fixture repositories. Fork PRs get no secrets, so the job only runs for
+  # pushes and same-repository PRs; there a missing token is a failure.
+  cli-e2e:
+    name: CLI suite (E2E)
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.10'
+
+      - name: Run the E2E rows
+        env:
+          PLUMBER_E2E_GITHUB_TOKEN: ${{ secrets.PLUMBER_E2E_GITHUB_TOKEN }}
+          PLUMBER_E2E_GITLAB_TOKEN: ${{ secrets.PLUMBER_E2E_GITLAB_TOKEN }}
+          PLUMBER_E2E_REQUIRED: "1"
+        run: make test-e2e
 
   lint:
     name: Lint

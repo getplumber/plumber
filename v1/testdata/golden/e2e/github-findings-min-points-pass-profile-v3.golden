@@ -1,0 +1,265 @@
+$ plumber analyze github.com/getplumber-examples/plumber-cli-e2e --branch findings --min-points 0 --score-profile v3 --score
+exit: 0
+--- stdout
+
+  ██████╗ ██╗     ██╗   ██╗ ███╗   ███╗██████╗ ███████╗██████╗
+  ██╔══██╗██║     ██║   ██║ ████╗ ████║██╔══██╗██╔════╝██╔══██╗
+  ██████╔╝██║     ██║   ██║ ██╔████╔██║██████╔╝█████╗  ██████╔╝
+  ██╔═══╝ ██║     ██║   ██║ ██║╚██╔╝██║██╔══██╗██╔══╝  ██╔══██╗
+  ██║     ███████╗╚██████╔╝ ██║ ╚═╝ ██║██████╔╝███████╗██║  ██║
+  ╚═╝     ╚══════╝ ╚═════╝  ╚═╝     ╚═╝╚═════╝ ╚══════╝╚═╝  ╚═╝
+  CI/CD Security Scanner  vdev
+  Share your feedback: https://getplumber.io/discord
+
+
+  Project    getplumber-examples/plumber-cli-e2e
+  Platform   GitHub
+  Auth       GITHUB_TOKEN env var
+  Config     built-in default
+  CI config  fetched from GitHub
+
+────────────────────
+✓ Passed Controls (8)
+────────────────────
+
+  ✓ Branch must be protected
+  ✓ Workflows must not use Docker-in-Docker
+  ✓ Reusable workflows must not inherit secrets
+  ✓ Workflows must declare permissions
+  ✓ Workflow files must be valid
+  ✓ Actions must not use ambiguous tag/branch refs
+  ✓ Actions must not execute mutable remote code
+  ✓ Untrusted triggers must not write the cache
+
+────────────────────
+• Skipped Controls (1)
+────────────────────
+
+  • Workflows must include required actions (disabled in configuration)
+
+────────────────────
+✗ Failed Controls (16)
+────────────────────
+
+  ✗ Checkout must not persist credentials (4 findings)
+      Workflows Scanned: 6
+
+      Findings:
+         LOW   [ISSUE-307] job "ci/build" runs "actions/checkout@v4" without `persist-credentials: false` — GITHUB_TOKEN lingers in .git/config (latent; becomes a leak if a later step packs .git into an artifact or runs fork-controlled code)
+         ↳ at https://github.com/getplumber-examples/plumber-cli-e2e/blob/findings/.github/workflows/ci.yml#L30
+         ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-307
+         LOW   [ISSUE-307] job "dangerous/comment" runs "actions/checkout@v4" without `persist-credentials: false` — GITHUB_TOKEN lingers in .git/config (latent; becomes a leak if a later step packs .git into an artifact or runs fork-controlled code)
+         ↳ at https://github.com/getplumber-examples/plumber-cli-e2e/blob/findings/.github/workflows/dangerous.yml#L18
+         ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-307
+         LOW   [ISSUE-307] job "pr-preview/preview" runs "actions/checkout@v4" without `persist-credentials: false` — GITHUB_TOKEN lingers in .git/config (latent; becomes a leak if a later step packs .git into an artifact or runs fork-controlled code)
+         ↳ at https://github.com/getplumber-examples/plumber-cli-e2e/blob/findings/.github/workflows/pr-preview.yml#L17
+         ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-307
+         LOW   [ISSUE-307] job "release/publish" runs "actions/checkout@v4" without `persist-credentials: false` — GITHUB_TOKEN lingers in .git/config (latent; becomes a leak if a later step packs .git into an artifact or runs fork-controlled code)
+         ↳ at https://github.com/getplumber-examples/plumber-cli-e2e/blob/findings/.github/workflows/release.yml#L15
+         ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-307
+
+  ✗ Actions must not reference archived repositories (1 finding)
+      Action Refs Checked: 17
+      Archived Refs Found: 1
+
+      Findings:
+         HIGH  [ISSUE-702] job "build/release-notes" references "actions/create-release@v1" whose upstream repository is archived — no security patches are coming
+         ↳ at https://github.com/getplumber-examples/plumber-cli-e2e/blob/findings/.github/workflows/build.yml#L27
+         ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-702
+
+  ✗ Pipeline must not execute unverified scripts (1 finding)
+      Jobs Checked: 8
+      Script Lines Checked: 15
+      Unverified Scripts: 1
+
+      Findings:
+         HIGH  [ISSUE-411] Job `ci/build` runs a script fetched from the network: `curl -sSL https://get.example.com/install.sh | bash`.
+         ↳ at https://github.com/getplumber-examples/plumber-cli-e2e/blob/findings/.github/workflows/ci.yml#L49
+         ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-411
+
+  ✗ Third-party actions must be pinned by commit SHA (1 finding)
+      Total Action Refs: 17
+      Pinned By SHA: 2
+      Pinned By Immutable Release: 0
+      Not Pinned By SHA: 1
+      Trusted-Owner Exempt: 14
+
+      Findings:
+         HIGH  [ISSUE-701] job "ci/build" references action "tj-actions/changed-files@v45.0.0" with a mutable ref — pin by commit SHA instead
+         ↳ at https://github.com/getplumber-examples/plumber-cli-e2e/blob/findings/.github/workflows/ci.yml#L35
+         ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-701
+
+  ✗ Workflows must not write untrusted content to $GITHUB_ENV (1 finding)
+      Workflows Scanned: 6
+      Script Lines Checked: 15
+
+      Findings:
+         HIGH  [ISSUE-209] job "ci/build" writes a user-controlled template expression into $GITHUB_ENV or $GITHUB_PATH; an attacker can hijack later steps
+         ↳ at https://github.com/getplumber-examples/plumber-cli-e2e/blob/findings/.github/workflows/ci.yml#L57
+         ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-209
+
+  ✗ Container images must not use forbidden reference (pinned by digest) (2 findings)
+      Total Images: 1
+      Pinned By Digest: 0
+      Not Pinned By Digest: 1
+      Using Forbidden Tags: 1
+
+      Findings:
+         MED   [ISSUE-102] Job `ci/build` uses the forbidden tag `latest` of image `node:latest`.
+         ↳ at https://github.com/getplumber-examples/plumber-cli-e2e/blob/findings/.github/workflows/ci.yml#L22
+         ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-102
+         HIGH  [ISSUE-103] Job `ci/build` uses image `node:latest` without a digest.
+         ↳ at https://github.com/getplumber-examples/plumber-cli-e2e/blob/findings/.github/workflows/ci.yml#L22
+         ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-103
+
+  ✗ Actions must come from authorized sources (2 findings)
+      Total Action Refs: 17
+      Authorized: 15
+      Unauthorized: 2
+
+      Findings:
+         HIGH  [ISSUE-713] job "ci/build" references action "tj-actions/changed-files@v45.0.0" from an unauthorized source — restrict actions to authorized owners (actions/*, github/*), an explicit allowlist, or a minimum-stars threshold
+         ↳ at https://github.com/getplumber-examples/plumber-cli-e2e/blob/findings/.github/workflows/ci.yml#L35
+         ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-713
+         HIGH  [ISSUE-713] job "ci/build" references action "dorny/paths-filter@1c9b1f1aaa2222bbbb3333cccc4444dddd5555ee" from an unauthorized source — restrict actions to authorized owners (actions/*, github/*), an explicit allowlist, or a minimum-stars threshold
+         ↳ at https://github.com/getplumber-examples/plumber-cli-e2e/blob/findings/.github/workflows/ci.yml#L41
+         ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-713
+
+  ✗ Workflow must not grant write-all permissions (3 findings)
+      Jobs Checked: 8
+      Jobs With write-all: 3
+
+      Findings:
+         HIGH  [ISSUE-803] job "ci/auto-approve" runs with overly broad permissions: "write-all"
+         ↳ at https://github.com/getplumber-examples/plumber-cli-e2e/blob/findings/.github/workflows/ci.yml#L9
+         ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-803
+         HIGH  [ISSUE-803] job "ci/build" runs with overly broad permissions: "write-all"
+         ↳ at https://github.com/getplumber-examples/plumber-cli-e2e/blob/findings/.github/workflows/ci.yml#L9
+         ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-803
+         HIGH  [ISSUE-803] job "release/publish" runs with overly broad permissions: "write-all"
+         ↳ at https://github.com/getplumber-examples/plumber-cli-e2e/blob/findings/.github/workflows/release.yml#L8
+         ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-803
+
+  ✗ Actions must not carry known CVEs (1 finding)
+      Action Refs Checked: 17
+      Refs With Advisories: 1
+
+      Findings:
+         CRIT  [ISSUE-703] job "ci/build" references "tj-actions/changed-files@v45.0.0" — published advisories: GHSA-mrrh-fwg8-r2c3 (https://github.com/advisories/GHSA-mrrh-fwg8-r2c3)
+         ↳ at https://github.com/getplumber-examples/plumber-cli-e2e/blob/findings/.github/workflows/ci.yml#L35
+         ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-703
+
+  ✗ Actions must pin commits that exist upstream (1 finding)
+      Action Refs Checked: 17
+      Impostor Refs Found: 1
+
+      Findings:
+         CRIT  [ISSUE-707] job "ci/build" pins action "dorny/paths-filter@1c9b1f1aaa2222bbbb3333cccc4444dddd5555ee" to a commit SHA that does not exist in the upstream repository (typo, or a commit removed or never pushed upstream)
+         ↳ at https://github.com/getplumber-examples/plumber-cli-e2e/blob/findings/.github/workflows/ci.yml#L41
+         ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-707
+
+  ✗ Security jobs must not be weakened (1 finding)
+      Security Jobs Found: 2
+      Weakened Jobs: 1
+
+      Findings:
+         CRIT  [ISSUE-410] Security job `build/security-scan` is weakened by `allow_failure: true`, which masks scan failures.
+         ↳ at https://github.com/getplumber-examples/plumber-cli-e2e/blob/findings/.github/workflows/build.yml#L35
+         ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-410
+
+  ✗ Workflows must not expose all secrets at once (1 finding)
+      Workflows Scanned: 6
+
+      Findings:
+         CRIT  [ISSUE-309] job "ci/build" exposes all its secrets at once via toJson(secrets) — pass secrets by name instead
+         ↳ at https://github.com/getplumber-examples/plumber-cli-e2e/blob/findings/.github/workflows/ci.yml#L66
+         ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-309
+
+  ✗ Workflows must not inject user input in scripts (1 finding)
+      Workflows Scanned: 6
+      Script Lines Checked: 15
+
+      Findings:
+         CRIT  [ISSUE-207] job "ci/build" interpolates a user-controlled template expression into an inline script (template-injection risk)
+         ↳ at https://github.com/getplumber-examples/plumber-cli-e2e/blob/findings/.github/workflows/ci.yml#L53
+         ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-207
+
+  ✗ Workflows must not use dangerous triggers (1 finding)
+      Workflows Scanned: 6
+      Using Dangerous Triggers: 1
+
+      Findings:
+         CRIT  [ISSUE-802] job "dangerous/comment" runs under dangerous trigger(s) workflow_run and checks out fork-controlled code — untrusted code executes with the base repo's secrets (CVE-2025-30066 pattern)
+         ↳ at https://github.com/getplumber-examples/plumber-cli-e2e/blob/findings/.github/workflows/dangerous.yml#L18
+         ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-802
+
+  ✗ pull_request_target workflows must not check out the PR head (1 finding)
+
+      Findings:
+         CRIT  [ISSUE-804] job "pr-preview/preview" runs under pull_request_target AND checks out the PR head (ref="${{ github.event.pull_request.head.sha }}") — base-repo secrets and fork-controlled code in the same run (tj-actions / CVE-2025-30066 pattern)
+         ↳ at https://github.com/getplumber-examples/plumber-cli-e2e/blob/findings/.github/workflows/pr-preview.yml#L17
+         ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-804
+
+  ✗ Pipeline must not enable debug trace (2 findings)
+      Variables Checked: 7
+      Forbidden Found: 2
+
+      Findings:
+         CRIT  [ISSUE-203] Job `ci/auto-approve` sets the debug variable `ACTIONS_STEP_DEBUG` to "true".
+         ↳ at https://github.com/getplumber-examples/plumber-cli-e2e/blob/findings/.github/workflows/ci.yml#L13
+         ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-203
+         CRIT  [ISSUE-203] Job `ci/build` sets the debug variable `ACTIONS_STEP_DEBUG` to "true".
+         ↳ at https://github.com/getplumber-examples/plumber-cli-e2e/blob/findings/.github/workflows/ci.yml#L13
+         ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-203
+
+────────────────────
+Summary
+────────────────────
+
+  ▶ Critical findings: ISSUE-203, ISSUE-207, ISSUE-309, ISSUE-410, ISSUE-703, ISSUE-707, ISSUE-802, ISSUE-804
+
+  Status: PASSED ✓ (score E — 0.0/100 pts, required ≥ 0 pts)
+
+  Controls
+  ╭──────────────────────────────────────────────────────────────────────┬──────────────────────┬────────────┬───╮
+  │ Control                                                              │ Codes                │ Severity   │ # │
+  ├──────────────────────────────────────────────────────────────────────┼──────────────────────┼────────────┼───┤
+  │ Pipeline must not enable debug trace                                 │ ISSUE-203            │ Critical   │ 2 │
+  │ Actions must not carry known CVEs                                    │ ISSUE-703            │ Critical   │ 1 │
+  │ Actions must pin commits that exist upstream                         │ ISSUE-707            │ Critical   │ 1 │
+  │ Security jobs must not be weakened                                   │ ISSUE-410            │ Critical   │ 1 │
+  │ Workflows must not expose all secrets at once                        │ ISSUE-309            │ Critical   │ 1 │
+  │ Workflows must not inject user input in scripts                      │ ISSUE-207            │ Critical   │ 1 │
+  │ Workflows must not use dangerous triggers                            │ ISSUE-802            │ Critical   │ 1 │
+  │ pull_request_target workflows must not check out the PR head         │ ISSUE-804            │ Critical   │ 1 │
+  │ Workflow must not grant write-all permissions                        │ ISSUE-803            │ High       │ 3 │
+  │ Actions must come from authorized sources                            │ ISSUE-713            │ High       │ 2 │
+  │ Container images must not use forbidden reference (pinned by digest) │ ISSUE-102, ISSUE-103 │ High       │ 2 │
+  │ Actions must not reference archived repositories                     │ ISSUE-702            │ High       │ 1 │
+  │ Pipeline must not execute unverified scripts                         │ ISSUE-411            │ High       │ 1 │
+  │ Third-party actions must be pinned by commit SHA                     │ ISSUE-701            │ High       │ 1 │
+  │ Workflows must not write untrusted content to $GITHUB_ENV            │ ISSUE-209            │ High       │ 1 │
+  │ Checkout must not persist credentials                                │ ISSUE-307            │ Low        │ 4 │
+  ╰──────────────────────────────────────────────────────────────────────┴──────────────────────┴────────────┴───╯
+  ↳ docs: https://getplumber.io/docs/cli/issues/<code>
+
+
+ ──────────────────────────────────────────────────────────────────────────────
+ Plumber Score
+
+ ███████╗                                                                     
+ ██╔════╝  0 / 100 pts                                                        
+ █████╗    ░░░░░░░░░░░░░░░░░░░░░░░░░░░░                                       
+ ██╔══╝    Critical: at least one Critical finding or heavy accumulated losses
+ ███████╗                                                                     
+ ╚══════╝  🔴 Critical 9   🟠 High 10   🟡 Medium 1   🔵 Low 4                
+
+ ▲ Critical malus applied  (final points capped at 30 while any Critical remains)
+
+ ──────────────────────────────────────────────────────────────────────────────
+
+
+--- stderr
+No .plumber.yaml found; using Plumber's built-in default configuration.
+Generate your own with 'plumber config generate' ('plumber config init' for the interactive wizard); see the default with 'plumber config view'.
+

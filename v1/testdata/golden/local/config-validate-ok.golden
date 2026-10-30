@@ -1,0 +1,7 @@
+$ plumber config validate -c overlay.plumber.yaml
+exit: 0
+--- stdout
+Configuration overlay.plumber.yaml is valid.
+
+--- stderr
+

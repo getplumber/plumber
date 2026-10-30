@@ -1,0 +1,82 @@
+$ plumber analyze github.com/getplumber-examples/plumber-cli-e2e --branch invalid-yaml
+exit: 1
+--- stdout
+
+  ██████╗ ██╗     ██╗   ██╗ ███╗   ███╗██████╗ ███████╗██████╗
+  ██╔══██╗██║     ██║   ██║ ████╗ ████║██╔══██╗██╔════╝██╔══██╗
+  ██████╔╝██║     ██║   ██║ ██╔████╔██║██████╔╝█████╗  ██████╔╝
+  ██╔═══╝ ██║     ██║   ██║ ██║╚██╔╝██║██╔══██╗██╔══╝  ██╔══██╗
+  ██║     ███████╗╚██████╔╝ ██║ ╚═╝ ██║██████╔╝███████╗██║  ██║
+  ╚═╝     ╚══════╝ ╚═════╝  ╚═╝     ╚═╝╚═════╝ ╚══════╝╚═╝  ╚═╝
+  CI/CD Security Scanner  vdev
+  Share your feedback: https://getplumber.io/discord
+
+
+  Project    getplumber-examples/plumber-cli-e2e
+  Platform   GitHub
+  Auth       GITHUB_TOKEN env var
+  Config     built-in default
+  CI config  fetched from GitHub
+
+────────────────────
+✓ Passed Controls (22)
+────────────────────
+
+  ✓ Container images must not use forbidden reference (pinned by digest)
+  ✓ Third-party actions must be pinned by commit SHA
+  ✓ Actions must come from authorized sources
+  ✓ Branch must be protected
+  ✓ Security jobs must not be weakened
+  ✓ Workflows must not use Docker-in-Docker
+  ✓ Pipeline must not execute unverified scripts
+  ✓ Reusable workflows must not inherit secrets
+  ✓ Workflows must not expose all secrets at once
+  ✓ Workflows must not inject user input in scripts
+  ✓ Workflows must not write untrusted content to $GITHUB_ENV
+  ✓ Workflows must not use dangerous triggers
+  ✓ Checkout must not persist credentials
+  ✓ Workflows must declare permissions
+  ✓ Workflow must not grant write-all permissions
+  ✓ Actions must not use ambiguous tag/branch refs
+  ✓ Actions must not reference archived repositories
+  ✓ Actions must pin commits that exist upstream
+  ✓ Actions must not carry known CVEs
+  ✓ Actions must not execute mutable remote code
+  ✓ Untrusted triggers must not write the cache
+  ✓ Pipeline must not enable debug trace
+
+────────────────────
+• Skipped Controls (1)
+────────────────────
+
+  • Workflows must include required actions (disabled in configuration)
+
+────────────────────
+✗ Individual findings (1)
+────────────────────
+
+ LOW   ISSUE-423  Workflow file is not valid
+       │
+       └──▶ workflow file ".github/workflows/broken.yml" could not be parsed as a workflow: yaml:
+            line 4: did not find expected ',' or ']'
+            ↳ at https://github.com/getplumber-examples/plumber-cli-e2e/blob/invalid-yaml/.github/workflows/broken.yml
+
+       Fix    fix the workflow file so GitHub can read it
+       ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-423
+
+────────────────────
+Score
+────────────────────
+
+  █████╗   Plumber Score  98 / 100  ███████████████████████████░
+ ██╔══██╗  Status: FAILED (gate blocks at 100 pts)
+ ███████║
+ ██╔══██║  Best fix: fix the workflow file so GitHub can read it, +2 pts, 100 / 100 (A)
+ ██║  ██║
+ ╚═╝  ╚═╝
+
+--- stderr
+No .plumber.yaml found; using Plumber's built-in default configuration.
+Generate your own with 'plumber config generate' ('plumber config init' for the interactive wizard); see the default with 'plumber config view'.
+time="<TIME>" level=warning msg="GitHub workflow is not valid, reported as ISSUE-423" action=RunGitHubAnalysisRemote file=.github/workflows/broken.yml host= projectPath=getplumber-examples/plumber-cli-e2e ref=invalid-yaml
+

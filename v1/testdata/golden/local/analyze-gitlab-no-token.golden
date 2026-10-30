@@ -1,0 +1,7 @@
+$ plumber analyze --provider gitlab --project a/b --gitlab-url https://gitlab.com
+exit: 2
+--- stdout
+
+--- stderr
+Error: GITLAB_TOKEN environment variable is required for GitLab analysis
+

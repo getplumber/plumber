@@ -1,0 +1,22 @@
+name: Post-CI
+
+# workflow_run is a "dangerous" trigger: it runs in the base context with secrets
+# available, even for runs originating from forks. Combined with a checkout of the
+# triggering run's head SHA, this is remote code execution. ISSUE-802 (critical).
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  comment:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - run: npm ci
+      - run: node ./scripts/post-results.js

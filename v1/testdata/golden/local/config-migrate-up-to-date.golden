@@ -1,0 +1,7 @@
+$ plumber config migrate --input overlay.plumber.yaml
+exit: 0
+--- stdout
+
+--- stderr
+overlay.plumber.yaml is already on schema v2.0 (no legacy keys, no renamed control, and version: "2.0"). Nothing to do.
+

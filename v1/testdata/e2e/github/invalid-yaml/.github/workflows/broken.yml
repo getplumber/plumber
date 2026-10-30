@@ -1,0 +1,9 @@
+# Case invalid-yaml: this file does not parse (unclosed flow sequence).
+# Plumber must report it and still analyze ci.yml.
+name: Broken
+on: [push
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo never parsed

@@ -1,0 +1,7 @@
+$ plumber analyze --provider github --project a/b --no-controls --controls x
+exit: 2
+--- stdout
+
+--- stderr
+Error: --no-controls cannot be combined with --controls / --skip-controls: it runs no control at all
+

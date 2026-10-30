@@ -1,0 +1,16 @@
+$ plumber catalog --help
+exit: 0
+--- stdout
+Print the control and issue catalog as JSON
+
+Usage:
+  plumber catalog [flags]
+
+Flags:
+  -h, --help   help for catalog
+
+Global Flags:
+  -v, --verbose   Enable debug logging on stderr (level=debug); replaces the progress bar
+
+--- stderr
+

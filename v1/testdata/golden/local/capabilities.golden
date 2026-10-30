@@ -1,0 +1,22 @@
+$ plumber capabilities
+exit: 0
+--- stdout
+Commands for the pipeline capabilities the CLI recognizes in a pipeline's jobs
+(for example secret_detection), listed in the bill of materials.
+
+Usage:
+  plumber capabilities [command]
+
+Available Commands:
+  defaults    Print the built-in capability list as YAML
+
+Flags:
+  -h, --help   help for capabilities
+
+Global Flags:
+  -v, --verbose   Enable debug logging on stderr (level=debug); replaces the progress bar
+
+Use "plumber capabilities [command] --help" for more information about a command.
+
+--- stderr
+

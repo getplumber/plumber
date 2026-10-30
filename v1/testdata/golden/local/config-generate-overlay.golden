@@ -1,0 +1,28 @@
+$ plumber config generate --overlay -o overlay.yaml
+exit: 0
+--- stdout
+Generated overlay.yaml
+
+Next steps:
+  1. Review and customize the configuration for your needs
+  2. Export the GITLAB_TOKEN environment variable if you haven't already
+  3. Run: plumber analyze  (auto-detects your repo, or: plumber analyze --gitlab-url <url> --project <group>/<project>)
+
+--- stderr
+
+--- file overlay.yaml
+# Plumber overlay config. Inherits every control from Plumber's
+# baseline; you only write what you change. New controls Plumber ships
+# appear automatically. Run 'plumber config resolve' to see the full
+# effective config, or 'plumber config generate' for the commented template.
+extends: plumber:default
+version: "2.0"
+
+# Example overrides (delete or edit):
+# github:
+#   controls:
+#     githubActionMustComeFromAuthorizedSources:
+#       includePlumberDefaults: true   # keep the curated trusted orgs
+#       trustedGithubActions:
+#         - myorg
+

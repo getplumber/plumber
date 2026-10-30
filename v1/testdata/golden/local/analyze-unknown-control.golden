@@ -1,0 +1,52 @@
+$ plumber analyze --provider github --project a/b --controls bogusControl
+exit: 2
+--- stdout
+
+--- stderr
+Error: unknown control names: bogusControl
+
+Valid controls:
+  - actionRefsMustExistUpstream
+  - actionsMustBePinnedByCommitSha
+  - actionsMustNotBeArchived
+  - actionsMustNotCarryKnownCVEs
+  - actionsMustNotExecuteMutableRemoteCode
+  - branchMustBeProtected
+  - checkoutMustNotPersistCredentials
+  - cicdVariablesMustBeMasked
+  - cicdVariablesMustBeProtected
+  - componentMustComeFromAuthorizedSources
+  - containerImageMustComeFromAuthorizedSources
+  - containerImageMustNotUseForbiddenTags
+  - externalRefsMustNotCollide
+  - functionMustComeFromAuthorizedSources
+  - githubActionMustComeFromAuthorizedSources
+  - includesMustBeUpToDate
+  - includesMustNotUseForbiddenVersions
+  - mergeRequestApprovalRulesMustCoverAllProtectedBranches
+  - mergeRequestApprovalRulesMustRequireMinimumApprovals
+  - mergeRequestApprovalSettingsMustBeCompliant
+  - mergeRequestSettingsMustBeCompliant
+  - pipelineMustIncludeComponent
+  - pipelineMustIncludeTemplate
+  - pipelineMustNotEnableDebugTrace
+  - pipelineMustNotExecuteUnverifiedScripts
+  - pipelineMustNotIncludeHardcodedJobs
+  - pipelineMustNotOverrideJobVariables
+  - pipelineMustNotUseDockerInDocker
+  - pipelineMustNotUseUnsafeVariableExpansion
+  - projectMustHaveSecurityPolicySource
+  - pullRequestTargetMustNotCheckoutHead
+  - reusableWorkflowsMustNotInheritSecrets
+  - securityJobsMustNotBeWeakened
+  - untrustedTriggersMustNotWriteCache
+  - workflowMustIncludeRequiredActions
+  - workflowMustNotExportEntireSecretsContext
+  - workflowMustNotGrantPermissionsWriteAll
+  - workflowMustNotInjectUserInputInScripts
+  - workflowMustNotUseDangerousTriggers
+  - workflowMustNotWriteUntrustedContentToGitHubEnv
+  - workflowsMustBeValid
+  - workflowsMustDeclarePermissions
+
+

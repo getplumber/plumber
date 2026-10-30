@@ -1,0 +1,219 @@
+$ plumber explain -a all --project getplumber/examples/plumber-cli-e2e --provider gitlab
+exit: 0
+--- stdout
+ LOW   Attack path 1
+       Entry  docker.io/alpine:latest (mutable image tag)
+       │
+       └──▶ runs in job `deploy` ─▶ reaches secrets Plumber could not list
+
+       So     if this image is compromised, an attacker can read the secrets Plumber could not list
+       Note   Plumber could not list the secrets
+       Note   Plumber could not read: secrets Plumber could not list
+       Fix    pin the image by digest
+       Findings
+
+          LOW   ISSUE-102  Forbidden container image tag
+                │
+                └──▶ job `deploy`: uses the forbidden tag `latest` of image
+                     `docker.io/alpine:latest`.
+                     ↳ at https://gitlab.com/getplumber/examples/plumber-cli-e2e/-/blob/11483f88a750137f6a848bf8e92a92bf5534a8cb/.gitlab-ci.yml#L31
+
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-102
+
+          LOW   ISSUE-103  Container image is not pinned by digest
+                │
+                └──▶ job `deploy`: uses image `docker.io/alpine:latest` without a digest.
+                     ↳ at https://gitlab.com/getplumber/examples/plumber-cli-e2e/-/blob/11483f88a750137f6a848bf8e92a92bf5534a8cb/.gitlab-ci.yml#L31
+
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-103
+
+       Claims
+         entry   docker.io/alpine:latest         proven
+         secret  secrets Plumber could not list  unknown  unlisted
+  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+
+ LOW   Attack path 2
+       Entry  registry.gitlab.com/security-products/kubesec:6 (mutable image tag)
+       │
+       └──▶ runs in job `kubesec-sast` ─▶ reaches secrets Plumber could not list
+
+       So     if this image is compromised, an attacker can read the secrets Plumber could not list
+       Note   Plumber could not list the secrets
+       Note   Plumber could not read: secrets Plumber could not list
+       Fix    pin the image by digest
+       Findings
+
+          LOW   ISSUE-103  Container image is not pinned by digest
+                │
+                └──▶ job `kubesec-sast`: uses image
+                     `registry.gitlab.com/security-products/kubesec:6` without a digest.
+                     ↳ at https://gitlab.com/getplumber/examples/plumber-cli-e2e/-/blob/11483f88a750137f6a848bf8e92a92bf5534a8cb/.gitlab-ci.yml#L10
+
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-103
+
+       Claims
+         entry   registry.gitlab.com/security-products/kubesec:6  proven
+         secret  secrets Plumber could not list                   unknown  unlisted
+  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+
+ LOW   Attack path 3
+       Entry  registry.gitlab.com/security-products/sobelow:6 (mutable image tag)
+       │
+       └──▶ runs in job `sobelow-sast` ─▶ reaches secrets Plumber could not list
+
+       So     if this image is compromised, an attacker can read the secrets Plumber could not list
+       Note   Plumber could not list the secrets
+       Note   Plumber could not read: secrets Plumber could not list
+       Fix    pin the image by digest
+       Findings
+
+          LOW   ISSUE-103  Container image is not pinned by digest
+                │
+                └──▶ job `sobelow-sast`: uses image
+                     `registry.gitlab.com/security-products/sobelow:6` without a digest.
+                     ↳ at https://gitlab.com/getplumber/examples/plumber-cli-e2e/-/blob/11483f88a750137f6a848bf8e92a92bf5534a8cb/.gitlab-ci.yml#L10
+
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-103
+
+       Claims
+         entry   registry.gitlab.com/security-products/sobelow:6  proven
+         secret  secrets Plumber could not list                   unknown  unlisted
+  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+
+ LOW   Attack path 4
+       Entry  registry.gitlab.com/security-products/pmd-apex:6 (mutable image tag)
+       │
+       └──▶ runs in job `pmd-apex-sast` ─▶ reaches secrets Plumber could not list
+
+       So     if this image is compromised, an attacker can read the secrets Plumber could not list
+       Note   Plumber could not list the secrets
+       Note   Plumber could not read: secrets Plumber could not list
+       Fix    pin the image by digest
+       Findings
+
+          LOW   ISSUE-103  Container image is not pinned by digest
+                │
+                └──▶ job `pmd-apex-sast`: uses image
+                     `registry.gitlab.com/security-products/pmd-apex:6` without a digest.
+                     ↳ at https://gitlab.com/getplumber/examples/plumber-cli-e2e/-/blob/11483f88a750137f6a848bf8e92a92bf5534a8cb/.gitlab-ci.yml#L10
+
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-103
+
+       Claims
+         entry   registry.gitlab.com/security-products/pmd-apex:6  proven
+         secret  secrets Plumber could not list                    unknown  unlisted
+  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+
+ LOW   Attack path 5
+       Entry  registry.example.com/team/tool:1.0 (untrusted and mutable image)
+       │
+       └──▶ runs in job `untrusted-registry` ─▶ reaches secrets Plumber could not list
+
+       So     if this image is compromised or malicious,
+              an attacker can read the secrets Plumber could not list
+       Note   Plumber could not list the secrets
+       Note   Plumber could not read: secrets Plumber could not list
+       Fix    use an image from a trusted registry and pin it by digest
+       Findings
+
+          LOW   ISSUE-101  Untrusted image source
+                │
+                └──▶ job `untrusted-registry`: uses image `registry.example.com/team/tool:1.0` from
+                     an unauthorized source.
+                     ↳ at https://gitlab.com/getplumber/examples/plumber-cli-e2e/-/blob/11483f88a750137f6a848bf8e92a92bf5534a8cb/.gitlab-ci.yml#L24
+
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-101
+
+          LOW   ISSUE-103  Container image is not pinned by digest
+                │
+                └──▶ job `untrusted-registry`: uses image `registry.example.com/team/tool:1.0`
+                     without a digest.
+                     ↳ at https://gitlab.com/getplumber/examples/plumber-cli-e2e/-/blob/11483f88a750137f6a848bf8e92a92bf5534a8cb/.gitlab-ci.yml#L24
+
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-103
+
+       Claims
+         entry   registry.example.com/team/tool:1.0  proven
+         secret  secrets Plumber could not list      unknown  unlisted
+  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+
+ LOW   Attack path 6
+       Entry  docker.io/node:latest (mutable image tag)
+       │
+       └──▶ runs in job `build` ─▶ reaches secrets Plumber could not list
+
+       So     if this image is compromised, an attacker can read the secrets Plumber could not list
+       Note   Plumber could not list the secrets
+       Note   Plumber could not read: secrets Plumber could not list
+       Fix    pin the image by digest
+       Findings
+
+          LOW   ISSUE-102  Forbidden container image tag
+                │
+                └──▶ job `build`: uses the forbidden tag `latest` of image `docker.io/node:latest`.
+                     ↳ at https://gitlab.com/getplumber/examples/plumber-cli-e2e/-/blob/11483f88a750137f6a848bf8e92a92bf5534a8cb/.gitlab-ci.yml#L14
+
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-102
+
+          LOW   ISSUE-103  Container image is not pinned by digest
+                │
+                └──▶ job `build`: uses image `docker.io/node:latest` without a digest.
+                     ↳ at https://gitlab.com/getplumber/examples/plumber-cli-e2e/-/blob/11483f88a750137f6a848bf8e92a92bf5534a8cb/.gitlab-ci.yml#L14
+
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-103
+
+       Claims
+         entry   docker.io/node:latest           proven
+         secret  secrets Plumber could not list  unknown  unlisted
+  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+
+ LOW   Attack path 7
+       Entry  registry.gitlab.com/security-products/spotbugs:5 (mutable image tag)
+       │
+       └──▶ runs in job `spotbugs-sast` ─▶ reaches secrets Plumber could not list
+
+       So     if this image is compromised, an attacker can read the secrets Plumber could not list
+       Note   Plumber could not list the secrets
+       Note   Plumber could not read: secrets Plumber could not list
+       Fix    pin the image by digest
+       Findings
+
+          LOW   ISSUE-103  Container image is not pinned by digest
+                │
+                └──▶ job `spotbugs-sast`: uses image
+                     `registry.gitlab.com/security-products/spotbugs:5` without a digest.
+                     ↳ at https://gitlab.com/getplumber/examples/plumber-cli-e2e/-/blob/11483f88a750137f6a848bf8e92a92bf5534a8cb/.gitlab-ci.yml#L10
+
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-103
+
+       Claims
+         entry   registry.gitlab.com/security-products/spotbugs:5  proven
+         secret  secrets Plumber could not list                    unknown  unlisted
+  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+
+ LOW   Attack path 8
+       Entry  https://get.example.com/install.sh (script downloaded and run at build time)
+       │
+       └──▶ runs in job `build` ─▶ reaches secrets Plumber could not list
+
+       So     if this script is compromised or malicious,
+              an attacker can read the secrets Plumber could not list
+       Note   Plumber could not list the secrets
+       Note   Plumber could not read: secrets Plumber could not list
+       Fix    download the script, check its checksum, then run it
+       Findings
+
+          LOW   ISSUE-411  Unverified script execution
+                │
+                └──▶ job `build`: runs a script fetched from the network: `curl -sSL
+                     https://get.example.com/install.sh | bash`.
+                     ↳ at https://gitlab.com/getplumber/examples/plumber-cli-e2e/-/blob/11483f88a750137f6a848bf8e92a92bf5534a8cb/.gitlab-ci.yml#L14
+
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-411
+
+       Claims
+         entry   https://get.example.com/install.sh  proven
+         secret  secrets Plumber could not list      unknown  unlisted
+
+--- stderr
+

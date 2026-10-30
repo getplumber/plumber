@@ -1,0 +1,806 @@
+$ plumber explain --all --json
+exit: 0
+--- stdout
+[
+  {
+    "code": "ISSUE-101",
+    "severity": "high",
+    "title": "Untrusted image source",
+    "description": "A container image is pulled from a registry that is not listed in the authorized sources. Using untrusted registries increases supply chain attack risk.",
+    "remediation": "Use images from an authorized registry configured in .plumber.yaml under containerImageMustComeFromAuthorizedSources.trustedUrls, or add the registry to the authorized list.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-101",
+    "controlName": "containerImageMustComeFromAuthorizedSources",
+    "role": "hygiene"
+  },
+  {
+    "code": "ISSUE-102",
+    "severity": "medium",
+    "title": "Forbidden container image tag",
+    "description": "A container image in the pipeline uses a tag that is forbidden by the configuration (e.g., 'latest', 'dev'). Mutable tags make builds non-reproducible because the underlying image can change without notice.",
+    "remediation": "Pin the image to a specific immutable version tag (e.g., 'python:3.12.1' instead of 'python:latest'). Configure forbidden tags in .plumber.yaml under containerImageMustNotUseForbiddenTags.tags.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-102",
+    "controlName": "containerImageMustNotUseForbiddenTags",
+    "role": "entry",
+    "entryKind": "mutable_dependency"
+  },
+  {
+    "code": "ISSUE-103",
+    "severity": "high",
+    "title": "Container image is not pinned by digest",
+    "description": "A container image in the pipeline is not pinned by its SHA256 digest. Without digest pinning, a tag can be reassigned to a different image, introducing supply chain risks.",
+    "remediation": "Pin the image using its digest: 'image: registry.example.com/myimage@sha256:abc123...'. You can find the digest with 'docker inspect --format={{.RepoDigests}} \u003cimage\u003e'.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-103",
+    "controlName": "containerImageMustNotUseForbiddenTags",
+    "role": "entry",
+    "entryKind": "mutable_dependency"
+  },
+  {
+    "code": "ISSUE-201",
+    "severity": "medium",
+    "title": "CI/CD settings variable is not protected",
+    "description": "A project CI/CD settings variable is not marked protected, so it is injected into pipelines running on unprotected branches. Anyone who can push to such a branch can exfiltrate its value.",
+    "remediation": "Mark the variable protected in Settings \u003e CI/CD \u003e Variables so it is only exposed to pipelines on protected branches and tags.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-201",
+    "controlName": "cicdVariablesMustBeProtected",
+    "role": "privilege"
+  },
+  {
+    "code": "ISSUE-202",
+    "severity": "medium",
+    "title": "CI/CD settings variable is not masked",
+    "description": "A project CI/CD settings variable is not masked, so its value prints verbatim in every job log a project member can read.",
+    "remediation": "Enable masking in Settings \u003e CI/CD \u003e Variables. GitLab requires a value of at least 8 characters; restructure the secret if it cannot be masked by length.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-202",
+    "controlName": "cicdVariablesMustBeMasked",
+    "role": "privilege"
+  },
+  {
+    "code": "ISSUE-203",
+    "severity": "critical",
+    "title": "Pipeline enables CI debug trace",
+    "description": "The pipeline has CI_DEBUG_TRACE or CI_DEBUG_SERVICES enabled, which exposes all secret variables in the job log output. This is a critical security risk in production pipelines.",
+    "remediation": "Remove or set CI_DEBUG_TRACE and CI_DEBUG_SERVICES to 'false' in your .gitlab-ci.yml variables section. These should only be used temporarily for debugging and never committed.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-203",
+    "controlName": "pipelineMustNotEnableDebugTrace",
+    "role": "privilege"
+  },
+  {
+    "code": "ISSUE-204",
+    "severity": "medium",
+    "title": "Unsafe variable expansion",
+    "description": "A dangerous CI variable is expanded in a shell re-interpretation context (eval, sh -c, bash -c, source, etc.). The expanded value is executed as code, enabling command injection if the variable is user-controlled.",
+    "remediation": "Avoid passing variables to commands that re-interpret input as shell code. Use the variable in a safe context (e.g. echo, env) or sanitize/allowlist values. Configure dangerousVariables and allowedPatterns in .plumber.yaml under pipelineMustNotUseUnsafeVariableExpansion.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-204",
+    "controlName": "pipelineMustNotUseUnsafeVariableExpansion",
+    "role": "entry",
+    "entryKind": "untrusted_expression"
+  },
+  {
+    "code": "ISSUE-205",
+    "severity": "high",
+    "title": "Job variable overrides controlled variable",
+    "description": "A CI/CD variable that should only be set in GitLab CI/CD Settings (as a protected or project-level variable) is redefined in the pipeline configuration. This can neutralize security scanners, disable protections, or alter intended behavior.",
+    "remediation": "Remove the variable from .gitlab-ci.yml and set it in GitLab CI/CD Settings \u003e Variables instead. Configure the list of controlled variables in .plumber.yaml under pipelineMustNotOverrideJobVariables.variables.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-205",
+    "controlName": "pipelineMustNotOverrideJobVariables",
+    "role": "gate"
+  },
+  {
+    "code": "ISSUE-207",
+    "severity": "critical",
+    "title": "Template injection in workflow script",
+    "description": "A GitHub Actions workflow inlines user-controlled template expressions (github.event.*, github.head_ref, ...) directly into a `run:` shell script. Attacker-controlled values such as PR titles, issue bodies or fork branch names can break out of the intended string and execute arbitrary commands with the job's secrets.",
+    "remediation": "Move the template expression into an `env:` binding first, then reference the environment variable from the shell (`\"$TITLE\"`). Shell expansion of a bound variable quotes the value and neutralises injection payloads.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-207",
+    "controlName": "workflowMustNotInjectUserInputInScripts",
+    "role": "entry",
+    "entryKind": "untrusted_expression"
+  },
+  {
+    "code": "ISSUE-208",
+    "severity": "high",
+    "title": "Deprecated workflow commands re-enabled",
+    "description": "A GitHub Actions job re-enables the deprecated `::set-env::` / `::add-path::` workflow commands via ACTIONS_ALLOW_UNSECURE_COMMANDS. Those commands were disabled after CVE-2020-15228 because attacker-controlled log output can rewrite the running job's environment and PATH.",
+    "remediation": "Remove the `ACTIONS_ALLOW_UNSECURE_COMMANDS` environment variable. Use the `$GITHUB_ENV` and `$GITHUB_PATH` files explicitly when you need to propagate values, and validate any untrusted content before writing to them.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-208",
+    "controlName": "workflowMustNotReEnableInsecureCommands",
+    "role": "gate"
+  },
+  {
+    "code": "ISSUE-209",
+    "severity": "high",
+    "title": "Untrusted content written to $GITHUB_ENV or $GITHUB_PATH",
+    "description": "A GitHub Actions `run:` step appends a user-controlled value (PR title, issue body, fork branch name, ...) to `$GITHUB_ENV` or `$GITHUB_PATH`. The appended value becomes an environment variable or PATH entry for every subsequent step in the job. An attacker who controls the value can override existing variables (for example `NODE_OPTIONS=--require=./exfil.js`) or inject a malicious directory at the front of PATH, hijacking any later `npm`, `bash`, etc. invocation and exfiltrating secrets from privileged triggers.",
+    "remediation": "Do not write user-controlled values into `$GITHUB_ENV` or `$GITHUB_PATH`. If you must propagate a value derived from user input, bind it through an `env:` block first (`env: { TITLE: ${{ github.event.issue.title }} }`) and validate/escape it before writing, or pass it as a step output instead. Restrict workflows touching these files to non-PR triggers when possible.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-209",
+    "controlName": "workflowMustNotWriteUntrustedContentToGitHubEnv",
+    "role": "entry",
+    "entryKind": "untrusted_expression"
+  },
+  {
+    "code": "ISSUE-210",
+    "severity": "high",
+    "title": "Workflow gates behaviour on a spoofable actor/bot check",
+    "description": "A GitHub Actions workflow gates behaviour on `github.actor`, `github.triggering_actor` or equivalent identity strings (`dependabot[bot]`, `renovate[bot]`, a specific username) without cryptographic backing. Those values are filled from whoever opened or synchronised the PR: an attacker can open a fork PR using a crafted username, or in some trigger types the `actor` field reflects the fork author, not the verified bot. Any step that trusts such a check (`if: github.actor == 'dependabot[bot]'`) can be bypassed by a malicious contributor forging the right login.",
+    "remediation": "Never grant elevated behaviour based on `github.actor` / `github.triggering_actor` alone. For Dependabot-specific flows use the `pull_request` event with a separate privileged workflow triggered by `pull_request_target` only after a manual review, or rely on branch protections. For bots, verify the commit signature/author via git rather than the GitHub actor string.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-210",
+    "controlName": "workflowMustNotTrustSpoofableActorChecks",
+    "role": "gate"
+  },
+  {
+    "code": "ISSUE-211",
+    "severity": "medium",
+    "title": "Unsound `if:` condition (tautology, contradiction, or missing ${{ }})",
+    "description": "A GitHub Actions `if:` expression contains a pattern that cannot be evaluated as intended: a tautology (`always() || ...`, `true == true`), a contradiction (`false \u0026\u0026 anything`), or a bare boolean string that is not wrapped in `${{ }}` (GitHub parses it as the literal string \"true\" / \"false\", which is always truthy). The gate the author thought they installed is not actually there: the step/job runs unconditionally (or never), usually silently.",
+    "remediation": "Review the condition: remove dead branches (`always()` short-circuits OR), wrap every template expression in `${{ … }}`, and prefer simple comparisons over nested constructs. For debugging, `if: ${{ github.event_name == 'push' }}` is safer than `if: github.event_name == 'push'` which often parses as the literal string.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-211",
+    "controlName": "workflowConditionsMustBeSound",
+    "role": "hygiene"
+  },
+  {
+    "code": "ISSUE-212",
+    "severity": "medium",
+    "title": "`contains()` built-in misused (argument order or type)",
+    "description": "A GitHub Actions expression calls `contains()` with arguments in the wrong order or of incompatible types. The signature is `contains(haystack, needle)`: passing a single string as the first argument and a whole expression as the second inverts the semantics and the gate never matches the intended case. A common failure mode is `contains('main', github.ref)`: the literal `'main'` does not contain the full ref `refs/heads/main`, so the check always fails even on the `main` branch.",
+    "remediation": "Use `contains(github.ref, 'refs/heads/main')`: the ref is the haystack, the branch name is the needle. For filter lists, convert to a set: `contains(fromJSON('[\"main\", \"release\"]'), github.ref_name)` makes the intent explicit.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-212",
+    "controlName": "workflowContainsCallsMustBeSound",
+    "role": "hygiene"
+  },
+  {
+    "code": "ISSUE-213",
+    "severity": "high",
+    "title": "Entire `github` context serialised with toJson(github)",
+    "description": "A `run:` step, env binding or action input serialises the whole `github` context (or `github.event`) with `toJson(...)`. The resulting JSON carries every user-controllable field GitHub exposes (PR title, issue body, fork branch name, commit message) bundled with metadata the workflow might otherwise believe is trusted. Any downstream consumer (log line, third-party action, HTTP header) then sees a payload that is trivially shell-injectable under a privileged trigger (`pull_request_target`, `workflow_run`). Same risk class as ISSUE-207 template-injection, but the dump form is worse: a single `echo $JSON` leaks the full attack surface rather than one field.",
+    "remediation": "Never pass the `github` context whole. Extract the exact fields you need into named `env:` bindings first (`env: { PR_TITLE: ${{ github.event.pull_request.title }} }`), then reference the environment variable from the shell: expansion quotes the value automatically. If the downstream tool genuinely requires JSON, build it explicitly from the named fields with `jq -n --arg title \"$PR_TITLE\" '{title: $title}'`.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-213",
+    "controlName": "workflowMustNotExportEntireGitHubContext",
+    "role": "entry",
+    "entryKind": "untrusted_expression"
+  },
+  {
+    "code": "ISSUE-214",
+    "severity": "medium",
+    "title": "Package installed without a pinned version or lockfile",
+    "description": "A `run:` step invokes `pip install PKG` or `npm install PKG` without a pinned version (`pip install pkg==1.2.3`, `npm install pkg@1.2.3`) and without a lockfile install (`pip install -r requirements.txt`, `npm ci`). Every run then resolves whatever is latest on the registry at execution time: a window exploited repeatedly by typosquat and maintainer-account compromise attacks. Lockfiles (`package-lock.json`, `poetry.lock`, `pdm.lock`, …) combined with `npm ci` / `pip install -r requirements.txt --require-hashes` turn every run into a reproducible, verifiable install.",
+    "remediation": "Replace `pip install pkg` with `pip install -r requirements.txt` (with hashes generated via `pip-compile --generate-hashes`) or pin every package explicitly: `pip install 'pkg==1.2.3'`. Replace `npm install pkg` with `npm ci` once the lockfile is committed. Enable Dependabot or Renovate on the locked manifest so upgrades still flow, reviewed, rather than silently.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-214",
+    "controlName": "workflowMustPinPackageInstalls",
+    "role": "hygiene"
+  },
+  {
+    "code": "ISSUE-215",
+    "severity": "low",
+    "title": "Maintainer-adjacent template (`vars.*` or `inputs.*`) expanded into a shell script",
+    "description": "A `run:` step inlines a `${{ vars.X }}` or `${{ inputs.X }}` expression directly into the shell command. `vars` values come from repository / organisation / environment variables set by maintainers; `inputs` values come from the caller of a reusable workflow. Neither is PR-author-controlled by default (ISSUE-207 covers that case), but both flip to attacker-controlled under specific conditions: a compromised maintainer account, a misconfigured org-level variable, or a caller workflow that proxies `github.event.*` into a reusable-workflow input. The canonical remediation is identical to ISSUE-207: bind the value through `env:` first, then reference the environment variable from the shell so expansion quotes it automatically.",
+    "remediation": "Replace `${{ vars.X }}` / `${{ inputs.X }}` in the `run:` body with an `env:` binding plus `$X` dereference. Example: `env: { REGISTRY: ${{ vars.REGISTRY }} }` at the step, then `docker login \"$REGISTRY\"` in the script.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-215",
+    "controlName": "workflowMustNotInjectVarsInScripts",
+    "role": "hygiene"
+  },
+  {
+    "code": "ISSUE-302",
+    "severity": "high",
+    "title": "Reusable workflow called with `secrets: inherit`",
+    "description": "A GitHub Actions job calls a reusable workflow (`jobs.\u003cname\u003e.uses: owner/repo/.github/workflows/x.yml@ref`) with `secrets: inherit`. The call forwards every secret visible to the caller (repo, organisation, environment) to the reusable workflow, regardless of what the reusable workflow actually needs. A compromise of the reusable workflow (upstream maintainer account, malicious PR merged on the reusable side, tag retag) then sees the full secret surface of every caller.",
+    "remediation": "Replace `secrets: inherit` with an explicit mapping that names only the secrets the reusable workflow needs: `secrets: { NPM_TOKEN: ${{ secrets.NPM_TOKEN }} }`. For internal reusable workflows hosted in the same repository the risk is lower but the principle stands: narrow the scope so a future incident exposes a minimum.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-302",
+    "controlName": "reusableWorkflowsMustNotInheritSecrets",
+    "role": "privilege"
+  },
+  {
+    "code": "ISSUE-303",
+    "severity": "high",
+    "title": "Secret dereferenced via fromJSON bypasses log redaction",
+    "description": "A GitHub Actions workflow dereferences a secret value with `fromJSON(secrets.X).y`: once fromJSON parses the secret, the inner fields are fresh strings GitHub does not recognise as masked values. Anything that echoes the sub-field (print, log, HTTP header, error message) leaks the plaintext to the job log.",
+    "remediation": "Pass structured secrets through `env:` bindings that reference each leaf individually (`env: { API_KEY: ${{ secrets.MY_API_KEY }} }`) so log redaction keeps working. If a JSON blob must be split, do it inside a step that never echoes the result and writes only the necessary parts back to the environment.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-303",
+    "controlName": "workflowMustNotUnredactSecretsViaFromJSON",
+    "role": "privilege"
+  },
+  {
+    "code": "ISSUE-305",
+    "severity": "medium",
+    "title": "Deploy / release job uses secrets without an `environment:` gate",
+    "description": "A GitHub Actions job that consumes production secrets (deploy, release, publish) does not declare an `environment:` field. Environments are the gatekeeper GitHub exposes for required reviewers, wait timers, and deployment branch rules: without one, any caller on the configured trigger goes straight to the secret-bearing step, no human-in-the-loop. Combined with a spoofable trigger (ISSUE-802) or an over-broad branch pattern, the secret can be exfiltrated without any review.",
+    "remediation": "Put production secrets behind environments. Attach the environment to the deploy job (`environment: production`) and configure required reviewers / wait timers on the environment in the repository settings.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-305",
+    "controlName": "deployJobsMustUseEnvironmentGate",
+    "role": "gate"
+  },
+  {
+    "code": "ISSUE-306",
+    "severity": "high",
+    "title": "GitHub App token issued with revocation disabled",
+    "description": "A workflow step that mints a GitHub App installation token (e.g. `actions/create-github-app-token`) sets `skip-token-revoke: true`. That keeps the minted token alive after the workflow finishes, which turns a scoped, short-lived credential into a long-lived one. Any later leak (log fragment, restored cache, exfiltrated artefact) hands the attacker a working token well after the run completes, instead of getting back a revoked one.",
+    "remediation": "Remove the `skip-token-revoke: true` input (the default is to revoke). Only keep revocation disabled for workflows that legitimately need to hand the token to a downstream step launched after this workflow, and even then, prefer re-minting it fresh in the downstream workflow.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-306",
+    "controlName": "githubAppTokensMustBeRevokedOnExit",
+    "role": "privilege"
+  },
+  {
+    "code": "ISSUE-307",
+    "severity": "low",
+    "title": "Checkout persists credentials in .git/config (latent)",
+    "description": "A GitHub Actions job runs `actions/checkout` without disabling credential persistence. By default the action writes GITHUB_TOKEN into the cloned repository's .git/config, where it survives for the lifetime of the job. On its own this is latent hygiene: the token is discarded when the job ends. It becomes a demonstrable leak only when a later step packs `.git` into an uploaded artifact (escalated to ISSUE-310) or when fork-controlled code runs in the job (covered by ISSUE-802 / ISSUE-804).",
+    "remediation": "Add `with: { persist-credentials: false }` on every `uses: actions/checkout@*` step unless the job legitimately needs to push back. When push is required, scope the token with an explicit `permissions:` block.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-307",
+    "controlName": "checkoutMustNotPersistCredentials",
+    "role": "privilege"
+  },
+  {
+    "code": "ISSUE-308",
+    "severity": "low",
+    "title": "Secret accessed via a dynamic index `secrets[expr]`",
+    "description": "A workflow reads `${{ secrets[expr] }}` where `expr` is not a quoted literal, typically an `env.VAR_NAME`, `inputs.NAME`, or a computed expression. The dynamic form lets the runtime resolve the secret name at execution, which effectively hands read access to every secret the job can see to whatever source controls `expr`. When `expr` comes from a maintainer-controlled env binding the risk is theoretical, but the pattern is brittle: a rename of the named secret, or a later refactor that introduces a template expression at the indexed position, silently promotes the weakness. Prefer naming each secret directly so the grant surface is explicit in the workflow source.",
+    "remediation": "Replace `${{ secrets[env.X] }}` with a direct reference `${{ secrets.EXPECTED_NAME }}`. When a matrix really needs to select among N secrets, split the job into N copies with static names rather than indexing; the verbosity is worth the reviewability.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-308",
+    "controlName": "workflowMustNotIndexSecretsDynamically",
+    "role": "privilege"
+  },
+  {
+    "code": "ISSUE-309",
+    "severity": "critical",
+    "title": "Entire secrets context exported via toJson(secrets)",
+    "description": "A GitHub Actions workflow serialises the whole `secrets` context with `toJson(secrets)` or `toJSON(secrets)` and pipes the result into a step's environment, run script, or `with:` input. The resulting string contains every secret the job has access to (repository, organisation and environment) and travels through whatever downstream consumer the step passes it to (a third-party action, a remote server, a log line). Even with GitHub's automatic log redaction, a single `echo` of the JSON payload has been enough to leak tokens in past supply-chain incidents; a compromised reusable action sees them directly regardless of logging.",
+    "remediation": "Pass only the specific secrets the step needs, by name: `env: { TOKEN: ${{ secrets.NPM_TOKEN }} }`. If the step forwards credentials to a reusable workflow, name each one in the `secrets:` block of the call rather than using `toJson(secrets)`.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-309",
+    "controlName": "workflowMustNotExportEntireSecretsContext",
+    "role": "privilege"
+  },
+  {
+    "code": "ISSUE-310",
+    "severity": "high",
+    "title": "Persisted checkout credentials packed into an uploaded artifact",
+    "description": "A GitHub Actions job runs `actions/checkout` with credential persistence enabled and then a later `actions/upload-artifact` step uploads a `.git`-inclusive path (the workspace root, `.`, or a path naming `.git`). The GITHUB_TOKEN written into `.git/config` is packed into the artifact, which is downloadable (anonymously, on public repos), so the token is exfiltrable. This is the canonical, demonstrable ArtiPACKED leak.",
+    "remediation": "Add `with: { persist-credentials: false }` on the `actions/checkout@*` step, or upload a scoped path that excludes `.git` (e.g. `path: dist/` instead of `path: .`). When push is required, scope the token with an explicit `permissions:` block.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-310",
+    "controlName": "checkoutMustNotPersistCredentials",
+    "role": "privilege"
+  },
+  {
+    "code": "ISSUE-401",
+    "severity": "medium",
+    "title": "Hardcoded job",
+    "description": "A job in the pipeline is defined directly in the CI configuration instead of being sourced from a CI/CD component or include. Hardcoded jobs bypass governance and standardization.",
+    "remediation": "Replace the hardcoded job with a CI/CD component or an include from an approved catalog. Use 'include:' or 'component:' directives in your .gitlab-ci.yml.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-401",
+    "controlName": "pipelineMustNotIncludeHardcodedJobs",
+    "role": "hygiene"
+  },
+  {
+    "code": "ISSUE-402",
+    "severity": "medium",
+    "title": "Reference collides with both a tag and a branch",
+    "description": "An external CI reference is pinned to a name that exists upstream **as both a tag and a branch** (classic case: a tag `v1` kept in parallel with a branch `v1`). This covers GitHub Actions `uses:` refs and GitLab `include:` project `ref:` / component `@version` refs. The platform resolves the tag first, so today the pinned, tagged revision runs, but a maintainer rename, a typo, or a parameter that drops a character can switch the binding to the branch, which tracks every push. The ambiguity makes the reference fundamentally unreliable: the reviewer cannot tell from the YAML alone which of the two upstream revisions will execute, and the referenced code runs in the pipeline with its secrets and tokens.",
+    "remediation": "Pin the reference to a 40-character commit SHA (preferred), which is unambiguous. Alternatively, ask the upstream maintainer to remove one of the two colliding refs; keeping both is a supply-chain landmine for every caller.",
+    "nestedRemediation": "Pin the outermost action to a commit SHA whose chain pins this reference by SHA, or vendor the chain into `./.github/actions/` and pin it there. The ambiguous ref sits in a container you do not edit (the finding names it), so ask its maintainer to pin it.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-402",
+    "controlName": "externalRefsMustNotCollide",
+    "role": "entry",
+    "entryKind": "mutable_dependency"
+  },
+  {
+    "code": "ISSUE-403",
+    "severity": "low",
+    "title": "Outdated template",
+    "description": "An included CI/CD component or template is not using the latest available version. Outdated versions may miss security patches, bug fixes, or improvements.",
+    "remediation": "Update the include to use the latest version. Check the component/template repository for the latest release and update the version reference in your .gitlab-ci.yml.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-403",
+    "controlName": "includesMustBeUpToDate",
+    "role": "hygiene"
+  },
+  {
+    "code": "ISSUE-404",
+    "severity": "medium",
+    "title": "Forbidden include version",
+    "description": "An included CI/CD component or template uses a version that is explicitly forbidden (e.g., a mutable branch reference like 'main' instead of a tagged version).",
+    "remediation": "Replace the forbidden version with an authorized version format. Use semantic version tags (e.g., '1.2.3' or '~latest') instead of branch names or mutable references as configured in .plumber.yaml.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-404",
+    "controlName": "includesMustNotUseForbiddenVersions",
+    "role": "entry",
+    "entryKind": "mutable_dependency"
+  },
+  {
+    "code": "ISSUE-405",
+    "severity": "high",
+    "title": "Missing required template",
+    "description": "A CI/CD template required by the configuration is not included in the pipeline. This means a mandatory workflow step is missing.",
+    "remediation": "Add the required template to your .gitlab-ci.yml using 'include:' with the template path specified in your .plumber.yaml under pipelineMustIncludeTemplate.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-405",
+    "controlName": "pipelineMustIncludeTemplate",
+    "role": "gate"
+  },
+  {
+    "code": "ISSUE-406",
+    "severity": "medium",
+    "title": "Forbidden override of required template",
+    "description": "A required CI/CD template is included but some of its job keys are overridden locally, which may alter the intended behavior.",
+    "remediation": "Remove the local overrides on the template's jobs. If customization is needed, check if the template provides variables for configuration instead of overriding job keys directly.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-406",
+    "controlName": "pipelineMustIncludeTemplate",
+    "role": "hygiene"
+  },
+  {
+    "code": "ISSUE-408",
+    "severity": "high",
+    "title": "Missing required component",
+    "description": "A CI/CD component required by the configuration is not included in the pipeline. This means a mandatory compliance check or security scan is missing.",
+    "remediation": "Add the required component to your .gitlab-ci.yml using 'include:' with the component path specified in your .plumber.yaml under pipelineMustIncludeComponent.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-408",
+    "controlName": "pipelineMustIncludeComponent",
+    "role": "gate"
+  },
+  {
+    "code": "ISSUE-409",
+    "severity": "medium",
+    "title": "Forbidden override of required component",
+    "description": "A required CI/CD component is included but some of its job keys are overridden locally, which may alter the intended behavior of the compliance check.",
+    "remediation": "Remove the local overrides on the component's jobs. If customization is needed, check if the component provides input variables for configuration instead of overriding job keys directly.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-409",
+    "controlName": "pipelineMustIncludeComponent",
+    "role": "hygiene"
+  },
+  {
+    "code": "ISSUE-410",
+    "severity": "critical",
+    "title": "Security job weakened",
+    "description": "A security job in the pipeline has been weakened by setting allow_failure to true, overriding rules with when: never or when: manual, or setting when to manual. This can cause critical security scans to be skipped or require manual intervention.",
+    "remediation": "Ensure security jobs run automatically and block the pipeline on failure. Remove allow_failure: true, do not override rules with when: never or when: manual, and do not set when: manual on security jobs.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-410",
+    "controlName": "securityJobsMustNotBeWeakened",
+    "role": "gate"
+  },
+  {
+    "code": "ISSUE-411",
+    "severity": "high",
+    "title": "Unverified script execution",
+    "description": "A CI/CD job executes a script without integrity verification: pipe-to-shell (curl | bash), download-then-exec, redirect-then-exec, base64-decode-to-shell (Megalodon-style), or any command piped into bash/sh. An attacker can exfiltrate CI secrets via a compromised URL or obfuscated inline payload.",
+    "remediation": "Download scripts to a file, verify checksum or signature on the same line, then execute. Avoid piping remote or encoded content directly into a shell. Vendor scripts in-repo or use trusted package managers.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-411",
+    "controlName": "pipelineMustNotExecuteUnverifiedScripts",
+    "role": "entry",
+    "entryKind": "mutable_dependency"
+  },
+  {
+    "code": "ISSUE-412",
+    "severity": "high",
+    "title": "Docker-in-Docker service detected",
+    "description": "A CI/CD job uses a Docker-in-Docker (dind) service. On shared runners running in privileged mode, this enables container escape, lateral movement, and access to secrets from other jobs on the same runner.",
+    "remediation": "Replace Docker-in-Docker with a safer alternative such as Kaniko or Buildah for building container images. These tools do not require privileged mode and avoid the security risks of running a Docker daemon inside a CI container.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-412",
+    "controlName": "pipelineMustNotUseDockerInDocker",
+    "role": "privilege"
+  },
+  {
+    "code": "ISSUE-413",
+    "severity": "high",
+    "title": "Docker-in-Docker with insecure daemon configuration",
+    "description": "A CI/CD job uses Docker-in-Docker with an insecure daemon configuration. Setting DOCKER_TLS_CERTDIR to an empty string or using DOCKER_HOST with tcp://...:2375 disables TLS encryption between the CI job and the Docker daemon, allowing network-level eavesdropping and command injection.",
+    "remediation": "If Docker-in-Docker is required, ensure TLS is enabled: do not set DOCKER_TLS_CERTDIR to an empty string, and use tcp://docker:2376 (TLS) instead of tcp://docker:2375 (plaintext). Prefer Kaniko or Buildah to avoid this pattern entirely.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-413",
+    "controlName": "pipelineMustNotUseDockerInDocker",
+    "role": "privilege"
+  },
+  {
+    "code": "ISSUE-414",
+    "severity": "high",
+    "title": "Untrusted GitLab CI/CD component source",
+    "description": "A GitLab CI/CD component is included from a source that is not trusted: not on an explicit allowlist, not under the scanned project's own namespace, not on the same GitLab instance (when that trust is enabled), and not one of GitLab's official namespaces on gitlab.com (when that trust is enabled). Components run arbitrary code with the job's full context (variables, secrets, CI_JOB_TOKEN), so an untrusted source increases supply chain attack risk.",
+    "remediation": "Include components only from a trusted source: add it to .plumber.yaml under componentMustComeFromAuthorizedSources.trustedComponents, or rely on trustSameGroupComponents / trustSameInstanceComponents if it already lives in your own namespace or instance, or on trustGitlabOfficialComponents for GitLab's official gitlab.com/components/* and gitlab.com/gitlab-org/* components.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-414",
+    "controlName": "componentMustComeFromAuthorizedSources",
+    "role": "hygiene"
+  },
+  {
+    "code": "ISSUE-415",
+    "severity": "high",
+    "title": "Untrusted GitLab CI/CD function reference",
+    "description": "A GitLab CI/CD function (run:/func: step) is referenced from a source that is not trusted: not on an explicit allowlist and not under the scanned project's own namespace (when that trust is enabled). Functions run arbitrary code with the job's full context, the same supply chain exposure as CI/CD components.",
+    "remediation": "Reference functions only from a trusted source: add it to .plumber.yaml under functionMustComeFromAuthorizedSources.trustedFunctions, or rely on trustSameGroupFunctions if it already lives in your own namespace.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-415",
+    "controlName": "functionMustComeFromAuthorizedSources",
+    "role": "hygiene"
+  },
+  {
+    "code": "ISSUE-417",
+    "severity": "high",
+    "title": "Required action or reusable workflow is missing",
+    "description": "A GitHub action or reusable workflow declared as required in `workflowMustIncludeRequiredActions.requiredGroups` is not referenced by any job or step in the project's `.github/workflows/` files. The missing reference means a mandatory security scan, compliance check, or organization-wide workflow is not actually running on this repository.",
+    "remediation": "Add a `uses: \u003cowner\u003e/\u003crepo\u003e[@\u003cref\u003e]` step that references the required action, or a `jobs.\u003cname\u003e.uses: \u003cowner\u003e/\u003crepo\u003e/.github/workflows/\u003cfile\u003e.yml@\u003cref\u003e` job that calls the required reusable workflow. The exact path declared in `.plumber.yaml` under `workflowMustIncludeRequiredActions` is matched ref-agnostically, so any pinned ref works.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-417",
+    "controlName": "workflowMustIncludeRequiredActions",
+    "role": "gate"
+  },
+  {
+    "code": "ISSUE-418",
+    "severity": "medium",
+    "title": "Workflow has no concurrency block",
+    "description": "A GitHub Actions workflow declares no `concurrency:` block at either the workflow or the job level. Without it, concurrent pushes to the same branch (common during rebases and force-pushes) start parallel runs that race on caches, artifact uploads, and external state, and burn runner minutes. When the workflow deploys, it can also land stale state by overtaking a newer run.",
+    "remediation": "Add a `concurrency` block that groups runs by ref: `concurrency: { group: ${{ github.workflow }}-${{ github.ref }}, cancel-in-progress: true }`. For deploy workflows, keep `cancel-in-progress: false` so an in-flight deploy finishes cleanly.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-418",
+    "controlName": "workflowsMustDeclareConcurrency",
+    "role": "hygiene"
+  },
+  {
+    "code": "ISSUE-419",
+    "severity": "medium",
+    "title": "Workflow uses a known misfeature pattern",
+    "description": "A GitHub Actions workflow uses a pattern that is supported but widely considered harmful: `shell: cmd` / `shell: powershell` on Windows runners (legacy shells, weak quoting, historical CVEs), an inline pip/gem/bundler install against a network URL, or an `actions/upload-artifact` of the checkout directory (leaks `.git` including tokens if ISSUE-307 artipacked also fires).",
+    "remediation": "Switch Windows jobs to `shell: pwsh`. Vendor dependencies or use a pinned install step with checksums. Never upload the checkout directory as an artefact: upload the build output only.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-419",
+    "controlName": "workflowMustNotUseKnownMisfeatures",
+    "role": "hygiene"
+  },
+  {
+    "code": "ISSUE-420",
+    "severity": "high",
+    "title": "Workflow script contains obfuscation (zero-width / bidi / non-ASCII homoglyphs)",
+    "description": "A GitHub Actions `run:` script or an expression carries invisible characters: zero-width spaces, bidirectional override codepoints (Trojan Source, CVE-2021-42574), or homoglyph identifiers mixing Cyrillic / Greek letters with Latin. The rendered source reads harmless on GitHub while the runner executes a different instruction. This was seen in the wild in backdoored npm / PyPI packages and has been documented as a supply-chain attack primitive since 2021.",
+    "remediation": "Strip non-ASCII characters from workflow scripts and expression references unless strictly necessary (localised strings, user-facing labels). Enable `.gitattributes` pre-commit checks that block zero-width and bidirectional Unicode in source files.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-420",
+    "controlName": "workflowMustNotContainObfuscation",
+    "role": "hygiene"
+  },
+  {
+    "code": "ISSUE-421",
+    "severity": "high",
+    "title": "Publish step relies on a static token instead of OIDC trusted publishing",
+    "description": "A GitHub Actions workflow publishes to PyPI, npm, or Maven Central using a long-lived `API_TOKEN` / `NPM_TOKEN` / `OSSRH_USERNAME` secret instead of OIDC-backed trusted publishing. Static publish tokens are reusable from anywhere they leak to (logs, build caches, malicious dependencies), whereas OIDC tokens are short-lived and bound to a specific repository / environment / workflow.",
+    "remediation": "Migrate to trusted publishing: for PyPI set a publisher in the project settings and drop the token; for npm use the `--provenance` flag with OIDC; for Maven Central use the Sonatype portal's trusted publishing. Delete the static token once OIDC is live.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-421",
+    "controlName": "publishWorkflowsMustUseOidcTrustedPublishing",
+    "role": "privilege"
+  },
+  {
+    "code": "ISSUE-422",
+    "severity": "low",
+    "title": "Workflow has no explicit name",
+    "description": "A GitHub Actions workflow file omits the top-level `name:` field, so GitHub falls back to the file path in the Actions UI, pull-request checks, required-status-check rules, and audit logs. In a repository with many workflows this makes dashboards harder to read and, more importantly, causes the required-status-check settings to bind to file paths that change with renames, silently disabling a compliance gate.",
+    "remediation": "Add a human-readable `name: \u003cdescriptive-name\u003e` at the top of every workflow. Keep the name stable so branch protections and required status checks continue to match after renames.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-422",
+    "controlName": "workflowsMustHaveExplicitName",
+    "role": "hygiene"
+  },
+  {
+    "code": "ISSUE-423",
+    "severity": "low",
+    "title": "Workflow file is not valid",
+    "description": "A file under `.github/workflows` cannot be parsed as a workflow by Plumber's own parser (an undefined YAML anchor, a tab-indented block, a duplicate key, a syntax error). GitHub shows a workflow file it cannot read as invalid on the Actions tab and does not run it, so whatever that workflow was meant to do, a test, a security scan, a release gate, never happens, and nothing else in the repository notices. Only a YAML parse failure is reported: a well-formed file GitHub still rejects on its own schema checks, such as a job without runs-on, is out of scope.",
+    "remediation": "Open the Actions tab, read the error GitHub reports for the file, and fix it: define a YAML anchor in the same file before using it, or inline the block; GitHub Actions resolves anchors only within one file. Then confirm the workflow appears without the invalid-workflow banner.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-423",
+    "controlName": "workflowsMustBeValid",
+    "role": "hygiene"
+  },
+  {
+    "code": "ISSUE-501",
+    "severity": "critical",
+    "title": "Branch protection missing",
+    "description": "A branch that should be protected according to the configuration has no protection rules. Unprotected branches allow direct pushes and force pushes, bypassing code review.",
+    "remediation": "Enable branch protection in GitLab: Settings \u003e Repository \u003e Protected Branches. Add the branch with appropriate access levels for push and merge.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-501",
+    "controlName": "branchMustBeProtected",
+    "role": "gate"
+  },
+  {
+    "code": "ISSUE-502",
+    "severity": "high",
+    "title": "Merge request approval rule requires too few approvals",
+    "description": "A merge request approval rule that covers all protected branches requires fewer approvals than the configured minimum, so a protected branch can be merged with too little review.",
+    "remediation": "Raise the rule's required approvals in Settings \u003e Merge requests \u003e Approval rules to at least your configured minimum, or narrow the rule's scope if it is not meant to cover all protected branches.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-502",
+    "controlName": "mergeRequestApprovalRulesMustRequireMinimumApprovals",
+    "role": "gate"
+  },
+  {
+    "code": "ISSUE-503",
+    "severity": "high",
+    "title": "MR approval settings are not compliant",
+    "description": "The project's merge request approval settings fall short of the configured expectations (authors or committers can approve, rules can be overridden per MR, no re-authentication, or approvals survive new commits), so approvals can be weakened at the project level regardless of any approval rule.",
+    "remediation": "Tighten the project's approval settings in Settings \u003e Merge requests: prevent approval by the author and by committers, prevent editing approval rules in merge requests, require re-authentication to approve, and remove approvals when new commits are added, as your policy requires.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-503",
+    "controlName": "mergeRequestApprovalSettingsMustBeCompliant",
+    "role": "gate"
+  },
+  {
+    "code": "ISSUE-504",
+    "severity": "high",
+    "title": "No approval rule covers all protected branches",
+    "description": "No merge request approval rule applies to all protected branches, so a protected branch can exist with no required approval and be merged without review.",
+    "remediation": "Add a merge request approval rule that applies to all protected branches in Settings \u003e Merge requests \u003e Approval rules.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-504",
+    "controlName": "mergeRequestApprovalRulesMustCoverAllProtectedBranches",
+    "role": "gate"
+  },
+  {
+    "code": "ISSUE-505",
+    "severity": "high",
+    "title": "Branch protection configuration not compliant",
+    "description": "A protected branch does not meet the required protection settings (e.g., force push allowed, access levels too permissive, code owner approval not required).",
+    "remediation": "Update branch protection settings in GitLab: Settings \u003e Repository \u003e Protected Branches. Ensure force push is disabled, access levels meet the minimum, and code owner approval is required per your .plumber.yaml configuration.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-505",
+    "controlName": "branchMustBeProtected",
+    "role": "gate"
+  },
+  {
+    "code": "ISSUE-506",
+    "severity": "medium",
+    "title": "MR settings are not compliant",
+    "description": "The project's merge-request/merge settings (merge method, squash policy, merge trains, source-branch removal, and related options) do not match the configured expectations, so merges can happen in a way the policy does not allow.",
+    "remediation": "Align the project's merge-request settings in Settings \u003e Merge requests with your policy: set the required merge method and squash option, and toggle the merge-train, skipped-pipeline, discussion-resolution, and source-branch-removal options to the expected values.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-506",
+    "controlName": "mergeRequestSettingsMustBeCompliant",
+    "role": "hygiene"
+  },
+  {
+    "code": "ISSUE-601",
+    "severity": "critical",
+    "title": "Missing security policy source on project",
+    "description": "The project does not directly link the expected GitLab security policy project (none is linked, or a different one than the configured expectation). This checks the project's own link only, so a security policy source inherited from a parent group is not detected.",
+    "remediation": "Link the expected security policy project in Settings \u003e Security \u0026 Compliance \u003e Policies (or set it via the API). If your policies are enforced at a parent group and inherited, this project-scoped check will not see them, so link at the project level too or disable this control. Security policies require GitLab Ultimate.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-601",
+    "controlName": "projectMustHaveSecurityPolicySource",
+    "role": "gate"
+  },
+  {
+    "code": "ISSUE-701",
+    "severity": "high",
+    "title": "Third-party action reference is not pinned by commit SHA",
+    "description": "A GitHub Actions workflow references a third-party action with a mutable ref (tag or branch) instead of a 40-character commit SHA. Tag and branch refs can be reassigned by the action's maintainer, or by an attacker who compromises the action's repository, to point at arbitrary code, which then runs inside the caller workflow with its secrets. The March 2025 tj-actions/changed-files compromise (CVE-2025-30066) propagated this way to hundreds of repositories, including aquasecurity/trivy. A tag backed by an immutable GitHub release (`immutable: true` on the release of that exact tag) can never be moved or deleted, so it is accepted as pinned and listed with `pinnedVia: immutable_release`; a floating major tag such as `@v4` has no release behind it and is still reported. The exemption needs a GitHub token: when the release cannot be read, the reference is reported. When the analyzed branch commits a workflow dependency lockfile (`.github/workflows/actions.lock`), the runner executes the commits it records for the repository's own steps, so those are accepted and listed with `pinnedVia: workflow_lockfile`. Reusable workflows are not in the lockfile schema: a reusable-workflow call is still reported when its ref is mutable, and so are the steps of a reusable workflow defined in another repository (that repository's own lockfile is not read). A caller's run fails to start when a called reusable workflow has no lockfile of its own, but that requirement does not pin the call. Plumber reads only the lockfile's presence: GitHub refuses to start any workflow the lockfile does not fully cover (not listed, stale or missing entry, malformed file).",
+    "remediation": "Replace `uses: owner/action@v4` with `uses: owner/action@\u003c40-char-sha\u003e` and add a `# vX.Y.Z` comment to document the version, or reference the exact tag of an immutable release (`uses: owner/action@v4.2.1`) when the action publishes immutable releases. Tools like Dependabot's `version-update-strategy: sha-and-version` can automate the update flow. For step references, a workflow lockfile is an alternative (`gh extension install github/gh-actions-lock \u0026\u0026 gh actions-lock`); lockfiles are not available on GitHub Enterprise Server, and workflows using local-path actions cannot be onboarded yet. Reusable workflow calls still need a commit SHA, lockfile or not. Official GitHub-owned actions (actions/*, github/*) can be excluded if they are in the workflow's trusted boundary.",
+    "nestedRemediation": "Pin the outermost action to a commit SHA whose definition pins this reference, or vendor the chain into `./.github/actions/` and pin it there. The reference sits in a container you do not edit (the finding names it), so asking its maintainer to pin it is the lasting fix.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-701",
+    "controlName": "actionsMustBePinnedByCommitSha",
+    "role": "entry",
+    "entryKind": "mutable_dependency"
+  },
+  {
+    "code": "ISSUE-702",
+    "severity": "high",
+    "title": "Action is hosted in an archived repository",
+    "description": "A GitHub Actions workflow references an action whose upstream repository is archived. Archived repos no longer receive maintenance (security fixes, dependency bumps, compatibility patches all stop), and any existing vulnerability stays open forever. A new SHA can still be pushed by the last maintainer, so even pinning by SHA does not make the reference safe against a future takeover.",
+    "remediation": "Replace the action with a maintained fork (audit the fork's owner first) or with an equivalent step implemented inline. If the behaviour is trivial, inlining the shell logic avoids the supply-chain dependency entirely.",
+    "nestedRemediation": "Replace the outermost action, or vendor the chain into `./.github/actions/` and drop the archived action there. The archived repository is pulled in by a container you do not edit (the finding names it), so ask its maintainer to move off it.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-702",
+    "controlName": "actionsMustNotBeArchived",
+    "role": "hygiene"
+  },
+  {
+    "code": "ISSUE-703",
+    "severity": "critical",
+    "title": "Action version carries a published security advisory",
+    "description": "The pinned version of this action appears in the GitHub Advisory Database under the `actions` ecosystem. Running a workflow on a known-vulnerable action version inherits the published vulnerability class (RCE, secret exfiltration, privilege escalation, depending on the advisory). Examples from history: tj-actions/changed-files (CVE-2025-30066), reviewdog/action-setup with the March 2025 compromise, unpatched releases of `actions/artifact`. This check reports every advisory whose affected-version range covers the pinned ref.",
+    "remediation": "Upgrade the action to a version outside the advisory's affected range (the advisory page lists a fixed-in version). Pin by SHA once upgraded so future retags cannot silently revert the fix. Configure Dependabot with `package-ecosystem: github-actions` to receive PR alerts when new advisories land.",
+    "nestedRemediation": "Move the outermost action to a release whose chain pulls a patched version, or vendor the chain into `./.github/actions/` and upgrade the vulnerable action there. The vulnerable reference sits in a container you do not edit (the finding names it), so ask its maintainer to upgrade it.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-703",
+    "controlName": "actionsMustNotCarryKnownCVEs",
+    "role": "entry",
+    "entryKind": "mutable_dependency"
+  },
+  {
+    "code": "ISSUE-704",
+    "severity": "critical",
+    "title": "Container registry password is hard-coded in the workflow",
+    "description": "A GitHub Actions workflow sets `jobs.\u003cname\u003e.container.credentials.password` to a literal string instead of a `${{ secrets.X }}` reference. The password is committed to the repository's history in plain text; anyone with read access (including the entire public on a public repo) can retrieve it, and rotating it requires rewriting history to purge the leak.",
+    "remediation": "Store the password in a repository, environment, or organization secret and reference it via `${{ secrets.\u003cNAME\u003e }}`. If the password is already exposed in git history, rotate it immediately and purge the literal with `git filter-repo` or a BFG run before re-publishing.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-704",
+    "controlName": "containerCredentialsMustComeFromSecrets",
+    "role": "gate"
+  },
+  {
+    "code": "ISSUE-705",
+    "severity": "high",
+    "title": "Untrusted trigger granted cache write",
+    "description": "A job runs on an event GitHub restricts to read-only cache access (pull_request_target, issue_comment, workflow_run and every other event that runs on the default branch, apart from push, workflow_dispatch, repository_dispatch, delete, registry_package, page_build and schedule), and its `cache-mode:` (on the job or its workflow) is `write` or `write-only`. GitHub isolates caches by ref, and a run restores caches from its own ref and from the default branch. The explicit grant lifts GitHub's read-only default, so code running in that job (a comment body, a pull request's head, an upstream run's artifact) can create or overwrite caches that every default-branch run restores, including release and publish jobs.",
+    "remediation": "Set `cache-mode: read` on the job (or the workflow) for these events, and keep the cache maintained by a trusted workflow, for example one triggered by `push` on the default branch. If the job must write the cache and runs no untrusted code, list it under `exemptJobs` or its workflow under `exemptWorkflows` to accept the risk.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-705",
+    "controlName": "untrustedTriggersMustNotWriteCache",
+    "role": "entry",
+    "entryKind": "poisoned_cache"
+  },
+  {
+    "code": "ISSUE-706",
+    "severity": "medium",
+    "title": "Dockerfile FROM reference is not pinned by digest",
+    "description": "A Dockerfile at the root of the repository (or under a known build directory) uses `FROM image:tag` without a `@sha256:…` digest. Tags are mutable at the registry level: an attacker who compromises the registry (or the image maintainer) can re-push the same tag to point at a different layer, silently injecting code into every later build that pulls the reference. The supply chain of the downstream artefact then inherits that substitution. Pinning by digest is the single control that neutralises this vector.",
+    "remediation": "Replace `FROM image:tag` with `FROM image:tag@sha256:…`. `docker inspect --format='{{index .RepoDigests 0}}' image:tag` prints the digest for the tag you just pulled. Automate refresh with Dependabot or Renovate (`package-ecosystem: docker`, `version-update-strategy: sha-and-version`) so the pin stays current.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-706",
+    "controlName": "dockerfilesMustPinBaseImageByDigest",
+    "role": "hygiene"
+  },
+  {
+    "code": "ISSUE-707",
+    "severity": "critical",
+    "title": "Pinned commit SHA does not belong to the action's repository",
+    "description": "A workflow pins an action to a commit SHA that does not resolve in the action's upstream repository. That means either the SHA was mistyped (the reference silently runs whatever tag/branch GitHub falls back to, typically the default branch) or, far worse, the author was tricked by a PR comment / stargazer dashboard showing a detached commit that was never merged upstream. The name-and-SHA combination is the precise form of the `impostor commit` attack documented in academic supply-chain literature.",
+    "remediation": "Replace the reference with a SHA that actually belongs to the action's repository. Use `gh api repos/\u003cowner\u003e/\u003crepo\u003e/commits/\u003csha\u003e` to verify before committing the change. That endpoint only accepts commit SHAs, so a pin naming an annotated tag object answers 422 there; check it with `gh api repos/\u003cowner\u003e/\u003crepo\u003e/git/tags/\u003csha\u003e` instead, which also reports the tag name and the commit it points at.",
+    "nestedRemediation": "Pin the outermost action to a version whose chain only pins commits that exist upstream, or vendor the chain into `./.github/actions/` with a pin that exists. The bad pin sits in a container you do not edit (the finding names it), so report it to its maintainer.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-707",
+    "controlName": "actionRefsMustExistUpstream",
+    "role": "entry",
+    "entryKind": "mutable_dependency"
+  },
+  {
+    "code": "ISSUE-708",
+    "severity": "medium",
+    "title": "`# vX.Y.Z` comment does not match the SHA",
+    "description": "A workflow pins an action by commit SHA and adds a trailing `# vX.Y.Z` comment to document the intended version, but the SHA does not correspond to the tag named in the comment. Reviewers scanning diffs trust that annotation and miss the discrepancy, so silent downgrades (or upgrades that claim to be a patch) slip through review unnoticed.",
+    "remediation": "Either update the SHA to the one the tag points at, or update the comment to the tag that actually corresponds to the SHA. `gh api repos/\u003cowner\u003e/\u003crepo\u003e/git/ref/tags/\u003ctag\u003e` returns the SHA the tag resolves to.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-708",
+    "controlName": "actionPinCommentsMustMatchSha",
+    "role": "hygiene"
+  },
+  {
+    "code": "ISSUE-709",
+    "severity": "low",
+    "title": "Action pin is behind the latest upstream release",
+    "description": "A workflow pins an action to a commit SHA that predates the repository's most recent release. The SHA may still work today, but it is missing security fixes, dependency updates, and runtime compatibility changes shipped in later releases. Dependabot's `version-update-strategy: sha-and-version` handles the upgrade loop once configured.",
+    "remediation": "Update the pin to the SHA of the latest release, and refresh the trailing `# vX.Y.Z` comment. Enable Dependabot with `package-ecosystem: github-actions` and `version-update-strategy: sha-and-version` to keep the pins fresh automatically.",
+    "nestedRemediation": "Move the outermost action to a release whose chain pins a current version, or vendor the chain into `./.github/actions/` and refresh the pin there. The stale pin sits in a container you do not edit (the finding names it), so ask its maintainer to refresh it.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-709",
+    "controlName": "actionPinsMustNotBeStale",
+    "role": "hygiene"
+  },
+  {
+    "code": "ISSUE-711",
+    "severity": "low",
+    "title": "Third-party action duplicates functionality already on the runner",
+    "description": "A workflow uses a third-party action to do something the GitHub-hosted runner already provides out of the box: `gh` CLI operations wrapped by `peter-evans/create-pull-request`, basic cache operations that `actions/cache` already covers, `nick-invision/retry` for a one-line `bash` retry loop. Each extra action is an extra supply-chain dependency for zero capability gain: the sort of reference where an `impostor-commit`, a tag retag, or a compromise of the upstream account buys the attacker a foothold with no functional reason to have taken that risk.",
+    "remediation": "Replace the action with the equivalent inline shell step using the runner's built-in tooling (`gh pr create`, `gh release`, simple `bash` retry loops). Keeps the workflow readable AND removes a supply-chain link. When the capability is non-trivial (artifact caching, matrix fan-out), prefer the official `actions/*` action over a third-party duplicate.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-711",
+    "controlName": "actionsMustNotDuplicateRunnerBuiltins",
+    "role": "hygiene"
+  },
+  {
+    "code": "ISSUE-712",
+    "severity": "medium",
+    "title": "Release / publish workflow produces unsigned artefacts",
+    "description": "A workflow runs a release or publish action (goreleaser, softprops/action-gh-release, pypa publish, npm-publish, docker build+push) without invoking any signing step. Consumers pulling the released artefact have no cryptographic handle to verify the artefact was built by the expected pipeline rather than tampered with along the way (cache poisoning, compromised runner, repository takeover). Signing (Sigstore cosign, GPG, SLSA provenance) turns 'I trust this came from that repo' into a falsifiable statement.",
+    "remediation": "Add a signing step to the release job: `sigstore/cosign-installer` followed by `cosign sign \u003cartefact\u003e` for container images, `sigstore/gh-action-sigstore-python` for Python wheels, `crazy-max/ghaction-import-gpg` + `gpg --detach-sign` for tarballs, or `--snapshot-github-actions` on goreleaser with the signing pipeline configured. Publish the `.sig` / `.asc` alongside the artefact in the release assets.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-712",
+    "controlName": "releaseWorkflowsMustSignArtefacts",
+    "role": "hygiene"
+  },
+  {
+    "code": "ISSUE-713",
+    "severity": "high",
+    "title": "Action comes from an unauthorized source",
+    "description": "A GitHub Actions workflow references an action whose source is not authorized. Every third-party action runs with the caller workflow's token and secrets, so an unvetted owner is a direct supply-chain entry point: the vector behind the tj-actions/changed-files compromise (CVE-2025-30066), where an attacker also exploited repository rename/re-creation to squat a once-trusted name. Restricting actions to GitHub-official owners, an explicit org allowlist, and a minimum-popularity floor shrinks that attack surface to vetted sources.",
+    "remediation": "Use an action from an authorized source. Configure the allowlist in .plumber.yaml under githubActionMustComeFromAuthorizedSources: keep trustGithubOfficialActions on for actions/* and github/*, add trusted owners or actions to trustedGithubActions (exact `owner/repo` or `owner/*`), and optionally set minimumStars to require a popularity threshold. Vendoring the action into a local `./.github/actions/…` directory removes the external dependency entirely.",
+    "nestedRemediation": "Replace the outermost action with one whose chain only pulls authorized sources, or vendor the chain into `./.github/actions/` and replace the reference there. The reference sits in a container you do not edit (the finding names it), so ask its maintainer to depend on authorized sources.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-713",
+    "controlName": "githubActionMustComeFromAuthorizedSources",
+    "role": "hygiene"
+  },
+  {
+    "code": "ISSUE-714",
+    "severity": "high",
+    "title": "Action fetches and runs remote code from a mutable ref (in the open)",
+    "description": "A third-party action's own source fetches and executes a script from a MOVING ref (a branch such as main/master, not a tag or SHA) of another repository at runtime, and does not verify the download against a checksum. Pinning the action by commit SHA does not reach this: the fetched code can change with nothing committed where the pin can see it, so a compromise or retag of that upstream branch runs arbitrary code in the job with its token and secrets. The canonical example is anchore/scan-action, which fetches `raw.githubusercontent.com/anchore/grype/main/install.sh` and runs it. This is a static, text-level match on the action's source: it catches the in-the-open shape, not an author who deliberately hides the fetch (see ISSUE-715), so a clean result asserts 'no known pattern seen', not 'safe'.",
+    "remediation": "Prefer an action that pins its downloads to an immutable ref AND verifies a checksum. Otherwise install the tool yourself from a pinned release, verify it against a checksum committed to your repo, and run it directly; or vendor the action and pin its internal fetch. A fetch that already verifies a pinned checksum is content-pinned and is not flagged here.",
+    "nestedRemediation": "Replace the outermost action, or vendor the chain into `./.github/actions/` and replace the step that fetches mutable code. A SHA pin on the outermost action does not reach this code and the container that runs it is one you do not edit (the finding names it), so ask its maintainer to pin and verify the download.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-714",
+    "controlName": "actionsMustNotExecuteMutableRemoteCode",
+    "role": "entry",
+    "entryKind": "mutable_dependency"
+  },
+  {
+    "code": "ISSUE-715",
+    "severity": "critical",
+    "title": "Action obfuscates a remote code fetch/exec",
+    "description": "The action's own source decodes and then executes code: `base64 -d | sh`, `eval \"$(… | base64 -d)\"`, `eval(atob(…))`, `new Function(atob(x))`, a hex/xxd decode piped to a shell, and similar. No legitimate action needs to hide what it runs at runtime, so obfuscation-then-execute is treated as the strongest signal regardless of the host, ref, or encoding used. This deliberately does NOT chase every possible encoding (an unbounded space); it flags the act of hiding itself, which is what makes a clean result meaningful here.",
+    "remediation": "Remove the obfuscation. If the action is a dependency, drop or vendor it and replace the hidden fetch with an explicit, pinned, checksum-verified install. An action that must decode data at runtime should not feed that decoded value into a shell or eval.",
+    "nestedRemediation": "Stop using the outermost action until the obfuscated fetch in its chain is explained, or vendor the chain into `./.github/actions/` without that step. The container that hides it is one you do not edit (the finding names it), so report it to its maintainer.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-715",
+    "controlName": "actionsMustNotExecuteMutableRemoteCode",
+    "role": "entry",
+    "entryKind": "mutable_dependency"
+  },
+  {
+    "code": "ISSUE-716",
+    "severity": "low",
+    "title": "Action source could not be verified",
+    "description": "Plumber could not fetch the action's own source (a network error, API rate limit, GitHub Enterprise Server host, private repo, or a Docker-image action) so it could not confirm whether the action fetches mutable remote code at runtime. This is surfaced as an explicit could-not-verify finding rather than a silent pass, because a silent pass would let the same repository score differently across CI environments and would over-claim safety on an unchecked dependency.",
+    "remediation": "Re-run where the action source is reachable (authenticated token, network access) to get a definitive result, or vendor the action so its source is local and auditable. This finding is informational: it flags an unchecked dependency, not a confirmed problem.",
+    "nestedRemediation": "Give the run read access to the container's source (a token that can read it), or vendor the chain into `./.github/actions/` so it can be scanned. The container is one you do not edit (the finding names it).",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-716",
+    "controlName": "actionsMustNotExecuteMutableRemoteCode",
+    "role": "entry",
+    "entryKind": "mutable_dependency"
+  },
+  {
+    "code": "ISSUE-801",
+    "severity": "medium",
+    "title": "Workflow has no explicit `permissions:` block",
+    "description": "A GitHub Actions workflow declares neither a workflow-level nor per-job `permissions:` block. The runner then falls back to the repository-wide default GITHUB_TOKEN permissions (often `contents: write` or `read-all`), giving every step more authority than it needs. Any compromise (unpinned action, template-injection, cache poisoning) inherits the full default scope.",
+    "remediation": "Declare the narrowest permissions explicitly: `permissions: { contents: read }` at the workflow level and widen per-job only when a step needs to push, comment on issues, etc. This enforces the principle of least privilege regardless of the repo default setting.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-801",
+    "controlName": "workflowsMustDeclarePermissions",
+    "role": "privilege"
+  },
+  {
+    "code": "ISSUE-802",
+    "severity": "critical",
+    "title": "Dangerous workflow trigger",
+    "description": "A GitHub Actions job is reachable via a trigger that runs with the base repository's secrets while being influenceable by an unprivileged caller (`workflow_run`, `issue_comment`, `pull_request_review`, `pull_request_review_comment`, `discussion`, `discussion_comment`, `gollum`, `fork`) AND it checks out fork-controlled code. The `pull_request_target` case is owned by ISSUE-804 (pull-request-target-with-head-checkout). This is the same exploit class as the March 2025 tj-actions/changed-files supply-chain compromise (CVE-2025-30066).",
+    "remediation": "Prefer the standard `pull_request` trigger unless access to base-repo secrets is strictly required. If a secret-bearing trigger is necessary, never check out fork content and never render github.event.* / github.head_ref into shell commands. For `workflow_run`, keep the job restricted to non-secret-bearing steps.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-802",
+    "controlName": "workflowMustNotUseDangerousTriggers",
+    "role": "entry",
+    "entryKind": "pr_target"
+  },
+  {
+    "code": "ISSUE-803",
+    "severity": "high",
+    "title": "Excessive workflow permissions",
+    "description": "A GitHub Actions job's effective permissions block grants `write-all`, giving its GITHUB_TOKEN write access to every API scope regardless of what the job actually needs. Paired with a compromise through injection, dangerous triggers or a malicious action, this amplifies impact to full repository control.",
+    "remediation": "Declare the narrowest permissions block that lets the job do its work. Prefer `permissions: { contents: read }` at the workflow level and grant additional scopes only on the jobs that truly need them.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-803",
+    "controlName": "workflowMustNotGrantPermissionsWriteAll",
+    "role": "privilege"
+  },
+  {
+    "code": "ISSUE-804",
+    "severity": "critical",
+    "title": "pull_request_target workflow explicitly checks out the PR head",
+    "description": "A workflow triggered by `pull_request_target` calls `actions/checkout` with an explicit `ref:` pointing at the pull request's head (e.g. `github.event.pull_request.head.sha`, `github.head_ref`). This is the exact pattern behind the March 2025 tj-actions/changed-files compromise (CVE-2025-30066): the workflow has access to the base repository's secrets AND it executes code controlled by the PR author. Any shell step that runs after the checkout is a direct path to secret exfiltration. Unlike the broader dangerous-triggers check (ISSUE-802) which flags the trigger itself, this rule flags the actual exploitable combination.",
+    "remediation": "Either switch to the standard `pull_request` event (runs in the fork's context, no base-repo secrets), or remove the explicit `ref:` input so `actions/checkout` falls back to the base repository's SHA. If cross-context code must be examined, split the job: a small pull_request_target job gathers metadata, then hands off to a separate pull_request workflow that executes the fork code.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-804",
+    "controlName": "pullRequestTargetMustNotCheckoutHead",
+    "role": "entry",
+    "entryKind": "pr_target"
+  },
+  {
+    "code": "ISSUE-901",
+    "severity": "critical",
+    "title": "Dependabot re-enables insecure external code execution",
+    "description": "The repository's `.github/dependabot.yml` sets `insecure-external-code-execution: allow` for one of its update ecosystems. Dependabot will then execute install / postinstall hooks from every candidate dependency version during its version-resolution passes, giving any compromised upstream package a path to run arbitrary code in the Dependabot runner, which holds privileged access to the repository via a non-auditable push token. This is the option Dependabot itself documents as dangerous and defaults to `deny`.",
+    "remediation": "Remove the `insecure-external-code-execution: allow` entry. If a specific ecosystem genuinely requires executing upstream scripts to resolve versions, scope the allowance narrowly with `enable-beta-ecosystems: false` and pair it with a dedicated runner isolation review; do not set it repository-wide.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-901",
+    "controlName": "dependabotMustNotAllowInsecureExternalCodeExecution",
+    "role": "gate"
+  },
+  {
+    "code": "ISSUE-902",
+    "severity": "low",
+    "title": "Dependabot ecosystem has no cooldown window",
+    "description": "An update ecosystem in `.github/dependabot.yml` declares no `cooldown:` block. Dependabot then opens a PR the instant a new upstream version is published, including when that version was uploaded minutes ago by a compromised maintainer account. A cooldown window (48–72 hours is common) gives the security-advisory pipeline time to flag a bad release before the automation merges it.",
+    "remediation": "Add a `cooldown:` block to each update ecosystem: for example `cooldown: { default-days: 3, semver-major-days: 7, include: [\"*\"] }`. Adjust the window to fit the project's patching tolerance but never skip it for ecosystems that auto-merge.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-902",
+    "controlName": "dependabotEcosystemsMustHaveCooldown",
+    "role": "hygiene"
+  },
+  {
+    "code": "ISSUE-903",
+    "severity": "medium",
+    "title": "Repository has workflows but no dependency update tool",
+    "description": "The repository ships CI/CD workflows but neither `.github/dependabot.yml` nor `renovate.json` / `.renovaterc` is configured. Dependencies then drift as upstream security patches land: nothing opens the PRs that would pull them in. On a project with any third-party action pinning (which every sane workflow does), this means SHA pins go stale and every unpatched CVE for the pinned versions stays unreachable until a human remembers to refresh the locks.",
+    "remediation": "Add `.github/dependabot.yml` with at minimum `package-ecosystem: github-actions` and your primary language ecosystem (npm, pip, gomod, etc.). For more configurable flows prefer Renovate: `npx -y renovate-config-validator` validates a `renovate.json` before commit.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-903",
+    "controlName": "repositoriesMustConfigureDependencyUpdates",
+    "role": "hygiene"
+  },
+  {
+    "code": "ISSUE-904",
+    "severity": "low",
+    "title": "No static analysis scanner runs in CI",
+    "description": "None of the repository's workflows invokes a recognised SAST scanner (CodeQL, Semgrep, SonarQube, Trivy config scan, Snyk, FOSSA, etc.). Static analysis catches whole vulnerability classes (injection, unsafe deserialisation, crypto misuse) before they reach production; leaving it out of CI means the only gate is manual review, which misses regressions exactly when the diff is large.",
+    "remediation": "Add a workflow that runs CodeQL (`github/codeql-action/init` + `analyze`, free for public repos), Semgrep, or an equivalent SAST scanner on pushes to the default branch and on pull requests. Enable GitHub's code-scanning alerts so findings open issues rather than sit in log output.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-904",
+    "controlName": "repositoriesMustRunSAST",
+    "role": "hygiene"
+  },
+  {
+    "code": "ISSUE-905",
+    "severity": "low",
+    "title": "Repository has no SECURITY.md policy file",
+    "description": "The repository has no `SECURITY.md` (nor `.github/SECURITY.md`, nor `docs/SECURITY.md`) documenting the vulnerability disclosure process. Researchers who find an issue have no public contact beyond opening a GitHub issue, which defeats coordinated disclosure and teaches them to dump vulnerabilities in the open. The file can be short: two lines naming the contact channel and the expected response window are enough to move reports off the public tracker.",
+    "remediation": "Add a `SECURITY.md` at the repo root or under `.github/`. GitHub ships a template (New file → security policy). Include: the supported versions, the reporting channel (email / security@ / private advisory), the expected first-response SLA, and any bounty / safe-harbour terms the project honours.",
+    "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-905",
+    "controlName": "repositoriesMustPublishSecurityPolicy",
+    "role": "hygiene"
+  }
+]
+
+--- stderr
+

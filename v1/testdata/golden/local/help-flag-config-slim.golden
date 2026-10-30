@@ -1,0 +1,25 @@
+$ plumber config slim --help
+exit: 0
+--- stdout
+Collapse a full .plumber.yaml into a small overlay that extends
+plumber:default, keeping only the controls whose values differ from the
+baseline. Comments are not preserved; the result is a fresh minimal file.
+Review it, then commit. Use 'plumber config resolve' to expand it again.
+
+Examples:
+  plumber config slim -o .plumber.yaml
+  plumber config slim -c old.yaml -o slim.yaml
+
+Usage:
+  plumber config slim [flags]
+
+Flags:
+  -c, --config string   Path to the full configuration file (default ".plumber.yaml")
+  -h, --help            help for slim
+  -o, --output string   Write slim overlay to this file (default: stdout)
+
+Global Flags:
+  -v, --verbose   Enable debug logging on stderr (level=debug); replaces the progress bar
+
+--- stderr
+

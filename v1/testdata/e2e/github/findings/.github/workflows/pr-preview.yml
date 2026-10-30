@@ -1,0 +1,23 @@
+name: PR Preview
+
+# pull_request_target runs with a read/write token in the BASE repo context,
+# but this workflow then checks out the untrusted PR HEAD. ISSUE-804 (critical).
+on:
+  pull_request_target:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Fork-controlled code, executed with elevated context.
+          ref: ${{ github.event.pull_request.head.sha }}
+      - run: npm ci
+      - run: npm run build
+
