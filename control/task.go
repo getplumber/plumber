@@ -365,6 +365,31 @@ func applyGitLabRegistryHost(pipeline *ir.NormalizedPipeline, project *gitlab.Pr
 	}
 }
 
+// collectGitLabTagProtection reads the tag protection for
+// tagMustBeProtected when its lane is collected and the run is not a
+// platform run. nil means not fetched. A failed read returns Known=false:
+// a network failure also degrades the run, a permission failure only
+// leaves the control not evaluated (markTagProtectionGap).
+func collectGitLabTagProtection(l *logrus.Entry, conf *configuration.Configuration, result *AnalysisResult) *gitlab.GitlabTagProtectionData {
+	if !anyCollectionConfig(conf, tagProtectionControlEnabledFor(configuration.ProviderGitLab)) {
+		return nil
+	}
+	result.markLaneCollected(laneGitLabTagProtection)
+	if conf.PlatformRun.Engaged() {
+		return nil
+	}
+	tagData, err := gitlab.CollectGitlabTagProtection(conf.ProjectPath, conf.GitlabToken, conf)
+	if err != nil {
+		if isNetworkError(err) {
+			// Same split as the other collectors: a network failure degrades
+			// the run, a permission failure leaves the control not evaluated.
+			markDegraded(result, degradedReasonTagProtectionPrefix+" (network or timeout)")
+		}
+		l.WithError(err).Warn("Tag protection could not be read; tagMustBeProtected will report not evaluated")
+	}
+	return tagData
+}
+
 // runRegoEngine invokes the experimental Rego/OPA rule engine on the
 // GitLab collector outputs and returns the aggregated findings. The
 // legacy Go controls always run and remain authoritative until parity
@@ -1286,22 +1311,7 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	// yet, so platform mode never fetches it (a CI job token holds no rights
 	// to it either): the control reports lane_not_served through
 	// controlsWithNoPlatformLane instead.
-	var tagData *gitlab.GitlabTagProtectionData
-	if anyCollectionConfig(conf, tagProtectionControlEnabledFor(configuration.ProviderGitLab)) {
-		result.markLaneCollected(laneGitLabTagProtection)
-		if !conf.PlatformRun.Engaged() {
-			var tErr error
-			tagData, tErr = gitlab.CollectGitlabTagProtection(conf.ProjectPath, conf.GitlabToken, conf)
-			if tErr != nil {
-				if isNetworkError(tErr) {
-					// Same split as the collectors above: a network failure degrades
-					// the run, a permission failure leaves the control not evaluated.
-					markDegraded(result, degradedReasonTagProtectionPrefix+" (network or timeout)")
-				}
-				l.WithError(tErr).Warn("Tag protection could not be read; tagMustBeProtected will report not evaluated")
-			}
-		}
-	}
+	tagData := collectGitLabTagProtection(l, conf, result)
 
 	// Rego/OPA rule engine evaluation — the single authoritative
 	// compliance path (the legacy Go controls were retired in

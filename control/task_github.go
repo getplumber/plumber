@@ -26,6 +26,10 @@ var fetchGitHubDefaultBranch = func(host, owner, repo string) (string, error) {
 // which otherwise needs network and auth.
 var scanGitHubWorkflowsRemote = githubpkg.ScanGitHubWorkflowsRemote
 
+// fetchGitHubTagProtection is a test seam over the tag rulesets and tags
+// fetch, which otherwise needs network and auth.
+var fetchGitHubTagProtection = githubpkg.FetchGitHubTagProtection
+
 // fetchGitHubEnvironments is a test seam over the environments lookup.
 // The default honors PLUMBER_DISABLE_GITHUB_API (same contract as
 // fetchGitHubDefaultBranch above) so offline test suites never hit the
@@ -335,7 +339,7 @@ func enrichGitHubTags(l *logrus.Entry, pipeline *ir.NormalizedPipeline, host str
 		return false
 	}
 	owner, repo, _ := gitHubOwnerRepo(projectPath)
-	tp, err := githubpkg.FetchGitHubTagProtection(host, owner, repo)
+	tp, err := fetchGitHubTagProtection(host, owner, repo)
 	pipeline.TagProtection = tp
 	if err != nil {
 		l.WithError(err).Warn("GitHub tag protection fetch failed; tagMustBeProtected will report not evaluated")
