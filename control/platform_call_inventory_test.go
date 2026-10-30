@@ -48,6 +48,19 @@ type gitlabRecorder struct {
 	// than answer, which is what a token that can read this project but not
 	// the include's SOURCE project produces.
 	failRefProbes bool
+	// tags and protectedTags are the JSON bodies of the tag listing and the
+	// protected tags listing. Empty serves `[]`, which leaves no tag
+	// pattern in use.
+	tags          string
+	protectedTags string
+}
+
+// jsonOrEmptyList returns body, or `[]` when it is empty.
+func jsonOrEmptyList(body string) []byte {
+	if body == "" {
+		return []byte(`[]`)
+	}
+	return []byte(body)
 }
 
 // A ledger has to name ENDPOINTS, not URLs, or the same run against a
@@ -139,7 +152,7 @@ func (g *gitlabRecorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasSuffix(path, "/repository/branches"):
 		_, _ = w.Write([]byte(`[{"name":"main"}]`))
 	case strings.HasSuffix(path, "/repository/tags"):
-		_, _ = w.Write([]byte(`[]`))
+		_, _ = w.Write(jsonOrEmptyList(g.tags))
 	case strings.Contains(path, "/repository/tags/"), strings.Contains(path, "/repository/branches/"):
 		if g.failRefProbes {
 			// NOT a 404. A 404 means "not that kind of ref", which is an
@@ -156,6 +169,8 @@ func (g *gitlabRecorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"message":"404 Not Found"}`))
 	case strings.HasSuffix(path, "/protected_branches"):
 		_, _ = w.Write([]byte(`[]`))
+	case strings.HasSuffix(path, "/protected_tags"):
+		_, _ = w.Write(jsonOrEmptyList(g.protectedTags))
 	case strings.HasSuffix(path, "/approval_rules"):
 		_, _ = w.Write([]byte(`[]`))
 	case strings.HasSuffix(path, "/approvals"):
@@ -260,6 +275,8 @@ gitlab:
     cicdVariablesMustBeMasked:
       enabled: true
     projectMustHaveSecurityPolicySource:
+      enabled: true
+    tagMustBeProtected:
       enabled: true
     containerImageMustNotUseForbiddenTags:
       enabled: true
@@ -504,7 +521,9 @@ func TestGitLabCallInventory(t *testing.T) {
 		"1x GET /api/v4/projects/:id/approval_rules",
 		"1x GET /api/v4/projects/:id/approvals",
 		"1x GET /api/v4/projects/:id/protected_branches",
+		"1x GET /api/v4/projects/:id/protected_tags",
 		"1x GET /api/v4/projects/:id/repository/branches",
+		"1x GET /api/v4/projects/:id/repository/tags",
 		// Two single-branch reads: the head sha of the analysed ref, and the
 		// image collection asking whether that ref is protected, which
 		// decides if a protected variable's value may expand a placeholder.
@@ -582,7 +601,7 @@ func TestPlatformModeRemovesMostGitLabRequests(t *testing.T) {
 	standalone := totalRequests(runInventory(t, false))
 	platformRun := totalRequests(runInventory(t, true))
 
-	const wantStandaloneTotal = 18
+	const wantStandaloneTotal = 20
 	const wantPlatformTotal = 3
 
 	if standalone != wantStandaloneTotal || platformRun != wantPlatformTotal {
@@ -1383,6 +1402,14 @@ func TestObservationsReachTheSameVerdictAsProbing(t *testing.T) {
 
 	probedFindings, probedGaps := verdicts(false)
 	observedFindings, observedGaps := verdicts(true)
+
+	// The one gap that differs by design, and not about includes: the
+	// snapshot carries no tag lane, so platform mode never reads tag
+	// protection and the control says so (controlsWithNoPlatformLane).
+	if got := observedGaps[controlTagMustBeProtected]; got != ReasonLaneNotServed {
+		t.Errorf("platform mode: %s = %q, want %q", controlTagMustBeProtected, got, ReasonLaneNotServed)
+	}
+	delete(observedGaps, controlTagMustBeProtected)
 
 	if !maps.Equal(probedFindings, observedFindings) {
 		t.Errorf("findings differ:\n  probed:   %v\n  observed: %v", probedFindings, observedFindings)

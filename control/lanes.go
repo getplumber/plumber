@@ -528,6 +528,26 @@ func (r *AnalysisResult) MarkFailedCollections(entries []ControlEntry) {
 	r.DropNotEvaluableFindings()
 }
 
+// markTagProtectionGap flags tagMustBeProtected when its collection ran but
+// could not read the rules or the tags authoritatively (a token without
+// scope, an instance without rulesets): the rule already abstains there, and
+// this mark is what makes the control report not evaluated rather than pass,
+// in a standalone run too (whose summary reads NotEvaluable, not StatusFor).
+// A collection that never ran is left to the lane markers.
+func markTagProtectionGap(r *AnalysisResult, entries []ControlEntry) {
+	tp := r.evaluatedPipeline().TagProtectionOrNil()
+	if tp == nil || tp.Known {
+		return
+	}
+	for _, e := range entries {
+		if e.ControlName == controlTagMustBeProtected && e.Skipped {
+			return
+		}
+	}
+	r.MarkNotEvaluable(controlTagMustBeProtected, ReasonCollectionFailed)
+	r.DropNotEvaluableFindings()
+}
+
 // NotEvaluableReason returns the machine-readable reason this control's own
 // data lane could not feed it, and whether it was marked at all.
 //
@@ -607,6 +627,11 @@ var controlsIndependentOfMergedConfig = map[string]bool{
 	"mergeRequestSettingsMustBeCompliant": true,
 	// Reads the project's linked security policy project over GraphQL.
 	"projectMustHaveSecurityPolicySource": true,
+	// Reads the provider's tag protection rules and tag names. On GitHub it
+	// also reads the workflows' tag triggers, but without them it still
+	// checks the configured patterns: a missing pipeline can only hide a
+	// finding (a trigger-only pattern), never invent one.
+	"tagMustBeProtected": true,
 }
 
 // snapshotLaneControls maps each platform snapshot lane identifier to the
@@ -706,8 +731,11 @@ func laneUnusableReason(run *platform.RunContext, lane string) string {
 // exist, so in platform mode there is nothing they could honestly evaluate
 // against and they must say so rather than pass.
 //
-// It is EMPTY today, and that is the point of keeping it. Its two entries
-// were projectMustHaveSecurityPolicySource and
+// tagMustBeProtected is here (#398): the snapshot has no protected_tags or
+// tags lane yet, and a CI job token cannot read them itself.
+//
+// It was EMPTY before that, and that is the point of keeping it. Its two
+// earlier entries were projectMustHaveSecurityPolicySource and
 // mergeRequestSettingsMustBeCompliant, written off on the strength of a
 // contract that had moved on: the platform has served
 // security_policy_project and project_details since 2026-08-27, and the
@@ -725,7 +753,9 @@ func laneUnusableReason(run *platform.RunContext, lane string) string {
 // ReasonLaneNotServed, for the same reason - the data was never on offer.
 // Whatever is added, check first that the contract has not already grown
 // the lane.
-var controlsWithNoPlatformLane = map[string]string{}
+var controlsWithNoPlatformLane = map[string]string{
+	controlTagMustBeProtected: ReasonLaneNotServed,
+}
 
 // MarkDegradedSnapshotLanes flags the controls whose platform snapshot lane
 // failed collection, plus the controls the snapshot has no lane for at all.
@@ -897,6 +927,8 @@ func ReEvaluateForConfig(
 		entries = GitHubControls(pc)
 	}
 	MarkUnconfiguredControls(&scopedResult, entries, pc, provider)
+	// The run marked a failed tag read only against the local config.
+	markTagProtectionGap(&scopedResult, entries)
 	// Every workflow file invalid: this policy's own workflow controls had
 	// nothing parsed to judge either (review of PR 560).
 	if provider == configuration.ProviderGitHub {

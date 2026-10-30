@@ -123,6 +123,13 @@ var controlsMeta = map[string]ControlMeta{
 		Description:    "Verifies that the analyzed branch is protected and that the protection settings are compliant: direct pushes and force pushes blocked, access levels tight enough, and code owner approval enforced where required.",
 		RequiresConfig: true,
 	},
+	"tagMustBeProtected": {
+		Providers:   []string{ProviderGitLab, ProviderGitHub},
+		DisplayName: "Tag must be protected",
+		Category:    CategoryAccessAndAuthorization,
+		ID:          "CTRL-510",
+		Description: "Verifies that release tag patterns in use (configured ones and those workflows trigger on) are protected: tag updates and deletions blocked and tag creation restricted.",
+	},
 	"mergeRequestApprovalRulesMustRequireMinimumApprovals": {
 		Providers:      []string{ProviderGitLab},
 		DisplayName:    "MR approval rules must require a minimum number of approvals",
@@ -672,13 +679,13 @@ var RenamedControls = map[string]string{
 // on/off, also add a typed struct in configuration/plumberconfig.go
 // and wire it through buildEngineConfig.
 //
-// As of 2026-10-27 (after v0.7.14), counted from this file and control/catalog.go:
-//   - controlsMeta declares 69 controls: 7 cross-provider, 45
+// As of 2026-10-29 (tagMustBeProtected added), counted from this file and control/catalog.go:
+//   - controlsMeta declares 70 controls: 8 cross-provider, 45
 //     GitHub-only, 17 GitLab-only.
-//   - GitLab: zero benched. All 24 GitLab-applicable controls ship, and
-//     GitLabControls returns exactly those 24.
-//   - GitHub: 27 benched, so 25 of the 52 GitHub-applicable controls
-//     reach users, and GitHubControls returns exactly those 25. None of
+//   - GitLab: zero benched. All 25 GitLab-applicable controls ship, and
+//     GitLabControls returns exactly those 25.
+//   - GitHub: 27 benched, so 26 of the 53 GitHub-applicable controls
+//     reach users, and GitHubControls returns exactly those 26. None of
 //     the 27 is cross-provider: the eight GitLab-shaped controls that
 //     used to sit here (includes, components, templates, hardcoded jobs,
 //     job variables, unsafe expansion, image sources) now declare

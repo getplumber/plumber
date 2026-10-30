@@ -28,11 +28,13 @@ var gitLabShapedControls = []string{
 // The sets below are snapshots taken on v0.7.14 before the change: what
 // GitHubControls renders, what reaches users on each provider (applicable
 // and not benched). The metadata fix must leave all three untouched.
+// tagMustBeProtected (#398) was added to both providers since.
 var wantGitHubControlsOrder = []string{
 	"containerImageMustNotUseForbiddenTags",
 	"actionsMustBePinnedByCommitSha",
 	"githubActionMustComeFromAuthorizedSources",
 	"branchMustBeProtected",
+	"tagMustBeProtected",
 	"securityJobsMustNotBeWeakened",
 	"pipelineMustNotUseDockerInDocker",
 	"pipelineMustNotExecuteUnverifiedScripts",
@@ -81,6 +83,7 @@ var wantLiveGitLab = []string{
 	"pipelineMustNotUseUnsafeVariableExpansion",
 	"projectMustHaveSecurityPolicySource",
 	"securityJobsMustNotBeWeakened",
+	"tagMustBeProtected",
 }
 
 func liveControls(provider string) []string {

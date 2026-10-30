@@ -72,6 +72,7 @@ reading the upstream docs.
 | Code | Name | Severity |
 | :--- | :--- | :--- |
 | [ISSUE-803](#issue-803--excessive-permissions) | `excessive-permissions` | high |
+| [ISSUE-510](#issue-510--tag-unprotected) | `tag-unprotected` | **critical** _(API)_ |
 
 ### Workflow hygiene — `6xx`
 
@@ -1850,6 +1851,69 @@ jobs:
     permissions:
       pull-requests: write   # only the job that needs it
     steps: [ { run: gh pr comment ... } ]
+```
+
+---
+
+## ISSUE-510 — `tag-unprotected`
+
+**Severity:** `critical` (`high` when no workflow runs on a tag push) • **Control:** `tagMustBeProtected`
+
+A release tag pattern is in use but anyone with push access can move,
+delete or create a matching tag. Tags are what release workflows run on
+and what consumers pin to, so a moved tag ships code nobody reviewed
+under a name everyone trusts: the tj-actions/changed-files compromise
+re-pointed existing version tags to a malicious commit.
+
+The patterns checked are `namePatterns` (default `v*`) plus every
+`on.push.tags` pattern of a workflow. A pattern is only checked while it
+is in use: an existing tag matches it, or a workflow triggers on it, so
+a repository that never tags stays quiet. The finding is critical when a
+workflow runs on a tag push (`on.push.tags`, `on.push.tags-ignore`, or
+`on: release`), high otherwise.
+
+A pattern is protected when active tag
+[rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets)
+(the repository's own or inherited from the organization) cover it with
+**Restrict updates**, **Restrict deletions** and, unless
+`requireCreationRestricted: false`, **Restrict creations**. The rules may
+come from different rulesets. A ruleset in `evaluate` mode does not
+count: it reports, it does not block.
+
+```yaml
+# ❌ before — release workflow on v* tags, no tag ruleset
+on:
+  push:
+    tags: ["v*"]
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - run: ./publish.sh
+```
+
+**Fix.** Settings > Rules > Rulesets > New tag ruleset: enforcement
+**Active**, target `v*` (or all tags), enable Restrict creations,
+Restrict updates and Restrict deletions, and add the release automation
+(a GitHub App or the repository admin role) to the bypass list.
+
+**Token.** Listing rulesets and tags needs only **Metadata: read**
+([fine-grained permissions](https://docs.github.com/en/rest/authentication/permissions-required-for-fine-grained-personal-access-tokens#repository-permissions-for-metadata)),
+which every `GITHUB_TOKEN` carries. Without access, or on a GHES version
+without rulesets, the control reports "not evaluated", never a false
+positive.
+
+**Config.**
+
+```yaml
+tagMustBeProtected:
+  enabled: true
+  # Tag name patterns that must be protected; workflow tag triggers are added
+  namePatterns:
+    - v*
+  # Also require tag creation to be restricted
+  requireCreationRestricted: true
 ```
 
 ---

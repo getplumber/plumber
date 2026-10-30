@@ -1844,6 +1844,58 @@
       "issueCodeEntryKinds": {}
     },
     {
+      "id": "CTRL-510",
+      "name": "tagMustBeProtected",
+      "displayName": "Tag must be protected",
+      "category": "Access and Authorization",
+      "providers": [
+        "gitlab",
+        "github"
+      ],
+      "description": "Verifies that release tag patterns in use (configured ones and those workflows trigger on) are protected: tag updates and deletions blocked and tag creation restricted.",
+      "requiresConfig": false,
+      "configSchema": {
+        "control": "tagMustBeProtected",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "nullable": true,
+            "toggle": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          },
+          {
+            "name": "namePatterns",
+            "type": "array",
+            "optional": true,
+            "description": "List of tag name patterns that must be protected; supports wildcards. The tag patterns of workflow push triggers are added to it. A pattern is only checked when an existing tag matches it or a workflow triggers on it.",
+            "elem": {
+              "type": "string",
+              "optional": false
+            },
+            "default": "v*"
+          },
+          {
+            "name": "requireCreationRestricted",
+            "type": "bool",
+            "optional": true,
+            "nullable": true,
+            "toggle": true,
+            "description": "When true, tag creation must also be restricted, on top of tag updates and deletions being blocked.",
+            "default": "true"
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-510"
+      ],
+      "issueCodeRoles": {
+        "ISSUE-510": "gate"
+      },
+      "issueCodeEntryKinds": {}
+    },
+    {
       "id": "CTRL-705",
       "name": "untrustedTriggersMustNotWriteCache",
       "displayName": "Untrusted triggers must not write the cache",
@@ -2875,6 +2927,15 @@
       "remediation": "Align the project's merge-request settings in Settings \u003e Merge requests with your policy: set the required merge method and squash option, and toggle the merge-train, skipped-pipeline, discussion-resolution, and source-branch-removal options to the expected values.",
       "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-506",
       "controlName": "mergeRequestSettingsMustBeCompliant"
+    },
+    {
+      "code": "ISSUE-510",
+      "severity": "critical",
+      "title": "Tag pattern not protected",
+      "description": "A release tag pattern in use (an existing tag matches it, or a workflow triggers on it) is not fully protected: anyone with push access can move, delete or create a release tag, and ship code that consumers pinned to that tag, or that a tag-triggered release workflow publishes, without review.",
+      "remediation": "Protect the tag pattern. On GitLab: Settings \u003e Repository \u003e Protected tags, add the pattern with Maintainers (or a narrower set) allowed to create. On GitHub: Settings \u003e Rules \u003e Rulesets, add an active tag ruleset targeting the pattern with Restrict creations, Restrict updates and Restrict deletions, and grant your release automation a bypass.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-510",
+      "controlName": "tagMustBeProtected"
     },
     {
       "code": "ISSUE-601",

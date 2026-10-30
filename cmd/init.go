@@ -1056,6 +1056,22 @@ func defaultBranchPatterns() string {
 	return ""
 }
 
+// defaultTagProtection is the tagMustBeProtected block the wizard writes
+// with the access controls: the embedded default's patterns, enabled. The
+// wizard asks nothing about it; the defaults are the release-tag
+// convention and an edit away from any other.
+func defaultTagProtection() *configuration.TagProtectionControlConfig {
+	patterns := []string{"v*"}
+	if c := defaultGitLabControls().TagMustBeProtected; c != nil && c.NamePatterns != nil {
+		patterns = c.NamePatterns
+	}
+	return &configuration.TagProtectionControlConfig{
+		Enabled:                   boolPtrInit(true),
+		NamePatterns:              patterns,
+		RequireCreationRestricted: boolPtrInit(true),
+	}
+}
+
 // defaultTrustedActionsMinimumStars sources the star floor for
 // githubActionMustComeFromAuthorizedSources from the embedded default.
 func defaultTrustedActionsMinimumStars() int {
@@ -1300,6 +1316,7 @@ func (st *initWizardState) applyAccessControls(gl, gh *configuration.ProviderCon
 			MinMergeAccessLevel:       intPtrInit(parseIntInit(st.BranchMinMergeAccessLevel, 30)),
 			MinPushAccessLevel:        intPtrInit(parseIntInit(st.BranchMinPushAccessLevel, 40)),
 		}
+		gl.Controls.TagMustBeProtected = defaultTagProtection()
 		if st.MRApprovalMinEnabled {
 			gl.Controls.MergeRequestApprovalRulesMustRequireMinimumApprovals = &configuration.MRApprovalRulesMinApprovalsControlConfig{
 				Enabled:                  boolPtrInit(true),
@@ -1336,6 +1353,7 @@ func (st *initWizardState) applyAccessControls(gl, gh *configuration.ProviderCon
 			AllowForcePush:            boolPtrInit(st.BranchAllowForcePush),
 			CodeOwnerApprovalRequired: boolPtrInit(st.BranchCodeOwnerApprovalRequiredGitHub),
 		}
+		gh.Controls.TagMustBeProtected = defaultTagProtection()
 	}
 }
 

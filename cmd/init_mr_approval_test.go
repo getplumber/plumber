@@ -117,3 +117,23 @@ func TestApplyAccessControls_MRApprovalSettingsMapping(t *testing.T) {
 		}
 	})
 }
+
+// applyAccessControls writes tagMustBeProtected on both providers. A
+// dropped assignment or a regressed defaultTagProtection would silently
+// leave the control out of the .plumber.yaml `plumber config init` emits.
+func TestApplyAccessControls_TagProtection(t *testing.T) {
+	gl, gh := &configuration.ProviderConfig{}, &configuration.ProviderConfig{}
+	(&initWizardState{}).applyAccessControls(gl, gh)
+	for provider, pc := range map[string]*configuration.ProviderConfig{"gitlab": gl, "github": gh} {
+		c := pc.Controls.TagMustBeProtected
+		if c == nil || !c.IsEnabled() {
+			t.Fatalf("%s: tagMustBeProtected should be emitted enabled, got %+v", provider, c)
+		}
+		if got := c.EffectiveNamePatterns(); len(got) != 1 || got[0] != "v*" {
+			t.Errorf("%s: namePatterns = %v, want [v*]", provider, got)
+		}
+		if !c.IsCreationRestrictionRequired() {
+			t.Errorf("%s: requireCreationRestricted should default to true", provider)
+		}
+	}
+}

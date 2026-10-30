@@ -114,6 +114,8 @@ var gitLabMessageStyleKeys = map[string][]string{
 	"ISSUE-504": {},
 	"ISSUE-505": {"branchName"},
 	"ISSUE-506": {},
+	// Tag pattern not protected: the pattern.
+	"ISSUE-510": {"tagPattern"},
 	"ISSUE-601": {},
 }
 
@@ -153,6 +155,10 @@ var dataArrayKinds = map[string]bool{
 	// 2026-10-16 section 6): `uses:` references a consumer parses (the
 	// identity, the paths), rendered for a reader by the message's clause.
 	"ISSUE-402.via": false,
+	// The protections a tag pattern lacks, as stable tokens (update,
+	// deletion, creation). A consumer parses them; the message renders
+	// them as clauses.
+	"ISSUE-510.missingProtections": false,
 }
 
 // messageBranches is the render manifest, and the answer to a defect class
@@ -256,6 +262,11 @@ var messageBranches = []messageBranch{
 	{"ISSUE-506", "subject resolveOutdatedDiffDiscussions", "Resolving outdated diff discussions is", ""},
 	{"ISSUE-506", "subject printingMergeRequestLinkEnabled", "Printing the merge request link on push is", ""},
 	{"ISSUE-506", "subject removeSourceBranchAfterMerge", "Removing the source branch after merge is", ""},
+	{"ISSUE-510", "nothing protected", "` is not protected.", ""},
+	{"ISSUE-510", "partly protected", "` is not fully protected, ", ""},
+	{"ISSUE-510", "clause update", "tag updates are not blocked", ""},
+	{"ISSUE-510", "clause deletion", "tag deletions are not blocked", ""},
+	{"ISSUE-510", "clause creation", "tag creation is not restricted", ""},
 	{"ISSUE-601", "nothing linked, no expectation", "is linked to this project", ""},
 	{"ISSUE-601", "nothing linked, expectation set", "is linked (expected", ""},
 	{"ISSUE-601", "wrong project, id only", ") is not the expected one (expected id", ""},

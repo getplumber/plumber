@@ -654,6 +654,7 @@ var mrCommentControlOrder = []struct {
 	{"containerImageMustNotUseForbiddenTags", "Container images must not use forbidden reference"},
 	{"containerImageMustComeFromAuthorizedSources", "Container images must come from authorized sources"},
 	{"branchMustBeProtected", "Branch must be protected"},
+	{"tagMustBeProtected", "Tag must be protected"},
 	{"projectMustHaveSecurityPolicySource", "Project must have a security policy source"},
 	{"mergeRequestApprovalRulesMustRequireMinimumApprovals", "MR approval rules must require a minimum number of approvals"},
 	{"mergeRequestApprovalRulesMustCoverAllProtectedBranches", "MR approval rules must cover all protected branches"},

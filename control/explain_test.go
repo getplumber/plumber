@@ -931,6 +931,23 @@ func TestBestFixSubjectUsesIncludePathForAJobLessFinding(t *testing.T) {
 	}
 }
 
+// ISSUE-510 is job-less too (a tag pattern is not a job), so its subject
+// comes from tagPattern in bestFixSubjectKeys.
+func TestBestFixSubjectUsesTagPatternForATagFinding(t *testing.T) {
+	sit := includeSituation(ir.VisibilityPublic, "build")
+	f := finding("ISSUE-510", "", map[string]any{"tagPattern": "v*"})
+	in := ScoreInputV4{Findings: []opaengine.Finding{f}}
+	in.Paths = assemblePaths(in.Findings, sit)
+	current := ComputePlumberScoreV4(in)
+	fix := ComputeBestFix(in, sit, current)
+	if fix == nil || fix.Subject != "v*" {
+		t.Fatalf("want tagPattern as the subject, got %+v", fix)
+	}
+	if strings.Contains(fix.Sentence, "(``)") {
+		t.Errorf("sentence = %q, empty backticks", fix.Sentence)
+	}
+}
+
 // A name rendered in backticks is attacker text on a merge-request
 // pipeline (the CI configuration is the author's), so code() strips every
 // backtick and control character (a newline, a carriage return) to a
