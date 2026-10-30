@@ -91,7 +91,8 @@ func detail(id int64, sourceType string, include, exclude []string, rules ...str
 
 func TestFetchGitHubTagProtection_MapsActiveRulesetsAndTags(t *testing.T) {
 	org := detail(2, "Organization", []string{"~ALL"}, nil, "creation")
-	org["conditions"].(map[string]any)["repository_name"] = map[string]any{"include": []string{"r*"}, "exclude": []string{}}
+	// An organization ruleset on every repository: GitHub's ~ALL sentinel.
+	org["conditions"].(map[string]any)["repository_name"] = map[string]any{"include": []string{"~ALL"}, "exclude": []string{}}
 	otherRepo := detail(4, "Organization", []string{"~ALL"}, nil, "update")
 	otherRepo["conditions"].(map[string]any)["repository_name"] = map[string]any{"include": []string{"elsewhere"}}
 	api := &tagAPI{
@@ -229,6 +230,34 @@ func TestFetchGitHubTagProtection_RulesetListingCapIsUnknown(t *testing.T) {
 	}
 	if got == nil || got.Known {
 		t.Fatalf("want Known=false, got %+v", got)
+	}
+}
+
+// Dropping an organization ruleset that applies would invent a finding,
+// keeping one that does not would hide one.
+func TestRulesetAppliesToRepo(t *testing.T) {
+	cases := []struct {
+		name string
+		cond *remoteIncludeExclude
+		want bool
+	}{
+		{"no repository condition", nil, true},
+		{"every repository", &remoteIncludeExclude{Include: []string{"~ALL"}}, true},
+		{"name pattern matching", &remoteIncludeExclude{Include: []string{"r*"}}, true},
+		{"name pattern not matching", &remoteIncludeExclude{Include: []string{"elsewhere"}}, false},
+		{"every repository but this one", &remoteIncludeExclude{Include: []string{"~ALL"}, Exclude: []string{"r"}}, false},
+		{"every repository but others", &remoteIncludeExclude{Include: []string{"~ALL"}, Exclude: []string{"other*"}}, true},
+		{"exclude only, matching", &remoteIncludeExclude{Exclude: []string{"r*"}}, false},
+		{"exclude only, not matching", &remoteIncludeExclude{Exclude: []string{"other"}}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rs := &remoteRuleset{}
+			rs.Conditions.RepositoryName = tc.cond
+			if got := rulesetAppliesToRepo(rs, "r"); got != tc.want {
+				t.Fatalf("rulesetAppliesToRepo = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

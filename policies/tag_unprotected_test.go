@@ -278,6 +278,8 @@ func TestIssue507_OccurrenceSeverity(t *testing.T) {
 		{"GitHub filter quantifiers overlapping through a tag", &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, TagProtection: &ir.TagProtection{Known: true, Tags: []string{"v1.0.0"}, Rules: []ir.TagProtectionRule{fullTagRule("v*.*")}}, Jobs: []ir.Job{{Name: "r/p", PushTags: []string{"v[0-9]+.[0-9]+.[0-9]+"}}}}, "critical"},
 		{"GitHub release trigger", &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, TagProtection: tp(), Jobs: []ir.Job{{Name: "r/p", Triggers: []string{"release"}}}}, "critical"},
 		{"inert release job", &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, TagProtection: tp(), Jobs: []ir.Job{{Name: "r/p", Triggers: []string{"release"}, Inert: "disabled"}}}, "high"},
+		{"GitHub push tags-ignore", &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, TagProtection: tp(), Jobs: []ir.Job{{Name: "r/p", Triggers: []string{"push"}, PushTagsIgnore: []string{"*-rc*"}}}}, "critical"},
+		{"inert push tags-ignore job", &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, TagProtection: tp(), Jobs: []ir.Job{{Name: "r/p", Triggers: []string{"push"}, PushTagsIgnore: []string{"*-rc*"}, Inert: "disabled"}}}, "high"},
 		{"GitHub bare push", &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, TagProtection: tp(), Jobs: []ir.Job{{Name: "r/p", Triggers: []string{"push"}}}}, "high"},
 		{"GitLab only tags", &ir.NormalizedPipeline{Provider: ir.ProviderGitLab, TagProtection: tp(), Jobs: []ir.Job{{Name: "release", Only: []string{"tags"}}}}, "critical"},
 		{"GitLab rule on CI_COMMIT_TAG", &ir.NormalizedPipeline{Provider: ir.ProviderGitLab, TagProtection: tp(), Jobs: []ir.Job{{Name: "release", Rules: []map[string]any{{"if": "$CI_COMMIT_TAG"}}}}}, "critical"},

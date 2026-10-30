@@ -15,6 +15,10 @@ import (
 )
 
 func tagProtectionServer(protectedStatus int, protectedBody, tagsBody string) *httptest.Server {
+	return tagProtectionServerWithTags(protectedStatus, protectedBody, http.StatusOK, tagsBody)
+}
+
+func tagProtectionServerWithTags(protectedStatus int, protectedBody string, tagsStatus int, tagsBody string) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/protected_tags"):
@@ -24,6 +28,10 @@ func tagProtectionServer(protectedStatus int, protectedBody, tagsBody string) *h
 			}
 			_, _ = w.Write([]byte(protectedBody))
 		case strings.HasSuffix(r.URL.Path, "/repository/tags"):
+			if tagsStatus != http.StatusOK {
+				w.WriteHeader(tagsStatus)
+				return
+			}
 			_, _ = w.Write([]byte(tagsBody))
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -73,6 +81,39 @@ func TestCollectGitlabTagProtection(t *testing.T) {
 		}
 		if data == nil || data.Known {
 			t.Fatalf("want Known=false, got %+v", data)
+		}
+	})
+
+	t.Run("a failed tag listing is unknown, not partial", func(t *testing.T) {
+		srv := tagProtectionServerWithTags(http.StatusOK, `[]`, http.StatusInternalServerError, "")
+		defer srv.Close()
+		conf := &configuration.Configuration{GitlabURL: srv.URL, HTTPClientTimeout: 30 * time.Second}
+
+		data, err := CollectGitlabTagProtection("group/project", "tok", conf)
+		if err == nil {
+			t.Fatal("want the error surfaced")
+		}
+		if data == nil || data.Known {
+			t.Fatalf("want Known=false, got %+v", data)
+		}
+	})
+
+	t.Run("tags past the page cap are checked up to the cap", func(t *testing.T) {
+		entries := make([]string, 100)
+		for i := range entries {
+			entries[i] = fmt.Sprintf(`{"name":"t%d"}`, i)
+		}
+		// Every page comes back full: the listing stops at the cap and says so.
+		srv := tagProtectionServer(http.StatusOK, `[]`, "["+strings.Join(entries, ",")+"]")
+		defer srv.Close()
+		conf := &configuration.Configuration{GitlabURL: srv.URL, HTTPClientTimeout: 30 * time.Second}
+
+		data, err := CollectGitlabTagProtection("group/project", "tok", conf)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !data.Known || !data.TagsTruncated || len(data.Tags) != maxTagListingPages*100 {
+			t.Fatalf("want Known, truncated, %d tags; got known=%v truncated=%v n=%d", maxTagListingPages*100, data.Known, data.TagsTruncated, len(data.Tags))
 		}
 	})
 

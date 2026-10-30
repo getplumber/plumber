@@ -1869,8 +1869,8 @@ The patterns checked are `namePatterns` (default `v*`) plus every
 `on.push.tags` pattern of a workflow. A pattern is only checked while it
 is in use: an existing tag matches it, or a workflow triggers on it, so
 a repository that never tags stays quiet. The finding is critical when a
-workflow runs on a tag push (`on.push.tags`, or `on: release`), high
-otherwise.
+workflow runs on a tag push (`on.push.tags`, `on.push.tags-ignore`, or
+`on: release`), high otherwise.
 
 A pattern is protected when active tag
 [rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets)

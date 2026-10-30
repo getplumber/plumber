@@ -121,7 +121,8 @@ _pattern_triggered(pattern, tp) if {
 }
 
 # _triggered: the pattern's own trigger, or a workflow that runs on tags
-# without naming a pattern (a GitHub release, a GitLab tag pipeline).
+# without naming a pattern (a GitHub release or tags-ignore push, a GitLab
+# tag pipeline).
 # Those raise the severity but never put a pattern in use on their own.
 _triggered(pattern, tp) if _pattern_triggered(pattern, tp)
 
@@ -129,6 +130,14 @@ _triggered(_, _) if {
 	some job in _jobs
 	_live(job)
 	"release" in object.get(job, "triggers", [])
+}
+
+# A push trigger with tags-ignore runs on every tag it does not ignore
+# (GitHub rejects tags and tags-ignore on the same event).
+_triggered(_, _) if {
+	some job in _jobs
+	_live(job)
+	count(object.get(job, "pushTagsIgnore", [])) > 0
 }
 
 _triggered(_, _) if {
