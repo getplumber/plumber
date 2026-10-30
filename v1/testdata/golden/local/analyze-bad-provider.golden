@@ -1,0 +1,7 @@
+$ plumber analyze --provider bogus --project a/b
+exit: 2
+--- stdout
+
+--- stderr
+Error: --provider must be 'github' or 'gitlab' (got "bogus")
+

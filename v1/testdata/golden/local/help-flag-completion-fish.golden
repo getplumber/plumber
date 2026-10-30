@@ -1,0 +1,27 @@
+$ plumber completion fish --help
+exit: 0
+--- stdout
+Generate the autocompletion script for the fish shell.
+
+To load completions in your current shell session:
+
+	plumber completion fish | source
+
+To load completions for every new session, execute once:
+
+	plumber completion fish > ~/.config/fish/completions/plumber.fish
+
+You will need to start a new shell for this setup to take effect.
+
+Usage:
+  plumber completion fish [flags]
+
+Flags:
+  -h, --help              help for fish
+      --no-descriptions   disable completion descriptions
+
+Global Flags:
+  -v, --verbose   Enable debug logging on stderr (level=debug); replaces the progress bar
+
+--- stderr
+

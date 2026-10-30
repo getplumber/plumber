@@ -1,0 +1,138 @@
+$ plumber help analyze
+exit: 0
+--- stdout
+Analyze the CI/CD configuration and report its security findings.
+
+Without TARGET, the repository is the git remote of the current directory.
+With TARGET, it is that repository, fetched through the provider API:
+  github.com/owner/repo, https://github.com/owner/repo, owner/repo (github.com),
+  gitlab.com/group/project, https://gitlab.example.com/group/sub/project,
+  git@host:path.git. A /tree/<branch> suffix selects the branch; the other page
+  suffixes a browser URL carries (/blob, /pull, /-/merge_requests) are ignored.
+  Any host other than github.com and gitlab.com is GitLab unless --provider github.
+
+GitHub (github.com remote, or a GitHub TARGET / --project):
+  Inside a clone, scans the local .github/workflows and the repository settings.
+  With a TARGET or --project, fetches the workflows through the GitHub API.
+  Token: GH_TOKEN (GH_ENTERPRISE_TOKEN for a GitHub Enterprise Server host).
+
+GitLab (gitlab.com or self-hosted remote, or a GitLab TARGET / --gitlab-url):
+  Connects to GitLab, retrieves CI/CD configuration and project settings, and runs
+  checks including pipeline origins, images, tags, and branch protection.
+  Token: GITLAB_TOKEN, unless --platform is set: platform mode reads the
+  configuration and project settings from the platform, so a CI job can run with
+  no GitLab token at all.
+
+Every run keeps its JSON report in the user cache directory, under
+plumber/runs/<provider>/<owner>/<repo>.json (plumber/runs/local/<hash>.json
+without a project), where plumber explain -a N reads an attack path back.
+
+Flags (auto-detected from git remote if not specified; TARGET sets them for you):
+  --gitlab-url    GitLab instance URL (auto-detected from git remote)
+  --github-url    GitHub Enterprise Server API host (empty = api.github.com)
+  --project       Full path of the project (auto-detected from git remote)
+  --provider      Force github or gitlab when the host does not tell
+
+Optional flags:
+  --config           Path to .plumber.yaml config file (default: .plumber.yaml)
+  --min-points       Minimum Plumber Score points to pass, 0-100 (default: 100 — any finding fails)
+  --min-score        Minimum Plumber Score letter to pass, A-E (e.g. B fails on C, D, E)
+  --threshold        Deprecated: minimum percentage of passing controls, 0-100; use --min-points / --min-score
+  --branch           Branch to analyze (defaults to project's default branch)
+  --print            Print the human-readable report and, on a terminal, the progress bar (default: true). Log verbosity is controlled by --verbose, file outputs by --output/--sarif/...
+  --output           Write JSON results to file (optional)
+  --pbom             Write PBOM (Pipeline Bill of Materials) to file (optional)
+  --pbom-cyclonedx   Write PBOM in CycloneDX format for integration with security tools
+  --mr-comment       Post/update a Plumber comment on the merge request (requires api scope, merge request pipeline only)
+  --badge            Create/update a Plumber letter-score badge on the project (requires api scope; only runs on default branch)
+  --score            Letter score, points, bar, and counts in stdout (banner only); points + score in JSON/PBOM/CycloneDX; badge/MR use letter when set (optional)
+  --score-point      Same as --score plus full points breakdown in stdout and MR comment (optional; wins if both set)
+  --score-push       Publish this repo's Plumber Score to the hosted badge service (CI only; a local run is a no-op) (optional)
+  --score-endpoint   Score service base URL (default https://score.getplumber.io); override only for a self-hosted score service (optional)
+  --score-profile    Scoring formula: v4 (attack paths, default) or v3 (per-code severities)
+  --controls         Run only listed controls (comma-separated)
+  --skip-controls    Skip listed controls (comma-separated)
+  --no-controls      Run no control at all: collect the pipeline, write the requested inventory
+                     artifacts (PBOM, JSON, CSV, OCSF), skip evaluation, withhold the score, exit 0.
+                     Every control reports as skipped, never passed. --sarif / --glsast are NOT
+                     written (an empty security report clears existing alerts). Overrides the
+                     controls enabled in .plumber.yaml; cannot be combined with --controls /
+                     --skip-controls
+  --fail-warnings    Treat configuration warnings as errors (exit 2)
+  --ci-config-path   Override the CI configuration file path (default: auto-detected from GitLab project settings, usually .gitlab-ci.yml)
+
+Exit codes:
+  0  Analysis passed (score gate met, or --no-controls with data collection intact)
+  1  Gate failure (Plumber Score below --min-points / --min-score, or deprecated --threshold not met)
+  2  Runtime error (configuration error, network failure, missing token, etc.)
+
+Examples:
+  # Set token via environment variable
+  export GITLAB_TOKEN=glpat-xxxx
+
+  # Analyze the current repo (provider, host and project from the git remote)
+  plumber analyze
+
+  # Analyze another repository, on GitHub or GitLab
+  plumber analyze github.com/owner/repo
+  plumber analyze https://gitlab.com/mygroup/myproject
+  plumber analyze https://gitlab.example.com/mygroup/myproject/-/tree/release
+
+  # The same with explicit flags
+  plumber analyze --provider github --project owner/repo
+  plumber analyze --gitlab-url https://gitlab.com --project mygroup/myproject
+
+  # Analyze with custom config and a relaxed score gate
+  plumber analyze gitlab.com/mygroup/myproject --config custom.yaml --min-points 80
+
+  # Analyze and save JSON to file (no stdout)
+  plumber analyze gitlab.com/mygroup/myproject --print=false --output results.json
+
+  # Analyze a project that uses a custom CI configuration file path
+  plumber analyze --ci-config-path my-custom-ci.yml
+
+  # PBOM only: no control evaluated, no score, no gate (exit 0 unless collection fails)
+  plumber analyze --pbom-cyclonedx pbom.cdx --no-controls --print=false
+
+Usage:
+  plumber analyze [TARGET] [flags]
+
+Flags:
+      --badge                   Create/update a Plumber compliance badge on the project (requires api scope; only runs on default branch) (env: PLUMBER_ANALYZE_BADGE)
+      --branch string           Branch to analyze (defaults to project's default branch) (env: PLUMBER_ANALYZE_BRANCH)
+      --ci-config-path string   Override the CI configuration file path (default: auto-detected from GitLab project settings, usually .gitlab-ci.yml) (env: PLUMBER_ANALYZE_CI_CONFIG_PATH)
+      --config string           Path to .plumber.yaml config file (env: PLUMBER_ANALYZE_CONFIG) (default ".plumber.yaml")
+      --controls string         Run only listed controls (comma-separated) (env: PLUMBER_ANALYZE_CONTROLS)
+      --csv string              Write CSV results to file (env: PLUMBER_ANALYZE_CSV)
+      --fail-warnings           Treat configuration warnings as errors (exit 2) (env: PLUMBER_ANALYZE_FAIL_WARNINGS)
+      --github-url string       GitHub Enterprise Server API host (empty = api.github.com) (env: PLUMBER_ANALYZE_GITHUB_URL)
+      --gitlab-url string       GitLab instance URL (auto-detected from git remote, required otherwise) (env: PLUMBER_ANALYZE_GITLAB_URL)
+      --glsast string           Write a GitLab SAST report (gl-sast-report.json) to file (for the GitLab Security Dashboard / MR widget) (env: PLUMBER_ANALYZE_GLSAST)
+  -h, --help                    help for analyze
+      --min-points float        Minimum Plumber Score points to pass, 0-100 (default 100: any finding fails) (env: PLUMBER_ANALYZE_MIN_POINTS) (default 100)
+      --min-score string        Minimum Plumber Score letter to pass, A-E (e.g. B fails on C, D, E) (env: PLUMBER_ANALYZE_MIN_SCORE)
+      --mr-comment              Post/update a compliance comment on the merge request (requires api scope token; only works in merge request pipelines) (env: PLUMBER_ANALYZE_MR_COMMENT)
+      --no-controls             Run no controls at all: collect the pipeline and write the requested inventory artifacts (PBOM, JSON, CSV, OCSF), skip evaluation, withhold the score, and never fail the gate (env: PLUMBER_ANALYZE_NO_CONTROLS)
+      --ocsf string             Write OCSF Compliance Finding results (JSON array) to file (for OCSF-consuming tools and GRC platforms) (env: PLUMBER_ANALYZE_OCSF)
+  -o, --output string           Write JSON results to file (env: PLUMBER_ANALYZE_OUTPUT)
+      --pbom string             Write PBOM (Pipeline Bill of Materials) to file (env: PLUMBER_ANALYZE_PBOM)
+      --pbom-cyclonedx string   Write PBOM in CycloneDX format (for security tool integration) (env: PLUMBER_ANALYZE_PBOM_CYCLONEDX)
+      --platform string         Plumber platform base URL; turns on platform mode (policies and collected data come from the platform) and pushes this run's full results there over CI OIDC, taking precedence over --score-push (env: PLUMBER_ANALYZE_PLATFORM)
+      --platform-allow-http     Allow --platform to be plain http for a non-loopback host; without it, http to anything but localhost/127.0.0.0/8/::1 is refused before any credential is sent (env: PLUMBER_ANALYZE_PLATFORM_ALLOW_HTTP)
+      --print                   Print the human-readable report (and, on a terminal, the progress bar); JSON/SARIF file outputs are unaffected (env: PLUMBER_ANALYZE_PRINT) (default true)
+      --project string          Project path (auto-detected from git remote, required otherwise) (env: PLUMBER_ANALYZE_PROJECT)
+      --provider string         Force provider: 'github' or 'gitlab' (overrides auto-detection; host still auto-detected) (env: PLUMBER_ANALYZE_PROVIDER)
+      --sarif string            Write SARIF 2.1.0 results to file (for GitHub Code Scanning / GitLab Security Dashboard) (env: PLUMBER_ANALYZE_SARIF)
+      --score                   Banner: letter score, points, bar, severity counts on stdout; points + score in JSON, PBOM, CycloneDX; badge shows letter when set (env: PLUMBER_ANALYZE_SCORE)
+      --score-endpoint string   Score service base URL (default https://score.getplumber.io); override only for a self-hosted score service (env: PLUMBER_ANALYZE_SCORE_ENDPOINT)
+      --score-point             Like --score plus full points breakdown in stdout and MR comment; overrides --score when both are set (env: PLUMBER_ANALYZE_SCORE_POINT)
+      --score-profile string    Scoring formula: v4 (attack paths, default) or v3 (per-code severities) (env: PLUMBER_ANALYZE_SCORE_PROFILE) (default "v4")
+      --score-push              Publish this repo's Plumber Score to the hosted badge service (CI only; needs a CI OIDC id-token, so a local run is a no-op) (env: PLUMBER_ANALYZE_SCORE_PUSH)
+      --skip-controls string    Skip listed controls (comma-separated) (env: PLUMBER_ANALYZE_SKIP_CONTROLS)
+      --threshold float         Deprecated: minimum percentage of passing controls, 0-100; use --min-points / --min-score instead (env: PLUMBER_ANALYZE_THRESHOLD) (default 100)
+
+Global Flags:
+  -v, --verbose   Enable debug logging on stderr (level=debug); replaces the progress bar
+
+--- stderr
+

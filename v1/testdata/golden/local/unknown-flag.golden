@@ -1,0 +1,7 @@
+$ plumber analyze --nope
+exit: 2
+--- stdout
+
+--- stderr
+Error: unknown flag: --nope
+

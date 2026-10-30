@@ -1,0 +1,5 @@
+# Case invalid-yaml: this file does not parse (unclosed flow sequence).
+stages: [build
+build:
+  script:
+    - echo never parsed

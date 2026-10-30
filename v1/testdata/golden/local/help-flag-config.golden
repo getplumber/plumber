@@ -1,0 +1,28 @@
+$ plumber config --help
+exit: 0
+--- stdout
+Commands for viewing and managing Plumber configuration files.
+
+Usage:
+  plumber config [command]
+
+Available Commands:
+  diff        Display the difference between current config and defaults
+  generate    Write the default .plumber.yaml template (commented)
+  init        Interactive wizard for a tailored minimal .plumber.yaml
+  migrate     Upgrade .plumber.yaml to the current schema (v2.0, per-provider, current control names)
+  resolve     Print the fully resolved effective configuration
+  slim        Rewrite a full .plumber.yaml as a minimal overlay
+  validate    Validate a configuration file
+  view        Display the effective configuration
+
+Flags:
+  -h, --help   help for config
+
+Global Flags:
+  -v, --verbose   Enable debug logging on stderr (level=debug); replaces the progress bar
+
+Use "plumber config [command] --help" for more information about a command.
+
+--- stderr
+

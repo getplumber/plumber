@@ -129,6 +129,8 @@ They must declare the same *set* of control blocks (values may differ); `configu
 | `make build` | Build binary |
 | `make build-all` | Cross-compile for Linux, macOS, and Windows |
 | `make test` | Run all tests |
+| `make test-integration` | CLI suite: every input that makes no backend request, against the built binary (offline, no token) |
+| `make test-e2e` | CLI suite: every input that calls GitHub or GitLab, on the E2E fixture repositories |
 | `make lint` | Lint code |
 | `make run` | `go run .` (quick dev iteration) |
 | `make install` | Build + install to `/usr/local/bin/` |
@@ -189,6 +191,10 @@ behave differently there than on a local checkout. Compare like with like when
 testing a rule.
 
 ### Running Tests
+
+> **CLI refactoring.** The CLI is being refactored ([monorepo#640](https://github.com/getplumber/monorepo/issues/640)).
+> That work branches from and targets the `v1` branch, and its test suite lives in
+> [`v1/`](v1/README.md): `make test-integration` runs it offline before every push.
 
 ```bash
 # Run all tests

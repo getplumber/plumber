@@ -1,0 +1,4144 @@
+{
+  "projectPath": "getplumber-examples/plumber-example-critical",
+  "projectId": 0,
+  "defaultBranch": "main",
+  "ciConfigSource": "remote",
+  "ciValid": true,
+  "ciMissing": false,
+  "pipelineOriginMetrics": {
+    "jobTotal": 9,
+    "originAction": 4,
+    "originActionNested": 2,
+    "originActionTrustedExempt": 14,
+    "originActionUnpinned": 2,
+    "originReusableWorkflow": 1,
+    "originReusableWorkflowSecretsInherit": 1,
+    "originTotal": 5,
+    "unexpandedActions": 1,
+    "workflowsTotal": 6
+  },
+  "pipelineImageMetrics": {
+    "total": 1
+  },
+  "minPoints": 100,
+  "passed": false,
+  "plumberScore": {
+    "profileId": "scoring-v4",
+    "counts": {
+      "critical": 12,
+      "high": 9,
+      "medium": 2,
+      "low": 5
+    },
+    "rawPoints": 0,
+    "rawPointsUnclamped": -77,
+    "finalPoints": 0,
+    "score": "E",
+    "criticalMalusApplied": true,
+    "criticalMalusMax": 30,
+    "losses": [],
+    "codeLosses": [
+      {
+        "code": "ISSUE-307",
+        "severity": "low",
+        "count": 1,
+        "weight": 2,
+        "uncappedLoss": 2,
+        "cappedLoss": 0
+      },
+      {
+        "code": "ISSUE-410",
+        "severity": "critical",
+        "count": 1,
+        "weight": 20,
+        "uncappedLoss": 20,
+        "cappedLoss": 20
+      },
+      {
+        "code": "ISSUE-702",
+        "severity": "high",
+        "count": 1,
+        "weight": 10,
+        "uncappedLoss": 10,
+        "cappedLoss": 5
+      },
+      {
+        "code": "ISSUE-803",
+        "severity": "high",
+        "count": 1,
+        "weight": 10,
+        "uncappedLoss": 10,
+        "cappedLoss": 5
+      }
+    ],
+    "paths": [
+      {
+        "id": "6ec3495440deb3d4",
+        "tier": "critical",
+        "baseTier": "critical",
+        "state": "unverified",
+        "entryKind": "mutable_dependency",
+        "entry": {
+          "kind": "mutable_dependency",
+          "state": "unknown",
+          "evidence": "job \"ci/build\" pins action \"dorny/paths-filter@1c9b1f1aaa2222bbbb3333cccc4444dddd5555ee\" to a commit SHA that does not exist in the upstream repository (typo, or a commit removed or never pushed...",
+          "subject": "dorny/paths-filter@1c9b1f1aaa2222bbbb3333cccc4444dddd5555ee",
+          "file": ".github/workflows/ci.yml",
+          "line": 41
+        },
+        "anchorHash": "16588897f4235ee4cec41897fcb78e7c30e4ad720ad00cb93f383af6337dbea0",
+        "anchorCode": "ISSUE-707",
+        "anchorHashes": [
+          "16588897f4235ee4cec41897fcb78e7c30e4ad720ad00cb93f383af6337dbea0",
+          "2aacf1d70cfea689a2d6c62c338b0a52e4dc787e07fac004da8e5ca4ec82a1c2"
+        ],
+        "anchorCodes": [
+          "ISSUE-707",
+          "ISSUE-713"
+        ],
+        "jobs": [
+          "ci/build"
+        ],
+        "reach": {
+          "secrets": [],
+          "allSecrets": true,
+          "tokenWrite": [
+            "actions",
+            "contents",
+            "deployments",
+            "id-token",
+            "packages",
+            "pull-requests",
+            "security-events"
+          ],
+          "impacts": [
+            {
+              "kind": "deploys",
+              "state": "proven",
+              "evidence": "permissions: write-all",
+              "source": "token"
+            },
+            {
+              "kind": "publishes",
+              "state": "proven",
+              "evidence": "permissions: write-all",
+              "source": "token"
+            },
+            {
+              "kind": "writes_repo",
+              "state": "proven",
+              "evidence": "permissions: write-all",
+              "source": "token"
+            }
+          ],
+          "executes": true
+        },
+        "reachKind": "impact:publishes",
+        "reachKinds": [
+          "impact:publishes",
+          "impact:deploys",
+          "impact:writes_repo",
+          "secrets",
+          "token",
+          "execution"
+        ],
+        "modifiers": [
+          "unresolvable",
+          "gate:ISSUE-501"
+        ],
+        "gateHashes": [
+          "a139c4f5e265111efa1f164d67e7417b8980d13c993626d3aa4500f46057f9bd"
+        ],
+        "exposure": "public",
+        "branches": [
+          {
+            "job": "ci/build",
+            "jobs": [
+              "ci/build"
+            ],
+            "reach": {
+              "secrets": [],
+              "allSecrets": true,
+              "tokenWrite": [
+                "actions",
+                "contents",
+                "deployments",
+                "id-token",
+                "packages",
+                "pull-requests",
+                "security-events"
+              ],
+              "impacts": [
+                {
+                  "kind": "deploys",
+                  "state": "proven",
+                  "evidence": "permissions: write-all",
+                  "source": "token"
+                },
+                {
+                  "kind": "publishes",
+                  "state": "proven",
+                  "evidence": "permissions: write-all",
+                  "source": "token"
+                },
+                {
+                  "kind": "writes_repo",
+                  "state": "proven",
+                  "evidence": "permissions: write-all",
+                  "source": "token"
+                }
+              ],
+              "executes": true
+            },
+            "tier": "critical",
+            "state": "unverified",
+            "modifiers": [
+              "unresolvable",
+              "gate:ISSUE-501"
+            ]
+          }
+        ],
+        "sentence": "A new version of `dorny/paths-filter@1c9b1f1aaa2222bbbb3333cccc4444dddd5555ee` runs inside `ci/build` without any change in this repository, holding every secret of the repository and a token that can write to the repository, publish packages and create deployments: a compromise here ships a malicious release to your users or into production. Plumber could not verify `job \"ci/build\" pins action \"dorny/paths-filter@1c9b1f1aaa2222bbbb3333cccc4444dddd5555ee\" to a commit SHA that does not exist...",
+        "findingIds": [
+          "16588897f4235ee4cec41897fcb78e7c30e4ad720ad00cb93f383af6337dbea0",
+          "2aacf1d70cfea689a2d6c62c338b0a52e4dc787e07fac004da8e5ca4ec82a1c2",
+          "a139c4f5e265111efa1f164d67e7417b8980d13c993626d3aa4500f46057f9bd",
+          "012a21b97c570298b77d457abd717eee976c60d698b30ba002785150ace2f9b0",
+          "2b387d3f7733c404eef69d1f6da4660dd92e6c9178a0c777e8529c907e3bac97",
+          "4ac998ad251b9adcf89f1891954a63223f51dd071b5eda0c3206018260c6b43f",
+          "a8966811dbba2f06ff42ef36af480153779f68955ca25fd7703d59f8200232bd"
+        ],
+        "loss": 30,
+        "claims": [
+          {
+            "kind": "entry",
+            "subject": "dorny/paths-filter@1c9b1f1aaa2222bbbb3333cccc4444dddd5555ee",
+            "state": "proven"
+          },
+          {
+            "kind": "secret",
+            "subject": "every secret of the repository",
+            "state": "proven"
+          },
+          {
+            "kind": "token",
+            "subject": "actions, contents, deployments, id-token, packages, pull-requests, security-events",
+            "state": "proven",
+            "source": "declared"
+          },
+          {
+            "kind": "impact",
+            "subject": "deploys",
+            "state": "proven"
+          },
+          {
+            "kind": "impact",
+            "subject": "publishes",
+            "state": "proven"
+          },
+          {
+            "kind": "impact",
+            "subject": "writes_repo",
+            "state": "proven"
+          }
+        ]
+      },
+      {
+        "id": "a78f558c42bdc8de",
+        "tier": "critical",
+        "baseTier": "critical",
+        "state": "proven",
+        "entryKind": "mutable_dependency",
+        "entry": {
+          "kind": "mutable_dependency",
+          "state": "proven",
+          "evidence": "job \"ci/build\" references action \"tj-actions/changed-files@v45.0.0\" with a mutable ref — pin by commit SHA instead",
+          "subject": "tj-actions/changed-files@v45.0.0",
+          "file": ".github/workflows/ci.yml",
+          "line": 35
+        },
+        "anchorHash": "8308a852426534c8f5a67520fe9ede55281576dd38bf25f591f5f3fa491de5bd",
+        "anchorCode": "ISSUE-703",
+        "anchorHashes": [
+          "8308a852426534c8f5a67520fe9ede55281576dd38bf25f591f5f3fa491de5bd",
+          "c381d36318c28816e609862a575f10905fd0a4c7a57086d2d3f9cbe76d0152af",
+          "cc7d16eda68787dbfb9c71b66e3aba8424fb44c84310829df24a395ba83ff745"
+        ],
+        "anchorCodes": [
+          "ISSUE-701",
+          "ISSUE-703",
+          "ISSUE-713"
+        ],
+        "jobs": [
+          "ci/build"
+        ],
+        "reach": {
+          "secrets": [],
+          "allSecrets": true,
+          "tokenWrite": [
+            "actions",
+            "contents",
+            "deployments",
+            "id-token",
+            "packages",
+            "pull-requests",
+            "security-events"
+          ],
+          "impacts": [
+            {
+              "kind": "deploys",
+              "state": "proven",
+              "evidence": "permissions: write-all",
+              "source": "token"
+            },
+            {
+              "kind": "publishes",
+              "state": "proven",
+              "evidence": "permissions: write-all",
+              "source": "token"
+            },
+            {
+              "kind": "writes_repo",
+              "state": "proven",
+              "evidence": "permissions: write-all",
+              "source": "token"
+            }
+          ],
+          "executes": true
+        },
+        "reachKind": "impact:publishes",
+        "reachKinds": [
+          "impact:publishes",
+          "impact:deploys",
+          "impact:writes_repo",
+          "secrets",
+          "token",
+          "execution"
+        ],
+        "modifiers": [
+          "gate:ISSUE-501"
+        ],
+        "gateHashes": [
+          "a139c4f5e265111efa1f164d67e7417b8980d13c993626d3aa4500f46057f9bd"
+        ],
+        "exposure": "public",
+        "branches": [
+          {
+            "job": "ci/build",
+            "jobs": [
+              "ci/build"
+            ],
+            "reach": {
+              "secrets": [],
+              "allSecrets": true,
+              "tokenWrite": [
+                "actions",
+                "contents",
+                "deployments",
+                "id-token",
+                "packages",
+                "pull-requests",
+                "security-events"
+              ],
+              "impacts": [
+                {
+                  "kind": "deploys",
+                  "state": "proven",
+                  "evidence": "permissions: write-all",
+                  "source": "token"
+                },
+                {
+                  "kind": "publishes",
+                  "state": "proven",
+                  "evidence": "permissions: write-all",
+                  "source": "token"
+                },
+                {
+                  "kind": "writes_repo",
+                  "state": "proven",
+                  "evidence": "permissions: write-all",
+                  "source": "token"
+                }
+              ],
+              "executes": true
+            },
+            "tier": "critical",
+            "state": "proven",
+            "modifiers": [
+              "gate:ISSUE-501"
+            ]
+          }
+        ],
+        "sentence": "A new version of `tj-actions/changed-files@v45.0.0` runs inside `ci/build` without any change in this repository, holding every secret of the repository and a token that can write to the repository, publish packages and create deployments: a compromise here ships a malicious release to your users or into production. Nothing stands between this and the default branch: Branch protection missing on `main`.",
+        "findingIds": [
+          "8308a852426534c8f5a67520fe9ede55281576dd38bf25f591f5f3fa491de5bd",
+          "c381d36318c28816e609862a575f10905fd0a4c7a57086d2d3f9cbe76d0152af",
+          "cc7d16eda68787dbfb9c71b66e3aba8424fb44c84310829df24a395ba83ff745",
+          "a139c4f5e265111efa1f164d67e7417b8980d13c993626d3aa4500f46057f9bd",
+          "012a21b97c570298b77d457abd717eee976c60d698b30ba002785150ace2f9b0",
+          "2b387d3f7733c404eef69d1f6da4660dd92e6c9178a0c777e8529c907e3bac97",
+          "4ac998ad251b9adcf89f1891954a63223f51dd071b5eda0c3206018260c6b43f",
+          "a8966811dbba2f06ff42ef36af480153779f68955ca25fd7703d59f8200232bd"
+        ],
+        "loss": 30,
+        "claims": [
+          {
+            "kind": "entry",
+            "subject": "tj-actions/changed-files@v45.0.0",
+            "state": "proven"
+          },
+          {
+            "kind": "secret",
+            "subject": "every secret of the repository",
+            "state": "proven"
+          },
+          {
+            "kind": "token",
+            "subject": "actions, contents, deployments, id-token, packages, pull-requests, security-events",
+            "state": "proven",
+            "source": "declared"
+          },
+          {
+            "kind": "impact",
+            "subject": "deploys",
+            "state": "proven"
+          },
+          {
+            "kind": "impact",
+            "subject": "publishes",
+            "state": "proven"
+          },
+          {
+            "kind": "impact",
+            "subject": "writes_repo",
+            "state": "proven"
+          }
+        ]
+      },
+      {
+        "id": "40e285b874440c2d",
+        "tier": "critical",
+        "baseTier": "critical",
+        "state": "proven",
+        "entryKind": "pr_target",
+        "entry": {
+          "kind": "pr_target",
+          "state": "proven",
+          "evidence": "job \"pr-preview/preview\" runs under pull_request_target AND checks out the PR head (ref=\"${{ github.event.pull_request.head.sha }}\") — base-repo secrets and fork-controlled code in the same run...",
+          "subject": "github.event.pull_request.head.sha",
+          "file": ".github/workflows/pr-preview.yml",
+          "line": 17,
+          "actor": "outsider",
+          "pinnedSha": true
+        },
+        "anchorHash": "e3eeaa65c68a9d72e86a0331023613b8ba9a7d8bfad531d15fb52a91a6e833cc",
+        "anchorCode": "ISSUE-804",
+        "anchorHashes": [
+          "e3eeaa65c68a9d72e86a0331023613b8ba9a7d8bfad531d15fb52a91a6e833cc"
+        ],
+        "anchorCodes": [
+          "ISSUE-804"
+        ],
+        "jobs": [
+          "pr-preview/preview"
+        ],
+        "reach": {
+          "secrets": [],
+          "allSecrets": false,
+          "tokenWrite": [
+            "pull-requests"
+          ],
+          "impacts": null,
+          "executes": true
+        },
+        "reachKind": "token",
+        "reachKinds": [
+          "token",
+          "execution"
+        ],
+        "modifiers": [],
+        "gateHashes": [],
+        "exposure": "public",
+        "branches": [
+          {
+            "job": "pr-preview/preview",
+            "jobs": [
+              "pr-preview/preview"
+            ],
+            "reach": {
+              "secrets": [],
+              "allSecrets": false,
+              "tokenWrite": [
+                "pull-requests"
+              ],
+              "impacts": null,
+              "executes": true
+            },
+            "tier": "critical",
+            "state": "proven",
+            "modifiers": []
+          }
+        ],
+        "sentence": "A pull request from anyone runs inside `pr-preview/preview` with the base repository's privileges, checking out `github.event.pull_request.head.sha`, holding a token with `pull-requests` write: a compromise here ships a malicious release to your users or into production.",
+        "findingIds": [
+          "e3eeaa65c68a9d72e86a0331023613b8ba9a7d8bfad531d15fb52a91a6e833cc",
+          "c2664ef8a4b56cc823218742a3d4c65ca219a5fdd5750398d4faed289f1b4890"
+        ],
+        "loss": 30,
+        "claims": [
+          {
+            "kind": "entry",
+            "subject": "github.event.pull_request.head.sha",
+            "state": "proven"
+          },
+          {
+            "kind": "token",
+            "subject": "pull-requests",
+            "state": "proven",
+            "source": "declared"
+          }
+        ]
+      },
+      {
+        "id": "808e99a78305a8b4",
+        "tier": "high",
+        "baseTier": "critical",
+        "state": "proven",
+        "entryKind": "unprotected_push",
+        "entry": {
+          "kind": "unprotected_push",
+          "state": "proven",
+          "evidence": "on push; default branch main proven; push filter proven",
+          "subject": "main",
+          "file": ".github/workflows/ci.yml",
+          "line": 18,
+          "cacheScopes": [
+            "default",
+            "pull_request"
+          ]
+        },
+        "anchorHash": "a139c4f5e265111efa1f164d67e7417b8980d13c993626d3aa4500f46057f9bd",
+        "anchorCode": "ISSUE-501",
+        "anchorHashes": [
+          "a139c4f5e265111efa1f164d67e7417b8980d13c993626d3aa4500f46057f9bd"
+        ],
+        "anchorCodes": [
+          "ISSUE-501"
+        ],
+        "jobs": [
+          "ci/build",
+          "ci/auto-approve",
+          "build/release-notes",
+          "plumber/scan",
+          "build/security-scan"
+        ],
+        "reach": {
+          "secrets": [],
+          "allSecrets": true,
+          "tokenWrite": [
+            "actions",
+            "contents",
+            "deployments",
+            "id-token",
+            "packages",
+            "pull-requests",
+            "security-events"
+          ],
+          "impacts": [
+            {
+              "kind": "deploys",
+              "state": "proven",
+              "evidence": "permissions: write-all",
+              "source": "token"
+            },
+            {
+              "kind": "publishes",
+              "state": "proven",
+              "evidence": "permissions: write-all",
+              "source": "token"
+            },
+            {
+              "kind": "writes_repo",
+              "state": "proven",
+              "evidence": "permissions: write-all",
+              "source": "token"
+            }
+          ],
+          "executes": true
+        },
+        "reachKind": "impact:publishes",
+        "reachKinds": [
+          "impact:publishes",
+          "impact:deploys",
+          "impact:writes_repo",
+          "secrets",
+          "token",
+          "execution"
+        ],
+        "modifiers": [
+          "push_entry_cap"
+        ],
+        "gateHashes": [],
+        "exposure": "public",
+        "branches": [
+          {
+            "job": "ci/build",
+            "jobs": [
+              "ci/build"
+            ],
+            "reach": {
+              "secrets": [],
+              "allSecrets": true,
+              "tokenWrite": [
+                "actions",
+                "contents",
+                "deployments",
+                "id-token",
+                "packages",
+                "pull-requests",
+                "security-events"
+              ],
+              "impacts": [
+                {
+                  "kind": "deploys",
+                  "state": "proven",
+                  "evidence": "permissions: write-all",
+                  "source": "token"
+                },
+                {
+                  "kind": "publishes",
+                  "state": "proven",
+                  "evidence": "permissions: write-all",
+                  "source": "token"
+                },
+                {
+                  "kind": "writes_repo",
+                  "state": "proven",
+                  "evidence": "permissions: write-all",
+                  "source": "token"
+                }
+              ],
+              "executes": true
+            },
+            "tier": "high",
+            "state": "proven",
+            "modifiers": [
+              "push_entry_cap"
+            ]
+          },
+          {
+            "job": "ci/auto-approve",
+            "jobs": [
+              "ci/auto-approve"
+            ],
+            "reach": {
+              "secrets": [],
+              "allSecrets": false,
+              "tokenWrite": [
+                "actions",
+                "contents",
+                "deployments",
+                "id-token",
+                "packages",
+                "pull-requests",
+                "security-events"
+              ],
+              "impacts": [
+                {
+                  "kind": "deploys",
+                  "state": "proven",
+                  "evidence": "permissions: write-all",
+                  "source": "token"
+                },
+                {
+                  "kind": "publishes",
+                  "state": "proven",
+                  "evidence": "permissions: write-all",
+                  "source": "token"
+                },
+                {
+                  "kind": "writes_repo",
+                  "state": "proven",
+                  "evidence": "permissions: write-all",
+                  "source": "token"
+                }
+              ],
+              "executes": true
+            },
+            "tier": "high",
+            "state": "proven",
+            "modifiers": [
+              "push_entry_cap"
+            ]
+          },
+          {
+            "job": "build/release-notes",
+            "jobs": [
+              "build/release-notes"
+            ],
+            "reach": {
+              "secrets": [],
+              "allSecrets": false,
+              "tokenWrite": [],
+              "impacts": [
+                {
+                  "kind": "signs_or_releases",
+                  "state": "proven",
+                  "evidence": "actions/create-release@v1"
+                }
+              ],
+              "executes": true
+            },
+            "tier": "high",
+            "state": "proven",
+            "modifiers": []
+          },
+          {
+            "job": "plumber/scan",
+            "jobs": [
+              "plumber/scan"
+            ],
+            "reach": {
+              "secrets": [],
+              "allSecrets": false,
+              "tokenWrite": [
+                "id-token",
+                "security-events"
+              ],
+              "impacts": null,
+              "executes": true
+            },
+            "tier": "high",
+            "state": "proven",
+            "modifiers": []
+          },
+          {
+            "job": "build/security-scan",
+            "jobs": [
+              "build/security-scan"
+            ],
+            "reach": {
+              "secrets": [],
+              "allSecrets": false,
+              "tokenWrite": [],
+              "impacts": null,
+              "executes": true
+            },
+            "tier": "low",
+            "state": "proven",
+            "modifiers": []
+          }
+        ],
+        "sentence": "Anyone with write access to `main` runs `ci/build`, holding every secret of the repository and a token that can write to the repository, publish packages and create deployments: a compromise here ships a malicious release to your users or into production. Pushing to this branch needs write access, so this path is capped at High.",
+        "findingIds": [
+          "a139c4f5e265111efa1f164d67e7417b8980d13c993626d3aa4500f46057f9bd",
+          "012a21b97c570298b77d457abd717eee976c60d698b30ba002785150ace2f9b0",
+          "2b387d3f7733c404eef69d1f6da4660dd92e6c9178a0c777e8529c907e3bac97",
+          "30ccfcc77e0e7baa3a56c2d3dcadf58e37260d058aa76288675c82860da69f81",
+          "4ac998ad251b9adcf89f1891954a63223f51dd071b5eda0c3206018260c6b43f",
+          "a547ac8171f8b19c8d844fd4483e6926678c29a88cae40f9087be4b8d7a51ca3",
+          "a8966811dbba2f06ff42ef36af480153779f68955ca25fd7703d59f8200232bd"
+        ],
+        "loss": 15,
+        "claims": [
+          {
+            "kind": "entry",
+            "subject": "main",
+            "state": "proven"
+          },
+          {
+            "kind": "secret",
+            "subject": "every secret of the repository",
+            "state": "proven"
+          },
+          {
+            "kind": "token",
+            "subject": "actions, contents, deployments, id-token, packages, pull-requests, security-events",
+            "state": "proven",
+            "source": "declared"
+          },
+          {
+            "kind": "impact",
+            "subject": "deploys",
+            "state": "proven"
+          },
+          {
+            "kind": "impact",
+            "subject": "publishes",
+            "state": "proven"
+          },
+          {
+            "kind": "impact",
+            "subject": "writes_repo",
+            "state": "proven"
+          }
+        ]
+      },
+      {
+        "id": "a60de2eab49ea3b6",
+        "tier": "high",
+        "baseTier": "high",
+        "state": "proven",
+        "entryKind": "mutable_dependency",
+        "entry": {
+          "kind": "mutable_dependency",
+          "state": "proven",
+          "evidence": "job \"pr-preview/deploy\" calls reusable workflow \"acme/shared-workflows/.github/workflows/deploy.yml@main\" with a mutable ref — pin by commit SHA instead",
+          "subject": "acme/shared-workflows/.github/workflows/deploy.yml@main",
+          "file": ".github/workflows/pr-preview.yml",
+          "line": 27
+        },
+        "anchorHash": "9b75446da5fc5ba8a2b9d582e61cb10cc8fe69cf02cb6c5a66e1f98c9f9ab2f0",
+        "anchorCode": "ISSUE-701",
+        "anchorHashes": [
+          "9b75446da5fc5ba8a2b9d582e61cb10cc8fe69cf02cb6c5a66e1f98c9f9ab2f0",
+          "a0bb232fab66d3eca579b54d5fed9bd110f0890d5cf9afcbf507dbbbbc814e01"
+        ],
+        "anchorCodes": [
+          "ISSUE-701",
+          "ISSUE-713"
+        ],
+        "jobs": [
+          "pr-preview/deploy"
+        ],
+        "reach": {
+          "secrets": [],
+          "allSecrets": true,
+          "tokenWrite": [
+            "pull-requests"
+          ],
+          "impacts": null,
+          "executes": true
+        },
+        "reachKind": "secrets",
+        "reachKinds": [
+          "secrets",
+          "token",
+          "execution"
+        ],
+        "modifiers": [],
+        "gateHashes": [],
+        "exposure": "public",
+        "branches": [
+          {
+            "job": "pr-preview/deploy",
+            "jobs": [
+              "pr-preview/deploy"
+            ],
+            "reach": {
+              "secrets": [],
+              "allSecrets": true,
+              "tokenWrite": [
+                "pull-requests"
+              ],
+              "impacts": null,
+              "executes": true
+            },
+            "tier": "high",
+            "state": "proven",
+            "modifiers": []
+          }
+        ],
+        "sentence": "A new version of `acme/shared-workflows/.github/workflows/deploy.yml@main` runs inside `pr-preview/deploy` without any change in this repository, holding every secret of the repository and a token with `pull-requests` write: the secrets can be read and reused elsewhere.",
+        "findingIds": [
+          "9b75446da5fc5ba8a2b9d582e61cb10cc8fe69cf02cb6c5a66e1f98c9f9ab2f0",
+          "a0bb232fab66d3eca579b54d5fed9bd110f0890d5cf9afcbf507dbbbbc814e01",
+          "3271174e494faa998cac782091e7066c8bfc13841b2d2f3d7272543d1b820d55"
+        ],
+        "loss": 15,
+        "claims": [
+          {
+            "kind": "entry",
+            "subject": "acme/shared-workflows/.github/workflows/deploy.yml@main",
+            "state": "proven"
+          },
+          {
+            "kind": "secret",
+            "subject": "every secret of the repository",
+            "state": "proven"
+          },
+          {
+            "kind": "token",
+            "subject": "pull-requests",
+            "state": "proven",
+            "source": "declared"
+          }
+        ]
+      },
+      {
+        "id": "fe13efbb6d50e748",
+        "tier": "high",
+        "baseTier": "critical",
+        "state": "proven",
+        "entryKind": "mutable_dependency",
+        "entry": {
+          "kind": "mutable_dependency",
+          "state": "proven",
+          "evidence": "Job `ci/build` runs a script fetched from the network: `curl -sSL https://get.example.com/install.sh | bash`.",
+          "subject": "https://get.example.com/install.sh",
+          "file": ".github/workflows/ci.yml",
+          "line": 49
+        },
+        "anchorHash": "e29026ab252a70eb78b9871e16b59841f876ce3a7f3e1a8a2bb37c2a169b7167",
+        "anchorCode": "ISSUE-411",
+        "anchorHashes": [
+          "e29026ab252a70eb78b9871e16b59841f876ce3a7f3e1a8a2bb37c2a169b7167"
+        ],
+        "anchorCodes": [
+          "ISSUE-411"
+        ],
+        "jobs": [
+          "ci/build"
+        ],
+        "reach": {
+          "secrets": [],
+          "allSecrets": true,
+          "tokenWrite": [
+            "actions",
+            "contents",
+            "deployments",
+            "id-token",
+            "packages",
+            "pull-requests",
+            "security-events"
+          ],
+          "impacts": [
+            {
+              "kind": "deploys",
+              "state": "proven",
+              "evidence": "permissions: write-all",
+              "source": "token"
+            },
+            {
+              "kind": "publishes",
+              "state": "proven",
+              "evidence": "permissions: write-all",
+              "source": "token"
+            },
+            {
+              "kind": "writes_repo",
+              "state": "proven",
+              "evidence": "permissions: write-all",
+              "source": "token"
+            }
+          ],
+          "executes": true
+        },
+        "reachKind": "impact:publishes",
+        "reachKinds": [
+          "impact:publishes",
+          "impact:deploys",
+          "impact:writes_repo",
+          "secrets",
+          "token",
+          "execution"
+        ],
+        "modifiers": [
+          "gate:ISSUE-501",
+          "dependency_cap"
+        ],
+        "gateHashes": [
+          "a139c4f5e265111efa1f164d67e7417b8980d13c993626d3aa4500f46057f9bd"
+        ],
+        "exposure": "public",
+        "branches": [
+          {
+            "job": "ci/build",
+            "jobs": [
+              "ci/build"
+            ],
+            "reach": {
+              "secrets": [],
+              "allSecrets": true,
+              "tokenWrite": [
+                "actions",
+                "contents",
+                "deployments",
+                "id-token",
+                "packages",
+                "pull-requests",
+                "security-events"
+              ],
+              "impacts": [
+                {
+                  "kind": "deploys",
+                  "state": "proven",
+                  "evidence": "permissions: write-all",
+                  "source": "token"
+                },
+                {
+                  "kind": "publishes",
+                  "state": "proven",
+                  "evidence": "permissions: write-all",
+                  "source": "token"
+                },
+                {
+                  "kind": "writes_repo",
+                  "state": "proven",
+                  "evidence": "permissions: write-all",
+                  "source": "token"
+                }
+              ],
+              "executes": true
+            },
+            "tier": "high",
+            "state": "proven",
+            "modifiers": [
+              "gate:ISSUE-501",
+              "dependency_cap"
+            ]
+          }
+        ],
+        "sentence": "A new version of `https://get.example.com/install.sh` runs inside `ci/build` without any change in this repository, holding every secret of the repository and a token that can write to the repository, publish packages and create deployments: a compromise here ships a malicious release to your users or into production. Nothing stands between this and the default branch: Branch protection missing on `main`. The dependency must be compromised first, so this path is capped at High.",
+        "findingIds": [
+          "e29026ab252a70eb78b9871e16b59841f876ce3a7f3e1a8a2bb37c2a169b7167",
+          "a139c4f5e265111efa1f164d67e7417b8980d13c993626d3aa4500f46057f9bd",
+          "012a21b97c570298b77d457abd717eee976c60d698b30ba002785150ace2f9b0",
+          "2b387d3f7733c404eef69d1f6da4660dd92e6c9178a0c777e8529c907e3bac97",
+          "4ac998ad251b9adcf89f1891954a63223f51dd071b5eda0c3206018260c6b43f",
+          "a8966811dbba2f06ff42ef36af480153779f68955ca25fd7703d59f8200232bd"
+        ],
+        "loss": 15,
+        "claims": [
+          {
+            "kind": "entry",
+            "subject": "https://get.example.com/install.sh",
+            "state": "proven"
+          },
+          {
+            "kind": "secret",
+            "subject": "every secret of the repository",
+            "state": "proven"
+          },
+          {
+            "kind": "token",
+            "subject": "actions, contents, deployments, id-token, packages, pull-requests, security-events",
+            "state": "proven",
+            "source": "declared"
+          },
+          {
+            "kind": "impact",
+            "subject": "deploys",
+            "state": "proven"
+          },
+          {
+            "kind": "impact",
+            "subject": "publishes",
+            "state": "proven"
+          },
+          {
+            "kind": "impact",
+            "subject": "writes_repo",
+            "state": "proven"
+          }
+        ]
+      },
+      {
+        "id": "69c8c269adb4d1d2",
+        "tier": "medium",
+        "baseTier": "critical",
+        "state": "proven",
+        "entryKind": "mutable_dependency",
+        "entry": {
+          "kind": "mutable_dependency",
+          "state": "proven",
+          "evidence": "Job `ci/build` uses the forbidden tag `latest` of image `node:latest`.",
+          "subject": "node:latest",
+          "file": ".github/workflows/ci.yml",
+          "line": 22
+        },
+        "anchorHash": "0b5a75ed69f96aa570994a111a270894aecafda4b060ef32b7432b2ea5678fcb",
+        "anchorCode": "ISSUE-102",
+        "anchorHashes": [
+          "0b5a75ed69f96aa570994a111a270894aecafda4b060ef32b7432b2ea5678fcb",
+          "fb6a45c4310ecdd273561d888f874c23e2d2d3cc671498e2e1cb249ff36699ba"
+        ],
+        "anchorCodes": [
+          "ISSUE-102",
+          "ISSUE-103"
+        ],
+        "jobs": [
+          "ci/build"
+        ],
+        "reach": {
+          "secrets": [],
+          "allSecrets": true,
+          "tokenWrite": [
+            "actions",
+            "contents",
+            "deployments",
+            "id-token",
+            "packages",
+            "pull-requests",
+            "security-events"
+          ],
+          "impacts": [
+            {
+              "kind": "deploys",
+              "state": "proven",
+              "evidence": "permissions: write-all",
+              "source": "token"
+            },
+            {
+              "kind": "publishes",
+              "state": "proven",
+              "evidence": "permissions: write-all",
+              "source": "token"
+            },
+            {
+              "kind": "writes_repo",
+              "state": "proven",
+              "evidence": "permissions: write-all",
+              "source": "token"
+            }
+          ],
+          "executes": true
+        },
+        "reachKind": "impact:publishes",
+        "reachKinds": [
+          "impact:publishes",
+          "impact:deploys",
+          "impact:writes_repo",
+          "secrets",
+          "token",
+          "execution"
+        ],
+        "modifiers": [
+          "gate:ISSUE-501",
+          "dependency_cap"
+        ],
+        "gateHashes": [
+          "a139c4f5e265111efa1f164d67e7417b8980d13c993626d3aa4500f46057f9bd"
+        ],
+        "exposure": "public",
+        "branches": [
+          {
+            "job": "ci/build",
+            "jobs": [
+              "ci/build"
+            ],
+            "reach": {
+              "secrets": [],
+              "allSecrets": true,
+              "tokenWrite": [
+                "actions",
+                "contents",
+                "deployments",
+                "id-token",
+                "packages",
+                "pull-requests",
+                "security-events"
+              ],
+              "impacts": [
+                {
+                  "kind": "deploys",
+                  "state": "proven",
+                  "evidence": "permissions: write-all",
+                  "source": "token"
+                },
+                {
+                  "kind": "publishes",
+                  "state": "proven",
+                  "evidence": "permissions: write-all",
+                  "source": "token"
+                },
+                {
+                  "kind": "writes_repo",
+                  "state": "proven",
+                  "evidence": "permissions: write-all",
+                  "source": "token"
+                }
+              ],
+              "executes": true
+            },
+            "tier": "medium",
+            "state": "proven",
+            "modifiers": [
+              "gate:ISSUE-501",
+              "dependency_cap"
+            ]
+          }
+        ],
+        "sentence": "A new version of `node:latest` runs inside `ci/build` without any change in this repository, holding every secret of the repository and a token that can write to the repository, publish packages and create deployments: a compromise here ships a malicious release to your users or into production. Nothing stands between this and the default branch: Branch protection missing on `main`. The dependency must be compromised first, so this path is capped at Medium.",
+        "findingIds": [
+          "0b5a75ed69f96aa570994a111a270894aecafda4b060ef32b7432b2ea5678fcb",
+          "fb6a45c4310ecdd273561d888f874c23e2d2d3cc671498e2e1cb249ff36699ba",
+          "a139c4f5e265111efa1f164d67e7417b8980d13c993626d3aa4500f46057f9bd",
+          "012a21b97c570298b77d457abd717eee976c60d698b30ba002785150ace2f9b0",
+          "2b387d3f7733c404eef69d1f6da4660dd92e6c9178a0c777e8529c907e3bac97",
+          "4ac998ad251b9adcf89f1891954a63223f51dd071b5eda0c3206018260c6b43f",
+          "a8966811dbba2f06ff42ef36af480153779f68955ca25fd7703d59f8200232bd"
+        ],
+        "loss": 6,
+        "claims": [
+          {
+            "kind": "entry",
+            "subject": "node:latest",
+            "state": "proven"
+          },
+          {
+            "kind": "secret",
+            "subject": "every secret of the repository",
+            "state": "proven"
+          },
+          {
+            "kind": "token",
+            "subject": "actions, contents, deployments, id-token, packages, pull-requests, security-events",
+            "state": "proven",
+            "source": "declared"
+          },
+          {
+            "kind": "impact",
+            "subject": "deploys",
+            "state": "proven"
+          },
+          {
+            "kind": "impact",
+            "subject": "publishes",
+            "state": "proven"
+          },
+          {
+            "kind": "impact",
+            "subject": "writes_repo",
+            "state": "proven"
+          }
+        ]
+      },
+      {
+        "id": "7c38db44656f247a",
+        "tier": "low",
+        "baseTier": "low",
+        "state": "proven",
+        "entryKind": "pr_target",
+        "entry": {
+          "kind": "pr_target",
+          "state": "proven",
+          "evidence": "job \"dangerous/comment\" runs under dangerous trigger(s) workflow_run and checks out fork-controlled code — untrusted code executes with the base repo's secrets (CVE-2025-30066 pattern)",
+          "subject": "github.event.workflow_run.head_sha",
+          "file": ".github/workflows/dangerous.yml",
+          "line": 18,
+          "actor": "outsider",
+          "pinnedSha": true
+        },
+        "anchorHash": "8bba1846d2eb42ad4c2a3ef8e1cc933c750eae52e7ca78cf1cbd628e0ae7c40e",
+        "anchorCode": "ISSUE-802",
+        "anchorHashes": [
+          "8bba1846d2eb42ad4c2a3ef8e1cc933c750eae52e7ca78cf1cbd628e0ae7c40e"
+        ],
+        "anchorCodes": [
+          "ISSUE-802"
+        ],
+        "jobs": [
+          "dangerous/comment"
+        ],
+        "reach": {
+          "secrets": [],
+          "allSecrets": false,
+          "tokenWrite": [],
+          "impacts": null,
+          "executes": true
+        },
+        "reachKind": "execution",
+        "reachKinds": [
+          "execution"
+        ],
+        "modifiers": [],
+        "gateHashes": [],
+        "exposure": "public",
+        "branches": [
+          {
+            "job": "dangerous/comment",
+            "jobs": [
+              "dangerous/comment"
+            ],
+            "reach": {
+              "secrets": [],
+              "allSecrets": false,
+              "tokenWrite": [],
+              "impacts": null,
+              "executes": true
+            },
+            "tier": "low",
+            "state": "proven",
+            "modifiers": []
+          }
+        ],
+        "sentence": "A pull request from anyone runs inside `dangerous/comment` with the base repository's privileges, checking out `github.event.workflow_run.head_sha`, but it holds no secret and cannot write anything: code runs on an ephemeral runner and nothing else is proven.",
+        "findingIds": [
+          "8bba1846d2eb42ad4c2a3ef8e1cc933c750eae52e7ca78cf1cbd628e0ae7c40e",
+          "b03f5b3c1863d3db7594a633e41f9390f7022fb0602e01652a7bc292752d6557"
+        ],
+        "loss": 3,
+        "claims": [
+          {
+            "kind": "entry",
+            "subject": "github.event.workflow_run.head_sha",
+            "state": "proven"
+          }
+        ]
+      },
+      {
+        "id": "c29bc4ab93054779",
+        "tier": "low",
+        "baseTier": "low",
+        "state": "proven",
+        "entryKind": "untrusted_expression",
+        "entry": {
+          "kind": "untrusted_expression",
+          "state": "proven",
+          "evidence": "job \"ci/build\" interpolates a user-controlled template expression into an inline script (template-injection risk)",
+          "subject": "github.event.pull_request.title",
+          "file": ".github/workflows/ci.yml",
+          "line": 53,
+          "actor": "outsider"
+        },
+        "anchorHash": "7d794c83f6bd099627759995b52098067e3ec21438afcd9b69c559b803279b97",
+        "anchorCode": "ISSUE-207",
+        "anchorHashes": [
+          "7d794c83f6bd099627759995b52098067e3ec21438afcd9b69c559b803279b97",
+          "a51865b697900c15b4fad64dad3a204931adec03c8a7b8965254ea60f393146a"
+        ],
+        "anchorCodes": [
+          "ISSUE-207",
+          "ISSUE-209"
+        ],
+        "jobs": [
+          "ci/build"
+        ],
+        "reach": {
+          "secrets": [],
+          "allSecrets": false,
+          "tokenWrite": [],
+          "impacts": null,
+          "executes": true
+        },
+        "reachKind": "execution",
+        "reachKinds": [
+          "execution"
+        ],
+        "modifiers": [],
+        "gateHashes": [],
+        "exposure": "public",
+        "branches": [
+          {
+            "job": "ci/build",
+            "jobs": [
+              "ci/build"
+            ],
+            "reach": {
+              "secrets": [],
+              "allSecrets": false,
+              "tokenWrite": [],
+              "impacts": null,
+              "executes": true
+            },
+            "tier": "low",
+            "state": "proven",
+            "modifiers": []
+          }
+        ],
+        "sentence": "Anyone who can open a pull request or push a commit controls `github.event.pull_request.title`, which `ci/build` passes to a shell, but it holds no secret and cannot write anything: the runner can be abused and anything it caches or uploads can be poisoned.",
+        "findingIds": [
+          "7d794c83f6bd099627759995b52098067e3ec21438afcd9b69c559b803279b97",
+          "a51865b697900c15b4fad64dad3a204931adec03c8a7b8965254ea60f393146a"
+        ],
+        "loss": 3,
+        "claims": [
+          {
+            "kind": "entry",
+            "subject": "github.event.pull_request.title",
+            "state": "proven"
+          }
+        ]
+      }
+    ],
+    "pathLosses": [
+      {
+        "tier": "critical",
+        "count": 3,
+        "weight": 30,
+        "cappedLoss": 90,
+        "pathIds": [
+          "40e285b874440c2d",
+          "6ec3495440deb3d4",
+          "a78f558c42bdc8de"
+        ]
+      },
+      {
+        "tier": "high",
+        "count": 3,
+        "weight": 15,
+        "cap": 69,
+        "cappedLoss": 45,
+        "pathIds": [
+          "808e99a78305a8b4",
+          "a60de2eab49ea3b6",
+          "fe13efbb6d50e748"
+        ]
+      },
+      {
+        "tier": "medium",
+        "count": 1,
+        "weight": 6,
+        "cap": 49,
+        "cappedLoss": 6,
+        "pathIds": [
+          "69c8c269adb4d1d2"
+        ]
+      },
+      {
+        "tier": "low",
+        "count": 2,
+        "weight": 3,
+        "cap": 29,
+        "cappedLoss": 6,
+        "pathIds": [
+          "7c38db44656f247a",
+          "c29bc4ab93054779"
+        ]
+      }
+    ],
+    "otherFindings": {
+      "count": 4,
+      "counts": {
+        "critical": 1,
+        "high": 2,
+        "medium": 0,
+        "low": 1
+      },
+      "uncappedLoss": 42,
+      "cap": 30,
+      "cappedLoss": 30,
+      "capApplied": true
+    },
+    "criticalPaths": 3,
+    "pathCounts": {
+      "critical": 3,
+      "high": 3,
+      "low": 2,
+      "medium": 1
+    },
+    "situation": "Repository: public. Default branch: main, not protected. Workflows: 9 jobs in 6 workflows, 4 publish or deploy.",
+    "bestFix": {
+      "anchorHash": "16588897f4235ee4cec41897fcb78e7c30e4ad720ad00cb93f383af6337dbea0",
+      "code": "ISSUE-707",
+      "job": "ci/build",
+      "subject": "dorny/paths-filter@1c9b1f1aaa2222bbbb3333cccc4444dddd5555ee",
+      "pathId": "6ec3495440deb3d4",
+      "pointsGained": 0,
+      "newPoints": 0,
+      "newLetter": "E",
+      "sentence": "Fixing the path through `dorny/paths-filter@1c9b1f1aaa22` (pin a commit that exists in the action's repository) does not move the score yet. The score stays at 0 while the rest takes it below 0."
+    }
+  },
+  "pathBlocks": [
+    {
+      "id": "6ec3495440deb3d4",
+      "tier": "critical",
+      "unverified": true,
+      "loss": 30,
+      "entry": "dorny/paths-filter@1c9b1f1aaa22 (external action pinned to a commit that is not in its repository)",
+      "entrySubject": "dorny/paths-filter@1c9b1f1aaa22",
+      "branches": [
+        {
+          "job": "job `build` from workflow `ci.yml`",
+          "reach": "every secret of the repository, a token with push, publish and deploy access and write access to actions, pull requests and security events and an OIDC token",
+          "marker": "(unverified)"
+        }
+      ],
+      "entryUnverified": "Plumber could not check what it runs",
+      "runsIn": "job ci/build",
+      "reachesShort": "every secret; token: push, publish, deploy",
+      "so": "through the commit this action is pinned to, which is not in its repository, an attacker can read every secret, push in your repository, publish packages and deploy",
+      "fix": "pin a commit that exists in the action's repository",
+      "findings": [
+        {
+          "code": "ISSUE-707",
+          "title": "Pinned commit SHA does not belong to the action's repository",
+          "location": ".github/workflows/ci.yml:41",
+          "details": [
+            {
+              "message": "job \"ci/build\" pins action \"dorny/paths-filter@1c9b1f1aaa2222bbbb3333cccc4444dddd5555ee\" to a commit SHA that does not exist in the upstream repository (typo, or a commit removed or never pushed upstream)",
+              "severity": "critical",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L41",
+              "location": ".github/workflows/ci.yml:41"
+            }
+          ]
+        },
+        {
+          "code": "ISSUE-713",
+          "title": "Action comes from an unauthorized source",
+          "location": ".github/workflows/ci.yml:41",
+          "details": [
+            {
+              "message": "job \"ci/build\" references action \"dorny/paths-filter@1c9b1f1aaa2222bbbb3333cccc4444dddd5555ee\" from an unauthorized source — restrict actions to authorized owners (actions/*, github/*), an explicit allowlist, or a minimum-stars threshold",
+              "severity": "critical",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L41",
+              "location": ".github/workflows/ci.yml:41"
+            }
+          ]
+        },
+        {
+          "code": "ISSUE-501",
+          "title": "Branch protection missing",
+          "details": [
+            {
+              "message": "Branch `main` is not protected.",
+              "severity": "high"
+            }
+          ]
+        },
+        {
+          "code": "ISSUE-203",
+          "title": "Pipeline enables CI debug trace",
+          "location": ".github/workflows/ci.yml:13",
+          "details": [
+            {
+              "message": "Job `ci/build` sets the debug variable `ACTIONS_STEP_DEBUG` to \"true\".",
+              "severity": "critical",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L13",
+              "location": ".github/workflows/ci.yml:13"
+            }
+          ]
+        },
+        {
+          "code": "ISSUE-307",
+          "title": "Checkout persists credentials in .git/config (latent)",
+          "location": ".github/workflows/ci.yml:30",
+          "details": [
+            {
+              "message": "job \"ci/build\" runs \"actions/checkout@v4\" without `persist-credentials: false` — GITHUB_TOKEN lingers in .git/config (latent; becomes a leak if a later step packs .git into an artifact or runs fork-controlled code)",
+              "severity": "critical",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L30",
+              "location": ".github/workflows/ci.yml:30"
+            }
+          ]
+        },
+        {
+          "code": "ISSUE-309",
+          "title": "Entire secrets context exported via toJson(secrets)",
+          "location": ".github/workflows/ci.yml:66",
+          "details": [
+            {
+              "message": "job \"ci/build\" exposes all its secrets at once via toJson(secrets) — pass secrets by name instead",
+              "severity": "critical",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L66",
+              "location": ".github/workflows/ci.yml:66"
+            }
+          ]
+        },
+        {
+          "code": "ISSUE-803",
+          "title": "Excessive workflow permissions",
+          "location": ".github/workflows/ci.yml:9",
+          "details": [
+            {
+              "message": "job \"ci/build\" runs with overly broad permissions: \"write-all\"",
+              "severity": "critical",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L9",
+              "location": ".github/workflows/ci.yml:9"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "a78f558c42bdc8de",
+      "tier": "critical",
+      "loss": 30,
+      "entry": "tj-actions/changed-files@v45.0.0 (external action with a known vulnerability)",
+      "entrySubject": "tj-actions/changed-files@v45.0.0",
+      "branches": [
+        {
+          "job": "job `build` from workflow `ci.yml`",
+          "reach": "every secret of the repository, a token with push, publish and deploy access and write access to actions, pull requests and security events and an OIDC token"
+        }
+      ],
+      "runsIn": "job ci/build",
+      "reachesShort": "every secret; token: push, publish, deploy",
+      "so": "through the known vulnerability of this action, an attacker can read every secret of the repository, push in your repository, publish packages and deploy",
+      "fix": "move to a version without the advisory",
+      "findings": [
+        {
+          "code": "ISSUE-701",
+          "title": "Third-party action reference is not pinned by commit SHA",
+          "location": ".github/workflows/ci.yml:35",
+          "details": [
+            {
+              "message": "job \"ci/build\" references action \"tj-actions/changed-files@v45.0.0\" with a mutable ref — pin by commit SHA instead",
+              "severity": "critical",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L35",
+              "location": ".github/workflows/ci.yml:35"
+            }
+          ]
+        },
+        {
+          "code": "ISSUE-703",
+          "title": "Action version carries a published security advisory",
+          "location": ".github/workflows/ci.yml:35",
+          "details": [
+            {
+              "message": "job \"ci/build\" references \"tj-actions/changed-files@v45.0.0\" — published advisories: GHSA-mrrh-fwg8-r2c3 (https://github.com/advisories/GHSA-mrrh-fwg8-r2c3)",
+              "severity": "critical",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L35",
+              "location": ".github/workflows/ci.yml:35"
+            }
+          ]
+        },
+        {
+          "code": "ISSUE-713",
+          "title": "Action comes from an unauthorized source",
+          "location": ".github/workflows/ci.yml:35",
+          "details": [
+            {
+              "message": "job \"ci/build\" references action \"tj-actions/changed-files@v45.0.0\" from an unauthorized source — restrict actions to authorized owners (actions/*, github/*), an explicit allowlist, or a minimum-stars threshold",
+              "severity": "critical",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L35",
+              "location": ".github/workflows/ci.yml:35"
+            }
+          ]
+        },
+        {
+          "code": "ISSUE-501",
+          "title": "Branch protection missing",
+          "details": [
+            {
+              "message": "Branch `main` is not protected.",
+              "severity": "high"
+            }
+          ]
+        },
+        {
+          "code": "ISSUE-203",
+          "title": "Pipeline enables CI debug trace",
+          "location": ".github/workflows/ci.yml:13",
+          "details": [
+            {
+              "message": "Job `ci/build` sets the debug variable `ACTIONS_STEP_DEBUG` to \"true\".",
+              "severity": "critical",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L13",
+              "location": ".github/workflows/ci.yml:13"
+            }
+          ]
+        },
+        {
+          "code": "ISSUE-307",
+          "title": "Checkout persists credentials in .git/config (latent)",
+          "location": ".github/workflows/ci.yml:30",
+          "details": [
+            {
+              "message": "job \"ci/build\" runs \"actions/checkout@v4\" without `persist-credentials: false` — GITHUB_TOKEN lingers in .git/config (latent; becomes a leak if a later step packs .git into an artifact or runs fork-controlled code)",
+              "severity": "critical",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L30",
+              "location": ".github/workflows/ci.yml:30"
+            }
+          ]
+        },
+        {
+          "code": "ISSUE-309",
+          "title": "Entire secrets context exported via toJson(secrets)",
+          "location": ".github/workflows/ci.yml:66",
+          "details": [
+            {
+              "message": "job \"ci/build\" exposes all its secrets at once via toJson(secrets) — pass secrets by name instead",
+              "severity": "critical",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L66",
+              "location": ".github/workflows/ci.yml:66"
+            }
+          ]
+        },
+        {
+          "code": "ISSUE-803",
+          "title": "Excessive workflow permissions",
+          "location": ".github/workflows/ci.yml:9",
+          "details": [
+            {
+              "message": "job \"ci/build\" runs with overly broad permissions: \"write-all\"",
+              "severity": "critical",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L9",
+              "location": ".github/workflows/ci.yml:9"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "40e285b874440c2d",
+      "tier": "critical",
+      "loss": 30,
+      "entry": "github.event.pull_request.head.sha (pull request code checked out in a privileged workflow)",
+      "entrySubject": "github.event.pull_request.head.sha",
+      "branches": [
+        {
+          "job": "job `preview` from workflow `pr-preview.yml`",
+          "reach": "a token with write access to pull requests",
+          "marker": "(on pull_request_target)"
+        }
+      ],
+      "runsIn": "job pr-preview/preview",
+      "reachesShort": "token: write",
+      "so": "as anyone who opens a pull request, an attacker can execute code to write to pull requests",
+      "fix": "never check out the pull request head in a privileged workflow",
+      "findings": [
+        {
+          "code": "ISSUE-804",
+          "title": "pull_request_target workflow explicitly checks out the PR head",
+          "location": ".github/workflows/pr-preview.yml:17",
+          "details": [
+            {
+              "message": "job \"pr-preview/preview\" runs under pull_request_target AND checks out the PR head (ref=\"${{ github.event.pull_request.head.sha }}\") — base-repo secrets and fork-controlled code in the same run (tj-actions / CVE-2025-30066 pattern)",
+              "severity": "critical",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/pr-preview.yml#L17",
+              "location": ".github/workflows/pr-preview.yml:17"
+            }
+          ]
+        },
+        {
+          "code": "ISSUE-307",
+          "title": "Checkout persists credentials in .git/config (latent)",
+          "location": ".github/workflows/pr-preview.yml:17",
+          "details": [
+            {
+              "message": "job \"pr-preview/preview\" runs \"actions/checkout@v4\" without `persist-credentials: false` — GITHUB_TOKEN lingers in .git/config (latent; becomes a leak if a later step packs .git into an artifact or runs fork-controlled code)",
+              "severity": "critical",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/pr-preview.yml#L17",
+              "location": ".github/workflows/pr-preview.yml:17"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "808e99a78305a8b4",
+      "tier": "high",
+      "loss": 15,
+      "entry": "main (branch anyone with write access can push to, not protected)",
+      "entrySubject": "main",
+      "branches": [
+        {
+          "job": "job `build` from workflow `ci.yml`",
+          "reach": "every secret of the repository, a token with push, publish and deploy access and write access to actions, pull requests and security events and an OIDC token"
+        },
+        {
+          "job": "job `auto-approve` from workflow `ci.yml`",
+          "reach": "a token with push, publish and deploy access and write access to actions, pull requests and security events and an OIDC token"
+        },
+        {
+          "job": "job `release-notes` from workflow `build.yml`",
+          "reach": "a step that releases"
+        },
+        {
+          "job": "job `scan` from workflow `plumber`",
+          "reach": "a token with write access to security events and an OIDC token"
+        },
+        {
+          "job": "job `security-scan` from workflow `build.yml`",
+          "reach": "code execution on the runner; nothing else proven"
+        }
+      ],
+      "runsIn": "jobs ci/build, ci/auto-approve, build/release-notes, plumber/scan, build/security-scan",
+      "reachesShort": "every secret; token: push, publish, deploy",
+      "so": "as anyone with write access to `main`, an attacker can read every secret of the repository, push in your repository, publish packages and deploy",
+      "cap": "Capped at High: it needs write access first",
+      "fix": "protect the default branch",
+      "findings": [
+        {
+          "code": "ISSUE-501",
+          "title": "Branch protection missing",
+          "details": [
+            {
+              "message": "Branch `main` is not protected.",
+              "severity": "high"
+            }
+          ]
+        },
+        {
+          "code": "ISSUE-203",
+          "title": "Pipeline enables CI debug trace",
+          "location": ".github/workflows/ci.yml:13",
+          "count": 2,
+          "details": [
+            {
+              "message": "Job `ci/auto-approve` sets the debug variable `ACTIONS_STEP_DEBUG` to \"true\".",
+              "severity": "high",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L13",
+              "location": ".github/workflows/ci.yml:13"
+            },
+            {
+              "message": "Job `ci/build` sets the debug variable `ACTIONS_STEP_DEBUG` to \"true\".",
+              "severity": "critical",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L13",
+              "location": ".github/workflows/ci.yml:13"
+            }
+          ]
+        },
+        {
+          "code": "ISSUE-307",
+          "title": "Checkout persists credentials in .git/config (latent)",
+          "location": ".github/workflows/ci.yml:30",
+          "details": [
+            {
+              "message": "job \"ci/build\" runs \"actions/checkout@v4\" without `persist-credentials: false` — GITHUB_TOKEN lingers in .git/config (latent; becomes a leak if a later step packs .git into an artifact or runs fork-controlled code)",
+              "severity": "critical",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L30",
+              "location": ".github/workflows/ci.yml:30"
+            }
+          ]
+        },
+        {
+          "code": "ISSUE-309",
+          "title": "Entire secrets context exported via toJson(secrets)",
+          "location": ".github/workflows/ci.yml:66",
+          "details": [
+            {
+              "message": "job \"ci/build\" exposes all its secrets at once via toJson(secrets) — pass secrets by name instead",
+              "severity": "critical",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L66",
+              "location": ".github/workflows/ci.yml:66"
+            }
+          ]
+        },
+        {
+          "code": "ISSUE-803",
+          "title": "Excessive workflow permissions",
+          "location": ".github/workflows/ci.yml:9",
+          "count": 2,
+          "details": [
+            {
+              "message": "job \"ci/auto-approve\" runs with overly broad permissions: \"write-all\"",
+              "severity": "high",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L9",
+              "location": ".github/workflows/ci.yml:9"
+            },
+            {
+              "message": "job \"ci/build\" runs with overly broad permissions: \"write-all\"",
+              "severity": "critical",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L9",
+              "location": ".github/workflows/ci.yml:9"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "a60de2eab49ea3b6",
+      "tier": "high",
+      "loss": 15,
+      "entry": "acme/shared-workflows/.github/workflows/deploy.yml@main (untrusted and mutable external reusable workflow)",
+      "entrySubject": "acme/shared-workflows/.github/workflows/deploy.yml@main",
+      "branches": [
+        {
+          "job": "job `deploy` from workflow `pr-preview.yml`",
+          "reach": "every secret of the repository and a token with write access to pull requests",
+          "marker": "(on pull_request_target)"
+        }
+      ],
+      "runsIn": "job pr-preview/deploy",
+      "reachesShort": "every secret; token: write",
+      "so": "if this reusable workflow is compromised or malicious, an attacker can read every secret of the repository and write to pull requests",
+      "fix": "use a reusable workflow from a trusted source and pin the version on the commit SHA",
+      "findings": [
+        {
+          "code": "ISSUE-701",
+          "title": "Third-party action reference is not pinned by commit SHA",
+          "location": ".github/workflows/pr-preview.yml:27",
+          "details": [
+            {
+              "message": "job \"pr-preview/deploy\" calls reusable workflow \"acme/shared-workflows/.github/workflows/deploy.yml@main\" with a mutable ref — pin by commit SHA instead",
+              "severity": "high",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/pr-preview.yml#L27",
+              "location": ".github/workflows/pr-preview.yml:27"
+            }
+          ]
+        },
+        {
+          "code": "ISSUE-713",
+          "title": "Action comes from an unauthorized source",
+          "location": ".github/workflows/pr-preview.yml:27",
+          "details": [
+            {
+              "message": "job \"pr-preview/deploy\" calls reusable workflow \"acme/shared-workflows/.github/workflows/deploy.yml@main\" from an unauthorized source — restrict to authorized owners (actions/*, github/*) or an explicit allowlist",
+              "severity": "high",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/pr-preview.yml#L27",
+              "location": ".github/workflows/pr-preview.yml:27"
+            }
+          ]
+        },
+        {
+          "code": "ISSUE-302",
+          "title": "Reusable workflow called with `secrets: inherit`",
+          "location": ".github/workflows/pr-preview.yml:28",
+          "details": [
+            {
+              "message": "job \"pr-preview/deploy\" calls reusable workflow \"acme/shared-workflows/.github/workflows/deploy.yml@main\" with `secrets: inherit` — forward only the secrets the callee needs",
+              "severity": "high",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/pr-preview.yml#L28",
+              "location": ".github/workflows/pr-preview.yml:28"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "fe13efbb6d50e748",
+      "tier": "high",
+      "loss": 15,
+      "entry": "https://get.example.com/install.sh (script downloaded and run at build time)",
+      "entrySubject": "https://get.example.com/install.sh",
+      "branches": [
+        {
+          "job": "job `build` from workflow `ci.yml`",
+          "reach": "every secret of the repository, a token with push, publish and deploy access and write access to actions, pull requests and security events and an OIDC token"
+        }
+      ],
+      "runsIn": "job ci/build",
+      "reachesShort": "every secret; token: push, publish, deploy",
+      "so": "if this script is compromised or malicious, an attacker can read every secret of the repository, push in your repository, publish packages and deploy",
+      "cap": "Capped at High: it needs a dependency compromise first",
+      "fix": "download the script, check its checksum, then run it",
+      "findings": [
+        {
+          "code": "ISSUE-411",
+          "title": "Unverified script execution",
+          "location": ".github/workflows/ci.yml:49",
+          "details": [
+            {
+              "message": "Job `ci/build` runs a script fetched from the network: `curl -sSL https://get.example.com/install.sh | bash`.",
+              "severity": "high",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L49",
+              "location": ".github/workflows/ci.yml:49"
+            }
+          ]
+        },
+        {
+          "code": "ISSUE-501",
+          "title": "Branch protection missing",
+          "details": [
+            {
+              "message": "Branch `main` is not protected.",
+              "severity": "high"
+            }
+          ]
+        },
+        {
+          "code": "ISSUE-203",
+          "title": "Pipeline enables CI debug trace",
+          "location": ".github/workflows/ci.yml:13",
+          "details": [
+            {
+              "message": "Job `ci/build` sets the debug variable `ACTIONS_STEP_DEBUG` to \"true\".",
+              "severity": "critical",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L13",
+              "location": ".github/workflows/ci.yml:13"
+            }
+          ]
+        },
+        {
+          "code": "ISSUE-307",
+          "title": "Checkout persists credentials in .git/config (latent)",
+          "location": ".github/workflows/ci.yml:30",
+          "details": [
+            {
+              "message": "job \"ci/build\" runs \"actions/checkout@v4\" without `persist-credentials: false` — GITHUB_TOKEN lingers in .git/config (latent; becomes a leak if a later step packs .git into an artifact or runs fork-controlled code)",
+              "severity": "critical",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L30",
+              "location": ".github/workflows/ci.yml:30"
+            }
+          ]
+        },
+        {
+          "code": "ISSUE-309",
+          "title": "Entire secrets context exported via toJson(secrets)",
+          "location": ".github/workflows/ci.yml:66",
+          "details": [
+            {
+              "message": "job \"ci/build\" exposes all its secrets at once via toJson(secrets) — pass secrets by name instead",
+              "severity": "critical",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L66",
+              "location": ".github/workflows/ci.yml:66"
+            }
+          ]
+        },
+        {
+          "code": "ISSUE-803",
+          "title": "Excessive workflow permissions",
+          "location": ".github/workflows/ci.yml:9",
+          "details": [
+            {
+              "message": "job \"ci/build\" runs with overly broad permissions: \"write-all\"",
+              "severity": "critical",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L9",
+              "location": ".github/workflows/ci.yml:9"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "69c8c269adb4d1d2",
+      "tier": "medium",
+      "loss": 6,
+      "entry": "node:latest (mutable image tag, source not checked on GitHub)",
+      "entrySubject": "node:latest",
+      "branches": [
+        {
+          "job": "job `build` from workflow `ci.yml`",
+          "reach": "every secret of the repository, a token with push, publish and deploy access and write access to actions, pull requests and security events and an OIDC token"
+        }
+      ],
+      "runsIn": "job ci/build",
+      "reachesShort": "every secret; token: push, publish, deploy",
+      "so": "if this image is compromised or malicious, an attacker can read every secret of the repository, push in your repository, publish packages and deploy",
+      "cap": "Capped at Medium: it needs a dependency compromise first",
+      "fix": "pin the image by digest",
+      "findings": [
+        {
+          "code": "ISSUE-102",
+          "title": "Forbidden container image tag",
+          "location": ".github/workflows/ci.yml:22",
+          "details": [
+            {
+              "message": "Job `ci/build` uses the forbidden tag `latest` of image `node:latest`.",
+              "severity": "medium",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L22",
+              "location": ".github/workflows/ci.yml:22"
+            }
+          ]
+        },
+        {
+          "code": "ISSUE-103",
+          "title": "Container image is not pinned by digest",
+          "location": ".github/workflows/ci.yml:22",
+          "details": [
+            {
+              "message": "Job `ci/build` uses image `node:latest` without a digest.",
+              "severity": "medium",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L22",
+              "location": ".github/workflows/ci.yml:22"
+            }
+          ]
+        },
+        {
+          "code": "ISSUE-501",
+          "title": "Branch protection missing",
+          "details": [
+            {
+              "message": "Branch `main` is not protected.",
+              "severity": "high"
+            }
+          ]
+        },
+        {
+          "code": "ISSUE-203",
+          "title": "Pipeline enables CI debug trace",
+          "location": ".github/workflows/ci.yml:13",
+          "details": [
+            {
+              "message": "Job `ci/build` sets the debug variable `ACTIONS_STEP_DEBUG` to \"true\".",
+              "severity": "critical",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L13",
+              "location": ".github/workflows/ci.yml:13"
+            }
+          ]
+        },
+        {
+          "code": "ISSUE-307",
+          "title": "Checkout persists credentials in .git/config (latent)",
+          "location": ".github/workflows/ci.yml:30",
+          "details": [
+            {
+              "message": "job \"ci/build\" runs \"actions/checkout@v4\" without `persist-credentials: false` — GITHUB_TOKEN lingers in .git/config (latent; becomes a leak if a later step packs .git into an artifact or runs fork-controlled code)",
+              "severity": "critical",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L30",
+              "location": ".github/workflows/ci.yml:30"
+            }
+          ]
+        },
+        {
+          "code": "ISSUE-309",
+          "title": "Entire secrets context exported via toJson(secrets)",
+          "location": ".github/workflows/ci.yml:66",
+          "details": [
+            {
+              "message": "job \"ci/build\" exposes all its secrets at once via toJson(secrets) — pass secrets by name instead",
+              "severity": "critical",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L66",
+              "location": ".github/workflows/ci.yml:66"
+            }
+          ]
+        },
+        {
+          "code": "ISSUE-803",
+          "title": "Excessive workflow permissions",
+          "location": ".github/workflows/ci.yml:9",
+          "details": [
+            {
+              "message": "job \"ci/build\" runs with overly broad permissions: \"write-all\"",
+              "severity": "critical",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L9",
+              "location": ".github/workflows/ci.yml:9"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "7c38db44656f247a",
+      "tier": "low",
+      "loss": 3,
+      "entry": "github.event.workflow_run.head_sha (code of another workflow's run checked out)",
+      "entrySubject": "github.event.workflow_run.head_sha",
+      "branches": [
+        {
+          "job": "job `comment` from workflow `dangerous.yml`",
+          "reach": "code execution on the runner; nothing else proven",
+          "marker": "(on workflow_run)"
+        }
+      ],
+      "runsIn": "job dangerous/comment",
+      "reachesShort": "code execution without secrets",
+      "so": "as anyone who opens a pull request, an attacker can execute code on an ephemeral runner",
+      "fix": "never check out the pull request head in a privileged workflow",
+      "findings": [
+        {
+          "code": "ISSUE-802",
+          "title": "Dangerous workflow trigger",
+          "location": ".github/workflows/dangerous.yml:18",
+          "details": [
+            {
+              "message": "job \"dangerous/comment\" runs under dangerous trigger(s) workflow_run and checks out fork-controlled code — untrusted code executes with the base repo's secrets (CVE-2025-30066 pattern)",
+              "severity": "low",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/dangerous.yml#L18",
+              "location": ".github/workflows/dangerous.yml:18"
+            }
+          ]
+        },
+        {
+          "code": "ISSUE-307",
+          "title": "Checkout persists credentials in .git/config (latent)",
+          "location": ".github/workflows/dangerous.yml:18",
+          "details": [
+            {
+              "message": "job \"dangerous/comment\" runs \"actions/checkout@v4\" without `persist-credentials: false` — GITHUB_TOKEN lingers in .git/config (latent; becomes a leak if a later step packs .git into an artifact or runs fork-controlled code)",
+              "severity": "low",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/dangerous.yml#L18",
+              "location": ".github/workflows/dangerous.yml:18"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "c29bc4ab93054779",
+      "tier": "low",
+      "loss": 3,
+      "entry": "github.event.pull_request.title (user-controlled input injected in a script)",
+      "entrySubject": "github.event.pull_request.title",
+      "branches": [
+        {
+          "job": "job `build` from workflow `ci.yml`",
+          "reach": "code execution on the runner, no secret and no write token"
+        }
+      ],
+      "runsIn": "job ci/build",
+      "reachesShort": "code execution without secrets",
+      "so": "as anyone who can open a pull request, an attacker can execute code on the runner and poison what it caches or uploads",
+      "fix": "pass the input through an environment variable",
+      "findings": [
+        {
+          "code": "ISSUE-207",
+          "title": "Template injection in workflow script",
+          "location": ".github/workflows/ci.yml:53",
+          "details": [
+            {
+              "message": "job \"ci/build\" interpolates a user-controlled template expression into an inline script (template-injection risk)",
+              "severity": "low",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L53",
+              "location": ".github/workflows/ci.yml:53"
+            }
+          ]
+        },
+        {
+          "code": "ISSUE-209",
+          "title": "Untrusted content written to $GITHUB_ENV or $GITHUB_PATH",
+          "location": ".github/workflows/ci.yml:57",
+          "details": [
+            {
+              "message": "job \"ci/build\" writes a user-controlled template expression into $GITHUB_ENV or $GITHUB_PATH; an attacker can hijack later steps",
+              "severity": "low",
+              "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L57",
+              "location": ".github/workflows/ci.yml:57"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "actionPinningResult": {
+    "category": "Third-party Actions",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "actionsMustBePinnedByCommitSha",
+    "immutableReleaseRefs": [],
+    "issues": [
+      {
+        "baseSeverity": "high",
+        "code": "ISSUE-701",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-701",
+        "explanation": "A new version of `tj-actions/changed-files@v45.0.0` runs inside `ci/build` without any change in this repository, holding every secret of the repository and a token that can write to the repository, publish packages and create deployments: a compromise here ships a malicious release to your users or into production. Nothing stands between this and the default branch: Branch protection missing on `main`.",
+        "fingerprint": "1530a83e0afb4bd1",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-701"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/ci.yml"
+            },
+            {
+              "key": "job",
+              "value": "ci/build"
+            },
+            {
+              "key": "uses",
+              "value": "tj-actions/changed-files@v45.0.0"
+            },
+            {
+              "key": "step",
+              "value": ""
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "ci/build",
+        "pathIds": [
+          "a78f558c42bdc8de"
+        ],
+        "role": "Entry of path a78f558c42bdc8de",
+        "severity": "critical",
+        "title": "Third-party action reference is not pinned by commit SHA",
+        "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L35",
+        "uses": "tj-actions/changed-files@v45.0.0"
+      },
+      {
+        "baseSeverity": "high",
+        "code": "ISSUE-701",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-701",
+        "explanation": "A new version of `acme/shared-workflows/.github/workflows/deploy.yml@main` runs inside `pr-preview/deploy` without any change in this repository, holding every secret of the repository and a token with `pull-requests` write: the secrets can be read and reused elsewhere.",
+        "fingerprint": "49e3aa0824cb5a61",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-701"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/pr-preview.yml"
+            },
+            {
+              "key": "job",
+              "value": "pr-preview/deploy"
+            },
+            {
+              "key": "uses",
+              "value": "acme/shared-workflows/.github/workflows/deploy.yml@main"
+            },
+            {
+              "key": "step",
+              "value": ""
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "pr-preview/deploy",
+        "pathIds": [
+          "a60de2eab49ea3b6"
+        ],
+        "role": "Entry of path a60de2eab49ea3b6",
+        "severity": "high",
+        "title": "Third-party action reference is not pinned by commit SHA",
+        "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/pr-preview.yml#L27",
+        "uses": "acme/shared-workflows/.github/workflows/deploy.yml@main"
+      }
+    ],
+    "metrics": {
+      "actionRefsExempt": 14,
+      "actionRefsImmutableRelease": 0,
+      "actionRefsTotal": 4,
+      "actionRefsUnpinned": 2
+    },
+    "name": "Third-party actions must be pinned by commit SHA",
+    "skipped": false,
+    "status": "failed",
+    "version": "0.1.0"
+  },
+  "archivedActionsResult": {
+    "category": "Third-party Actions",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "actionsMustNotBeArchived",
+    "issues": [
+      {
+        "baseSeverity": "high",
+        "code": "ISSUE-702",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-702",
+        "fingerprint": "8b2d7721b7753006",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-702"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/build.yml"
+            },
+            {
+              "key": "job",
+              "value": "build/release-notes"
+            },
+            {
+              "key": "uses",
+              "value": "actions/create-release@v1"
+            },
+            {
+              "key": "step",
+              "value": ""
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "build/release-notes",
+        "role": "Hygiene: on no attack path",
+        "severity": "high",
+        "title": "Action is hosted in an archived repository",
+        "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/build.yml#L27",
+        "uses": "actions/create-release@v1"
+      }
+    ],
+    "metrics": {
+      "actionRefsArchived": 1,
+      "actionRefsTotal": 4
+    },
+    "name": "Actions must not reference archived repositories",
+    "skipped": false,
+    "status": "failed",
+    "version": "0.1.0"
+  },
+  "authorizedActionSourcesResult": {
+    "category": "Third-party Actions",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "githubActionMustComeFromAuthorizedSources",
+    "issues": [
+      {
+        "baseSeverity": "high",
+        "code": "ISSUE-713",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-713",
+        "explanation": "A new version of `tj-actions/changed-files@v45.0.0` runs inside `ci/build` without any change in this repository, holding every secret of the repository and a token that can write to the repository, publish packages and create deployments: a compromise here ships a malicious release to your users or into production. Nothing stands between this and the default branch: Branch protection missing on `main`.",
+        "fingerprint": "d0f572a927428dc0",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-713"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/ci.yml"
+            },
+            {
+              "key": "job",
+              "value": "ci/build"
+            },
+            {
+              "key": "uses",
+              "value": "tj-actions/changed-files@v45.0.0"
+            },
+            {
+              "key": "step",
+              "value": ""
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "ci/build",
+        "occurrenceSeverity": "high",
+        "pathIds": [
+          "a78f558c42bdc8de"
+        ],
+        "pinnedBySha": false,
+        "role": "Entry of path a78f558c42bdc8de",
+        "severity": "critical",
+        "title": "Action comes from an unauthorized source",
+        "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L35",
+        "uses": "tj-actions/changed-files@v45.0.0"
+      },
+      {
+        "baseSeverity": "high",
+        "code": "ISSUE-713",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-713",
+        "explanation": "A new version of `dorny/paths-filter@1c9b1f1aaa2222bbbb3333cccc4444dddd5555ee` runs inside `ci/build` without any change in this repository, holding every secret of the repository and a token that can write to the repository, publish packages and create deployments: a compromise here ships a malicious release to your users or into production. Plumber could not verify `job \"ci/build\" pins action \"dorny/paths-filter@1c9b1f1aaa2222bbbb3333cccc4444dddd5555ee\" to a commit SHA that does not exist...",
+        "fingerprint": "9e2e273963293393",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-713"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/ci.yml"
+            },
+            {
+              "key": "job",
+              "value": "ci/build"
+            },
+            {
+              "key": "uses",
+              "value": "dorny/paths-filter@1c9b1f1aaa2222bbbb3333cccc4444dddd5555ee"
+            },
+            {
+              "key": "step",
+              "value": ""
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "ci/build",
+        "occurrenceSeverity": "medium",
+        "pathIds": [
+          "6ec3495440deb3d4"
+        ],
+        "pinnedBySha": true,
+        "role": "Entry of path 6ec3495440deb3d4",
+        "severity": "critical",
+        "title": "Action comes from an unauthorized source",
+        "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L41",
+        "uses": "dorny/paths-filter@1c9b1f1aaa2222bbbb3333cccc4444dddd5555ee"
+      },
+      {
+        "baseSeverity": "high",
+        "code": "ISSUE-713",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-713",
+        "explanation": "A new version of `acme/shared-workflows/.github/workflows/deploy.yml@main` runs inside `pr-preview/deploy` without any change in this repository, holding every secret of the repository and a token with `pull-requests` write: the secrets can be read and reused elsewhere.",
+        "fingerprint": "7d3ac8c127fdb177",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-713"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/pr-preview.yml"
+            },
+            {
+              "key": "job",
+              "value": "pr-preview/deploy"
+            },
+            {
+              "key": "uses",
+              "value": "acme/shared-workflows/.github/workflows/deploy.yml@main"
+            },
+            {
+              "key": "step",
+              "value": ""
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "pr-preview/deploy",
+        "occurrenceSeverity": "high",
+        "pathIds": [
+          "a60de2eab49ea3b6"
+        ],
+        "pinnedBySha": false,
+        "role": "Entry of path a60de2eab49ea3b6",
+        "severity": "high",
+        "title": "Action comes from an unauthorized source",
+        "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/pr-preview.yml#L27",
+        "uses": "acme/shared-workflows/.github/workflows/deploy.yml@main"
+      }
+    ],
+    "metrics": {
+      "actionRefsTotal": 18,
+      "actionRefsUnauthorized": 3
+    },
+    "name": "Actions must come from authorized sources",
+    "skipped": false,
+    "status": "failed",
+    "version": "0.1.0"
+  },
+  "branchProtectionResult": {
+    "category": "Access and Authorization",
+    "controlName": "branchMustBeProtected",
+    "data": [
+      {
+        "branchName": "main",
+        "default": true,
+        "protected": false
+      }
+    ],
+    "enabled": true,
+    "issues": [
+      {
+        "baseSeverity": "critical",
+        "branchName": "main",
+        "code": "ISSUE-501",
+        "defaultBranch": true,
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-501",
+        "explanation": "Anyone with write access to `main` runs `ci/build`, holding every secret of the repository and a token that can write to the repository, publish packages and create deployments: a compromise here ships a malicious release to your users or into production. Pushing to this branch needs write access, so this path is capped at High.",
+        "fingerprint": "71355d6cf13ef90e",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-501"
+            },
+            {
+              "key": "file",
+              "value": ""
+            },
+            {
+              "key": "job",
+              "value": ""
+            },
+            {
+              "key": "branchName",
+              "value": "main"
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "occurrenceSeverity": "critical",
+        "pathIds": [
+          "808e99a78305a8b4",
+          "6ec3495440deb3d4",
+          "a78f558c42bdc8de",
+          "fe13efbb6d50e748",
+          "69c8c269adb4d1d2"
+        ],
+        "role": "Entry of path 808e99a78305a8b4",
+        "severity": "high",
+        "title": "Branch protection missing",
+        "type": "unprotected"
+      }
+    ],
+    "metrics": {
+      "branches": 8,
+      "branchesToProtect": 1,
+      "nonCompliantBranches": 0,
+      "projectsCorrectlyProtected": 0,
+      "totalProtectedBranches": 0,
+      "unprotectedBranches": 1
+    },
+    "name": "Branch must be protected",
+    "status": "failed",
+    "version": "0.2.0"
+  },
+  "cachePoisoningResult": {
+    "category": "Third-party Actions",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "untrustedTriggersMustNotWriteCache",
+    "issues": [],
+    "metrics": {
+      "exemptedJobs": 0,
+      "untrustedCacheWriteFound": 0,
+      "workflowsScanned": 6
+    },
+    "name": "Untrusted triggers must not write the cache",
+    "skipped": false,
+    "status": "passed",
+    "version": "0.1.0"
+  },
+  "checkoutCredentialsResult": {
+    "category": "CI/CD Secrets",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "checkoutMustNotPersistCredentials",
+    "issues": [
+      {
+        "baseSeverity": "low",
+        "code": "ISSUE-307",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-307",
+        "fingerprint": "c79fa004d1ad3496",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-307"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/ci.yml"
+            },
+            {
+              "key": "job",
+              "value": "ci/build"
+            },
+            {
+              "key": "uses",
+              "value": "actions/checkout@v4"
+            },
+            {
+              "key": "step",
+              "value": ""
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "ci/build",
+        "pathIds": [
+          "6ec3495440deb3d4",
+          "a78f558c42bdc8de",
+          "808e99a78305a8b4",
+          "fe13efbb6d50e748",
+          "69c8c269adb4d1d2"
+        ],
+        "role": "Privilege: on path 6ec3495440deb3d4",
+        "severity": "critical",
+        "title": "Checkout persists credentials in .git/config (latent)",
+        "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L30",
+        "uses": "actions/checkout@v4"
+      },
+      {
+        "baseSeverity": "low",
+        "code": "ISSUE-307",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-307",
+        "fingerprint": "39d923fc33e61fe0",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-307"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/dangerous.yml"
+            },
+            {
+              "key": "job",
+              "value": "dangerous/comment"
+            },
+            {
+              "key": "uses",
+              "value": "actions/checkout@v4"
+            },
+            {
+              "key": "step",
+              "value": ""
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "dangerous/comment",
+        "pathIds": [
+          "7c38db44656f247a"
+        ],
+        "role": "Privilege: on path 7c38db44656f247a",
+        "severity": "low",
+        "title": "Checkout persists credentials in .git/config (latent)",
+        "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/dangerous.yml#L18",
+        "uses": "actions/checkout@v4"
+      },
+      {
+        "baseSeverity": "low",
+        "code": "ISSUE-307",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-307",
+        "fingerprint": "0ce30e4bc125d7f0",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-307"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/pr-preview.yml"
+            },
+            {
+              "key": "job",
+              "value": "pr-preview/preview"
+            },
+            {
+              "key": "uses",
+              "value": "actions/checkout@v4"
+            },
+            {
+              "key": "step",
+              "value": ""
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "pr-preview/preview",
+        "pathIds": [
+          "40e285b874440c2d"
+        ],
+        "role": "Privilege: on path 40e285b874440c2d",
+        "severity": "critical",
+        "title": "Checkout persists credentials in .git/config (latent)",
+        "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/pr-preview.yml#L17",
+        "uses": "actions/checkout@v4"
+      },
+      {
+        "baseSeverity": "low",
+        "code": "ISSUE-307",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-307",
+        "fingerprint": "a57f528ae0a18a1f",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-307"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/release.yml"
+            },
+            {
+              "key": "job",
+              "value": "release/publish"
+            },
+            {
+              "key": "uses",
+              "value": "actions/checkout@v4"
+            },
+            {
+              "key": "step",
+              "value": ""
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "release/publish",
+        "role": "Privilege: on no attack path",
+        "severity": "low",
+        "title": "Checkout persists credentials in .git/config (latent)",
+        "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/release.yml#L15",
+        "uses": "actions/checkout@v4"
+      }
+    ],
+    "metrics": {
+      "checkoutsPackedIntoArtifact": 0,
+      "checkoutsPersistingLatent": 4,
+      "workflowsScanned": 6
+    },
+    "name": "Checkout must not persist credentials",
+    "skipped": false,
+    "status": "failed",
+    "version": "0.1.0"
+  },
+  "dangerousTriggersResult": {
+    "category": "Workflow Triggers and Permissions",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "workflowMustNotUseDangerousTriggers",
+    "issues": [
+      {
+        "baseSeverity": "critical",
+        "code": "ISSUE-802",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-802",
+        "explanation": "A pull request from anyone runs inside `dangerous/comment` with the base repository's privileges, checking out `github.event.workflow_run.head_sha`, but it holds no secret and cannot write anything: code runs on an ephemeral runner and nothing else is proven.",
+        "fingerprint": "93ccda05224bbcd8",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-802"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/dangerous.yml"
+            },
+            {
+              "key": "job",
+              "value": "dangerous/comment"
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "dangerous/comment",
+        "pathIds": [
+          "7c38db44656f247a"
+        ],
+        "role": "Entry of path 7c38db44656f247a",
+        "severity": "low",
+        "title": "Dangerous workflow trigger",
+        "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/dangerous.yml#L18"
+      }
+    ],
+    "metrics": {
+      "workflowsScanned": 6,
+      "workflowsWithDangerousTrigger": 1
+    },
+    "name": "Workflows must not use dangerous triggers",
+    "skipped": false,
+    "status": "failed",
+    "version": "0.1.0"
+  },
+  "debugTraceResult": {
+    "category": "CI/CD Variables",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "pipelineMustNotEnableDebugTrace",
+    "issues": [
+      {
+        "baseSeverity": "critical",
+        "code": "ISSUE-203",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-203",
+        "fingerprint": "cc37b1849b7e11a6",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-203"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/ci.yml"
+            },
+            {
+              "key": "job",
+              "value": "ci/auto-approve"
+            },
+            {
+              "key": "variableName",
+              "value": "ACTIONS_STEP_DEBUG"
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "ci/auto-approve",
+        "location": "ci/auto-approve",
+        "pathIds": [
+          "808e99a78305a8b4"
+        ],
+        "role": "Privilege: on path 808e99a78305a8b4",
+        "severity": "high",
+        "title": "Pipeline enables CI debug trace",
+        "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L13",
+        "value": "true",
+        "valueProvenance": "ci_file",
+        "variableName": "ACTIONS_STEP_DEBUG"
+      },
+      {
+        "baseSeverity": "critical",
+        "code": "ISSUE-203",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-203",
+        "fingerprint": "d0eea11f4d6a3a8b",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-203"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/ci.yml"
+            },
+            {
+              "key": "job",
+              "value": "ci/build"
+            },
+            {
+              "key": "variableName",
+              "value": "ACTIONS_STEP_DEBUG"
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "ci/build",
+        "location": "ci/build",
+        "pathIds": [
+          "6ec3495440deb3d4",
+          "a78f558c42bdc8de",
+          "808e99a78305a8b4",
+          "fe13efbb6d50e748",
+          "69c8c269adb4d1d2"
+        ],
+        "role": "Privilege: on path 6ec3495440deb3d4",
+        "severity": "critical",
+        "title": "Pipeline enables CI debug trace",
+        "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L13",
+        "value": "true",
+        "valueProvenance": "ci_file",
+        "variableName": "ACTIONS_STEP_DEBUG"
+      }
+    ],
+    "metrics": {
+      "forbiddenFound": 2,
+      "totalVariablesChecked": 7
+    },
+    "name": "Pipeline must not enable debug trace",
+    "skipped": false,
+    "status": "failed",
+    "version": "0.1.0"
+  },
+  "dockerInDockerResult": {
+    "category": "Pipeline Composition",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "pipelineMustNotUseDockerInDocker",
+    "issues": [],
+    "metrics": {
+      "dindServicesFound": 0,
+      "insecureDaemonFound": 0,
+      "totalJobsChecked": 9
+    },
+    "name": "Pipeline must not use Docker-in-Docker",
+    "skipped": false,
+    "status": "passed",
+    "version": "0.1.0"
+  },
+  "excessivePermissionsResult": {
+    "category": "Workflow Triggers and Permissions",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "workflowMustNotGrantPermissionsWriteAll",
+    "issues": [
+      {
+        "baseSeverity": "high",
+        "code": "ISSUE-803",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-803",
+        "fingerprint": "8f04e4c5a200aee4",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-803"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/ci.yml"
+            },
+            {
+              "key": "job",
+              "value": "ci/auto-approve"
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "ci/auto-approve",
+        "pathIds": [
+          "808e99a78305a8b4"
+        ],
+        "role": "Privilege: on path 808e99a78305a8b4",
+        "severity": "high",
+        "title": "Excessive workflow permissions",
+        "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L9"
+      },
+      {
+        "baseSeverity": "high",
+        "code": "ISSUE-803",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-803",
+        "fingerprint": "0dc99fed14bc80eb",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-803"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/ci.yml"
+            },
+            {
+              "key": "job",
+              "value": "ci/build"
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "ci/build",
+        "pathIds": [
+          "6ec3495440deb3d4",
+          "a78f558c42bdc8de",
+          "808e99a78305a8b4",
+          "fe13efbb6d50e748",
+          "69c8c269adb4d1d2"
+        ],
+        "role": "Privilege: on path 6ec3495440deb3d4",
+        "severity": "critical",
+        "title": "Excessive workflow permissions",
+        "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L9"
+      },
+      {
+        "baseSeverity": "high",
+        "code": "ISSUE-803",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-803",
+        "fingerprint": "120a7c793031967d",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-803"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/release.yml"
+            },
+            {
+              "key": "job",
+              "value": "release/publish"
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "release/publish",
+        "role": "Privilege: on no attack path",
+        "severity": "high",
+        "title": "Excessive workflow permissions",
+        "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/release.yml#L8"
+      }
+    ],
+    "metrics": {
+      "jobsTotal": 9,
+      "jobsWithWriteAll": 3
+    },
+    "name": "Workflow must not grant write-all permissions",
+    "skipped": false,
+    "status": "failed",
+    "version": "0.1.0"
+  },
+  "githubEnvInjectionResult": {
+    "category": "CI/CD Variables",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "workflowMustNotWriteUntrustedContentToGitHubEnv",
+    "issues": [
+      {
+        "baseSeverity": "high",
+        "code": "ISSUE-209",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-209",
+        "explanation": "Anyone who can open a pull request or push a commit controls `github.event.pull_request.title`, which `ci/build` passes to a shell, but it holds no secret and cannot write anything: the runner can be abused and anything it caches or uploads can be poisoned.",
+        "fingerprint": "bef73828626f0e3c",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-209"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/ci.yml"
+            },
+            {
+              "key": "job",
+              "value": "ci/build"
+            },
+            {
+              "key": "variableName",
+              "value": ""
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "ci/build",
+        "pathIds": [
+          "c29bc4ab93054779"
+        ],
+        "role": "Entry of path c29bc4ab93054779",
+        "severity": "low",
+        "title": "Untrusted content written to $GITHUB_ENV or $GITHUB_PATH",
+        "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L57",
+        "variableName": ""
+      }
+    ],
+    "metrics": {
+      "githubEnvInjectionsFound": 1,
+      "scriptLinesChecked": 15,
+      "workflowsScanned": 6
+    },
+    "name": "Workflows must not write untrusted content to $GITHUB_ENV",
+    "skipped": false,
+    "status": "failed",
+    "version": "0.1.0"
+  },
+  "imageForbiddenTagsResult": {
+    "category": "CI/CD Container Images",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "containerImageMustNotUseForbiddenTags",
+    "issues": [
+      {
+        "baseSeverity": "medium",
+        "code": "ISSUE-102",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-102",
+        "explanation": "A new version of `node:latest` runs inside `ci/build` without any change in this repository, holding every secret of the repository and a token that can write to the repository, publish packages and create deployments: a compromise here ships a malicious release to your users or into production. Nothing stands between this and the default branch: Branch protection missing on `main`. The dependency must be compromised first, so this path is capped at Medium.",
+        "fingerprint": "657414fb5993f4ed",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-102"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/ci.yml"
+            },
+            {
+              "key": "job",
+              "value": "ci/build"
+            },
+            {
+              "key": "link",
+              "value": "node:latest"
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "ci/build",
+        "link": "node:latest",
+        "pathIds": [
+          "69c8c269adb4d1d2"
+        ],
+        "role": "Entry of path 69c8c269adb4d1d2",
+        "severity": "medium",
+        "tag": "latest",
+        "title": "Forbidden container image tag",
+        "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L22"
+      },
+      {
+        "baseSeverity": "high",
+        "code": "ISSUE-103",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-103",
+        "explanation": "A new version of `node:latest` runs inside `ci/build` without any change in this repository, holding every secret of the repository and a token that can write to the repository, publish packages and create deployments: a compromise here ships a malicious release to your users or into production. Nothing stands between this and the default branch: Branch protection missing on `main`. The dependency must be compromised first, so this path is capped at Medium.",
+        "fingerprint": "bca35dd3c8e05d7e",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-103"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/ci.yml"
+            },
+            {
+              "key": "job",
+              "value": "ci/build"
+            },
+            {
+              "key": "imageRepo",
+              "value": "node"
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "imageRepo": "node",
+        "job": "ci/build",
+        "link": "node:latest",
+        "pathIds": [
+          "69c8c269adb4d1d2"
+        ],
+        "role": "Entry of path 69c8c269adb4d1d2",
+        "severity": "medium",
+        "tag": "latest",
+        "title": "Container image is not pinned by digest",
+        "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L22"
+      }
+    ],
+    "metrics": {
+      "ciInvalid": 0,
+      "ciMissing": 0,
+      "notPinnedByDigest": 1,
+      "pinnedByDigest": 0,
+      "total": 1,
+      "usingForbiddenTags": 1
+    },
+    "mustBePinnedByDigest": true,
+    "name": "Container images must not use forbidden reference",
+    "skipped": false,
+    "status": "failed",
+    "version": "0.4.0"
+  },
+  "impostorCommitResult": {
+    "category": "Third-party Actions",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "actionRefsMustExistUpstream",
+    "issues": [
+      {
+        "baseSeverity": "critical",
+        "code": "ISSUE-707",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-707",
+        "explanation": "A new version of `dorny/paths-filter@1c9b1f1aaa2222bbbb3333cccc4444dddd5555ee` runs inside `ci/build` without any change in this repository, holding every secret of the repository and a token that can write to the repository, publish packages and create deployments: a compromise here ships a malicious release to your users or into production. Plumber could not verify `job \"ci/build\" pins action \"dorny/paths-filter@1c9b1f1aaa2222bbbb3333cccc4444dddd5555ee\" to a commit SHA that does not exist...",
+        "fingerprint": "2917fb102a99b81a",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-707"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/ci.yml"
+            },
+            {
+              "key": "job",
+              "value": "ci/build"
+            },
+            {
+              "key": "uses",
+              "value": "dorny/paths-filter@1c9b1f1aaa2222bbbb3333cccc4444dddd5555ee"
+            },
+            {
+              "key": "step",
+              "value": ""
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "ci/build",
+        "pathIds": [
+          "6ec3495440deb3d4"
+        ],
+        "role": "Entry of path 6ec3495440deb3d4",
+        "severity": "critical",
+        "title": "Pinned commit SHA does not belong to the action's repository",
+        "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L41",
+        "uses": "dorny/paths-filter@1c9b1f1aaa2222bbbb3333cccc4444dddd5555ee"
+      }
+    ],
+    "metrics": {
+      "actionRefsAbsentUpstream": 1,
+      "actionRefsTotal": 4
+    },
+    "name": "Actions must pin commits that exist upstream",
+    "skipped": false,
+    "status": "failed",
+    "version": "0.1.0"
+  },
+  "invalidWorkflowsResult": {
+    "category": "Pipeline Composition",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "workflowsMustBeValid",
+    "issues": [],
+    "metrics": {
+      "workflowFilesInvalid": 0,
+      "workflowsTotal": 6
+    },
+    "name": "Workflow files must be valid",
+    "skipped": false,
+    "status": "passed",
+    "version": "0.1.0"
+  },
+  "knownVulnerableActionsResult": {
+    "category": "Third-party Actions",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "actionsMustNotCarryKnownCVEs",
+    "issues": [
+      {
+        "advisories": [
+          "GHSA-mrrh-fwg8-r2c3"
+        ],
+        "advisorySeverities": {
+          "GHSA-mrrh-fwg8-r2c3": "high"
+        },
+        "baseSeverity": "critical",
+        "code": "ISSUE-703",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-703",
+        "explanation": "A new version of `tj-actions/changed-files@v45.0.0` runs inside `ci/build` without any change in this repository, holding every secret of the repository and a token that can write to the repository, publish packages and create deployments: a compromise here ships a malicious release to your users or into production. Nothing stands between this and the default branch: Branch protection missing on `main`.",
+        "fingerprint": "3c247b6365635855",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-703"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/ci.yml"
+            },
+            {
+              "key": "job",
+              "value": "ci/build"
+            },
+            {
+              "key": "uses",
+              "value": "tj-actions/changed-files@v45.0.0"
+            },
+            {
+              "key": "step",
+              "value": ""
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "ci/build",
+        "pathIds": [
+          "a78f558c42bdc8de"
+        ],
+        "role": "Entry of path a78f558c42bdc8de",
+        "severity": "critical",
+        "title": "Action version carries a published security advisory",
+        "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L35",
+        "uses": "tj-actions/changed-files@v45.0.0"
+      }
+    ],
+    "metrics": {
+      "actionRefsTotal": 4,
+      "actionRefsVulnerable": 1
+    },
+    "name": "Actions must not carry known CVEs",
+    "skipped": false,
+    "status": "failed",
+    "version": "0.1.0"
+  },
+  "mutableRemoteExecResult": {
+    "category": "Third-party Actions",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "actionsMustNotExecuteMutableRemoteCode",
+    "issues": [],
+    "metrics": {
+      "actionRefsTotal": 4,
+      "actionsWithMutableRemoteExec": 0
+    },
+    "name": "Actions must not execute mutable remote code",
+    "skipped": false,
+    "status": "passed",
+    "version": "0.1.0"
+  },
+  "overprovisionedSecretsResult": {
+    "category": "CI/CD Secrets",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "workflowMustNotExportEntireSecretsContext",
+    "issues": [
+      {
+        "baseSeverity": "critical",
+        "code": "ISSUE-309",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-309",
+        "fingerprint": "6ef911436f97f580",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-309"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/ci.yml"
+            },
+            {
+              "key": "job",
+              "value": "ci/build"
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "ci/build",
+        "pathIds": [
+          "6ec3495440deb3d4",
+          "a78f558c42bdc8de",
+          "808e99a78305a8b4",
+          "fe13efbb6d50e748",
+          "69c8c269adb4d1d2"
+        ],
+        "role": "Privilege: on path 6ec3495440deb3d4",
+        "severity": "critical",
+        "title": "Entire secrets context exported via toJson(secrets)",
+        "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L66"
+      }
+    ],
+    "metrics": {
+      "secretsContextExportsFound": 1,
+      "workflowsScanned": 6
+    },
+    "name": "Workflows must not expose all secrets at once",
+    "skipped": false,
+    "status": "failed",
+    "version": "0.1.0"
+  },
+  "permissionsResult": {
+    "category": "Workflow Triggers and Permissions",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "workflowsMustDeclarePermissions",
+    "issues": [],
+    "metrics": {
+      "workflowsMissingPermissions": 0,
+      "workflowsTotal": 6
+    },
+    "name": "Workflows must declare permissions",
+    "skipped": false,
+    "status": "passed",
+    "version": "0.1.0"
+  },
+  "pullRequestTargetHeadCheckoutResult": {
+    "category": "Workflow Triggers and Permissions",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "pullRequestTargetMustNotCheckoutHead",
+    "issues": [
+      {
+        "baseSeverity": "critical",
+        "code": "ISSUE-804",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-804",
+        "explanation": "A pull request from anyone runs inside `pr-preview/preview` with the base repository's privileges, checking out `github.event.pull_request.head.sha`, holding a token with `pull-requests` write: a compromise here ships a malicious release to your users or into production.",
+        "fingerprint": "065c2ae7f9848ee7",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-804"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/pr-preview.yml"
+            },
+            {
+              "key": "job",
+              "value": "pr-preview/preview"
+            },
+            {
+              "key": "uses",
+              "value": "actions/checkout@v4"
+            },
+            {
+              "key": "step",
+              "value": ""
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "pr-preview/preview",
+        "pathIds": [
+          "40e285b874440c2d"
+        ],
+        "ref": "${{ github.event.pull_request.head.sha }}",
+        "role": "Entry of path 40e285b874440c2d",
+        "severity": "critical",
+        "title": "pull_request_target workflow explicitly checks out the PR head",
+        "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/pr-preview.yml#L17",
+        "uses": "actions/checkout@v4"
+      }
+    ],
+    "metrics": {
+      "headCheckoutsUnderPrTarget": 1,
+      "workflowsScanned": 6
+    },
+    "name": "pull_request_target workflows must not check out the PR head",
+    "skipped": false,
+    "status": "failed",
+    "version": "0.1.0"
+  },
+  "refConfusionResult": {
+    "category": "Pipeline Composition",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "externalRefsMustNotCollide",
+    "issues": [],
+    "metrics": {
+      "actionRefsAmbiguous": 0,
+      "actionRefsTotal": 4
+    },
+    "name": "Includes must not use ambiguous tag/branch refs",
+    "skipped": false,
+    "status": "passed",
+    "version": "0.1.0"
+  },
+  "requiredActionsResult": {
+    "category": "Pipeline Composition",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "workflowMustIncludeRequiredActions",
+    "issues": [],
+    "metrics": {
+      "anySatisfiedGroup": false,
+      "satisfiedGroups": 0,
+      "totalGroups": 0
+    },
+    "name": "Workflows must include required actions",
+    "requirementGroups": [],
+    "skipped": true,
+    "status": "skipped",
+    "version": "0.1.0"
+  },
+  "reusableSecretsResult": {
+    "category": "CI/CD Secrets",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "reusableWorkflowsMustNotInheritSecrets",
+    "issues": [
+      {
+        "baseSeverity": "high",
+        "code": "ISSUE-302",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-302",
+        "fingerprint": "619f09bfa63ce82b",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-302"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/pr-preview.yml"
+            },
+            {
+              "key": "job",
+              "value": "pr-preview/deploy"
+            },
+            {
+              "key": "uses",
+              "value": "acme/shared-workflows/.github/workflows/deploy.yml@main"
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "pr-preview/deploy",
+        "pathIds": [
+          "a60de2eab49ea3b6"
+        ],
+        "role": "Privilege: on path a60de2eab49ea3b6",
+        "severity": "high",
+        "title": "Reusable workflow called with `secrets: inherit`",
+        "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/pr-preview.yml#L28",
+        "uses": "acme/shared-workflows/.github/workflows/deploy.yml@main"
+      }
+    ],
+    "metrics": {
+      "reusableCalls": 1,
+      "reusableCallsSecretsInherit": 1
+    },
+    "name": "Reusable workflows must not inherit secrets",
+    "skipped": false,
+    "status": "failed",
+    "version": "0.1.0"
+  },
+  "securityJobsWeakenedResult": {
+    "category": "Pipeline Composition",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "securityJobsMustNotBeWeakened",
+    "issues": [
+      {
+        "baseSeverity": "critical",
+        "code": "ISSUE-410",
+        "detail": "allow_failure",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-410",
+        "fingerprint": "b077326534bbfb22",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-410"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/build.yml"
+            },
+            {
+              "key": "job",
+              "value": "build/security-scan"
+            },
+            {
+              "key": "detail",
+              "value": "allow_failure"
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "build/security-scan",
+        "role": "Gate: no path to amplify today",
+        "severity": "critical",
+        "title": "Security job weakened",
+        "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/build.yml#L35"
+      }
+    ],
+    "metrics": {
+      "securityJobsFound": 2,
+      "weakenedJobs": 1
+    },
+    "name": "Security jobs must not be weakened",
+    "skipped": false,
+    "status": "failed",
+    "version": "0.1.0"
+  },
+  "templateInjectionResult": {
+    "category": "CI/CD Variables",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "workflowMustNotInjectUserInputInScripts",
+    "issues": [
+      {
+        "baseSeverity": "critical",
+        "code": "ISSUE-207",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-207",
+        "explanation": "Anyone who can open a pull request or push a commit controls `github.event.pull_request.title`, which `ci/build` passes to a shell, but it holds no secret and cannot write anything: the runner can be abused and anything it caches or uploads can be poisoned.",
+        "fingerprint": "2ec94246c07871cd",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-207"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/ci.yml"
+            },
+            {
+              "key": "job",
+              "value": "ci/build"
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "ci/build",
+        "pathIds": [
+          "c29bc4ab93054779"
+        ],
+        "role": "Entry of path c29bc4ab93054779",
+        "severity": "low",
+        "title": "Template injection in workflow script",
+        "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L53"
+      }
+    ],
+    "metrics": {
+      "scriptLinesChecked": 15,
+      "templateInjectionsFound": 1,
+      "workflowsScanned": 6
+    },
+    "name": "Workflows must not inject user input in scripts",
+    "skipped": false,
+    "status": "failed",
+    "version": "0.1.0"
+  },
+  "unverifiedScriptsResult": {
+    "category": "Pipeline Composition",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "pipelineMustNotExecuteUnverifiedScripts",
+    "issues": [
+      {
+        "baseSeverity": "high",
+        "code": "ISSUE-411",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-411",
+        "explanation": "A new version of `https://get.example.com/install.sh` runs inside `ci/build` without any change in this repository, holding every secret of the repository and a token that can write to the repository, publish packages and create deployments: a compromise here ships a malicious release to your users or into production. Nothing stands between this and the default branch: Branch protection missing on `main`. The dependency must be compromised first, so this path is capped at High.",
+        "fingerprint": "13f58bfc2575555c",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-411"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/ci.yml"
+            },
+            {
+              "key": "job",
+              "value": "ci/build"
+            },
+            {
+              "key": "scriptLine",
+              "value": "curl -sSL https://get.example.com/install.sh | bash"
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "ci/build",
+        "pathIds": [
+          "fe13efbb6d50e748"
+        ],
+        "role": "Entry of path fe13efbb6d50e748",
+        "scriptLine": "curl -sSL https://get.example.com/install.sh | bash",
+        "severity": "high",
+        "title": "Unverified script execution",
+        "url": "https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L49"
+      }
+    ],
+    "metrics": {
+      "jobsChecked": 9,
+      "totalScriptLinesChecked": 15,
+      "unverifiedScriptsFound": 1
+    },
+    "name": "Pipeline must not execute unverified scripts",
+    "skipped": false,
+    "status": "failed",
+    "version": "0.1.0"
+  },
+  "analyzeBranch": "main",
+  "analyzedCiConfig": {
+    "workflows": [
+      {
+        "content": "name: Build\n\n# INTENTIONALLY INSECURE — extends the critical demo with two controls the\n# other workflows don't exercise: archived actions and a weakened security job.\n\non:\n  push:\n    branches: [main]\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.ref }}\n  cancel-in-progress: true\n\njobs:\n  release-notes:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3\n        with:\n          persist-credentials: false\n      # Upstream repo is archived (read-only, unmaintained — no more security\n      # fixes, and the last maintainer can still push a new SHA over the tag).\n      # ISSUE-702 (API).\n      - uses: actions/create-release@v1\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n\n  security-scan:\n    runs-on: ubuntu-latest\n    # A security scanner neutered with continue-on-error: the job is allowed to\n    # fail, so a real finding never blocks the pipeline. ISSUE-410.\n    continue-on-error: true\n    steps:\n      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3\n        with:\n          persist-credentials: false\n      - name: run scanner\n        run: echo \"pretend to scan for secrets\"\n",
+        "path": ".github/workflows/build.yml"
+      },
+      {
+        "content": "# INTENTIONALLY INSECURE — this workflow exists to trip Plumber controls.\n# It has no `name:` (ISSUE-601) and no `concurrency:` (ISSUE-418).\non:\n  push:\n    branches: [main]\n  pull_request:\n\n# Grants every scope to GITHUB_TOKEN. ISSUE-803 (high).\npermissions: write-all\n\nenv:\n  # Streams secrets into job logs at debug verbosity. ISSUE-203 (critical).\n  ACTIONS_STEP_DEBUG: true\n  # Re-enables ::set-env:: / ::add-path:: style command injection. ISSUE-208 (high).\n  ACTIONS_ALLOW_UNSECURE_COMMANDS: \"true\"\n\njobs:\n  build:\n    runs-on: ubuntu-latest\n    container:\n      # Mutable, non-digest tag from the forbidden list. ISSUE-102 (medium) + ISSUE-103 (high).\n      image: node:latest\n      credentials:\n        username: ci-bot\n        # Registry password hardcoded in plaintext. ISSUE-704 (critical).\n        password: sup3rs3cr3t-do-not-commit\n    steps:\n      # actions/* is a trusted owner (no ISSUE-701) but credentials persist by\n      # default into .git/config. ISSUE-307 (high).\n      - uses: actions/checkout@v4\n\n      # Third-party action pinned by tag, with a published advisory, from an\n      # owner outside the authorized allowlist.\n      # ISSUE-701 (high) + ISSUE-703 (critical, API) + ISSUE-713 (high).\n      - uses: tj-actions/changed-files@v45.0.0\n\n      # Third-party action pinned to a 40-char SHA that does not exist in the\n      # upstream repo (a real action, but this commit was never pushed there),\n      # from an owner outside the authorized allowlist.\n      # ISSUE-707 impostor-commit (critical, API) + ISSUE-713 (high).\n      - uses: dorny/paths-filter@1c9b1f1aaa2222bbbb3333cccc4444dddd5555ee\n\n      # Unpinned package install. ISSUE-214 (medium).\n      - name: install tooling\n        run: npm install -g some-build-tool\n\n      # Pipes a remote script straight into a shell. ISSUE-411 (high).\n      - name: bootstrap\n        run: curl -sSL https://get.example.com/install.sh | bash\n\n      # Untrusted PR title interpolated into the shell. ISSUE-207 (critical).\n      - name: greet\n        run: echo \"Building PR ${{ github.event.pull_request.title }}\"\n\n      # Untrusted input written to $GITHUB_ENV. ISSUE-209 (critical).\n      - name: export title\n        run: echo \"PR_TITLE=${{ github.event.pull_request.title }}\" \u003e\u003e \"$GITHUB_ENV\"\n\n      # Whole github context serialized into a command. ISSUE-213 (high).\n      - name: dump context\n        run: echo '${{ toJson(github) }}'\n\n      # Entire secrets context exported as one blob. ISSUE-309 (critical).\n      - name: export secrets\n        env:\n          ALL_SECRETS: ${{ toJson(secrets) }}\n        run: echo \"$ALL_SECRETS\" \u003e /tmp/secrets.json\n\n      # Uploads the entire workspace, including .git. ISSUE-419 (medium).\n      - uses: actions/upload-artifact@v4\n        with:\n          name: everything\n          path: .\n      - name: Upload SARIF\n        uses: github/codeql-action/upload-sarif@v2 # Actions must not use ambiguous tag/branch refs. ISSUE-710 (Medium)\n        with:\n          sarif_file: results.sarif\n\n  auto-approve:\n    # github.actor is attacker-spoofable. ISSUE-210 (high).\n    if: github.actor == 'dependabot[bot]'\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo \"auto-approving\"\n",
+        "path": ".github/workflows/ci.yml"
+      },
+      {
+        "content": "name: Post-CI\n\n# workflow_run is a \"dangerous\" trigger: it runs in the base context with secrets\n# available, even for runs originating from forks. Combined with a checkout of the\n# triggering run's head SHA, this is remote code execution. ISSUE-802 (critical).\non:\n  workflow_run:\n    workflows: [\"CI\"]\n    types: [completed]\n\npermissions:\n  contents: read\n\njobs:\n  comment:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          ref: ${{ github.event.workflow_run.head_sha }}\n      - run: npm ci\n      - run: node ./scripts/post-results.js\n",
+        "path": ".github/workflows/dangerous.yml"
+      },
+      {
+        "content": "name: Plumber\n\non:\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main]\n\n# Least-privilege: read the repo, write SARIF to code scanning.\n# id-token is for the Plumber Score push (publishes only from the default branch).\npermissions:\n  contents: read\n  security-events: write\n  id-token: write\n\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.ref }}\n  cancel-in-progress: true\n\njobs:\n  scan:\n    runs-on: ubuntu-24.04\n    steps:\n      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3\n        with:\n          persist-credentials: false\n      - uses: getplumber/plumber@f84005b69dc57965d192feedd08b4a20fa6e52cc # v0.4.60\n        with:\n          # This repo is deliberately dangerous (target grade E). Surface every\n          # finding to code scanning and publish the live Plumber Score badge,\n          # but don't hard-fail CI on the expected result.\n          soft-fail: true\n          score-push: true\n",
+        "path": ".github/workflows/plumber.yml"
+      },
+      {
+        "content": "name: PR Preview\n\n# pull_request_target runs with a read/write token in the BASE repo context,\n# but this workflow then checks out the untrusted PR HEAD. ISSUE-804 (critical).\non:\n  pull_request_target:\n    branches: [main]\n\npermissions:\n  contents: read\n  pull-requests: write\n\njobs:\n  preview:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          # Fork-controlled code, executed with elevated context.\n          ref: ${{ github.event.pull_request.head.sha }}\n      - run: npm ci\n      - run: npm run build\n\n  deploy:\n    # Forwards every secret to an external reusable workflow from an\n    # unauthorized owner. ISSUE-302 (high) + ISSUE-713 (high).\n    uses: acme/shared-workflows/.github/workflows/deploy.yml@main\n    secrets: inherit\n",
+        "path": ".github/workflows/pr-preview.yml"
+      },
+      {
+        "content": "name: Release\n\non:\n  release:\n    types: [published]\n\n# write-all again. ISSUE-803 (high).\npermissions: write-all\n\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    # No `environment:` gate on a job that consumes a publish secret. ISSUE-305 (medium).\n    steps:\n      - uses: actions/checkout@v4 # persists credentials. ISSUE-307 (high).\n      - uses: actions/setup-node@v4\n        with:\n          node-version: \"20\"\n          registry-url: https://registry.npmjs.org\n      # Cache key is not scoped to the ref, so a poisoned cache from an untrusted\n      # branch can be restored into the release build. ISSUE-705 (high).\n      - uses: actions/cache@v4\n        with:\n          path: ~/.npm\n          key: npm-${{ hashFiles('**/package-lock.json') }}\n      - run: npm ci\n      - run: npm run build\n      # Long-lived NPM_TOKEN instead of OIDC trusted publishing (ISSUE-421, high),\n      # and the published artifact is never signed (ISSUE-712, medium).\n      - run: npm publish\n        env:\n          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}\n",
+        "path": ".github/workflows/release.yml"
+      }
+    ]
+  },
+  "partialControls": [
+    {
+      "affectedBranches": 1,
+      "control": "branchMustBeProtected",
+      "reason": "Token lacks Administration:Read scope; force-push and code-owner-approval rules (ISSUE-505) not evaluated.",
+      "remediation": "Re-run with a token carrying Administration:Read (fine-grained PAT) or `repo` scope (classic PAT)."
+    }
+  ],
+  "unexpandedActions": [
+    {
+      "reason": "fetch",
+      "uses": "acme/shared-workflows/.github/workflows/deploy.yml@main"
+    }
+  ],
+  "warnings": [
+    "acme/shared-workflows: the repository could not be read (HTTP 404: Not Found (https://api.github.com/repos/acme/shared-workflows)), so the archived-repo check was skipped for this action",
+    "the definition of acme/shared-workflows/.github/workflows/deploy.yml@main could not be fetched, the actions it pulls in were not expanded"
+  ],
+  "plumberConfig": {
+    "effectivePolicy": {
+      "github": {
+        "controls": {
+          "actionRefsMustExistUpstream": {
+            "enabled": true
+          },
+          "actionsMustBePinnedByCommitSha": {
+            "enabled": true,
+            "trustedOwners": [
+              "actions",
+              "github"
+            ]
+          },
+          "actionsMustNotBeArchived": {
+            "enabled": true
+          },
+          "actionsMustNotCarryKnownCVEs": {
+            "enabled": true
+          },
+          "actionsMustNotExecuteMutableRemoteCode": {
+            "enabled": true
+          },
+          "branchMustBeProtected": {
+            "allowForcePush": false,
+            "codeOwnerApprovalRequired": false,
+            "defaultMustBeProtected": true,
+            "enabled": true,
+            "namePatterns": [
+              "main",
+              "master",
+              "release/*",
+              "production",
+              "dev"
+            ]
+          },
+          "checkoutMustNotPersistCredentials": {
+            "enabled": true
+          },
+          "containerImageMustNotUseForbiddenTags": {
+            "containerImagesMustBePinnedByDigest": true,
+            "enabled": true,
+            "tags": [
+              "latest",
+              "dev",
+              "development",
+              "staging",
+              "main",
+              "master"
+            ]
+          },
+          "externalRefsMustNotCollide": {
+            "enabled": true
+          },
+          "githubActionMustComeFromAuthorizedSources": {
+            "enabled": true,
+            "minimumStars": 0,
+            "trustGithubOfficialActions": true,
+            "trustSameOrgActions": true,
+            "trustedGithubActions": [
+              "getplumber/plumber",
+              "anthropics/claude-code-action",
+              "oven-sh/setup-bun",
+              "docker/setup-qemu-action",
+              "docker/setup-buildx-action",
+              "docker/login-action",
+              "docker/metadata-action",
+              "docker/build-push-action",
+              "ossf/scorecard-action",
+              "anchore/scan-action"
+            ]
+          },
+          "pipelineMustNotEnableDebugTrace": {
+            "enabled": true,
+            "forbiddenVariables": [
+              "ACTIONS_STEP_DEBUG",
+              "ACTIONS_RUNNER_DEBUG"
+            ]
+          },
+          "pipelineMustNotExecuteUnverifiedScripts": {
+            "enabled": true,
+            "trustedUrls": []
+          },
+          "pipelineMustNotUseDockerInDocker": {
+            "detectInsecureDaemon": true,
+            "enabled": true
+          },
+          "pullRequestTargetMustNotCheckoutHead": {
+            "enabled": true
+          },
+          "reusableWorkflowsMustNotInheritSecrets": {
+            "enabled": true
+          },
+          "securityJobsMustNotBeWeakened": {
+            "allowFailureMustBeFalse": {
+              "enabled": true
+            },
+            "enabled": true,
+            "rulesMustNotBeRedefined": {
+              "enabled": true
+            },
+            "securityJobPatterns": [
+              "*codeql*",
+              "*dependency-review*",
+              "*trufflehog*",
+              "*gitleaks*",
+              "*osv-scanner*",
+              "*-sast",
+              "*-sast-*",
+              "*-scan",
+              "*scan*",
+              "*-security",
+              "*-security-*",
+              "*-audit",
+              "*-audit-*"
+            ],
+            "whenMustNotBeManual": {
+              "enabled": true
+            }
+          },
+          "untrustedTriggersMustNotWriteCache": {
+            "enabled": true,
+            "exemptJobs": [],
+            "exemptWorkflows": []
+          },
+          "workflowMustIncludeRequiredActions": {
+            "enabled": false,
+            "requiredGroups": []
+          },
+          "workflowMustNotExportEntireSecretsContext": {
+            "enabled": true
+          },
+          "workflowMustNotGrantPermissionsWriteAll": {
+            "enabled": true
+          },
+          "workflowMustNotInjectUserInputInScripts": {
+            "enabled": true
+          },
+          "workflowMustNotUseDangerousTriggers": {
+            "enabled": true
+          },
+          "workflowMustNotWriteUntrustedContentToGitHubEnv": {
+            "enabled": true
+          },
+          "workflowsMustBeValid": {
+            "enabled": true
+          },
+          "workflowsMustDeclarePermissions": {
+            "enabled": true
+          }
+        }
+      },
+      "gitlab": {
+        "controls": {
+          "branchMustBeProtected": {
+            "allowForcePush": false,
+            "codeOwnerApprovalRequired": false,
+            "defaultMustBeProtected": true,
+            "enabled": true,
+            "minMergeAccessLevel": 30,
+            "minPushAccessLevel": 40,
+            "namePatterns": [
+              "main",
+              "master",
+              "release/*",
+              "production",
+              "dev"
+            ]
+          },
+          "cicdVariablesMustBeMasked": {
+            "enabled": true
+          },
+          "cicdVariablesMustBeProtected": {
+            "enabled": true
+          },
+          "componentMustComeFromAuthorizedSources": {
+            "enabled": true,
+            "trustGitlabOfficialComponents": true,
+            "trustSameGroupComponents": true,
+            "trustSameInstanceComponents": true,
+            "trustedComponents": [
+              "gitlab.com/getplumber/*"
+            ]
+          },
+          "containerImageMustComeFromAuthorizedSources": {
+            "enabled": true,
+            "trustDockerHubOfficialImages": true,
+            "trustedUrls": [
+              "docker.io/docker:*",
+              "docker.io/getplumber/plumber:*",
+              "getplumber/plumber:*",
+              "docker.io/getplumber/plumber@sha256:*",
+              "$CI_REGISTRY_IMAGE:*",
+              "$CI_REGISTRY_IMAGE/*",
+              "$CI_REGISTRY/*",
+              "${CI_REGISTRY}/*",
+              "${CI_REGISTRY_IMAGE}:*",
+              "${CI_REGISTRY_IMAGE}/*",
+              "${CI_DEPENDENCY_PROXY_DIRECT_GROUP_IMAGE_PREFIX}/*",
+              "registry.gitlab.com/security-products/*",
+              "registry.gitlab.com/gitlab-org/*",
+              "registry.gitlab.com/pipeline-components/*",
+              "docker.io/curlimages/*",
+              "docker.io/alpine/*",
+              "docker.io/golangci/*",
+              "docker.io/koalaman/*",
+              "docker.io/hadolint/*",
+              "docker.io/semgrep/*",
+              "docker.io/sonarsource/*",
+              "docker.io/cypress/*",
+              "docker.io/gittools/*",
+              "docker.io/renovate/*",
+              "docker.io/gitlab/*",
+              "docker.io/lycheeverse/*",
+              "docker.io/hugomods/*",
+              "docker.io/fsfe/*",
+              "docker.io/hashicorp/*",
+              "docker.io/cimg/*",
+              "docker.io/circleci/*",
+              "docker.io/amazon/*",
+              "docker.io/google/*",
+              "docker.io/nvidia/*",
+              "docker.io/bitnami/*",
+              "docker.io/redhat/*",
+              "docker.io/opensuse/*",
+              "docker.io/gentoo/*",
+              "docker.io/nixos/*",
+              "docker.io/rustlang/*",
+              "mcr.microsoft.com/dotnet/*",
+              "mcr.microsoft.com/playwright/*",
+              "mcr.microsoft.com/playwright",
+              "quay.io/buildah/*",
+              "quay.io/podman/*",
+              "quay.io/containers/*",
+              "quay.io/centos/*",
+              "quay.io/pypa/*",
+              "quay.io/gnome_infrastructure/*",
+              "ghcr.io/astral-sh/*",
+              "ghcr.io/renovatebot/*",
+              "ghcr.io/containerbase/*",
+              "ghcr.io/canonical/*",
+              "ghcr.io/graalvm/*",
+              "ghcr.io/terraform-linters/*",
+              "ghcr.io/prefix-dev/*",
+              "gcr.io/kaniko-project/*",
+              "gcr.io/go-containerregistry/*",
+              "gcr.io/google.com/cloudsdktool/*"
+            ]
+          },
+          "containerImageMustNotUseForbiddenTags": {
+            "containerImagesMustBePinnedByDigest": true,
+            "enabled": true,
+            "tags": [
+              "latest",
+              "dev",
+              "development",
+              "staging",
+              "main",
+              "master"
+            ]
+          },
+          "externalRefsMustNotCollide": {
+            "enabled": true
+          },
+          "functionMustComeFromAuthorizedSources": {
+            "enabled": true,
+            "trustSameGroupFunctions": true,
+            "trustedFunctions": []
+          },
+          "includesMustBeUpToDate": {
+            "enabled": true
+          },
+          "includesMustNotUseForbiddenVersions": {
+            "defaultBranchIsForbiddenVersion": true,
+            "enabled": true,
+            "forbiddenVersions": [
+              "latest",
+              "~latest",
+              "main",
+              "master",
+              "HEAD"
+            ]
+          },
+          "mergeRequestApprovalRulesMustCoverAllProtectedBranches": {
+            "enabled": true
+          },
+          "mergeRequestApprovalRulesMustRequireMinimumApprovals": {
+            "enabled": true,
+            "minimumRequiredApprovals": 1
+          },
+          "mergeRequestApprovalSettingsMustBeCompliant": {
+            "behaviorWhenCommitIsAdded": "remove_all_approvals",
+            "enabled": true,
+            "preventApprovalByAuthor": true,
+            "preventApprovalsByCommitters": true,
+            "preventEditingApprovalRulesInMR": true,
+            "requireReAuthToApprove": false
+          },
+          "mergeRequestSettingsMustBeCompliant": {
+            "allowMergeOnSkippedPipeline": false,
+            "enabled": false,
+            "mergeMethod": "ff",
+            "mergePipelinesEnabled": true,
+            "mergeTrainsEnabled": false,
+            "printingMergeRequestLinkEnabled": true,
+            "removeSourceBranchAfterMerge": true,
+            "resolveOutdatedDiffDiscussions": true,
+            "squashOption": "default_on"
+          },
+          "pipelineMustIncludeComponent": {
+            "enabled": false,
+            "requiredGroups": []
+          },
+          "pipelineMustIncludeTemplate": {
+            "enabled": false,
+            "requiredGroups": []
+          },
+          "pipelineMustNotEnableDebugTrace": {
+            "enabled": true,
+            "forbiddenVariables": [
+              "CI_DEBUG_TRACE",
+              "CI_DEBUG_SERVICES"
+            ]
+          },
+          "pipelineMustNotExecuteUnverifiedScripts": {
+            "enabled": true,
+            "trustedUrls": []
+          },
+          "pipelineMustNotIncludeHardcodedJobs": {
+            "enabled": true
+          },
+          "pipelineMustNotOverrideJobVariables": {
+            "enabled": true,
+            "variables": [
+              "SECURE_ANALYZERS_PREFIX",
+              "SAST_DISABLED",
+              "SAST_EXCLUDED_PATHS",
+              "SAST_EXCLUDED_ANALYZERS",
+              "SECRET_DETECTION_DISABLED",
+              "SECRET_DETECTION_EXCLUDED_PATHS",
+              "CONTAINER_SCANNING_DISABLED",
+              "DAST_DISABLED",
+              "DEPENDENCY_SCANNING_DISABLED",
+              "LICENSE_SCANNING_DISABLED"
+            ]
+          },
+          "pipelineMustNotUseDockerInDocker": {
+            "detectInsecureDaemon": true,
+            "enabled": true
+          },
+          "pipelineMustNotUseUnsafeVariableExpansion": {
+            "allowedPatterns": [],
+            "dangerousVariables": [
+              "CI_MERGE_REQUEST_TITLE",
+              "CI_MERGE_REQUEST_DESCRIPTION",
+              "CI_COMMIT_MESSAGE",
+              "CI_COMMIT_TITLE",
+              "CI_COMMIT_TAG_MESSAGE",
+              "CI_COMMIT_REF_NAME",
+              "CI_COMMIT_REF_SLUG",
+              "CI_COMMIT_BRANCH",
+              "CI_MERGE_REQUEST_SOURCE_BRANCH_NAME",
+              "CI_EXTERNAL_PULL_REQUEST_SOURCE_BRANCH_NAME"
+            ],
+            "enabled": true
+          },
+          "projectMustHaveSecurityPolicySource": {
+            "enabled": false
+          },
+          "securityJobsMustNotBeWeakened": {
+            "allowFailureMustBeFalse": {
+              "enabled": false
+            },
+            "enabled": true,
+            "rulesMustNotBeRedefined": {
+              "enabled": false
+            },
+            "securityJobPatterns": [
+              "*-sast",
+              "secret_detection",
+              "container_scanning",
+              "*_dependency_scanning",
+              "gemnasium-*",
+              "dast",
+              "dast_*",
+              "license_scanning"
+            ],
+            "whenMustNotBeManual": {
+              "enabled": false
+            }
+          }
+        }
+      },
+      "version": "2.0"
+    },
+    "hash": "sha256:b819d3cf36288fb6cd030e16a2f84a788bf65b250415526878e13b352d11a350",
+    "source": ".plumber.yaml"
+  }
+}

@@ -1,0 +1,7 @@
+$ plumber analyze --provider github --project a/b --config missing.yaml
+exit: 2
+--- stdout
+
+--- stderr
+Error: configuration file not found: config file not found: missing.yaml. Create one with `plumber config generate` or `plumber config init`
+

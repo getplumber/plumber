@@ -1,0 +1,158 @@
+$ plumber analyze gitlab.com/getplumber/examples/plumber-cli-e2e --branch findings --min-points 0 --score-profile v3 --score
+exit: 0
+--- stdout
+
+  ██████╗ ██╗     ██╗   ██╗ ███╗   ███╗██████╗ ███████╗██████╗
+  ██╔══██╗██║     ██║   ██║ ████╗ ████║██╔══██╗██╔════╝██╔══██╗
+  ██████╔╝██║     ██║   ██║ ██╔████╔██║██████╔╝█████╗  ██████╔╝
+  ██╔═══╝ ██║     ██║   ██║ ██║╚██╔╝██║██╔══██╗██╔══╝  ██╔══██╗
+  ██║     ███████╗╚██████╔╝ ██║ ╚═╝ ██║██████╔╝███████╗██║  ██║
+  ╚═╝     ╚══════╝ ╚═════╝  ╚═╝     ╚═╝╚═════╝ ╚══════╝╚═╝  ╚═╝
+  CI/CD Security Scanner  vdev
+  Share your feedback: https://getplumber.io/discord
+
+
+  Project    getplumber/examples/plumber-cli-e2e
+  Platform   GitLab · https://gitlab.com
+  Config     built-in default
+  CI config  fetched from GitLab
+
+────────────────────
+✓ Passed Controls (10)
+────────────────────
+
+  ✓ Branch must be protected
+  ✓ Includes must not use ambiguous tag/branch refs
+  ✓ Includes must be up to date
+  ✓ Includes must not use forbidden versions
+  ✓ Components must come from authorized sources
+  ✓ Functions must come from authorized sources
+  ✓ Pipeline must not use unsafe variable expansion
+  ✓ Security jobs must not be weakened
+  ✓ Pipeline must not override job variables
+  ✓ Pipeline must not use Docker-in-Docker
+
+────────────────────
+• Skipped Controls (10)
+────────────────────
+
+  • MR approval rules must require a minimum number of approvals (disabled in configuration)
+  • MR approval rules must cover all protected branches (disabled in configuration)
+  • MR approval settings must be compliant (disabled in configuration)
+  • MR settings must be compliant (disabled in configuration)
+  • CI/CD variables must be protected (disabled in configuration)
+  • CI/CD variables must be masked (disabled in configuration)
+  • Project must have a security policy source (disabled in configuration)
+  • Pipeline must not include hardcoded jobs (disabled in configuration)
+  • Pipeline must include required components (disabled in configuration)
+  • Pipeline must include required templates (disabled in configuration)
+
+────────────────────
+✗ Failed Controls (4)
+────────────────────
+
+  ✗ Container images must come from authorized sources (1 finding)
+      Total Images: 13
+      Authorized: 6
+      Unauthorized: 1
+      Unresolved References: 6
+
+      Findings:
+         HIGH  [ISSUE-101] Job `untrusted-registry` uses image `registry.example.com/team/tool:1.0` from an unauthorized source.
+         ↳ at https://gitlab.com/getplumber/examples/plumber-cli-e2e/-/blob/11483f88a750137f6a848bf8e92a92bf5534a8cb/.gitlab-ci.yml#L24
+         ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-101
+
+  ✗ Pipeline must not execute unverified scripts (1 finding)
+      Jobs Checked: 34
+      Script Lines Checked: 49
+      Unverified Scripts: 1
+
+      Findings:
+         HIGH  [ISSUE-411] Job `build` runs a script fetched from the network: `curl -sSL https://get.example.com/install.sh | bash`.
+         ↳ at https://gitlab.com/getplumber/examples/plumber-cli-e2e/-/blob/11483f88a750137f6a848bf8e92a92bf5534a8cb/.gitlab-ci.yml#L14
+         ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-411
+
+  ✗ Container images must not use forbidden reference (pinned by digest) (9 findings)
+      Total Images: 13
+      Pinned By Digest: 0
+      Not Pinned By Digest: 7
+      Using Forbidden Tags: 2
+      Unresolved References: 6
+
+      Findings:
+         MED   [ISSUE-102] Job `build` uses the forbidden tag `latest` of image `docker.io/node:latest`.
+         ↳ at https://gitlab.com/getplumber/examples/plumber-cli-e2e/-/blob/11483f88a750137f6a848bf8e92a92bf5534a8cb/.gitlab-ci.yml#L14
+         ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-102
+         MED   [ISSUE-102] Job `deploy` uses the forbidden tag `latest` of image `docker.io/alpine:latest`.
+         ↳ at https://gitlab.com/getplumber/examples/plumber-cli-e2e/-/blob/11483f88a750137f6a848bf8e92a92bf5534a8cb/.gitlab-ci.yml#L31
+         ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-102
+         HIGH  [ISSUE-103] Job `build` uses image `docker.io/node:latest` without a digest.
+         ↳ at https://gitlab.com/getplumber/examples/plumber-cli-e2e/-/blob/11483f88a750137f6a848bf8e92a92bf5534a8cb/.gitlab-ci.yml#L14
+         ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-103
+         HIGH  [ISSUE-103] Job `deploy` uses image `docker.io/alpine:latest` without a digest.
+         ↳ at https://gitlab.com/getplumber/examples/plumber-cli-e2e/-/blob/11483f88a750137f6a848bf8e92a92bf5534a8cb/.gitlab-ci.yml#L31
+         ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-103
+         HIGH  [ISSUE-103] Job `kubesec-sast` uses image `registry.gitlab.com/security-products/kubesec:6` without a digest.
+         ↳ at https://gitlab.com/getplumber/examples/plumber-cli-e2e/-/blob/11483f88a750137f6a848bf8e92a92bf5534a8cb/.gitlab-ci.yml#L10
+         ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-103
+         HIGH  [ISSUE-103] Job `pmd-apex-sast` uses image `registry.gitlab.com/security-products/pmd-apex:6` without a digest.
+         ↳ at https://gitlab.com/getplumber/examples/plumber-cli-e2e/-/blob/11483f88a750137f6a848bf8e92a92bf5534a8cb/.gitlab-ci.yml#L10
+         ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-103
+         HIGH  [ISSUE-103] Job `sobelow-sast` uses image `registry.gitlab.com/security-products/sobelow:6` without a digest.
+         ↳ at https://gitlab.com/getplumber/examples/plumber-cli-e2e/-/blob/11483f88a750137f6a848bf8e92a92bf5534a8cb/.gitlab-ci.yml#L10
+         ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-103
+         HIGH  [ISSUE-103] Job `spotbugs-sast` uses image `registry.gitlab.com/security-products/spotbugs:5` without a digest.
+         ↳ at https://gitlab.com/getplumber/examples/plumber-cli-e2e/-/blob/11483f88a750137f6a848bf8e92a92bf5534a8cb/.gitlab-ci.yml#L10
+         ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-103
+         HIGH  [ISSUE-103] Job `untrusted-registry` uses image `registry.example.com/team/tool:1.0` without a digest.
+         ↳ at https://gitlab.com/getplumber/examples/plumber-cli-e2e/-/blob/11483f88a750137f6a848bf8e92a92bf5534a8cb/.gitlab-ci.yml#L24
+         ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-103
+
+  ✗ Pipeline must not enable debug trace (1 finding)
+      Variables Checked: 51
+      Forbidden Found: 1
+
+      Findings:
+         CRIT  [ISSUE-203] The root `variables:` keyword of the CI configuration sets the debug variable `CI_DEBUG_TRACE` to "true".
+         ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-203
+
+────────────────────
+Summary
+────────────────────
+
+  ▶ Critical findings: ISSUE-203
+
+  Status: PASSED ✓ (score E — 0.0/100 pts, required ≥ 0 pts)
+
+  Controls
+  ╭──────────────────────────────────────────────────────────────────────┬──────────────────────┬────────────┬───╮
+  │ Control                                                              │ Codes                │ Severity   │ # │
+  ├──────────────────────────────────────────────────────────────────────┼──────────────────────┼────────────┼───┤
+  │ Pipeline must not enable debug trace                                 │ ISSUE-203            │ Critical   │ 1 │
+  │ Container images must not use forbidden reference (pinned by digest) │ ISSUE-102, ISSUE-103 │ High       │ 9 │
+  │ Container images must come from authorized sources                   │ ISSUE-101            │ High       │ 1 │
+  │ Pipeline must not execute unverified scripts                         │ ISSUE-411            │ High       │ 1 │
+  ╰──────────────────────────────────────────────────────────────────────┴──────────────────────┴────────────┴───╯
+  ↳ docs: https://getplumber.io/docs/cli/issues/<code>
+
+
+ ──────────────────────────────────────────────────────────────────────────────
+ Plumber Score
+
+ ███████╗                                                                     
+ ██╔════╝  0 / 100 pts                                                        
+ █████╗    ░░░░░░░░░░░░░░░░░░░░░░░░░░░░                                       
+ ██╔══╝    Critical: at least one Critical finding or heavy accumulated losses
+ ███████╗                                                                     
+ ╚══════╝  🔴 Critical 1   🟠 High 9   🟡 Medium 2   🔵 Low 0                 
+
+ ▲ Critical malus applied  (final points capped at 30 while any Critical remains)
+
+ ──────────────────────────────────────────────────────────────────────────────
+
+
+--- stderr
+No .plumber.yaml found; using Plumber's built-in default configuration.
+Generate your own with 'plumber config generate' ('plumber config init' for the interactive wizard); see the default with 'plumber config view'.
+Using remote CI configuration from branch: findings
+

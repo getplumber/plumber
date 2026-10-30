@@ -1,0 +1,24 @@
+$ plumber config migrate --input legacy.plumber.yaml --output migrated.yaml
+exit: 0
+--- stdout
+
+--- stderr
+Migrated legacy.plumber.yaml → migrated.yaml
+  - renamed github.controls.releaseWorkflowsMustNotRestoreUntrustedCache to untrustedTriggersMustNotWriteCache
+  - dropped publishActions, cacheActions (the control no longer detects release jobs)
+Review the result, then replace the original with:
+  mv migrated.yaml legacy.plumber.yaml
+
+--- file migrated.yaml
+# Legacy control name, renamed by `plumber config migrate`.
+version: "2.0"
+github:
+  controls:
+    workflowsMustDeclarePermissions:
+      enabled: true
+    # Cache poisoning
+    untrustedTriggersMustNotWriteCache:
+      enabled: false
+    pipelineMustNotEnableDebugTrace:
+      enabled: true
+

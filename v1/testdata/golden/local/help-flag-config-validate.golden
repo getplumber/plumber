@@ -1,0 +1,30 @@
+$ plumber config validate --help
+exit: 0
+--- stdout
+Validate a Plumber configuration file for correctness.
+
+This command checks the configuration file for:
+  - Valid YAML syntax
+  - Unknown configuration keys (warns with suggestions)
+  - Required fields
+
+Examples:
+  # Validate the default .plumber.yaml
+  plumber config validate
+
+  # Validate a specific config file
+  plumber config validate --config custom-plumber.yaml
+
+Usage:
+  plumber config validate [flags]
+
+Flags:
+  -c, --config string   Path to configuration file (default ".plumber.yaml")
+      --fail-warnings   Treat configuration warnings as errors (exit 2)
+  -h, --help            help for validate
+
+Global Flags:
+  -v, --verbose   Enable debug logging on stderr (level=debug); replaces the progress bar
+
+--- stderr
+

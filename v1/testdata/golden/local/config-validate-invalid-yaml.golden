@@ -1,0 +1,8 @@
+$ plumber config validate -c invalid.plumber.yaml
+exit: 2
+--- stdout
+
+--- stderr
+time="<TIME>" level=error msg="Failed to parse config" action=LoadPlumberConfigFromBytes error="yaml: line 3: did not find expected ',' or ']'" source=invalid.plumber.yaml
+Error: failed to validate configuration: yaml: line 3: did not find expected ',' or ']'
+

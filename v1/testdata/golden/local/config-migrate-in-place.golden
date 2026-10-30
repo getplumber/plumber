@@ -1,0 +1,39 @@
+$ plumber config migrate --input legacy.plumber.yaml --in-place
+exit: 0
+--- stdout
+
+--- stderr
+Backed up original to legacy.plumber.yaml.bak
+Migrated legacy.plumber.yaml → legacy.plumber.yaml
+  - renamed github.controls.releaseWorkflowsMustNotRestoreUntrustedCache to untrustedTriggersMustNotWriteCache
+  - dropped publishActions, cacheActions (the control no longer detects release jobs)
+
+--- file legacy.plumber.yaml
+# Legacy control name, renamed by `plumber config migrate`.
+version: "2.0"
+github:
+  controls:
+    workflowsMustDeclarePermissions:
+      enabled: true
+    # Cache poisoning
+    untrustedTriggersMustNotWriteCache:
+      enabled: false
+    pipelineMustNotEnableDebugTrace:
+      enabled: true
+
+--- file legacy.plumber.yaml.bak
+# Legacy control name, renamed by `plumber config migrate`.
+version: "2.0"
+github:
+  controls:
+    workflowsMustDeclarePermissions:
+      enabled: true
+    # Cache poisoning
+    releaseWorkflowsMustNotRestoreUntrustedCache:
+      enabled: false
+      publishActions: [pypa/gh-action-pypi-publish]
+      cacheActions:
+        - {action: actions/cache, mode: always}
+    pipelineMustNotEnableDebugTrace:
+      enabled: true
+

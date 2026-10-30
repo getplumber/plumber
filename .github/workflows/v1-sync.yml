@@ -1,0 +1,132 @@
+name: v1 sync
+
+# Merges main into v1 every day, the branch of the CLI refactoring
+# (getplumber/monorepo#640, v1/AGENTS.md). The merge is pushed to
+# sync/main-into-v1 and proposed as a PR into v1, with the result of the CLI
+# suite on the merged tree: a red suite means something new on main needs a
+# row in v1/cli_test.go. The E2E rows also run here every day to catch
+# provider API drift.
+#
+# Scheduled workflows only run from the default branch, so this file lives on
+# main (and v1 keeps the same copy).
+#
+# A PR opened with GITHUB_TOKEN does not trigger other workflows: the suite
+# runs in this job, and its result is in the PR body.
+
+on:
+  schedule:
+    - cron: '0 5 * * 1-5'
+  workflow_dispatch:
+
+concurrency:
+  group: v1-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    name: Merge main into v1
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: v1
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.10'
+
+      - name: Merge main
+        id: merge
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git merge-base --is-ancestor origin/main HEAD; then
+            echo "v1 already contains main"
+            echo "status=up-to-date" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git switch -c sync/main-into-v1
+          if git merge --no-edit origin/main; then
+            echo "status=merged" >> "$GITHUB_OUTPUT"
+          else
+            # Leave the conflict to a human: propose main itself, the PR shows the conflicts.
+            git merge --abort
+            git reset --hard origin/main
+            echo "status=conflict" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run the CLI suite (local)
+        id: local
+        if: steps.merge.outputs.status == 'merged'
+        run: |
+          set -o pipefail
+          if make test-integration 2>&1 | tee local.log; then
+            echo "result=passed" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=failed" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run the CLI suite (E2E)
+        id: e2e
+        if: steps.merge.outputs.status == 'merged'
+        env:
+          PLUMBER_E2E_GITHUB_TOKEN: ${{ secrets.PLUMBER_E2E_GITHUB_TOKEN }}
+          PLUMBER_E2E_GITLAB_TOKEN: ${{ secrets.PLUMBER_E2E_GITLAB_TOKEN }}
+          PLUMBER_E2E_REQUIRED: "1"
+        run: |
+          set -o pipefail
+          if make test-e2e 2>&1 | tee e2e.log; then
+            echo "result=passed" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=failed" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open or update the PR
+        if: steps.merge.outputs.status != 'up-to-date'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STATUS: ${{ steps.merge.outputs.status }}
+          LOCAL: ${{ steps.local.outputs.result }}
+          E2E: ${{ steps.e2e.outputs.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:refs/heads/sync/main-into-v1
+          {
+            echo "Daily merge of \`main\` into \`v1\` (see \`v1/AGENTS.md\`)."
+            echo
+            if [ "$STATUS" = conflict ]; then
+              echo "**The merge conflicts.** This branch is \`main\` as is: resolve the conflicts locally"
+              echo "(\`git switch sync/main-into-v1 && git merge origin/v1\`), then run \`make test-integration\`."
+            else
+              echo "| Suite | Result |"
+              echo "|---|---|"
+              echo "| CLI local (\`make test-integration\`) | ${LOCAL:-not run} |"
+              echo "| CLI E2E (\`make test-e2e\`) | ${E2E:-not run} |"
+              echo
+              echo "A failure means something changed on \`main\`: add the missing rows to \`v1/cli_test.go\`"
+              echo "or refresh the golden files with \`UPDATE=1\` and explain the diff."
+            fi
+            echo
+            echo "Logs: ${RUN_URL}"
+          } > body.md
+          if gh pr view sync/main-into-v1 --json state --jq .state 2>/dev/null | grep -q OPEN; then
+            gh pr edit sync/main-into-v1 --body-file body.md
+          else
+            gh pr create --base v1 --head sync/main-into-v1 --title "chore(v1): merge main into v1" --body-file body.md
+          fi
+
+      - name: Fail on a red suite
+        if: steps.local.outputs.result == 'failed' || steps.e2e.outputs.result == 'failed' || steps.merge.outputs.status == 'conflict'
+        run: |
+          echo "::error::main does not merge cleanly into v1, or the CLI suite fails on the merge: see the sync PR"
+          exit 1

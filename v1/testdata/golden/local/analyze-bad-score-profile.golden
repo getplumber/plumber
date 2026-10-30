@@ -1,0 +1,7 @@
+$ plumber analyze --provider github --project a/b --score-profile v9
+exit: 2
+--- stdout
+
+--- stderr
+Error: --score-profile must be v3 or v4 (got "v9")
+

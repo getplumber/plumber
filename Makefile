@@ -1,4 +1,4 @@
-.PHONY: build clean test lint deadcode vuln
+.PHONY: build clean test test-integration test-e2e lint deadcode vuln
 
 # Binary name
 BINARY=plumber
@@ -18,6 +18,17 @@ build-all:
 # Run tests
 test:
 	go test ./...
+
+# CLI suite of the refactoring (v1/cli_test.go, see v1/AGENTS.md). UPDATE=1
+# rewrites the golden files; review the diff.
+# Local rows: every input that makes no backend request. No token, no network.
+test-integration:
+	go test -tags cli -count=1 -run 'TestCLICoverage|TestCLI/local' ./v1/ $(if $(UPDATE),-args -update)
+
+# E2E rows: every input that calls GitHub or GitLab, on the plumber-cli-e2e
+# fixture repositories. Needs PLUMBER_E2E_GITHUB_TOKEN and PLUMBER_E2E_GITLAB_TOKEN.
+test-e2e:
+	go test -tags cli -count=1 -timeout 30m -run 'TestCLI$$/e2e' ./v1/ $(if $(UPDATE),-args -update)
 
 # Lint (mirrors CI configuration — requires golangci-lint v2+)
 lint:

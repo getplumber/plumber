@@ -1,0 +1,35 @@
+# Case findings: one job per risk Plumber must report.
+stages: [build, test, deploy]
+
+variables:
+  # Streams secrets into job logs (ISSUE-203).
+  CI_DEBUG_TRACE: "true"
+
+include:
+  # Remote include on a mutable URL.
+  - remote: https://gitlab.com/gitlab-org/gitlab/-/raw/master/lib/gitlab/ci/templates/Jobs/SAST.gitlab-ci.yml
+  # Template include.
+  - template: Security/Secret-Detection.gitlab-ci.yml
+
+build:
+  stage: build
+  # Forbidden mutable tag, not pinned by digest (ISSUE-102, ISSUE-103).
+  image: node:latest
+  script:
+    # Unpinned package install.
+    - npm install -g some-build-tool
+    # Remote script piped into a shell.
+    - curl -sSL https://get.example.com/install.sh | bash
+
+untrusted-registry:
+  stage: test
+  # Image from a registry outside the authorized sources (ISSUE-101).
+  image: registry.example.com/team/tool:1.0
+  script:
+    - tool --check
+
+deploy:
+  stage: deploy
+  image: alpine:latest
+  script:
+    - echo "deploying $CI_COMMIT_MESSAGE"

@@ -1,0 +1,11 @@
+# Minimal overlay: inherits the defaults, turns one control off on each provider.
+extends: plumber:default
+version: "2.0"
+github:
+  controls:
+    workflowsMustDeclarePermissions:
+      enabled: false
+gitlab:
+  controls:
+    pipelineMustNotEnableDebugTrace:
+      enabled: false

@@ -1,0 +1,9 @@
+$ plumber analyze github.com/getplumber-examples/plumber-cli-e2e --branch findings --config warning.plumber.yaml --fail-warnings
+exit: 2
+--- stdout
+
+--- stderr
+Configuration validation warnings:
+  - Unknown key "notARealOption" in control "workflowsMustDeclarePermissions" (github.controls)
+Error: configuration has 1 warning(s) and --fail-warnings is set
+

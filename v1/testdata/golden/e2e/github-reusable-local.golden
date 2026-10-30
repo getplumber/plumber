@@ -1,0 +1,94 @@
+$ plumber analyze github.com/getplumber-examples/plumber-cli-e2e --branch reusable-local
+exit: 1
+--- stdout
+
+  ██████╗ ██╗     ██╗   ██╗ ███╗   ███╗██████╗ ███████╗██████╗
+  ██╔══██╗██║     ██║   ██║ ████╗ ████║██╔══██╗██╔════╝██╔══██╗
+  ██████╔╝██║     ██║   ██║ ██╔████╔██║██████╔╝█████╗  ██████╔╝
+  ██╔═══╝ ██║     ██║   ██║ ██║╚██╔╝██║██╔══██╗██╔══╝  ██╔══██╗
+  ██║     ███████╗╚██████╔╝ ██║ ╚═╝ ██║██████╔╝███████╗██║  ██║
+  ╚═╝     ╚══════╝ ╚═════╝  ╚═╝     ╚═╝╚═════╝ ╚══════╝╚═╝  ╚═╝
+  CI/CD Security Scanner  vdev
+  Share your feedback: https://getplumber.io/discord
+
+
+  Project    getplumber-examples/plumber-cli-e2e
+  Platform   GitHub
+  Auth       GITHUB_TOKEN env var
+  Config     built-in default
+  CI config  fetched from GitHub
+
+────────────────────
+✓ Passed Controls (20)
+────────────────────
+
+  ✓ Third-party actions must be pinned by commit SHA
+  ✓ Actions must come from authorized sources
+  ✓ Branch must be protected
+  ✓ Security jobs must not be weakened
+  ✓ Workflows must not use Docker-in-Docker
+  ✓ Reusable workflows must not inherit secrets
+  ✓ Workflows must not expose all secrets at once
+  ✓ Workflows must not inject user input in scripts
+  ✓ Workflows must not write untrusted content to $GITHUB_ENV
+  ✓ Workflows must not use dangerous triggers
+  ✓ Workflows must declare permissions
+  ✓ Workflow files must be valid
+  ✓ Workflow must not grant write-all permissions
+  ✓ Actions must not use ambiguous tag/branch refs
+  ✓ Actions must not reference archived repositories
+  ✓ Actions must pin commits that exist upstream
+  ✓ Actions must not carry known CVEs
+  ✓ Actions must not execute mutable remote code
+  ✓ Untrusted triggers must not write the cache
+  ✓ Pipeline must not enable debug trace
+
+────────────────────
+• Skipped Controls (1)
+────────────────────
+
+  • Workflows must include required actions (disabled in configuration)
+
+────────────────────
+✗ Attack paths (2)
+────────────────────
+
+ LOW   Attack path 2
+       Entry  https://get.example.com/install.sh (script downloaded and run at build time)
+       │
+       └──▶ runs in job `build` from workflow `reusable.yml`
+            └─▶ reaches code execution on the runner; nothing else proven
+
+       So     if this script is compromised or malicious,
+              an attacker can execute code on an ephemeral runner
+       Fix    download the script, check its checksum, then run it
+       ↳ details: run `plumber explain -a 2`
+
+  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+
+ LOW   Attack path 1
+       Entry  node:latest (mutable image tag, source not checked on GitHub)
+       │
+       └──▶ runs in job `build` from workflow `reusable.yml`
+            └─▶ reaches code execution on the runner; nothing else proven
+
+       So     if this image is compromised or malicious,
+              an attacker can execute code on an ephemeral runner
+       Fix    pin the image by digest
+       ↳ details: run `plumber explain -a 1`
+
+────────────────────
+Score
+────────────────────
+
+  █████╗   Plumber Score  94 / 100  ██████████████████████████░░
+ ██╔══██╗  Status: FAILED (gate blocks at 100 pts)
+ ███████║
+ ██╔══██║  Worst case: if this image is compromised or malicious, an attacker can execute code on an
+ ██║  ██║  ephemeral runner (attack path 1: node:latest)
+ ╚═╝  ╚═╝  Best fix: pin the image by digest (image node:latest), +3 pts, 97 / 100 (A)
+
+--- stderr
+No .plumber.yaml found; using Plumber's built-in default configuration.
+Generate your own with 'plumber config generate' ('plumber config init' for the interactive wizard); see the default with 'plumber config view'.
+

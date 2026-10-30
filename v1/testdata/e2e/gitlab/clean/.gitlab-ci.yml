@@ -1,0 +1,8 @@
+# Case clean: images pinned by digest, no risky setting.
+stages: [test]
+
+test:
+  stage: test
+  image: getplumber/plumber@sha256:122a1967020b0f19432fccebcc731f76ee98ee765f018f0ec5c3f216ea6dd472
+  script:
+    - plumber version

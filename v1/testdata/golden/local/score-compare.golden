@@ -1,0 +1,49 @@
+$ plumber score-compare --input score-compare
+exit: 0
+--- stdout
+## Letter migration matrix
+
+v3 rows, v4 columns, repository counts.
+
+| v3 \ v4 | A | B | C | D | E |
+|---|---|---|---|---|---|
+| A | 0 | 0 | 0 | 0 | 0 |
+| B | 0 | 0 | 0 | 0 | 0 |
+| C | 0 | 0 | 0 | 0 | 0 |
+| D | 0 | 0 | 0 | 0 | 0 |
+| E | 0 | 0 | 0 | 0 | 1 |
+
+## Top 20 codes by points recovered
+
+| Code | Points recovered |
+|---|---|
+| ISSUE-203 | 37.50 |
+| ISSUE-309 | 25.00 |
+| ISSUE-207 | 23.50 |
+| ISSUE-802 | 22.00 |
+| ISSUE-803 | 21.89 |
+| ISSUE-302 | 15.00 |
+| ISSUE-703 | 15.00 |
+| ISSUE-209 | 13.50 |
+| ISSUE-103 | 12.00 |
+| ISSUE-501 | 10.00 |
+| ISSUE-702 | 10.00 |
+| ISSUE-707 | 10.00 |
+| ISSUE-307 | 6.00 |
+| ISSUE-410 | 5.00 |
+| ISSUE-701 | 5.00 |
+| ISSUE-102 | 3.00 |
+| ISSUE-411 | 0.00 |
+| ISSUE-804 | -5.00 |
+| ISSUE-713 | -5.61 |
+
+## Dropped two or more letters
+
+None.
+
+## Unpaired
+
+None.
+
+--- stderr
+

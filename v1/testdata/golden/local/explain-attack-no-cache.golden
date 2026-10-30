@@ -1,0 +1,7 @@
+$ plumber explain -a 1
+exit: 2
+--- stdout
+
+--- stderr
+Error: no cached run at <CACHE>/plumber/runs/last: run plumber analyze first
+
