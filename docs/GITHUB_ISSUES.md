@@ -310,8 +310,10 @@ it pulls in is judged. The fix is on the outermost action: pin it to a
 commit whose chain pins, vendor the chain into `./.github/actions/`
 and pin it there, or ask the container's maintainer to pin it.
 The message closes on this fix in place of the direct one, the GitLab
-SAST solution gives it in full, and the SARIF result carries the
-container line as a related location.
+SAST solution gives it in full, and the SARIF result names the
+container line at the end of its message, linked to the file on GitHub
+(its one location stays the workflow step: Code Scanning rejects an
+upload that points outside the repository).
 
 ---
 
@@ -541,8 +543,10 @@ replace it with one whose chain only pulls authorized sources, vendor
 the chain into `./.github/actions/` and replace the reference there, or
 ask the container's maintainer to depend on authorized sources.
 The message closes on this fix in place of the direct one, the GitLab
-SAST solution gives it in full, and the SARIF result carries the
-container line as a related location.
+SAST solution gives it in full, and the SARIF result names the
+container line at the end of its message, linked to the file on GitHub
+(its one location stays the workflow step: Code Scanning rejects an
+upload that points outside the repository).
 
 ---
 
