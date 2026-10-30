@@ -54,7 +54,7 @@ type remoteTag struct {
 
 // FetchGitHubTagProtection reads the repository's active tag rulesets
 // (its own and those inherited from the organization or enterprise) and
-// its existing tag names, for tagMustBeProtected (ISSUE-507).
+// its existing tag names, for tagMustBeProtected (ISSUE-510).
 //
 // The legacy tag protection API is not used: GitHub retired it in 2024
 // and migrated its rules to rulesets.

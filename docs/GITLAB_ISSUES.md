@@ -20,7 +20,7 @@ absence from this file does not mean a rule doesn't exist — see
 
 | Code | Name | Severity |
 | :--- | :--- | :--- |
-| [ISSUE-507](#issue-507--tag-unprotected) | `tag-unprotected` | **critical** |
+| [ISSUE-510](#issue-510--tag-unprotected) | `tag-unprotected` | **critical** |
 
 ### Run / output conventions
 
@@ -192,7 +192,7 @@ functionMustComeFromAuthorizedSources:
 
 ---
 
-## ISSUE-507 — `tag-unprotected`
+## ISSUE-510 — `tag-unprotected`
 
 **Severity:** `critical` (`high` when no job runs on tag pipelines) • **Control:** `tagMustBeProtected`
 

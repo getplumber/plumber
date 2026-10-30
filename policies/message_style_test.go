@@ -115,7 +115,7 @@ var gitLabMessageStyleKeys = map[string][]string{
 	"ISSUE-505": {"branchName"},
 	"ISSUE-506": {},
 	// Tag pattern not protected: the pattern.
-	"ISSUE-507": {"tagPattern"},
+	"ISSUE-510": {"tagPattern"},
 	"ISSUE-601": {},
 }
 
@@ -158,7 +158,7 @@ var dataArrayKinds = map[string]bool{
 	// The protections a tag pattern lacks, as stable tokens (update,
 	// deletion, creation). A consumer parses them; the message renders
 	// them as clauses.
-	"ISSUE-507.missingProtections": false,
+	"ISSUE-510.missingProtections": false,
 }
 
 // messageBranches is the render manifest, and the answer to a defect class
@@ -262,11 +262,11 @@ var messageBranches = []messageBranch{
 	{"ISSUE-506", "subject resolveOutdatedDiffDiscussions", "Resolving outdated diff discussions is", ""},
 	{"ISSUE-506", "subject printingMergeRequestLinkEnabled", "Printing the merge request link on push is", ""},
 	{"ISSUE-506", "subject removeSourceBranchAfterMerge", "Removing the source branch after merge is", ""},
-	{"ISSUE-507", "nothing protected", "` is not protected.", ""},
-	{"ISSUE-507", "partly protected", "` is not fully protected, ", ""},
-	{"ISSUE-507", "clause update", "tag updates are not blocked", ""},
-	{"ISSUE-507", "clause deletion", "tag deletions are not blocked", ""},
-	{"ISSUE-507", "clause creation", "tag creation is not restricted", ""},
+	{"ISSUE-510", "nothing protected", "` is not protected.", ""},
+	{"ISSUE-510", "partly protected", "` is not fully protected, ", ""},
+	{"ISSUE-510", "clause update", "tag updates are not blocked", ""},
+	{"ISSUE-510", "clause deletion", "tag deletions are not blocked", ""},
+	{"ISSUE-510", "clause creation", "tag creation is not restricted", ""},
 	{"ISSUE-601", "nothing linked, no expectation", "is linked to this project", ""},
 	{"ISSUE-601", "nothing linked, expectation set", "is linked (expected", ""},
 	{"ISSUE-601", "wrong project, id only", ") is not the expected one (expected id", ""},

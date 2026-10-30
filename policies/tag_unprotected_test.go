@@ -35,7 +35,7 @@ func evalTagFindings(t *testing.T, p *ir.NormalizedPipeline, cfg map[string]any)
 	}
 	var out []opaengine.Finding
 	for _, f := range findings {
-		if f.Code == "ISSUE-507" {
+		if f.Code == "ISSUE-510" {
 			out = append(out, f)
 		}
 	}
@@ -299,7 +299,7 @@ func TestIssue507_OccurrenceSeverity(t *testing.T) {
 				t.Fatalf("want 1 finding, got %d", len(f))
 			}
 			if f[0].Severity != "critical" {
-				t.Errorf("ISSUE-507 keeps its registered severity, got %q", f[0].Severity)
+				t.Errorf("ISSUE-510 keeps its registered severity, got %q", f[0].Severity)
 			}
 			if got := f[0].Data["occurrenceSeverity"]; got != tc.want {
 				t.Errorf("occurrenceSeverity = %v, want %s", got, tc.want)

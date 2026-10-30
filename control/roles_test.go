@@ -38,7 +38,7 @@ func TestSpecAnchoredRoles(t *testing.T) {
 		"ISSUE-415": {RoleHygiene, ""},
 		"ISSUE-802": {RoleEntry, EntryPRTarget},
 		"ISSUE-501": {RoleGate, ""},
-		"ISSUE-507": {RoleGate, ""},
+		"ISSUE-510": {RoleGate, ""},
 		"ISSUE-505": {RoleGate, ""},
 		"ISSUE-305": {RoleGate, ""},
 		"ISSUE-704": {RoleGate, ""},

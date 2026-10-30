@@ -29,7 +29,7 @@ deny contains finding if {
 	missing := _missing(pattern, tp)
 	count(missing) > 0
 	finding := {
-		"code":     "ISSUE-507",
+		"code":     "ISSUE-510",
 		"severity": "critical",
 		"message":  _message(pattern, missing),
 		# No "job": a tag pattern is not a job. tagPattern names what this

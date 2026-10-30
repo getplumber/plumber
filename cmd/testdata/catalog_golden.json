@@ -1844,7 +1844,7 @@
       "issueCodeEntryKinds": {}
     },
     {
-      "id": "CTRL-507",
+      "id": "CTRL-510",
       "name": "tagMustBeProtected",
       "displayName": "Tag must be protected",
       "category": "Access and Authorization",
@@ -1888,10 +1888,10 @@
         ]
       },
       "issueCodes": [
-        "ISSUE-507"
+        "ISSUE-510"
       ],
       "issueCodeRoles": {
-        "ISSUE-507": "gate"
+        "ISSUE-510": "gate"
       },
       "issueCodeEntryKinds": {}
     },
@@ -2929,12 +2929,12 @@
       "controlName": "mergeRequestSettingsMustBeCompliant"
     },
     {
-      "code": "ISSUE-507",
+      "code": "ISSUE-510",
       "severity": "critical",
       "title": "Tag pattern not protected",
       "description": "A release tag pattern in use (an existing tag matches it, or a workflow triggers on it) is not fully protected: anyone with push access can move, delete or create a release tag, and ship code that consumers pinned to that tag, or that a tag-triggered release workflow publishes, without review.",
       "remediation": "Protect the tag pattern. On GitLab: Settings \u003e Repository \u003e Protected tags, add the pattern with Maintainers (or a narrower set) allowed to create. On GitHub: Settings \u003e Rules \u003e Rulesets, add an active tag ruleset targeting the pattern with Restrict creations, Restrict updates and Restrict deletions, and grant your release automation a bypass.",
-      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-507",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-510",
       "controlName": "tagMustBeProtected"
     },
     {

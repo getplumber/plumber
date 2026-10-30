@@ -194,7 +194,7 @@ var declarations = map[string][]string{
 	// MR settings not compliant: singleton finding (one per project); the platform IdOnly was empty, so the identity is the code alone. Deliberate consequence: changing WHICH settings deviate does not re-key the finding.
 	"ISSUE-506": {},
 	// Tag pattern not protected: one finding per tag pattern, keyed on the pattern (configured or read off a workflow tag trigger). Which protections are missing is data only, so tightening one of them does not re-key the finding.
-	"ISSUE-507": {"tagPattern"},
+	"ISSUE-510": {"tagPattern"},
 	// Security policy project not linked: singleton finding (one per project); the platform IdOnly was empty, so the identity is the code alone.
 	"ISSUE-601": {},
 	// Workflow has no explicit name: one finding per workflow file, keyed on the file (benched, not yet live: declaration provisional, revisit on unbench). Renumbered from 601 when the security-policy control took 601 (#417).

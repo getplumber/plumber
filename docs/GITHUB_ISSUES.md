@@ -72,7 +72,7 @@ reading the upstream docs.
 | Code | Name | Severity |
 | :--- | :--- | :--- |
 | [ISSUE-803](#issue-803--excessive-permissions) | `excessive-permissions` | high |
-| [ISSUE-507](#issue-507--tag-unprotected) | `tag-unprotected` | **critical** _(API)_ |
+| [ISSUE-510](#issue-510--tag-unprotected) | `tag-unprotected` | **critical** _(API)_ |
 
 ### Workflow hygiene — `6xx`
 
@@ -1855,7 +1855,7 @@ jobs:
 
 ---
 
-## ISSUE-507 — `tag-unprotected`
+## ISSUE-510 — `tag-unprotected`
 
 **Severity:** `critical` (`high` when no workflow runs on a tag push) • **Control:** `tagMustBeProtected`
 

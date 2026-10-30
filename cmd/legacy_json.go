@@ -396,7 +396,7 @@ func buildMRSettingsBlock(c legacyCommon, findings []opaengine.Finding) map[stri
 	}
 }
 
-// buildTagProtectionBlock emits the tagMustBeProtected (ISSUE-507) block on
+// buildTagProtectionBlock emits the tagMustBeProtected (ISSUE-510) block on
 // both providers. The findings are repository-level (no file/job): each
 // issue carries the tagPattern and its missingProtections. tagRules and
 // tagsChecked describe what the collection read; both stay 0 when it did

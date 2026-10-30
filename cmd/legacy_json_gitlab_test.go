@@ -369,7 +369,7 @@ func TestAuthorizedSourcesJSONBlocks(t *testing.T) {
 	}
 }
 
-// TestTagProtectionJSONBlock locks the tagMustBeProtected (ISSUE-507)
+// TestTagProtectionJSONBlock locks the tagMustBeProtected (ISSUE-510)
 // results.json block on both providers. An unrouted control falls through
 // to ("", nil) and its block silently leaves results.json; the metrics
 // must also come from whichever pipeline carries the collection and stay
@@ -377,7 +377,7 @@ func TestAuthorizedSourcesJSONBlocks(t *testing.T) {
 func TestTagProtectionJSONBlock(t *testing.T) {
 	entry := control.ControlEntry{DisplayName: "Tag pattern must be protected", ControlName: "tagMustBeProtected"}
 	findings := []opaengine.Finding{{
-		Code: "ISSUE-507",
+		Code: "ISSUE-510",
 		Data: map[string]any{"tagPattern": "v*", "missingProtections": []any{"update", "deletion", "creation"}},
 	}}
 	known := func() *ir.TagProtection {
@@ -419,8 +419,8 @@ func TestTagProtectionJSONBlock(t *testing.T) {
 				t.Fatalf("block is %T, want map[string]any", block)
 			}
 			issues, ok := m["issues"].([]map[string]any)
-			if !ok || len(issues) != 1 || issues[0]["code"] != "ISSUE-507" {
-				t.Fatalf("issues = %v, want the one ISSUE-507 finding", m["issues"])
+			if !ok || len(issues) != 1 || issues[0]["code"] != "ISSUE-510" {
+				t.Fatalf("issues = %v, want the one ISSUE-510 finding", m["issues"])
 			}
 			if issues[0]["tagPattern"] != "v*" {
 				t.Errorf("issue lost tagPattern; got keys %v", issues[0])

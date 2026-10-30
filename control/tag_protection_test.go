@@ -8,7 +8,7 @@ import (
 	"github.com/getplumber/plumber/internal/ir"
 )
 
-// tagMustBeProtected (ISSUE-507) reads the provider's API, never the CI
+// tagMustBeProtected (ISSUE-510) reads the provider's API, never the CI
 // file: it passes only on rules and tags read authoritatively, errors on
 // its own fetch failure or an unreadable answer, and its degraded reason
 // never taints the CI-file controls.
@@ -47,7 +47,7 @@ func TestStatusFor_TagMustBeProtected(t *testing.T) {
 // control not evaluated (what a standalone summary reads) and drops its
 // findings; known data, no collection, or a skipped control are left alone.
 func TestMarkTagProtectionGap(t *testing.T) {
-	finding := opaengine.Finding{Code: "ISSUE-507"}
+	finding := opaengine.Finding{Code: "ISSUE-510"}
 	cases := []struct {
 		name     string
 		pipeline *ir.NormalizedPipeline

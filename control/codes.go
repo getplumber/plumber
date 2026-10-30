@@ -215,8 +215,8 @@ const (
 	CodeBranchNonCompliant ErrorCode = "ISSUE-505"
 	// ISSUE-506: The project's merge-request/merge settings do not meet the configured expectations
 	CodeMRSettingsNonCompliant ErrorCode = "ISSUE-506"
-	// ISSUE-507: A release tag pattern in use is not protected (updates, deletions or creation left open)
-	CodeTagUnprotected ErrorCode = "ISSUE-507"
+	// ISSUE-510: A release tag pattern in use is not protected (updates, deletions or creation left open)
+	CodeTagUnprotected ErrorCode = "ISSUE-510"
 	// ISSUE-803: Job runs with overly broad permissions (write-all)
 	CodeExcessivePermissions ErrorCode = "ISSUE-803"
 )

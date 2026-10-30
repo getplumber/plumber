@@ -328,7 +328,7 @@ func eligibleDefaultTokenWorkflow(pipeline *ir.NormalizedPipeline, workflowPath 
 }
 
 // enrichGitHubTags fills pipeline.TagProtection for tagMustBeProtected
-// (ISSUE-507) when tagLaneCollected says this run collects it. A token
+// (ISSUE-510) when tagLaneCollected says this run collects it. A token
 // that cannot read the rulesets or the tags leaves TagProtection with
 // Known=false, which the rule abstains on and markTagProtectionGap turns
 // into "not evaluated". Returns true when the fetch failed outright

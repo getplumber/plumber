@@ -318,7 +318,7 @@ type ControlsConfig struct {
 
 	// TagMustBeProtected control configuration: release tag patterns must
 	// be immutable (update and deletion blocked) with creation restricted
-	// (ISSUE-507).
+	// (ISSUE-510).
 	TagMustBeProtected *TagProtectionControlConfig `yaml:"tagMustBeProtected,omitempty"`
 
 	// MergeRequestApprovalRulesMustRequireMinimumApprovals control

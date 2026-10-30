@@ -26,7 +26,7 @@ type NormalizedPipeline struct {
 	Dependabot    *DependabotConfig `json:"dependabot,omitempty"`
 
 	// TagProtection is the repository's tag protection rules and its
-	// existing tag names, read by tagMustBeProtected (ISSUE-507). nil when
+	// existing tag names, read by tagMustBeProtected (ISSUE-510). nil when
 	// the collection did not run, so the rule abstains.
 	TagProtection *TagProtection `json:"tagProtection,omitempty"`
 

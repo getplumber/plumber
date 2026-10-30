@@ -157,7 +157,7 @@ func mrSettingsPremiumFieldsNeedingUpgrade(conf *configuration.Configuration, pr
 const controlSecurityPolicy = "projectMustHaveSecurityPolicySource"
 
 // controlTagMustBeProtected is referenced directly to decide whether to
-// collect the tag protection rules and tag names (ISSUE-507) before
+// collect the tag protection rules and tag names (ISSUE-510) before
 // invoking the Rego engine. The collection reads no control field, so a
 // plain gate is enough: there is no per-policy scope to merge.
 const controlTagMustBeProtected = "tagMustBeProtected"
@@ -1304,7 +1304,7 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 		}
 	}
 
-	// Tag protection (ISSUE-507) is read on its own, outside the protection
+	// Tag protection (ISSUE-510) is read on its own, outside the protection
 	// collection, for the same reason as the security-policy linkage: a
 	// failure there must not cost the branch and approval controls their
 	// data, nor theirs this one. The platform snapshot carries no tag lane

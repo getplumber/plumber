@@ -127,7 +127,7 @@ var controlsMeta = map[string]ControlMeta{
 		Providers:   []string{ProviderGitLab, ProviderGitHub},
 		DisplayName: "Tag must be protected",
 		Category:    CategoryAccessAndAuthorization,
-		ID:          "CTRL-507",
+		ID:          "CTRL-510",
 		Description: "Verifies that release tag patterns in use (configured ones and those workflows trigger on) are protected: tag updates and deletions blocked and tag creation restricted.",
 	},
 	"mergeRequestApprovalRulesMustRequireMinimumApprovals": {
