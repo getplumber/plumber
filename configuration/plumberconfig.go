@@ -243,13 +243,23 @@ type PlumberConfig struct {
 	// yaml.Marshal, so the extends overlay and a re-encoded config keep it as written.
 	Capabilities interface{} `yaml:"capabilities,omitempty"`
 
-	// Raw is the verbatim text of the config that produced this run, captured
-	// at load. The self-describing `plumberConfig` block in the JSON report
-	// parses it into a structured object (the verbatim text is never shipped).
-	// Not serialized into the config itself.
+	// Raw is the text that produced this run's effective config, captured at
+	// load. In overlay mode (`extends: plumber:default`) this is the
+	// resolved (merged) YAML, not the bytes of the file on disk (see
+	// FileBytes for that). The self-describing `plumberConfig` block in the
+	// JSON report parses it into a structured object (the verbatim text is
+	// never shipped). Not serialized into the config itself.
 	Raw string `yaml:"-"`
-	// Source is the path the config was loaded from, or "default" when no
-	// file was present and the embedded default was used. Not serialized.
+	// FileBytes is the exact bytes read from disk (LoadPlumberConfig) or
+	// passed in (LoadPlumberConfigFromBytes), captured before any overlay
+	// resolution. Unlike Raw, it never carries the merged overlay content, so
+	// it is what a sha256 hash of the committed file must be compared
+	// against. Not serialized into the config itself, and excluded from JSON
+	// as a defense against ever shipping it through a generic marshal.
+	FileBytes []byte `yaml:"-" json:"-"`
+	// Source is the path the config was loaded from, or the
+	// builtinDefaultConfigSource sentinel ("built-in default") when no file
+	// was present and the embedded default was used. Not serialized.
 	Source string `yaml:"-"`
 }
 
@@ -1261,8 +1271,12 @@ func LoadPlumberConfigFromBytes(data []byte, source string) (*PlumberConfig, str
 	// a self-describing `plumberConfig` block (what produced this grade).
 	// In overlay mode, Raw holds the resolved (merged) YAML so the report
 	// reflects what actually ran, and Extends is cleared since resolution
-	// is now complete.
+	// is now complete. FileBytes keeps the original `data` argument, exactly
+	// as received before overlay resolution ran, so a sha256 hash of it
+	// equals sha256sum of the file on disk even when the config overlays
+	// the built-in default.
 	config.Raw = string(effectiveData)
+	config.FileBytes = data
 	config.Source = source
 	config.Extends = ""
 

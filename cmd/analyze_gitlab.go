@@ -1045,6 +1045,17 @@ func buildAnalysisJSONReport(result *control.AnalysisResult, pc *configuration.P
 	} else {
 		delete(output, "headCommitSha")
 	}
+	// The verifier of the hosted score service reads these three keys
+	// (monorepo spec 2026-10-30, section 4.1). cliVersion names the binary
+	// that produced the report; configFileSha256 is the sha256 of the raw
+	// committed .plumber.yaml bytes the run loaded (empty for the embedded
+	// default), so the service can compare it with the file at the analyzed
+	// commit without parsing; ci names the Actions run, when there is one.
+	output["cliVersion"] = Version
+	output["configFileSha256"] = configFileSha256(pc)
+	if ci, ok := actionsRunInfo(); ok {
+		output["ci"] = ci
+	}
 	// analyzeBranch gets the same treatment: the marshal above seeds it from
 	// the raw AnalyzeBranch (which can be the "HEAD" placeholder), so when no
 	// real ref resolved it is deleted rather than left leaking that value.
@@ -1348,6 +1359,11 @@ func partialControlEntries(result *control.AnalysisResult) []map[string]any {
 var analysisJSONLegacyKeyHead = []string{
 	"projectPath", "projectId", "defaultBranch",
 	"ciConfigSource", "ciValid", "ciMissing", "ciErrors",
+	// cliVersion, configFileSha256 and ci are the provenance keys the hosted
+	// score service's verifier reads (spec 2026-10-30 section 4.1); pinned
+	// next to the other run-identity fields rather than sorted into the
+	// generic middle group.
+	"cliVersion", "configFileSha256", "ci",
 	"pipelineOriginMetrics", "pipelineImageMetrics",
 	"minPoints", "minScore", "threshold", "passed", "plumberScore", "pathBlocks",
 	// platformMode and policies are the platform-mode block (spec s5); both
