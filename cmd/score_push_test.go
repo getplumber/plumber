@@ -2,7 +2,10 @@ package cmd
 
 import (
 	"bytes"
+	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +19,27 @@ import (
 	"github.com/getplumber/plumber/control"
 	providerPkg "github.com/getplumber/plumber/provider"
 )
+
+// stubSigner is a test double for scoreSigner: it returns the configured
+// bundle or error without ever talking to Fulcio/Rekor.
+type stubSigner struct {
+	bundle []byte
+	err    error
+}
+
+func (s stubSigner) Sign(context.Context, []byte) ([]byte, error) {
+	return s.bundle, s.err
+}
+
+// withScoreSigner swaps newScoreSignerFn so maybePushScore uses the given
+// stub signer regardless of provider or environment, restoring the real
+// implementation when the test ends.
+func withScoreSigner(t *testing.T, s scoreSigner) {
+	t.Helper()
+	old := newScoreSignerFn
+	newScoreSignerFn = func(providerPkg.Provider) scoreSigner { return s }
+	t.Cleanup(func() { newScoreSignerFn = old })
+}
 
 func TestHostOf(t *testing.T) {
 	cases := map[string]string{
@@ -81,12 +105,13 @@ func TestFetchGitHubActionsIDToken(t *testing.T) {
 }
 
 func TestPostScoreReport(t *testing.T) {
-	var gotAuth, gotCT, gotPath string
+	var gotAuth, gotCT, gotPath, gotBundle string
 	var gotBody []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
 		gotCT = r.Header.Get("Content-Type")
 		gotPath = r.URL.Path
+		gotBundle = r.Header.Get("Plumber-Sigstore-Bundle")
 		gotBody, _ = io.ReadAll(r.Body)
 		if r.URL.Path == "/forbidden" {
 			http.Error(w, "nope", http.StatusForbidden)
@@ -96,14 +121,25 @@ func TestPostScoreReport(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if err := postScoreReport(srv.URL+"/github.com/o/r", "tok", []byte(`{"a":1}`)); err != nil {
+	if err := postScoreReport(srv.URL+"/github.com/o/r", "tok", []byte(`{"a":1}`), nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if gotAuth != "Bearer tok" || gotCT != "application/json" || gotPath != "/github.com/o/r" || string(gotBody) != `{"a":1}` {
 		t.Fatalf("auth=%q ct=%q path=%q body=%q", gotAuth, gotCT, gotPath, gotBody)
 	}
+	if gotBundle != "" {
+		t.Fatalf("bundle header = %q, want empty when bundle is nil", gotBundle)
+	}
 
-	if err := postScoreReport(srv.URL+"/forbidden", "tok", []byte("{}")); err == nil {
+	bundle := []byte(`{"mediaType":"x"}`)
+	if err := postScoreReport(srv.URL+"/github.com/o/r", "tok", []byte(`{"a":1}`), bundle); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if want := base64.StdEncoding.EncodeToString(bundle); gotBundle != want {
+		t.Fatalf("bundle header = %q, want %q", gotBundle, want)
+	}
+
+	if err := postScoreReport(srv.URL+"/forbidden", "tok", []byte("{}"), nil); err == nil {
 		t.Fatal("expected a non-2xx error")
 	}
 }
@@ -240,6 +276,100 @@ func TestMaybePushScore_FullFlow(t *testing.T) {
 
 	if gotPath != "/github.com/octo/repo" || gotAuth != "Bearer id-tok" || string(gotBody) != `{"plumberScore":{"score":"A"}}` {
 		t.Fatalf("push not received as expected: path=%q auth=%q body=%q", gotPath, gotAuth, gotBody)
+	}
+}
+
+// TestMaybePushScore_SendsBundleHeader proves the score push carries the
+// Sigstore bundle (protojson, base64) under scoreBundleHeader when signing
+// succeeds, and that a successful signature prints the Rekor index line
+// (read from the bundle's first transparency log entry).
+func TestMaybePushScore_SendsBundleHeader(t *testing.T) {
+	p, ok := providerPkg.Get("github")
+	if !ok {
+		t.Skip("github provider not registered")
+	}
+
+	oidc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{"value": "id-tok"})
+	}))
+	defer oidc.Close()
+
+	bundleJSON := []byte(`{"mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json","verificationMaterial":{"tlogEntries":[{"logIndex":"4242"}]}}`)
+	var gotHeader string
+	score := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeader = r.Header.Get("Plumber-Sigstore-Bundle")
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer score.Close()
+
+	withScoreSigner(t, stubSigner{bundle: bundleJSON})
+	t.Setenv(scoreSignEnv, "true") // the stub score service is self-hosted
+	defer func(pp bool, e string) { pushScore, scoreEndpoint = pp, e }(pushScore, scoreEndpoint)
+	pushScore, scoreEndpoint = true, score.URL
+	t.Setenv("GITHUB_ACTIONS", "true")
+	t.Setenv("GITHUB_REPOSITORY", "octo/repo")
+	t.Setenv("GITHUB_SERVER_URL", "https://github.com")
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", oidc.URL)
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "req")
+
+	conf := &configuration.Configuration{PlumberConfig: &configuration.PlumberConfig{}}
+	stderr := captureStderr(t, func() {
+		maybePushScore(p, conf, []byte(`{"plumberScore":{"score":"A"}}`), "main")
+	})
+
+	want := base64.StdEncoding.EncodeToString(bundleJSON)
+	if gotHeader != want {
+		t.Fatalf("bundle header = %q, want %q", gotHeader, want)
+	}
+	if !strings.Contains(stderr, "Rekor index 4242") {
+		t.Fatalf("expected the Rekor index line, got %q", stderr)
+	}
+}
+
+// TestMaybePushScore_SigningFailureWarnsAndPushesWithoutBundle proves a
+// signing failure never blocks the push: the score still goes out, without a
+// bundle, and the operator sees a one-line warning naming the report as not
+// signed.
+func TestMaybePushScore_SigningFailureWarnsAndPushesWithoutBundle(t *testing.T) {
+	p, ok := providerPkg.Get("github")
+	if !ok {
+		t.Skip("github provider not registered")
+	}
+
+	oidc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{"value": "id-tok"})
+	}))
+	defer oidc.Close()
+
+	var gotHeader string
+	pushed := false
+	score := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pushed = true
+		gotHeader = r.Header.Get("Plumber-Sigstore-Bundle")
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer score.Close()
+
+	withScoreSigner(t, stubSigner{err: errors.New("fulcio down")})
+	t.Setenv(scoreSignEnv, "true") // the stub score service is self-hosted
+	defer func(pp bool, e string) { pushScore, scoreEndpoint = pp, e }(pushScore, scoreEndpoint)
+	pushScore, scoreEndpoint = true, score.URL
+	t.Setenv("GITHUB_ACTIONS", "true")
+	t.Setenv("GITHUB_REPOSITORY", "octo/repo")
+	t.Setenv("GITHUB_SERVER_URL", "https://github.com")
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", oidc.URL)
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "req")
+
+	conf := &configuration.Configuration{PlumberConfig: &configuration.PlumberConfig{}}
+	stderr := captureStderr(t, func() {
+		maybePushScore(p, conf, []byte(`{}`), "main")
+	})
+
+	if !pushed || gotHeader != "" {
+		t.Fatalf("pushed=%v header=%q", pushed, gotHeader)
+	}
+	if !strings.Contains(stderr, "not signed") {
+		t.Fatalf("expected a one-line warning, got %q", stderr)
 	}
 }
 
