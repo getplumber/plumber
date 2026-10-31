@@ -2340,6 +2340,13 @@ plumber analyze --print=false --output findings.json
 {
   "projectPath": "owner/repo",
   "ciValid": true,
+  "cliVersion": "0.7.18",
+  "configFileSha256": "9f2c4b1e7a6d3f80c5e2b7d4a19f6c3e8b0d5a7f2c4e6b8d1a3f5c7e9b2d4f6a",
+  "ci": {
+    "runId": "123456789",
+    "runAttempt": "1",
+    "runUrl": "https://github.com/owner/repo/actions/runs/123456789/attempts/1"
+  },
   "findings": [
     {
       "code": "ISSUE-802",
@@ -2352,3 +2359,9 @@ plumber analyze --print=false --output findings.json
   ]
 }
 ```
+
+`cliVersion`, `configFileSha256` and `ci` are the provenance keys the hosted score service's verifier reads to check a push against the certificate the provider's OIDC token attests (see [Signing on GitHub Actions](../README.md#signing-on-github-actions)):
+
+- `cliVersion`: the binary that produced the report.
+- `configFileSha256`: the sha256 of the raw, committed `.plumber.yaml` bytes the run loaded. Empty when the run used the embedded default config, never the hash of that default, so the service never mistakes a default run for a file.
+- `ci`: the GitHub Actions run that produced the report (`runId`, `runAttempt`, `runUrl`). Present only on GitHub Actions; omitted everywhere else, including GitLab CI and local runs.
