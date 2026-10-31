@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"bytes"
+	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,11 +17,34 @@ import (
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
 	providerPkg "github.com/getplumber/plumber/provider"
+	protobundle "github.com/sigstore/protobuf-specs/gen/pb-go/bundle/v1"
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 // scorePushHTTPTimeout bounds the OIDC token fetch and the push POST.
 // Publishing a badge must never hang a pipeline.
 const scorePushHTTPTimeout = 15 * time.Second
+
+// scoreSignTimeout caps the keyless signing as a whole (the id-token mint,
+// the TUF fetch, Fulcio and Rekor; each request is also bounded by
+// scorePushHTTPTimeout): signScorePayload returns at this deadline whatever
+// the inner legs do, so a slow Sigstore costs at most this long before the
+// push goes on unsigned. A variable so a test can shorten it.
+var scoreSignTimeout = 60 * time.Second
+
+// scoreSignEnv opts a self-hosted score service into the signed push. The
+// signature is produced for the hosted service (DefaultScoreEndpoint) only,
+// unless this env var is "true" (case-insensitive), which names a self-hosted
+// service that implements the organization trust page and verifies the
+// bundle. Anywhere else signing would only add a Fulcio certificate and a
+// public Rekor entry nobody reads.
+const scoreSignEnv = "PLUMBER_SCORE_SIGN"
+
+// maxScoreBundleHeaderBytes caps the base64-encoded bundle the push sends in
+// scoreBundleHeader. Common proxies reject request headers past a few tens
+// of KiB; a bundle over this cap is dropped with a warning so the push itself
+// still goes through.
+const maxScoreBundleHeaderBytes = 64 << 10
 
 // gitlabScoreTokenEnv is the env var the GitLab CI component's `id_tokens:`
 // block writes the score-service OIDC id-token to; the CLI reads it on the
@@ -32,6 +57,13 @@ const gitlabScoreTokenEnv = "PLUMBER_ANALYZE_SCORE_TOKEN"
 // token because the audience must equal the destination, and the two
 // destinations differ.
 const gitlabPlatformTokenEnv = "PLUMBER_ANALYZE_PLATFORM_TOKEN"
+
+// scorePayloadOutEnv is a verification aid, not a feature flag: when set to a
+// non-empty path, maybePushScore writes the exact bytes it posts to the
+// score service there. There is no --flag for it on purpose, since it is
+// only ever read by a human or an e2e check diffing the file against the
+// Rekor entry the push signed, never by a CI integration input.
+const scorePayloadOutEnv = "PLUMBER_SCORE_PAYLOAD_OUT"
 
 // effectiveScorePush resolves whether to publish and the score service
 // endpoint. Publishing has a single opt-in: the `--score-push` flag /
@@ -108,8 +140,15 @@ func maybePushScore(p providerPkg.Provider, conf *configuration.Configuration, p
 		return
 	}
 
+	// Sign the exact bytes posted so the hosted service can bind them to this
+	// job's identity (spec 2026-10-30, section 4.1). Never fatal: an unsigned
+	// push is still a valid push for a non-official repository.
+	bundle := signScorePayload(p, endpoint, payload)
+
+	writeScorePayloadOut(payload)
+
 	target := fmt.Sprintf("%s/%s/%s", endpoint, forgeHost, projectPath)
-	if err := postScoreReport(target, token, payload); err != nil {
+	if err := postScoreReport(target, token, payload, bundle); err != nil {
 		scoreWarn(fmt.Sprintf("score push failed: %v", err))
 		return
 	}
@@ -121,6 +160,96 @@ func maybePushScore(p providerPkg.Provider, conf *configuration.Configuration, p
 		note = fmt.Sprintf(" (but not displayed on the public badge: %q is not the default branch)", branch)
 	}
 	fmt.Fprintf(os.Stderr, "✓ Plumber Score published: %s/%s/%s%s\n", endpoint, forgeHost, projectPath, note)
+	if logIndex, ok := rekorLogIndexFromBundle(bundle); ok {
+		fmt.Fprintf(os.Stderr, "✓ report signed (Rekor index %d)\n", logIndex)
+	}
+}
+
+// scoreSigningWanted reports whether this push should be signed: always for
+// the hosted service, and for a self-hosted endpoint only when scoreSignEnv
+// opts it in.
+func scoreSigningWanted(endpoint string) bool {
+	if endpoint == configuration.DefaultScoreEndpoint {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(os.Getenv(scoreSignEnv)), "true")
+}
+
+// signScorePayload returns the protojson Sigstore bundle signing payload, or
+// nil when the push goes out unsigned: signing is not wanted for this
+// endpoint (silently: the signer is never built, no token is minted), not
+// available here, failed, did not finish within scoreSignTimeout, or produced
+// a bundle too large for the header. Every failure is one warning, never an
+// error.
+func signScorePayload(p providerPkg.Provider, endpoint string, payload []byte) []byte {
+	if !scoreSigningWanted(endpoint) {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), scoreSignTimeout)
+	defer cancel()
+	type signResult struct {
+		bundle []byte
+		err    error
+	}
+	// Buffered so the goroutine never blocks on the send when the deadline
+	// wins the select; it ends whenever the signer returns.
+	done := make(chan signResult, 1)
+	signer := newScoreSignerFn(p)
+	go func() {
+		b, err := signer.Sign(ctx, payload)
+		done <- signResult{bundle: b, err: err}
+	}()
+	var res signResult
+	select {
+	case res = <-done:
+	case <-ctx.Done():
+		res.err = fmt.Errorf("signing did not finish within %s", scoreSignTimeout)
+	}
+	if res.err != nil {
+		scoreWarn(fmt.Sprintf("report not signed (%v); pushed without a Sigstore bundle", res.err))
+		return nil
+	}
+	if n := base64.StdEncoding.EncodedLen(len(res.bundle)); n > maxScoreBundleHeaderBytes {
+		scoreWarn(fmt.Sprintf("Sigstore bundle too large (%d bytes encoded, limit %d), pushed without it", n, maxScoreBundleHeaderBytes))
+		return nil
+	}
+	return res.bundle
+}
+
+// writeScorePayloadOut writes payload verbatim to the path named by
+// scorePayloadOutEnv, when that env var is set to a non-empty value. This
+// is the only place that sees the exact bytes the score push signs and
+// posts (buildPublishPayload already dropped analyzedCiConfig, which the
+// --output file still carries), so it is the only way to verify a Rekor
+// entry against what was actually pushed. A write error never stops the
+// push: it is one scoreWarn line naming the path, same as every other
+// score-push failure mode.
+func writeScorePayloadOut(payload []byte) {
+	path := strings.TrimSpace(os.Getenv(scorePayloadOutEnv))
+	if path == "" {
+		return
+	}
+	if err := os.WriteFile(path, payload, 0o600); err != nil {
+		scoreWarn(fmt.Sprintf("payload not written to %s (%v)", path, err))
+	}
+}
+
+// rekorLogIndexFromBundle reads the transparency log index out of a signed
+// score report's Sigstore bundle (protojson). ok is false when the bundle is
+// empty (signing was skipped or failed) or carries no transparency log entry.
+func rekorLogIndexFromBundle(bundleJSON []byte) (int64, bool) {
+	if len(bundleJSON) == 0 {
+		return 0, false
+	}
+	var b protobundle.Bundle
+	if err := protojson.Unmarshal(bundleJSON, &b); err != nil {
+		return 0, false
+	}
+	entries := b.GetVerificationMaterial().GetTlogEntries()
+	if len(entries) == 0 {
+		return 0, false
+	}
+	return entries[0].GetLogIndex(), true
 }
 
 // ciRunBranch returns the branch this CI run executes on, or "" when unknown
@@ -248,10 +377,11 @@ func fetchGitHubActionsIDToken(reqURL, reqToken, audience string) (string, error
 	return out.Value, nil
 }
 
-// postScoreReport POSTs the report JSON to the score service. Any non-2xx is
-// an error (the caller turns it into a warning, never a failure).
-func postScoreReport(target, token string, payload []byte) error {
-	_, _, err := postScoreReportForBody(target, token, payload)
+// postScoreReport POSTs the report JSON to the score service, carrying the
+// Sigstore bundle under scoreBundleHeader when bundle is non-empty. Any
+// non-2xx is an error (the caller turns it into a warning, never a failure).
+func postScoreReport(target, token string, payload []byte, bundle []byte) error {
+	_, _, err := postScoreReportForBody(target, token, payload, bundle)
 	return err
 }
 
@@ -261,14 +391,19 @@ func postScoreReport(target, token string, payload []byte) error {
 // platformGateFailOpenLine). statusCode is 0 for a transport-level failure
 // (timeout, DNS, connection refused) where no response was ever received -
 // callers that only need the pass/fail outcome go through postScoreReport
-// instead, which never had a status code to report.
-func postScoreReportForBody(target, token string, payload []byte) (body []byte, statusCode int, err error) {
+// instead, which never had a status code to report. bundle, when non-empty,
+// is the protojson Sigstore bundle signing the payload; the platform push
+// passes nil (it has its own, platform-side integrity story).
+func postScoreReportForBody(target, token string, payload []byte, bundle []byte) (body []byte, statusCode int, err error) {
 	req, err := http.NewRequest(http.MethodPost, target, bytes.NewReader(payload))
 	if err != nil {
 		return nil, 0, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
+	if len(bundle) > 0 {
+		req.Header.Set(scoreBundleHeader, base64.StdEncoding.EncodeToString(bundle))
+	}
 
 	resp, err := (&http.Client{Timeout: scorePushHTTPTimeout}).Do(req)
 	if err != nil {
