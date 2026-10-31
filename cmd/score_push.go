@@ -58,6 +58,13 @@ const gitlabScoreTokenEnv = "PLUMBER_ANALYZE_SCORE_TOKEN"
 // destinations differ.
 const gitlabPlatformTokenEnv = "PLUMBER_ANALYZE_PLATFORM_TOKEN"
 
+// scorePayloadOutEnv is a verification aid, not a feature flag: when set to a
+// non-empty path, maybePushScore writes the exact bytes it posts to the
+// score service there. There is no --flag for it on purpose, since it is
+// only ever read by a human or an e2e check diffing the file against the
+// Rekor entry the push signed, never by a CI integration input.
+const scorePayloadOutEnv = "PLUMBER_SCORE_PAYLOAD_OUT"
+
 // effectiveScorePush resolves whether to publish and the score service
 // endpoint. Publishing has a single opt-in: the `--score-push` flag /
 // PLUMBER_ANALYZE_SCORE_PUSH env, which the CI integration input (the
@@ -138,6 +145,8 @@ func maybePushScore(p providerPkg.Provider, conf *configuration.Configuration, p
 	// push is still a valid push for a non-official repository.
 	bundle := signScorePayload(p, endpoint, payload)
 
+	writeScorePayloadOut(payload)
+
 	target := fmt.Sprintf("%s/%s/%s", endpoint, forgeHost, projectPath)
 	if err := postScoreReport(target, token, payload, bundle); err != nil {
 		scoreWarn(fmt.Sprintf("score push failed: %v", err))
@@ -205,6 +214,24 @@ func signScorePayload(p providerPkg.Provider, endpoint string, payload []byte) [
 		return nil
 	}
 	return res.bundle
+}
+
+// writeScorePayloadOut writes payload verbatim to the path named by
+// scorePayloadOutEnv, when that env var is set to a non-empty value. This
+// is the only place that sees the exact bytes the score push signs and
+// posts (buildPublishPayload already dropped analyzedCiConfig, which the
+// --output file still carries), so it is the only way to verify a Rekor
+// entry against what was actually pushed. A write error never stops the
+// push: it is one scoreWarn line naming the path, same as every other
+// score-push failure mode.
+func writeScorePayloadOut(payload []byte) {
+	path := strings.TrimSpace(os.Getenv(scorePayloadOutEnv))
+	if path == "" {
+		return
+	}
+	if err := os.WriteFile(path, payload, 0o600); err != nil {
+		scoreWarn(fmt.Sprintf("payload not written to %s (%v)", path, err))
+	}
 }
 
 // rekorLogIndexFromBundle reads the transparency log index out of a signed
