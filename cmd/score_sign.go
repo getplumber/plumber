@@ -46,6 +46,10 @@ type keylessSigner struct {
 	tokenURL, tokenReq string
 }
 
+// newScoreSignerFn is the seam maybePushScore calls through, so tests can
+// substitute a stub signer without touching Fulcio/Rekor or the environment.
+var newScoreSignerFn = newScoreSigner
+
 // newScoreSigner picks the implementation: sigstore keyless on GitHub
 // Actions, noSigner elsewhere.
 func newScoreSigner(p providerPkg.Provider) scoreSigner {
