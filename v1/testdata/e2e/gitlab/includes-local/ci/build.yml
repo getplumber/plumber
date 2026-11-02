@@ -1,0 +1,8 @@
+include:
+  - local: ci/test.yml
+
+build:
+  stage: build
+  image: node:latest
+  script:
+    - npm ci

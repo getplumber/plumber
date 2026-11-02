@@ -1,0 +1,69 @@
+$ plumber analyze gitlab.com/getplumber/examples/plumber-cli-e2e --branch invalid-yaml
+exit: 1
+--- stdout
+
+  ██████╗ ██╗     ██╗   ██╗ ███╗   ███╗██████╗ ███████╗██████╗
+  ██╔══██╗██║     ██║   ██║ ████╗ ████║██╔══██╗██╔════╝██╔══██╗
+  ██████╔╝██║     ██║   ██║ ██╔████╔██║██████╔╝█████╗  ██████╔╝
+  ██╔═══╝ ██║     ██║   ██║ ██║╚██╔╝██║██╔══██╗██╔══╝  ██╔══██╗
+  ██║     ███████╗╚██████╔╝ ██║ ╚═╝ ██║██████╔╝███████╗██║  ██║
+  ╚═╝     ╚══════╝ ╚═════╝  ╚═╝     ╚═╝╚═════╝ ╚══════╝╚═╝  ╚═╝
+  CI/CD Security Scanner  vdev
+  Share your feedback: https://getplumber.io/discord
+
+
+  Project    getplumber/examples/plumber-cli-e2e
+  Platform   GitLab · https://gitlab.com
+  Config     built-in default
+  CI config  fetched from GitLab
+
+  ⚠ WARNING: No controls could be evaluated!
+  CI configuration errors:
+    • (<unknown>): did not find expected ',' or ']' while parsing a flow sequence at line 2 column 9
+
+────────────────────
+• Skipped Controls (24)
+────────────────────
+
+  • Container images must not use forbidden reference (pinned by digest) (disabled in configuration)
+  • Container images must come from authorized sources (disabled in configuration)
+  • Branch must be protected (disabled in configuration)
+  • MR approval rules must require a minimum number of approvals (disabled in configuration)
+  • MR approval rules must cover all protected branches (disabled in configuration)
+  • MR approval settings must be compliant (disabled in configuration)
+  • MR settings must be compliant (disabled in configuration)
+  • CI/CD variables must be protected (disabled in configuration)
+  • CI/CD variables must be masked (disabled in configuration)
+  • Project must have a security policy source (disabled in configuration)
+  • Pipeline must not include hardcoded jobs (disabled in configuration)
+  • Includes must not use ambiguous tag/branch refs (disabled in configuration)
+  • Includes must be up to date (disabled in configuration)
+  • Includes must not use forbidden versions (disabled in configuration)
+  • Pipeline must include required components (disabled in configuration)
+  • Pipeline must include required templates (disabled in configuration)
+  • Components must come from authorized sources (disabled in configuration)
+  • Functions must come from authorized sources (disabled in configuration)
+  • Pipeline must not enable debug trace (disabled in configuration)
+  • Pipeline must not use unsafe variable expansion (disabled in configuration)
+  • Security jobs must not be weakened (disabled in configuration)
+  • Pipeline must not execute unverified scripts (disabled in configuration)
+  • Pipeline must not override job variables (disabled in configuration)
+  • Pipeline must not use Docker-in-Docker (disabled in configuration)
+
+────────────────────
+Score
+────────────────────
+
+ ██████╗   Plumber Score  withheld
+ ╚════██╗  Status: NOTHING CHECKED (no control was evaluated)
+   ███╔═╝
+   ╚══╝    Why: (<unknown>): did not find expected ',' or ']' while parsing a flow sequence at line
+   ██╗     2 column 9
+   ╚═╝     Next: enable or configure at least one control, then re-run
+
+--- stderr
+No .plumber.yaml found; using Plumber's built-in default configuration.
+Generate your own with 'plumber config generate' ('plumber config init' for the interactive wizard); see the default with 'plumber config view'.
+Using remote CI configuration from branch: invalid-yaml
+time="<TIME>" level=warning msg="Pipeline has configuration errors. Data collection will continue with limited data." context=platform/gitlab/collector dataCollection=GitlabPipelineOrigin dataCollectionVersion=0.2.0 errors="[(<unknown>): did not find expected ',' or ']' while parsing a flow sequence at line 2 column 9]" project=getplumber/examples/plumber-cli-e2e
+

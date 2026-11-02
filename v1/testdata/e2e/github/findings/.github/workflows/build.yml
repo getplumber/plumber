@@ -1,0 +1,41 @@
+name: Build
+
+# INTENTIONALLY INSECURE — extends the critical demo with two controls the
+# other workflows don't exercise: archived actions and a weakened security job.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release-notes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      # Upstream repo is archived (read-only, unmaintained — no more security
+      # fixes, and the last maintainer can still push a new SHA over the tag).
+      # ISSUE-702 (API).
+      - uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+  security-scan:
+    runs-on: ubuntu-latest
+    # A security scanner neutered with continue-on-error: the job is allowed to
+    # fail, so a real finding never blocks the pipeline. ISSUE-410.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - name: run scanner
+        run: echo "pretend to scan for secrets"

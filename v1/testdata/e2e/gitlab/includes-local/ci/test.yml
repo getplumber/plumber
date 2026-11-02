@@ -1,0 +1,5 @@
+test:
+  stage: test
+  image: python:3
+  script:
+    - python -m pytest

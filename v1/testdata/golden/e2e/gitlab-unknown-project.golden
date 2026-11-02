@@ -1,0 +1,20 @@
+$ plumber analyze gitlab.com/getplumber/examples/does-not-exist
+exit: 2
+--- stdout
+
+  ██████╗ ██╗     ██╗   ██╗ ███╗   ███╗██████╗ ███████╗██████╗
+  ██╔══██╗██║     ██║   ██║ ████╗ ████║██╔══██╗██╔════╝██╔══██╗
+  ██████╔╝██║     ██║   ██║ ██╔████╔██║██████╔╝█████╗  ██████╔╝
+  ██╔═══╝ ██║     ██║   ██║ ██║╚██╔╝██║██╔══██╗██╔══╝  ██╔══██╗
+  ██║     ███████╗╚██████╔╝ ██║ ╚═╝ ██║██████╔╝███████╗██║  ██║
+  ╚═╝     ╚══════╝ ╚═════╝  ╚═╝     ╚═╝╚═════╝ ╚══════╝╚═╝  ╚═╝
+  CI/CD Security Scanner  vdev
+  Share your feedback: https://getplumber.io/discord
+
+
+--- stderr
+No .plumber.yaml found; using Plumber's built-in default configuration.
+Generate your own with 'plumber config generate' ('plumber config init' for the interactive wizard); see the default with 'plumber config view'.
+time="<TIME>" level=error msg="Failed to fetch project from GitLab" action=RunAnalysis context=control error="project not found: getplumber/examples/does-not-exist" gitlabURL="https://gitlab.com" projectPath=getplumber/examples/does-not-exist
+Error: analysis failed: project not found: getplumber/examples/does-not-exist
+

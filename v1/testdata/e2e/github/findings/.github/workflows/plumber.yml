@@ -1,0 +1,33 @@
+name: Plumber
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Least-privilege: read the repo, write SARIF to code scanning.
+# id-token is for the Plumber Score push (publishes only from the default branch).
+permissions:
+  contents: read
+  security-events: write
+  id-token: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - uses: getplumber/plumber@f84005b69dc57965d192feedd08b4a20fa6e52cc # v0.4.60
+        with:
+          # This repo is deliberately dangerous (target grade E). Surface every
+          # finding to code scanning and publish the live Plumber Score badge,
+          # but don't hard-fail CI on the expected result.
+          soft-fail: true
+          score-push: true
