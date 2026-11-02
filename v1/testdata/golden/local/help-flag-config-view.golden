@@ -1,0 +1,36 @@
+$ plumber config view --help
+exit: 0
+--- stdout
+Display a clean, human-readable view of the effective configuration.
+
+This command loads and parses the configuration file, then displays it
+without comments, making it easy to see exactly what settings are active.
+
+Booleans are colorized for quick scanning:
+  - true  → green
+  - false → red
+
+Examples:
+  # View the default .plumber.yaml
+  plumber config view
+
+  # View a specific config file
+  plumber config view --config custom-plumber.yaml
+
+  # View without colors (for piping or scripts)
+  plumber config view --no-color
+
+Usage:
+  plumber config view [flags]
+
+Flags:
+  -c, --config string   Path to configuration file (default ".plumber.yaml")
+      --explain         Also show whether each control comes from the base or your overlay
+  -h, --help            help for view
+      --no-color        Disable colorized output
+
+Global Flags:
+  -v, --verbose   Enable debug logging on stderr (level=debug); replaces the progress bar
+
+--- stderr
+

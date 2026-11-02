@@ -1,0 +1,21 @@
+$ plumber config init -f -o x.yaml
+exit: 2
+--- stdout
+
+--- stderr
+Usage:
+  plumber config init [flags]
+
+Flags:
+  -f, --force           Overwrite existing file without asking
+  -h, --help            help for init
+  -o, --output string   Path to write the generated configuration (default ".plumber.yaml")
+
+Global Flags:
+  -v, --verbose   Enable debug logging on stderr (level=debug); replaces the progress bar
+
+Error: plumber config init needs an interactive terminal for the wizard.
+
+For the default template with comments (suitable for CI or scripts), run:
+  plumber config generate -o .plumber.yaml
+

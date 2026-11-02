@@ -1,0 +1,7 @@
+$ plumber config validate -c missing.yaml
+exit: 2
+--- stdout
+
+--- stderr
+Error: failed to validate configuration: config file not found: missing.yaml
+

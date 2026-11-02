@@ -1,0 +1,24 @@
+name: New tell
+description: A sign of AI writing that no current pattern catches.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: before
+    attributes:
+      label: Example
+      description: Real text that shows the tell. Remove anything private.
+    validations:
+      required: true
+  - type: textarea
+    id: after
+    attributes:
+      label: How a person would write it
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why no current pattern covers it
+      description: Name the closest existing pattern and say why it misses this. Most new tells fit into an existing pattern.
+    validations:
+      required: true

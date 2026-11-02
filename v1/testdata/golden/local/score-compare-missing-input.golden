@@ -1,0 +1,18 @@
+$ plumber score-compare
+exit: 2
+--- stdout
+
+--- stderr
+Usage:
+  plumber score-compare [flags]
+
+Flags:
+  -h, --help            help for score-compare
+      --input string    directory holding the <project>.v3.json / <project>.v4.json Radar output pairs (required)
+      --output string   file to write the markdown report to (default: stdout)
+
+Global Flags:
+  -v, --verbose   Enable debug logging on stderr (level=debug); replaces the progress bar
+
+Error: --input is required
+

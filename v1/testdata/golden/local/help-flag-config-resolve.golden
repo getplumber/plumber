@@ -1,0 +1,25 @@
+$ plumber config resolve --help
+exit: 0
+--- stdout
+Resolve extends and includePlumberDefaults and print the complete
+effective .plumber.yaml. Use this to materialize a sparse overlay into a
+full, self-contained config you can commit (nothing left implicit), or to
+audit exactly what a scan will use.
+
+Examples:
+  plumber config resolve
+  plumber config resolve -c overlay.yaml -o full.plumber.yaml
+
+Usage:
+  plumber config resolve [flags]
+
+Flags:
+  -c, --config string   Path to configuration file (default ".plumber.yaml")
+  -h, --help            help for resolve
+  -o, --output string   Write resolved config to this file (default: stdout)
+
+Global Flags:
+  -v, --verbose   Enable debug logging on stderr (level=debug); replaces the progress bar
+
+--- stderr
+

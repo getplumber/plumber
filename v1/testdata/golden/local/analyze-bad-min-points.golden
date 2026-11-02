@@ -1,0 +1,7 @@
+$ plumber analyze --provider github --project a/b --min-points 150
+exit: 2
+--- stdout
+
+--- stderr
+Error: min-points must be between 0 and 100
+

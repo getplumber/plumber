@@ -1,0 +1,11 @@
+$ plumber config validate -c warning.plumber.yaml --fail-warnings
+exit: 2
+--- stdout
+
+--- stderr
+Configuration validation warnings:
+  - Unknown key "notARealOption" in control "workflowsMustDeclarePermissions" (github.controls)
+
+Configuration loaded from: warning.plumber.yaml
+Error: configuration has 1 warning(s) and --fail-warnings is set
+

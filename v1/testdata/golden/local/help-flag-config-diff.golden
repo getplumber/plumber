@@ -1,0 +1,34 @@
+$ plumber config diff --help
+exit: 0
+--- stdout
+Display a clean, human-readable view of the differences between the current config and defaults.
+
+This command loads and parses the configuration file and the default config, and then compares them.
+
+Differences are colorized for quick scanning:
+  - Added/modified  → green
+  - Removed → red
+
+Examples:
+  # compare the .plumber.yaml in root of repo with default config
+  plumber config diff
+
+  # compare the default config with a custom config
+  plumber config diff --config custom-plumber.yaml
+
+  # View diff without colors (for piping or scripts)
+  plumber config diff --config custom-plumber.yaml --no-color
+
+Usage:
+  plumber config diff [flags]
+
+Flags:
+  -c, --config string   Path to configuration file (default ".plumber.yaml")
+  -h, --help            help for diff
+      --no-color        Disable colorized output
+
+Global Flags:
+  -v, --verbose   Enable debug logging on stderr (level=debug); replaces the progress bar
+
+--- stderr
+

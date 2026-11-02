@@ -1,0 +1,7 @@
+$ plumber analyze notaurl::x
+exit: 2
+--- stdout
+
+--- stderr
+Error: a GitLab target must name namespace/project (got "notaurl::x")
+

@@ -1,0 +1,17 @@
+$ plumber help --help
+exit: 0
+--- stdout
+Help provides help for any command in the application.
+Simply type plumber help [path to command] for full details.
+
+Usage:
+  plumber help [command] [flags]
+
+Flags:
+  -h, --help   help for help
+
+Global Flags:
+  -v, --verbose   Enable debug logging on stderr (level=debug); replaces the progress bar
+
+--- stderr
+

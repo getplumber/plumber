@@ -1,0 +1,588 @@
+$ plumber config view --config overlay.plumber.yaml --explain
+exit: 0
+--- stdout
+
+        enabled: false
+        enabled: true
+        enabled: true
+        enabled: true
+        enabled: true
+        enabled: true
+      - $CI_REGISTRY/*
+      - $CI_REGISTRY_IMAGE/*
+      - $CI_REGISTRY_IMAGE:*
+      - ${CI_DEPENDENCY_PROXY_DIRECT_GROUP_IMAGE_PREFIX}/*
+      - ${CI_REGISTRY_IMAGE}/*
+      - ${CI_REGISTRY_IMAGE}:*
+      - ${CI_REGISTRY}/*
+      - '*-audit'
+      - '*-audit-*'
+      - '*-sast'
+      - '*-sast'
+      - '*-sast-*'
+      - '*-scan'
+      - '*-security'
+      - '*-security-*'
+      - '*_dependency_scanning'
+      - '*codeql*'
+      - '*dependency-review*'
+      - '*detect*secret*'
+      - '*gitleaks*'
+      - '*osv-scanner*'
+      - '*scan*'
+      - '*secret*detect*'
+      - '*semgrep*'
+      - '*snyk*'
+      - '*trivy*'
+      - '*trufflehog*'
+      - 1Password/*
+      - 1password/*
+      - ACTIONS_RUNNER_DEBUG
+      - ACTIONS_STEP_DEBUG
+      - Azure/*
+      - CI_COMMIT_BRANCH
+      - CI_COMMIT_MESSAGE
+      - CI_COMMIT_REF_NAME
+      - CI_COMMIT_REF_SLUG
+      - CI_COMMIT_TAG_MESSAGE
+      - CI_COMMIT_TITLE
+      - CI_DEBUG_SERVICES
+      - CI_DEBUG_TRACE
+      - CI_EXTERNAL_PULL_REQUEST_SOURCE_BRANCH_NAME
+      - CI_MERGE_REQUEST_DESCRIPTION
+      - CI_MERGE_REQUEST_SOURCE_BRANCH_NAME
+      - CI_MERGE_REQUEST_TITLE
+      - CONTAINER_SCANNING_DISABLED
+      - Checkmarx/*
+      - CircleCI-Public/*
+      - CodSpeedHQ/*
+      - DAST_DISABLED
+      - DEPENDENCY_SCANNING_DISABLED
+      - DataDog/*
+      - DeterminateSystems/*
+      - EmbarkStudios/*
+      - GitGuardian/*
+      - HEAD
+      - Homebrew/*
+      - JetBrains/*
+      - LICENSE_SCANNING_DISABLED
+      - NuGet/*
+      - PyO3/*
+      - Qualys/*
+      - SAST_DISABLED
+      - SAST_EXCLUDED_ANALYZERS
+      - SAST_EXCLUDED_PATHS
+      - SECRET_DETECTION_DISABLED
+      - SECRET_DETECTION_EXCLUDED_PATHS
+      - SECURE_ANALYZERS_PREFIX
+      - Shopify/*
+      - SonarSource/*
+      - VirtusLab/*
+      - actions
+      - adobe/*
+      - anchore/*
+      - android-actions/*
+      - ansible-community/*
+      - ansible/*
+      - anthropics/*
+      - apache/*
+      - apple-Actions/*
+      - apple-actions/*
+      - aquasecurity/*
+      - arduino/*
+      - astral-sh/*
+      - atlassian/*
+      - aws-actions/*
+      - azure/*
+      - bazel-contrib/*
+      - biomejs/*
+      - bridgecrewio/*
+      - browserstack/*
+      - bufbuild/*
+      - buildkite/*
+      - bytecodealliance/*
+      - cachix/*
+      - canonical/*
+      - chainguard-dev/*
+      - changesets/*
+      - checkmarx-ts/*
+      - checkmarx/*
+      - chromaui/*
+      - circleci-public/*
+      - cloudflare/*
+      - codecov/*
+      - codspeedhq/*
+      - conda-incubator/*
+      - container_scanning
+      - crowdin/*
+      - cypress-io/*
+      - dagger/*
+      - dart-lang/*
+      - dast
+      - dast_*
+      - datadog/*
+      - denoland/*
+      - dependabot
+      - dependabot/*
+      - depot/*
+      - determinatesystems/*
+      - dev
+      - dev
+      - dev
+      - dev
+      - devcontainers/*
+      - development
+      - development
+      - digicert/*
+      - digitalocean/*
+      - docker.io/alpine/*
+      - docker.io/alpine:*
+      - docker.io/amazon/*
+      - docker.io/amd64/*
+      - docker.io/aquasec/*
+      - docker.io/arm32v6/*
+      - docker.io/arm32v7/*
+      - docker.io/arm64v8/*
+      - docker.io/bats/*
+      - docker.io/bitnami/*
+      - docker.io/bufbuild/*
+      - docker.io/cimg/*
+      - docker.io/circleci/*
+      - docker.io/continuumio/*
+      - docker.io/curlimages/*
+      - docker.io/cypress/*
+      - docker.io/davidanson/*
+      - docker.io/debian:*
+      - docker.io/docker:*
+      - docker.io/fsfe/*
+      - docker.io/gentoo/*
+      - docker.io/getplumber/plumber:*
+      - docker.io/getplumber/plumber@sha256:*
+      - docker.io/getsentry/*
+      - docker.io/gitlab/*
+      - docker.io/gittools/*
+      - docker.io/golang:*
+      - docker.io/golangci/*
+      - docker.io/google/*
+      - docker.io/hadolint/*
+      - docker.io/hashicorp/*
+      - docker.io/hugomods/*
+      - docker.io/i386/*
+      - docker.io/intel/*
+      - docker.io/jdkato/*
+      - docker.io/koalaman/*
+      - docker.io/library/*
+      - docker.io/lycheeverse/*
+      - docker.io/nixos/*
+      - docker.io/node:*
+      - docker.io/nvidia/*
+      - docker.io/opensuse/*
+      - docker.io/oven/*
+      - docker.io/pandoc/*
+      - docker.io/ppc64le/*
+      - docker.io/python:*
+      - docker.io/redhat/*
+      - docker.io/renovate/*
+      - docker.io/riscv64/*
+      - docker.io/rocm/*
+      - docker.io/rust:*
+      - docker.io/rustlang/*
+      - docker.io/s390x/*
+      - docker.io/semgrep/*
+      - docker.io/snapcore/*
+      - docker.io/sonarsource/*
+      - docker.io/ubuntu:*
+      - docker.io/zricethezav/*
+      - docker/*
+      - earthly/*
+      - embarkstudios/*
+      - emscripten-core/*
+      - erlef/*
+      - expo/*
+      - facebook/*
+      - fastly/*
+      - flatpak/*
+      - fsfe/*
+      - gcr.io/go-containerregistry/*
+      - gcr.io/google.com/cloudsdktool/*
+      - gcr.io/kaniko-project/*
+      - gcr.io/oss-fuzz-base/*
+      - gemnasium-*
+      - getplumber/*
+      - getplumber/plumber:*
+      - getsentry/*
+      - ghcr.io/astral-sh/*
+      - ghcr.io/canonical/*
+      - ghcr.io/cirruslabs/*
+      - ghcr.io/containerbase/*
+      - ghcr.io/graalvm/*
+      - ghcr.io/igorshubovych/*
+      - ghcr.io/prefix-dev/*
+      - ghcr.io/renovatebot/*
+      - ghcr.io/streetsidesoftware/*
+      - ghcr.io/tcort/*
+      - ghcr.io/terraform-linters/*
+      - gitguardian/*
+      - github
+      - gitlab.com/getplumber/*
+      - gitleaks/*
+      - gittools/*
+      - gleam-lang/*
+      - go-task/*
+      - golang/*
+      - golangci/*
+      - google-github-actions/*
+      - google/*
+      - googleapis/*
+      - goreleaser/*
+      - graalvm/*
+      - gradle/*
+      - grafana/*
+      - hadolint/*
+      - hashicorp/*
+      - haskell-actions/*
+      - helm/*
+      - homebrew/*
+      - honeycombio/*
+      - ibm/*
+      - in-toto/*
+      - jetbrains/*
+      - jfrog-fastci/*
+      - jfrog/*
+      - julia-actions/*
+      - kubernetes-sigs/*
+      - latest
+      - latest
+      - latest
+      - library/*
+      - license_scanning
+      - linear/*
+      - main
+      - main
+      - main
+      - main
+      - main
+      - master
+      - master
+      - master
+      - master
+      - master
+      - mcr.microsoft.com/*
+      - microsoft/*
+      - mongodb/*
+      - msys2/*
+      - namespacelabs/*
+      - netlify/*
+      - newrelic/*
+      - nix-community/*
+      - nuget/*
+      - nvcr.io/nvidia/*
+      - ocaml/*
+      - octokit/*
+      - openai/*
+      - opensuse/*
+      - opentofu/*
+      - oracle-actions/*
+      - orcasecurity/*
+      - ossf/*
+      - oven-sh/*
+      - oxsecurity/*
+      - peter-evans/*
+      - planetscale/*
+      - pnpm/*
+      - prefix-dev/*
+      - production
+      - production
+      - pulumi/*
+      - pyo3/*
+      - pypa/*
+      - qltysh/*
+      - qualys/*
+      - quay.io/buildah/*
+      - quay.io/centos/*
+      - quay.io/containers/*
+      - quay.io/gnome_infrastructure/*
+      - quay.io/podman/*
+      - quay.io/pypa/*
+      - r-lib/*
+      - redhat-actions/*
+      - redhat/*
+      - registry.fedoraproject.org/*
+      - registry.gitlab.com/gitlab-org/*
+      - registry.gitlab.com/pipeline-components/*
+      - registry.gitlab.com/security-products/*
+      - registry.hub.docker.com/library/*
+      - registry.suse.com/*
+      - release/*
+      - release/*
+      - renovatebot/*
+      - reviewdog/*
+      - ruby/*
+      - rubygems/*
+      - rust-lang/*
+      - saucelabs/*
+      - sbt/*
+      - scientific-python/*
+      - secret_detection
+      - semgrep/*
+      - shopify/*
+      - signpath/*
+      - sigstore/*
+      - slackapi/*
+      - slsa-framework/*
+      - snyk/*
+      - sonarsource/*
+      - sonatype-nexus-community/*
+      - sonatype/*
+      - staging
+      - staging
+      - step-security/*
+      - supabase/*
+      - tailscale/*
+      - tauri-apps/*
+      - tenable/*
+      - trufflesecurity/*
+      - veracode/*
+      - virtuslab/*
+      - voidzero-dev/*
+      - zaproxy/*
+      - zizmorcore/*
+      - ~latest
+      allowFailureMustBeFalse:
+      allowFailureMustBeFalse:
+      allowForcePush: false
+      allowForcePush: false
+      codeOwnerApprovalRequired: false
+      codeOwnerApprovalRequired: false
+      containerImagesMustBePinnedByDigest: true
+      containerImagesMustBePinnedByDigest: true
+      dangerousVariables:
+      defaultBranchIsForbiddenVersion: true
+      defaultMustBeProtected: true
+      defaultMustBeProtected: true
+      detectInsecureDaemon: true
+      detectInsecureDaemon: true
+      enabled: false
+      enabled: false
+      enabled: false
+      enabled: false
+      enabled: false
+      enabled: false
+      enabled: false
+      enabled: false
+      enabled: false
+      enabled: false
+      enabled: false
+      enabled: false
+      enabled: false
+      enabled: true
+      enabled: true
+      enabled: true
+      enabled: true
+      enabled: true
+      enabled: true
+      enabled: true
+      enabled: true
+      enabled: true
+      enabled: true
+      enabled: true
+      enabled: true
+      enabled: true
+      enabled: true
+      enabled: true
+      enabled: true
+      enabled: true
+      enabled: true
+      enabled: true
+      enabled: true
+      enabled: true
+      enabled: true
+      enabled: true
+      enabled: true
+      enabled: true
+      enabled: true
+      enabled: true
+      enabled: true
+      enabled: true
+      enabled: true
+      enabled: true
+      enabled: true
+      enabled: true
+      enabled: true
+      enabled: true
+      enabled: true
+      forbiddenVariables:
+      forbiddenVariables:
+      forbiddenVersions:
+      minMergeAccessLevel: 30
+      minPushAccessLevel: 40
+      minimumRequiredApprovals: 1
+      minimumStars: 20000
+      namePatterns:
+      namePatterns:
+      rulesMustNotBeRedefined:
+      rulesMustNotBeRedefined:
+      securityJobPatterns:
+      securityJobPatterns:
+      tags:
+      tags:
+      trustDockerHubOfficialImages: true
+      trustGithubOfficialActions: true
+      trustGitlabOfficialComponents: true
+      trustSameGroupComponents: true
+      trustSameGroupFunctions: true
+      trustSameInstanceComponents: true
+      trustSameOrgActions: true
+      trustedComponents:
+      trustedGithubActions:
+      trustedOwners:
+      trustedUrls:
+      variables:
+      whenMustNotBeManual:
+      whenMustNotBeManual:
+    - '*/secret-detection/*'
+    - '*betterleaks*'
+    - '*betterleaks/betterleaks*'
+    - '*detect-secrets*'
+    - '*detect_secrets*'
+    - '*ggshield scan*'
+    - '*ggshield secret*'
+    - '*gitguardian/ggshield*'
+    - '*gitleaks*'
+    - '*gitleaks/gitleaks*'
+    - '*trufflehog*'
+    - '*trufflesecurity/trufflehog*'
+    - '*zricethezav/gitleaks*'
+    - Jobs/Secret-Detection*
+    - Security/Secret-Detection*
+    - registry.gitlab.com/security-products/secrets*
+    - secret_detection
+    actionRefsMustExistUpstream:
+    actionsMustBePinnedByCommitSha:
+    actionsMustNotBeArchived:
+    actionsMustNotCarryKnownCVEs:
+    actionsMustNotExecuteMutableRemoteCode:
+    branchMustBeProtected:
+    branchMustBeProtected:
+    checkoutMustNotPersistCredentials:
+    cicdVariablesMustBeMasked:
+    cicdVariablesMustBeProtected:
+    commands:
+    commands:
+    commands:
+    commands:
+    commands:
+    componentMustComeFromAuthorizedSources:
+    containerImageMustComeFromAuthorizedSources:
+    containerImageMustNotUseForbiddenTags:
+    containerImageMustNotUseForbiddenTags:
+    externalRefsMustNotCollide:
+    externalRefsMustNotCollide:
+    functionMustComeFromAuthorizedSources:
+    githubActionMustComeFromAuthorizedSources:
+    gitlab_include_component:
+    gitlab_include_template:
+    gitlab_report_types:
+    images:
+    images:
+    images:
+    images:
+    images:
+    includesMustBeUpToDate:
+    includesMustNotUseForbiddenVersions:
+    mergeRequestApprovalRulesMustCoverAllProtectedBranches:
+    mergeRequestApprovalRulesMustRequireMinimumApprovals:
+    mergeRequestApprovalSettingsMustBeCompliant:
+    mergeRequestSettingsMustBeCompliant:
+    pipelineMustIncludeComponent:
+    pipelineMustIncludeTemplate:
+    pipelineMustNotEnableDebugTrace:
+    pipelineMustNotEnableDebugTrace:
+    pipelineMustNotExecuteUnverifiedScripts:
+    pipelineMustNotExecuteUnverifiedScripts:
+    pipelineMustNotIncludeHardcodedJobs:
+    pipelineMustNotOverrideJobVariables:
+    pipelineMustNotUseDockerInDocker:
+    pipelineMustNotUseDockerInDocker:
+    pipelineMustNotUseUnsafeVariableExpansion:
+    projectMustHaveSecurityPolicySource:
+    pullRequestTargetMustNotCheckoutHead:
+    reusableWorkflowsMustNotInheritSecrets:
+    securityJobsMustNotBeWeakened:
+    securityJobsMustNotBeWeakened:
+    untrustedTriggersMustNotWriteCache:
+    workflowMustIncludeRequiredActions:
+    workflowMustNotExportEntireSecretsContext:
+    workflowMustNotGrantPermissionsWriteAll:
+    workflowMustNotInjectUserInputInScripts:
+    workflowMustNotUseDangerousTriggers:
+    workflowMustNotWriteUntrustedContentToGitHubEnv:
+    workflowsMustBeValid:
+    workflowsMustDeclarePermissions:
+  - tool: betterleaks
+  - tool: detect-secrets
+  - tool: ggshield
+  - tool: gitlab-secret-detection
+  - tool: gitleaks
+  - tool: trufflehog
+  controls:
+  controls:
+  recognizers:
+- name: secret_detection
+capabilities:
+github:
+gitlab:
+version: "2.0"
+--- stderr
+
+
+  github.controls.actionRefsMustExistUpstream                            base
+  github.controls.actionsMustBePinnedByCommitSha                         base
+  github.controls.actionsMustNotBeArchived                               base
+  github.controls.actionsMustNotCarryKnownCVEs                           base
+  github.controls.actionsMustNotExecuteMutableRemoteCode                 base
+  github.controls.branchMustBeProtected                                  base
+  github.controls.checkoutMustNotPersistCredentials                      base
+  github.controls.containerImageMustNotUseForbiddenTags                  base
+  github.controls.externalRefsMustNotCollide                             base
+  github.controls.githubActionMustComeFromAuthorizedSources              base
+  github.controls.pipelineMustNotEnableDebugTrace                        base
+  github.controls.pipelineMustNotExecuteUnverifiedScripts                base
+  github.controls.pipelineMustNotUseDockerInDocker                       base
+  github.controls.pullRequestTargetMustNotCheckoutHead                   base
+  github.controls.reusableWorkflowsMustNotInheritSecrets                 base
+  github.controls.securityJobsMustNotBeWeakened                          base
+  github.controls.untrustedTriggersMustNotWriteCache                     base
+  github.controls.workflowMustIncludeRequiredActions                     base
+  github.controls.workflowMustNotExportEntireSecretsContext              base
+  github.controls.workflowMustNotGrantPermissionsWriteAll                base
+  github.controls.workflowMustNotInjectUserInputInScripts                base
+  github.controls.workflowMustNotUseDangerousTriggers                    base
+  github.controls.workflowMustNotWriteUntrustedContentToGitHubEnv        base
+  github.controls.workflowsMustBeValid                                   base
+  github.controls.workflowsMustDeclarePermissions                        overlay
+  gitlab.controls.branchMustBeProtected                                  base
+  gitlab.controls.cicdVariablesMustBeMasked                              base
+  gitlab.controls.cicdVariablesMustBeProtected                           base
+  gitlab.controls.componentMustComeFromAuthorizedSources                 base
+  gitlab.controls.containerImageMustComeFromAuthorizedSources            base
+  gitlab.controls.containerImageMustNotUseForbiddenTags                  base
+  gitlab.controls.externalRefsMustNotCollide                             base
+  gitlab.controls.functionMustComeFromAuthorizedSources                  base
+  gitlab.controls.includesMustBeUpToDate                                 base
+  gitlab.controls.includesMustNotUseForbiddenVersions                    base
+  gitlab.controls.mergeRequestApprovalRulesMustCoverAllProtectedBranches base
+  gitlab.controls.mergeRequestApprovalRulesMustRequireMinimumApprovals   base
+  gitlab.controls.mergeRequestApprovalSettingsMustBeCompliant            base
+  gitlab.controls.mergeRequestSettingsMustBeCompliant                    base
+  gitlab.controls.pipelineMustIncludeComponent                           base
+  gitlab.controls.pipelineMustIncludeTemplate                            base
+  gitlab.controls.pipelineMustNotEnableDebugTrace                        overlay
+  gitlab.controls.pipelineMustNotExecuteUnverifiedScripts                base
+  gitlab.controls.pipelineMustNotIncludeHardcodedJobs                    base
+  gitlab.controls.pipelineMustNotOverrideJobVariables                    base
+  gitlab.controls.pipelineMustNotUseDockerInDocker                       base
+  gitlab.controls.pipelineMustNotUseUnsafeVariableExpansion              base
+  gitlab.controls.projectMustHaveSecurityPolicySource                    base
+  gitlab.controls.securityJobsMustNotBeWeakened                          base
+Provenance (base = inherited from plumber:default, overlay = set in your file):

@@ -1,0 +1,26 @@
+$ plumber score-compare --help
+exit: 0
+--- stdout
+Read every "<project>.v3.json" / "<project>.v4.json" pair that
+plumber analyze --score-profile v3|v4 --output produced for the same
+repository, and write the migration report: the letter matrix, the top 20
+codes by points recovered, and the projects whose score dropped two or
+more letters moving from scoring-v3 to scoring-v4.
+
+This is the tool side of the Radar corpus run; running the CLI twice over
+the corpus and feeding this command its output directory is operational
+work, done separately.
+
+Usage:
+  plumber score-compare [flags]
+
+Flags:
+  -h, --help            help for score-compare
+      --input string    directory holding the <project>.v3.json / <project>.v4.json Radar output pairs (required)
+      --output string   file to write the markdown report to (default: stdout)
+
+Global Flags:
+  -v, --verbose   Enable debug logging on stderr (level=debug); replaces the progress bar
+
+--- stderr
+

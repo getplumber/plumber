@@ -1,0 +1,7 @@
+$ plumber bogus
+exit: 2
+--- stdout
+
+--- stderr
+Error: unknown command "bogus" for "plumber"
+

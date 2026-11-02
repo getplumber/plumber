@@ -1,0 +1,8 @@
+$ plumber config slim -c full.yaml
+exit: 0
+--- stdout
+extends: plumber:default
+version: "2.0"
+
+--- stderr
+

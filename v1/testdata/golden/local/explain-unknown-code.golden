@@ -1,0 +1,25 @@
+$ plumber explain BOGUS
+exit: 2
+--- stdout
+
+--- stderr
+Usage:
+  plumber explain [ISSUE-CODE | -a N] [flags]
+
+Flags:
+      --all               Show detailed information for all issue codes
+  -a, --attack string     Print attack path N of the last analyze run, with its findings (N or all)
+  -h, --help              help for explain
+      --json              Output in JSON format
+      --list              List all issue codes with short descriptions
+      --project string    With --attack: read the last cached run of this project (owner/repo) instead of the last run
+      --provider string   With --attack --project: the provider of the project ('github' or 'gitlab') when both have a cached run
+      --run string        With --attack: read this JSON report (written by analyze --output) instead of the cache
+
+Global Flags:
+  -v, --verbose   Enable debug logging on stderr (level=debug); replaces the progress bar
+
+Error: unknown issue code: BOGUS
+
+Run 'plumber explain --list' to see all available issue codes
+

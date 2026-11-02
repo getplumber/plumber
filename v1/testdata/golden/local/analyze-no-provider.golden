@@ -1,0 +1,7 @@
+$ plumber analyze
+exit: 2
+--- stdout
+
+--- stderr
+Error: could not determine the provider: not in a git repository and no provider flag set. Pass --provider github|gitlab, or --github-url <host> / --gitlab-url <url> to target a specific instance
+

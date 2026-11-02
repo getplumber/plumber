@@ -1,0 +1,7 @@
+$ plumber explain -a 1 --project a/b --provider github
+exit: 2
+--- stdout
+
+--- stderr
+Error: no cached run of a/b at <CACHE>/plumber/runs/github/a/b.json: file does not exist: run plumber analyze on it first
+
