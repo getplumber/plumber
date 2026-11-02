@@ -1,0 +1,10 @@
+$ plumber config validate -c legacy.plumber.yaml
+exit: 0
+--- stdout
+
+--- stderr
+Configuration validation warnings:
+  - Control "releaseWorkflowsMustNotRestoreUntrustedCache" in github.controls was renamed to "untrustedTriggersMustNotWriteCache" and is ignored; run "plumber config migrate" to rewrite it
+
+Configuration loaded from: legacy.plumber.yaml
+

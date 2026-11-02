@@ -1,0 +1,83 @@
+$ plumber explain --list
+exit: 0
+--- stdout
+ISSUE-101   Untrusted image source
+ISSUE-102   Forbidden container image tag
+ISSUE-103   Container image is not pinned by digest
+ISSUE-201   CI/CD settings variable is not protected
+ISSUE-202   CI/CD settings variable is not masked
+ISSUE-203   Pipeline enables CI debug trace
+ISSUE-204   Unsafe variable expansion
+ISSUE-205   Job variable overrides controlled variable
+ISSUE-207   Template injection in workflow script
+ISSUE-208   Deprecated workflow commands re-enabled
+ISSUE-209   Untrusted content written to $GITHUB_ENV or $GITHUB_PATH
+ISSUE-210   Workflow gates behaviour on a spoofable actor/bot check
+ISSUE-211   Unsound `if:` condition (tautology, contradiction, or missing ${{ }})
+ISSUE-212   `contains()` built-in misused (argument order or type)
+ISSUE-213   Entire `github` context serialised with toJson(github)
+ISSUE-214   Package installed without a pinned version or lockfile
+ISSUE-215   Maintainer-adjacent template (`vars.*` or `inputs.*`) expanded into a shell script
+ISSUE-302   Reusable workflow called with `secrets: inherit`
+ISSUE-303   Secret dereferenced via fromJSON bypasses log redaction
+ISSUE-305   Deploy / release job uses secrets without an `environment:` gate
+ISSUE-306   GitHub App token issued with revocation disabled
+ISSUE-307   Checkout persists credentials in .git/config (latent)
+ISSUE-308   Secret accessed via a dynamic index `secrets[expr]`
+ISSUE-309   Entire secrets context exported via toJson(secrets)
+ISSUE-310   Persisted checkout credentials packed into an uploaded artifact
+ISSUE-401   Hardcoded job
+ISSUE-402   Reference collides with both a tag and a branch
+ISSUE-403   Outdated template
+ISSUE-404   Forbidden include version
+ISSUE-405   Missing required template
+ISSUE-406   Forbidden override of required template
+ISSUE-408   Missing required component
+ISSUE-409   Forbidden override of required component
+ISSUE-410   Security job weakened
+ISSUE-411   Unverified script execution
+ISSUE-412   Docker-in-Docker service detected
+ISSUE-413   Docker-in-Docker with insecure daemon configuration
+ISSUE-414   Untrusted GitLab CI/CD component source
+ISSUE-415   Untrusted GitLab CI/CD function reference
+ISSUE-417   Required action or reusable workflow is missing
+ISSUE-418   Workflow has no concurrency block
+ISSUE-419   Workflow uses a known misfeature pattern
+ISSUE-420   Workflow script contains obfuscation (zero-width / bidi / non-ASCII homoglyphs)
+ISSUE-421   Publish step relies on a static token instead of OIDC trusted publishing
+ISSUE-422   Workflow has no explicit name
+ISSUE-423   Workflow file is not valid
+ISSUE-501   Branch protection missing
+ISSUE-502   Merge request approval rule requires too few approvals
+ISSUE-503   MR approval settings are not compliant
+ISSUE-504   No approval rule covers all protected branches
+ISSUE-505   Branch protection configuration not compliant
+ISSUE-506   MR settings are not compliant
+ISSUE-601   Missing security policy source on project
+ISSUE-701   Third-party action reference is not pinned by commit SHA
+ISSUE-702   Action is hosted in an archived repository
+ISSUE-703   Action version carries a published security advisory
+ISSUE-704   Container registry password is hard-coded in the workflow
+ISSUE-705   Untrusted trigger granted cache write
+ISSUE-706   Dockerfile FROM reference is not pinned by digest
+ISSUE-707   Pinned commit SHA does not belong to the action's repository
+ISSUE-708   `# vX.Y.Z` comment does not match the SHA
+ISSUE-709   Action pin is behind the latest upstream release
+ISSUE-711   Third-party action duplicates functionality already on the runner
+ISSUE-712   Release / publish workflow produces unsigned artefacts
+ISSUE-713   Action comes from an unauthorized source
+ISSUE-714   Action fetches and runs remote code from a mutable ref (in the open)
+ISSUE-715   Action obfuscates a remote code fetch/exec
+ISSUE-716   Action source could not be verified
+ISSUE-801   Workflow has no explicit `permissions:` block
+ISSUE-802   Dangerous workflow trigger
+ISSUE-803   Excessive workflow permissions
+ISSUE-804   pull_request_target workflow explicitly checks out the PR head
+ISSUE-901   Dependabot re-enables insecure external code execution
+ISSUE-902   Dependabot ecosystem has no cooldown window
+ISSUE-903   Repository has workflows but no dependency update tool
+ISSUE-904   No static analysis scanner runs in CI
+ISSUE-905   Repository has no SECURITY.md policy file
+
+--- stderr
+

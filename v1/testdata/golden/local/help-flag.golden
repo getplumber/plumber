@@ -1,0 +1,27 @@
+$ plumber --help
+exit: 0
+--- stdout
+Plumber is a command-line tool that analyzes GitLab CI/CD pipelines
+and enforces trust policies on third-party components, images, and branch protections.
+
+Usage:
+  plumber [command]
+
+Available Commands:
+  analyze       Analyze the CI/CD configuration of a GitHub or GitLab repository
+  capabilities  Inspect the pipeline capabilities the CLI recognizes
+  catalog       Print the control and issue catalog as JSON
+  completion    Generate the autocompletion script for the specified shell
+  config        Manage Plumber configuration
+  explain       Show detailed information about a Plumber issue code or an attack path
+  help          Help about any command
+  version       Print the version information
+
+Flags:
+  -h, --help      help for plumber
+  -v, --verbose   Enable debug logging on stderr (level=debug); replaces the progress bar
+
+Use "plumber [command] --help" for more information about a command.
+
+--- stderr
+

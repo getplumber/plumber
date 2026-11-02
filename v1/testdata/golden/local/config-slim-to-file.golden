@@ -1,0 +1,11 @@
+$ plumber config slim --config full.yaml --output slim.yaml
+exit: 0
+--- stdout
+
+--- stderr
+Wrote slim overlay to slim.yaml
+
+--- file slim.yaml
+extends: plumber:default
+version: "2.0"
+

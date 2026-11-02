@@ -1,0 +1,24 @@
+$ plumber completion powershell --help
+exit: 0
+--- stdout
+Generate the autocompletion script for powershell.
+
+To load completions in your current shell session:
+
+	plumber completion powershell | Out-String | Invoke-Expression
+
+To load completions for every new session, add the output of the above command
+to your powershell profile.
+
+Usage:
+  plumber completion powershell [flags]
+
+Flags:
+  -h, --help              help for powershell
+      --no-descriptions   disable completion descriptions
+
+Global Flags:
+  -v, --verbose   Enable debug logging on stderr (level=debug); replaces the progress bar
+
+--- stderr
+

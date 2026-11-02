@@ -1,0 +1,19 @@
+$ plumber config generate
+exit: 2
+--- stdout
+
+--- stderr
+Usage:
+  plumber config generate [flags]
+
+Flags:
+  -f, --force           Overwrite existing file
+  -h, --help            help for generate
+  -o, --output string   Output file path (default ".plumber.yaml")
+      --overlay         Write a minimal overlay starter (extends: plumber:default) instead of the full template
+
+Global Flags:
+  -v, --verbose   Enable debug logging on stderr (level=debug); replaces the progress bar
+
+Error: file .plumber.yaml already exists. Use --force to overwrite
+

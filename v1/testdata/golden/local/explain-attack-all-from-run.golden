@@ -1,0 +1,590 @@
+$ plumber explain --attack all --run score-compare/plumber-example-critical.v4.json
+exit: 0
+--- stdout
+ CRIT  Attack path 1 (unverified)
+       Entry  dorny/paths-filter@1c9b1f1aaa22 (external action pinned to a commit that is not in its
+              repository)
+       │
+       └──▶ runs in job `build` from workflow `ci.yml` (unverified)
+            └─▶ reaches every secret of the repository,
+                        a token with push, publish and deploy access and write access to actions,
+                        pull requests and security events and an OIDC token
+
+       So     through the commit this action is pinned to, which is not in its repository,
+              an attacker can read every secret, push in your repository, publish packages
+              and deploy
+       Note   Plumber could not check what it runs
+       Fix    pin a commit that exists in the action's repository
+       Findings
+
+          CRIT  ISSUE-707  Pinned commit SHA does not belong to the action's repository
+                │
+                └──▶ job `build` from workflow `ci.yml`: pins action
+                     "dorny/paths-filter@1c9b1f1aaa2222bbbb3333cccc4444dddd5555ee" to a commit SHA
+                     that does not exist in the upstream repository (typo, or a commit removed or
+                     never pushed upstream)
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L41
+
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-707
+
+          CRIT  ISSUE-713  Action comes from an unauthorized source
+                │
+                └──▶ job `build` from workflow `ci.yml`: references action
+                     "dorny/paths-filter@1c9b1f1aaa2222bbbb3333cccc4444dddd5555ee" from an
+                     unauthorized source
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L41
+
+                So     restrict actions to authorized owners (actions/*, github/*), an explicit
+                       allowlist, or a minimum-stars threshold
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-713
+
+          HIGH  ISSUE-501  Branch protection missing
+                │
+                └──▶ Branch `main` is not protected.
+
+                Fix    protect the branch
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-501
+
+          CRIT  ISSUE-203  Pipeline enables CI debug trace
+                │
+                └──▶ job `build` from workflow `ci.yml`: sets the debug variable
+                     `ACTIONS_STEP_DEBUG` to "true".
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L13
+
+                Fix    turn off the CI debug trace
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-203
+
+          CRIT  ISSUE-307  Checkout persists credentials in .git/config (latent)
+                │
+                └──▶ job `build` from workflow `ci.yml`: runs "actions/checkout@v4" without
+                     `persist-credentials: false`
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L30
+
+                So     GITHUB_TOKEN lingers in .git/config (latent; becomes a leak if a later step
+                       packs .git into an artifact or runs fork-controlled code)
+                Fix    set persist-credentials: false on the checkout
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-307
+
+          CRIT  ISSUE-309  Entire secrets context exported via toJson(secrets)
+                │
+                └──▶ job `build` from workflow `ci.yml`: exposes all its secrets at once via
+                     toJson(secrets)
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L66
+
+                So     pass secrets by name instead
+                Fix    pass only the secrets the step needs, by name
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-309
+
+          CRIT  ISSUE-803  Excessive workflow permissions
+                │
+                └──▶ job `build` from workflow `ci.yml`: runs with overly broad permissions:
+                     "write-all"
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L9
+
+                Fix    narrow the permissions to what the job needs
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-803
+
+       Claims
+         entry   dorny/paths-filter@1c9b1f1aaa2222bbbb3333cccc4444dddd5555ee                         proven
+         secret  every secret of the repository                                                      proven
+         token   actions, contents, deployments, id-token, packages, pull-requests, security-events  proven  declared
+         impact  deploys                                                                             proven
+         impact  publishes                                                                           proven
+         impact  writes_repo                                                                         proven
+  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+
+ CRIT  Attack path 2
+       Entry  tj-actions/changed-files@v45.0.0 (external action with a known vulnerability)
+       │
+       └──▶ runs in job `build` from workflow `ci.yml`
+            └─▶ reaches every secret of the repository,
+                        a token with push, publish and deploy access and write access to actions,
+                        pull requests and security events and an OIDC token
+
+       So     through the known vulnerability of this action,
+              an attacker can read every secret of the repository, push in your repository,
+              publish packages and deploy
+       Fix    move to a version without the advisory
+       Findings
+
+          CRIT  ISSUE-701  Third-party action reference is not pinned by commit SHA
+                │
+                └──▶ job `build` from workflow `ci.yml`: references action
+                     "tj-actions/changed-files@v45.0.0" with a mutable ref
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L35
+
+                So     pin by commit SHA instead
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-701
+
+          CRIT  ISSUE-703  Action version carries a published security advisory
+                │
+                └──▶ job `build` from workflow `ci.yml`: references
+                     "tj-actions/changed-files@v45.0.0"
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L35
+
+                So     published advisories: GHSA-mrrh-fwg8-r2c3
+                       (https://github.com/advisories/GHSA-mrrh-fwg8-r2c3)
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-703
+
+          CRIT  ISSUE-713  Action comes from an unauthorized source
+                │
+                └──▶ job `build` from workflow `ci.yml`: references action
+                     "tj-actions/changed-files@v45.0.0" from an unauthorized source
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L35
+
+                So     restrict actions to authorized owners (actions/*, github/*), an explicit
+                       allowlist, or a minimum-stars threshold
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-713
+
+          HIGH  ISSUE-501  Branch protection missing
+                │
+                └──▶ Branch `main` is not protected.
+
+                Fix    protect the branch
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-501
+
+          CRIT  ISSUE-203  Pipeline enables CI debug trace
+                │
+                └──▶ job `build` from workflow `ci.yml`: sets the debug variable
+                     `ACTIONS_STEP_DEBUG` to "true".
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L13
+
+                Fix    turn off the CI debug trace
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-203
+
+          CRIT  ISSUE-307  Checkout persists credentials in .git/config (latent)
+                │
+                └──▶ job `build` from workflow `ci.yml`: runs "actions/checkout@v4" without
+                     `persist-credentials: false`
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L30
+
+                So     GITHUB_TOKEN lingers in .git/config (latent; becomes a leak if a later step
+                       packs .git into an artifact or runs fork-controlled code)
+                Fix    set persist-credentials: false on the checkout
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-307
+
+          CRIT  ISSUE-309  Entire secrets context exported via toJson(secrets)
+                │
+                └──▶ job `build` from workflow `ci.yml`: exposes all its secrets at once via
+                     toJson(secrets)
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L66
+
+                So     pass secrets by name instead
+                Fix    pass only the secrets the step needs, by name
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-309
+
+          CRIT  ISSUE-803  Excessive workflow permissions
+                │
+                └──▶ job `build` from workflow `ci.yml`: runs with overly broad permissions:
+                     "write-all"
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L9
+
+                Fix    narrow the permissions to what the job needs
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-803
+
+       Claims
+         entry   tj-actions/changed-files@v45.0.0                                                    proven
+         secret  every secret of the repository                                                      proven
+         token   actions, contents, deployments, id-token, packages, pull-requests, security-events  proven  declared
+         impact  deploys                                                                             proven
+         impact  publishes                                                                           proven
+         impact  writes_repo                                                                         proven
+  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+
+ CRIT  Attack path 3
+       Entry  github.event.pull_request.head.sha (pull request code checked out in a privileged
+              workflow)
+       │
+       └──▶ runs in job `preview` from workflow `pr-preview.yml` (on pull_request_target)
+            └─▶ reaches a token with write access to pull requests
+
+       So     as anyone who opens a pull request,
+              an attacker can execute code to write to pull requests
+       Fix    never check out the pull request head in a privileged workflow
+       Findings
+
+          CRIT  ISSUE-804  pull_request_target workflow explicitly checks out the PR head
+                │
+                └──▶ job `preview` from workflow `pr-preview.yml`: runs under pull_request_target
+                     AND checks out the PR head (ref="${{ github.event.pull_request.head.sha }}")
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/pr-preview.yml#L17
+
+                So     base-repo secrets and fork-controlled code in the same run (tj-actions /
+                       CVE-2025-30066 pattern)
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-804
+
+          CRIT  ISSUE-307  Checkout persists credentials in .git/config (latent)
+                │
+                └──▶ job `preview` from workflow `pr-preview.yml`: runs "actions/checkout@v4"
+                     without `persist-credentials: false`
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/pr-preview.yml#L17
+
+                So     GITHUB_TOKEN lingers in .git/config (latent; becomes a leak if a later step
+                       packs .git into an artifact or runs fork-controlled code)
+                Fix    set persist-credentials: false on the checkout
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-307
+
+       Claims
+         entry  github.event.pull_request.head.sha  proven
+         token  pull-requests                       proven  declared
+  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+
+ HIGH  Attack path 4
+       Entry  main (branch anyone with write access can push to, not protected)
+       │
+       ├──▶ runs in job `build` from workflow `ci.yml`
+       │    └─▶ reaches every secret of the repository,
+       │                a token with push, publish and deploy access and write access to actions,
+       │                pull requests and security events and an OIDC token
+       ├──▶ runs in job `auto-approve` from workflow `ci.yml`
+       │    └─▶ reaches a token with push, publish and deploy access and write access to actions,
+       │                pull requests and security events and an OIDC token
+       ├──▶ runs in job `release-notes` from workflow `build.yml` ─▶ reaches a step that releases
+       ├──▶ runs in job `scan` from workflow `plumber`
+       │    └─▶ reaches a token with write access to security events and an OIDC token
+       └──▶ runs in job `security-scan` from workflow `build.yml`
+            └─▶ reaches code execution on the runner; nothing else proven
+
+       So     as anyone with write access to `main`,
+              an attacker can read every secret of the repository, push in your repository,
+              publish packages and deploy
+       Fix    protect the default branch
+       Findings
+
+          HIGH  ISSUE-501  Branch protection missing
+                │
+                └──▶ Branch `main` is not protected.
+
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-501
+
+          CRIT  ISSUE-203  Pipeline enables CI debug trace (2 findings)
+                │
+                ├──▶ job `auto-approve` from workflow `ci.yml`: sets the debug variable
+                │    `ACTIONS_STEP_DEBUG` to "true".
+                │    ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L13
+                └──▶ job `build` from workflow `ci.yml`: sets the debug variable
+                     `ACTIONS_STEP_DEBUG` to "true".
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L13
+
+                Fix    turn off the CI debug trace
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-203
+
+          CRIT  ISSUE-307  Checkout persists credentials in .git/config (latent)
+                │
+                └──▶ job `build` from workflow `ci.yml`: runs "actions/checkout@v4" without
+                     `persist-credentials: false`
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L30
+
+                So     GITHUB_TOKEN lingers in .git/config (latent; becomes a leak if a later step
+                       packs .git into an artifact or runs fork-controlled code)
+                Fix    set persist-credentials: false on the checkout
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-307
+
+          CRIT  ISSUE-309  Entire secrets context exported via toJson(secrets)
+                │
+                └──▶ job `build` from workflow `ci.yml`: exposes all its secrets at once via
+                     toJson(secrets)
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L66
+
+                So     pass secrets by name instead
+                Fix    pass only the secrets the step needs, by name
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-309
+
+          CRIT  ISSUE-803  Excessive workflow permissions (2 findings)
+                │
+                ├──▶ job `auto-approve` from workflow `ci.yml`: runs with overly broad permissions:
+                │    "write-all"
+                │    ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L9
+                └──▶ job `build` from workflow `ci.yml`: runs with overly broad permissions:
+                     "write-all"
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L9
+
+                Fix    narrow the permissions to what the job needs
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-803
+
+       Claims
+         entry   main                                                                                proven
+         secret  every secret of the repository                                                      proven
+         token   actions, contents, deployments, id-token, packages, pull-requests, security-events  proven  declared
+         impact  deploys                                                                             proven
+         impact  publishes                                                                           proven
+         impact  writes_repo                                                                         proven
+  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+
+ HIGH  Attack path 5
+       Entry  acme/shared-workflows/.github/workflows/deploy.yml@main (untrusted and mutable
+              external reusable workflow)
+       │
+       └──▶ runs in job `deploy` from workflow `pr-preview.yml` (on pull_request_target)
+            └─▶ reaches every secret of the repository
+                        and a token with write access to pull requests
+
+       So     if this reusable workflow is compromised or malicious,
+              an attacker can read every secret of the repository and write to pull requests
+       Fix    use a reusable workflow from a trusted source and pin the version on the commit SHA
+       Findings
+
+          HIGH  ISSUE-701  Third-party action reference is not pinned by commit SHA
+                │
+                └──▶ job `deploy` from workflow `pr-preview.yml`: calls reusable workflow
+                     "acme/shared-workflows/.github/workflows/deploy.yml@main" with a mutable ref
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/pr-preview.yml#L27
+
+                So     pin by commit SHA instead
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-701
+
+          HIGH  ISSUE-713  Action comes from an unauthorized source
+                │
+                └──▶ job `deploy` from workflow `pr-preview.yml`: calls reusable workflow
+                     "acme/shared-workflows/.github/workflows/deploy.yml@main" from an unauthorized
+                     source
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/pr-preview.yml#L27
+
+                So     restrict to authorized owners (actions/*, github/*) or an explicit allowlist
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-713
+
+          HIGH  ISSUE-302  Reusable workflow called with `secrets: inherit`
+                │
+                └──▶ job `deploy` from workflow `pr-preview.yml`: calls reusable workflow
+                     "acme/shared-workflows/.github/workflows/deploy.yml@main" with `secrets:
+                     inherit`
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/pr-preview.yml#L28
+
+                So     forward only the secrets the callee needs
+                Fix    forward only the secrets the called workflow needs
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-302
+
+       Claims
+         entry   acme/shared-workflows/.github/workflows/deploy.yml@main  proven
+         secret  every secret of the repository                           proven
+         token   pull-requests                                            proven  declared
+  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+
+ HIGH  Attack path 6
+       Entry  https://get.example.com/install.sh (script downloaded and run at build time)
+       │
+       └──▶ runs in job `build` from workflow `ci.yml`
+            └─▶ reaches every secret of the repository,
+                        a token with push, publish and deploy access and write access to actions,
+                        pull requests and security events and an OIDC token
+
+       So     if this script is compromised or malicious,
+              an attacker can read every secret of the repository, push in your repository,
+              publish packages and deploy
+       Fix    download the script, check its checksum, then run it
+       Findings
+
+          HIGH  ISSUE-411  Unverified script execution
+                │
+                └──▶ job `build` from workflow `ci.yml`: runs a script fetched from the network:
+                     `curl -sSL https://get.example.com/install.sh | bash`.
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L49
+
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-411
+
+          HIGH  ISSUE-501  Branch protection missing
+                │
+                └──▶ Branch `main` is not protected.
+
+                Fix    protect the branch
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-501
+
+          CRIT  ISSUE-203  Pipeline enables CI debug trace
+                │
+                └──▶ job `build` from workflow `ci.yml`: sets the debug variable
+                     `ACTIONS_STEP_DEBUG` to "true".
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L13
+
+                Fix    turn off the CI debug trace
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-203
+
+          CRIT  ISSUE-307  Checkout persists credentials in .git/config (latent)
+                │
+                └──▶ job `build` from workflow `ci.yml`: runs "actions/checkout@v4" without
+                     `persist-credentials: false`
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L30
+
+                So     GITHUB_TOKEN lingers in .git/config (latent; becomes a leak if a later step
+                       packs .git into an artifact or runs fork-controlled code)
+                Fix    set persist-credentials: false on the checkout
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-307
+
+          CRIT  ISSUE-309  Entire secrets context exported via toJson(secrets)
+                │
+                └──▶ job `build` from workflow `ci.yml`: exposes all its secrets at once via
+                     toJson(secrets)
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L66
+
+                So     pass secrets by name instead
+                Fix    pass only the secrets the step needs, by name
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-309
+
+          CRIT  ISSUE-803  Excessive workflow permissions
+                │
+                └──▶ job `build` from workflow `ci.yml`: runs with overly broad permissions:
+                     "write-all"
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L9
+
+                Fix    narrow the permissions to what the job needs
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-803
+
+       Claims
+         entry   https://get.example.com/install.sh                                                  proven
+         secret  every secret of the repository                                                      proven
+         token   actions, contents, deployments, id-token, packages, pull-requests, security-events  proven  declared
+         impact  deploys                                                                             proven
+         impact  publishes                                                                           proven
+         impact  writes_repo                                                                         proven
+  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+
+ MED   Attack path 7
+       Entry  node:latest (mutable image tag, source not checked on GitHub)
+       │
+       └──▶ runs in job `build` from workflow `ci.yml`
+            └─▶ reaches every secret of the repository,
+                        a token with push, publish and deploy access and write access to actions,
+                        pull requests and security events and an OIDC token
+
+       So     if this image is compromised or malicious,
+              an attacker can read every secret of the repository, push in your repository,
+              publish packages and deploy
+       Fix    pin the image by digest
+       Findings
+
+          MED   ISSUE-102  Forbidden container image tag
+                │
+                └──▶ job `build` from workflow `ci.yml`: uses the forbidden tag `latest` of image
+                     `node:latest`.
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L22
+
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-102
+
+          MED   ISSUE-103  Container image is not pinned by digest
+                │
+                └──▶ job `build` from workflow `ci.yml`: uses image `node:latest` without a digest.
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L22
+
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-103
+
+          HIGH  ISSUE-501  Branch protection missing
+                │
+                └──▶ Branch `main` is not protected.
+
+                Fix    protect the branch
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-501
+
+          CRIT  ISSUE-203  Pipeline enables CI debug trace
+                │
+                └──▶ job `build` from workflow `ci.yml`: sets the debug variable
+                     `ACTIONS_STEP_DEBUG` to "true".
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L13
+
+                Fix    turn off the CI debug trace
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-203
+
+          CRIT  ISSUE-307  Checkout persists credentials in .git/config (latent)
+                │
+                └──▶ job `build` from workflow `ci.yml`: runs "actions/checkout@v4" without
+                     `persist-credentials: false`
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L30
+
+                So     GITHUB_TOKEN lingers in .git/config (latent; becomes a leak if a later step
+                       packs .git into an artifact or runs fork-controlled code)
+                Fix    set persist-credentials: false on the checkout
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-307
+
+          CRIT  ISSUE-309  Entire secrets context exported via toJson(secrets)
+                │
+                └──▶ job `build` from workflow `ci.yml`: exposes all its secrets at once via
+                     toJson(secrets)
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L66
+
+                So     pass secrets by name instead
+                Fix    pass only the secrets the step needs, by name
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-309
+
+          CRIT  ISSUE-803  Excessive workflow permissions
+                │
+                └──▶ job `build` from workflow `ci.yml`: runs with overly broad permissions:
+                     "write-all"
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L9
+
+                Fix    narrow the permissions to what the job needs
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-803
+
+       Claims
+         entry   node:latest                                                                         proven
+         secret  every secret of the repository                                                      proven
+         token   actions, contents, deployments, id-token, packages, pull-requests, security-events  proven  declared
+         impact  deploys                                                                             proven
+         impact  publishes                                                                           proven
+         impact  writes_repo                                                                         proven
+  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+
+ LOW   Attack path 8
+       Entry  github.event.workflow_run.head_sha (code of another workflow's run checked out)
+       │
+       └──▶ runs in job `comment` from workflow `dangerous.yml` (on workflow_run)
+            └─▶ reaches code execution on the runner; nothing else proven
+
+       So     as anyone who opens a pull request,
+              an attacker can execute code on an ephemeral runner
+       Fix    never check out the pull request head in a privileged workflow
+       Findings
+
+          LOW   ISSUE-802  Dangerous workflow trigger
+                │
+                └──▶ job `comment` from workflow `dangerous.yml`: runs under dangerous trigger(s)
+                     workflow_run and checks out fork-controlled code
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/dangerous.yml#L18
+
+                So     untrusted code executes with the base repo's secrets (CVE-2025-30066 pattern)
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-802
+
+          LOW   ISSUE-307  Checkout persists credentials in .git/config (latent)
+                │
+                └──▶ job `comment` from workflow `dangerous.yml`: runs "actions/checkout@v4" without
+                     `persist-credentials: false`
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/dangerous.yml#L18
+
+                So     GITHUB_TOKEN lingers in .git/config (latent; becomes a leak if a later step
+                       packs .git into an artifact or runs fork-controlled code)
+                Fix    set persist-credentials: false on the checkout
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-307
+
+       Claims
+         entry  github.event.workflow_run.head_sha  proven
+  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+
+ LOW   Attack path 9
+       Entry  github.event.pull_request.title (user-controlled input injected in a script)
+       │
+       └──▶ runs in job `build` from workflow `ci.yml`
+            └─▶ reaches code execution on the runner, no secret and no write token
+
+       So     as anyone who can open a pull request, an attacker can execute code on the runner
+              and poison what it caches or uploads
+       Fix    pass the input through an environment variable
+       Findings
+
+          LOW   ISSUE-207  Template injection in workflow script
+                │
+                └──▶ job `build` from workflow `ci.yml`: interpolates a user-controlled template
+                     expression into an inline script (template-injection risk)
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L53
+
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-207
+
+          LOW   ISSUE-209  Untrusted content written to $GITHUB_ENV or $GITHUB_PATH
+                │
+                └──▶ job `build` from workflow `ci.yml`: writes a user-controlled template
+                     expression into $GITHUB_ENV or $GITHUB_PATH; an attacker can hijack later steps
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L57
+
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-209
+
+       Claims
+         entry  github.event.pull_request.title  proven
+
+--- stderr
+

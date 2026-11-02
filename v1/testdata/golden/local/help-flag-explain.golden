@@ -1,0 +1,40 @@
+$ plumber explain --help
+exit: 0
+--- stdout
+Display detailed information about a Plumber issue code, including
+its description, remediation guidance, and documentation link.
+
+Use --list to see all available issue codes, or --all for a full reference dump.
+
+With -a N (--attack N), print attack path N of the last plumber analyze run,
+numbered as its report numbers them, with every finding on it and their
+documentation; -a all prints every path. The run is read from the user cache
+directory (plumber/runs), where every analyze run keeps its JSON report;
+--project owner/repo (with --provider when two providers have it) reads that
+project's last run instead, and --run report.json reads a report written by
+plumber analyze --output, a CI artifact for instance.
+
+Examples:
+  plumber explain ISSUE-412
+  plumber explain -a 1
+  plumber explain -a all --project owner/repo
+  plumber explain -a 2 --run plumber-report.json
+
+Usage:
+  plumber explain [ISSUE-CODE | -a N] [flags]
+
+Flags:
+      --all               Show detailed information for all issue codes
+  -a, --attack string     Print attack path N of the last analyze run, with its findings (N or all)
+  -h, --help              help for explain
+      --json              Output in JSON format
+      --list              List all issue codes with short descriptions
+      --project string    With --attack: read the last cached run of this project (owner/repo) instead of the last run
+      --provider string   With --attack --project: the provider of the project ('github' or 'gitlab') when both have a cached run
+      --run string        With --attack: read this JSON report (written by analyze --output) instead of the cache
+
+Global Flags:
+  -v, --verbose   Enable debug logging on stderr (level=debug); replaces the progress bar
+
+--- stderr
+

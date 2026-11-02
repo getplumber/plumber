@@ -1,0 +1,44 @@
+name: Rewrite problem
+description: A rewrite kept a tell, changed the meaning, added a fact, or over-edited.
+labels: ["bug"]
+body:
+  - type: dropdown
+    id: problem
+    attributes:
+      label: What went wrong
+      options:
+        - A tell survived the rewrite
+        - The rewrite added or dropped a fact
+        - The rewrite changed text that was fine
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: input
+    attributes:
+      label: Input text
+      description: The text you gave Humanizer. Remove anything private.
+    validations:
+      required: true
+  - type: textarea
+    id: call
+    attributes:
+      label: How you called it
+      description: The agent and model you used, and your exact prompt.
+      placeholder: "Claude Code, Opus 5.5: /humanizer then pasted the text"
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: What Humanizer returned.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What it should have done
+      description: Quote the sentence that is wrong and say what a careful writer would write. Name the pattern number if you know it.
+    validations:
+      required: true

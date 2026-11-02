@@ -1,0 +1,8 @@
+$ plumber analyze --provider github --project a/b --threshold 150
+exit: 2
+--- stdout
+
+--- stderr
+Warning: --threshold is deprecated and will be removed in a future release; gate on the Plumber Score with --min-points (0-100) or --min-score (A-E) instead. See https://getplumber.io/docs/plumber-score
+Error: threshold must be between 0 and 100
+

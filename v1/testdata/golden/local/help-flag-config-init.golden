@@ -1,0 +1,27 @@
+$ plumber config init --help
+exit: 0
+--- stdout
+Walk through policy choices in the terminal and write a minimal .plumber.yaml:
+only the controls you enable, compact YAML, no long commented tutorial.
+
+Use generate for the full default template with comments. Use init when you
+want a smaller file shaped to your project.
+
+Requires an interactive terminal (TTY). In CI or headless environments, use
+generate and edit the file, or commit a hand-tuned config.
+
+Related: https://github.com/getplumber/plumber/issues/125
+
+Usage:
+  plumber config init [flags]
+
+Flags:
+  -f, --force           Overwrite existing file without asking
+  -h, --help            help for init
+  -o, --output string   Path to write the generated configuration (default ".plumber.yaml")
+
+Global Flags:
+  -v, --verbose   Enable debug logging on stderr (level=debug); replaces the progress bar
+
+--- stderr
+

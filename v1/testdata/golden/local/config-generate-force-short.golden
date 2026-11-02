@@ -1,0 +1,13 @@
+$ plumber config generate -f
+exit: 0
+--- stdout
+Generated .plumber.yaml
+
+Next steps:
+  1. Review and customize the configuration for your needs
+  2. Export the GITLAB_TOKEN environment variable if you haven't already
+  3. Run: plumber analyze  (auto-detects your repo, or: plumber analyze --gitlab-url <url> --project <group>/<project>)
+
+--- stderr
+Overwriting existing file: .plumber.yaml
+

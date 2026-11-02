@@ -1,0 +1,96 @@
+$ plumber explain -a 1 --run score-compare/plumber-example-critical.v4.json
+exit: 0
+--- stdout
+ CRIT  Attack path 1 (unverified)
+       Entry  dorny/paths-filter@1c9b1f1aaa22 (external action pinned to a commit that is not in its
+              repository)
+       │
+       └──▶ runs in job `build` from workflow `ci.yml` (unverified)
+            └─▶ reaches every secret of the repository,
+                        a token with push, publish and deploy access and write access to actions,
+                        pull requests and security events and an OIDC token
+
+       So     through the commit this action is pinned to, which is not in its repository,
+              an attacker can read every secret, push in your repository, publish packages
+              and deploy
+       Note   Plumber could not check what it runs
+       Fix    pin a commit that exists in the action's repository
+       Findings
+
+          CRIT  ISSUE-707  Pinned commit SHA does not belong to the action's repository
+                │
+                └──▶ job `build` from workflow `ci.yml`: pins action
+                     "dorny/paths-filter@1c9b1f1aaa2222bbbb3333cccc4444dddd5555ee" to a commit SHA
+                     that does not exist in the upstream repository (typo, or a commit removed or
+                     never pushed upstream)
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L41
+
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-707
+
+          CRIT  ISSUE-713  Action comes from an unauthorized source
+                │
+                └──▶ job `build` from workflow `ci.yml`: references action
+                     "dorny/paths-filter@1c9b1f1aaa2222bbbb3333cccc4444dddd5555ee" from an
+                     unauthorized source
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L41
+
+                So     restrict actions to authorized owners (actions/*, github/*), an explicit
+                       allowlist, or a minimum-stars threshold
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-713
+
+          HIGH  ISSUE-501  Branch protection missing
+                │
+                └──▶ Branch `main` is not protected.
+
+                Fix    protect the branch
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-501
+
+          CRIT  ISSUE-203  Pipeline enables CI debug trace
+                │
+                └──▶ job `build` from workflow `ci.yml`: sets the debug variable
+                     `ACTIONS_STEP_DEBUG` to "true".
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L13
+
+                Fix    turn off the CI debug trace
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-203
+
+          CRIT  ISSUE-307  Checkout persists credentials in .git/config (latent)
+                │
+                └──▶ job `build` from workflow `ci.yml`: runs "actions/checkout@v4" without
+                     `persist-credentials: false`
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L30
+
+                So     GITHUB_TOKEN lingers in .git/config (latent; becomes a leak if a later step
+                       packs .git into an artifact or runs fork-controlled code)
+                Fix    set persist-credentials: false on the checkout
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-307
+
+          CRIT  ISSUE-309  Entire secrets context exported via toJson(secrets)
+                │
+                └──▶ job `build` from workflow `ci.yml`: exposes all its secrets at once via
+                     toJson(secrets)
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L66
+
+                So     pass secrets by name instead
+                Fix    pass only the secrets the step needs, by name
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-309
+
+          CRIT  ISSUE-803  Excessive workflow permissions
+                │
+                └──▶ job `build` from workflow `ci.yml`: runs with overly broad permissions:
+                     "write-all"
+                     ↳ at https://github.com/getplumber-examples/plumber-example-critical/blob/main/.github/workflows/ci.yml#L9
+
+                Fix    narrow the permissions to what the job needs
+                ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-803
+
+       Claims
+         entry   dorny/paths-filter@1c9b1f1aaa2222bbbb3333cccc4444dddd5555ee                         proven
+         secret  every secret of the repository                                                      proven
+         token   actions, contents, deployments, id-token, packages, pull-requests, security-events  proven  declared
+         impact  deploys                                                                             proven
+         impact  publishes                                                                           proven
+         impact  writes_repo                                                                         proven
+
+--- stderr
+

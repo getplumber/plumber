@@ -1,0 +1,20 @@
+$ plumber explain ISSUE-101
+exit: 0
+--- stdout
+ISSUE-101: Untrusted image source
+Control:     containerImageMustComeFromAuthorizedSources
+
+Description:
+  A container image is pulled from a registry that is not listed in the
+  authorized sources. Using untrusted registries increases supply chain
+  attack risk.
+
+Remediation:
+  Use images from an authorized registry configured in .plumber.yaml under
+  containerImageMustComeFromAuthorizedSources.trustedUrls, or add the
+  registry to the authorized list.
+
+Documentation: https://getplumber.io/docs/cli/issues/ISSUE-101
+
+--- stderr
+
