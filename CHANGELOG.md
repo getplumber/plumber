@@ -1,3 +1,18 @@
+## [0.7.18](https://github.com/getplumber/plumber/compare/v0.7.17...v0.7.18) (2026-11-02)
+
+
+### ✨ Features
+
+* **report:** cliVersion, configFileSha256 and the Actions run in the JSON report ([fdd8faf](https://github.com/getplumber/plumber/commit/fdd8faf3f9fae31c09bb4d9708bc40e12f2bc3a7))
+* **score:** a keyless Sigstore signer for the score push on GitHub Actions ([f341aee](https://github.com/getplumber/plumber/commit/f341aeeb428663368ff6db148bfd348571924ed4))
+* **score:** PLUMBER_SCORE_PAYLOAD_OUT writes the exact pushed bytes ([c93d1ce](https://github.com/getplumber/plumber/commit/c93d1ce6cd33c7ab3a49ac2b249d386b3e873d59))
+* **score:** the score push carries the Sigstore bundle, a signing failure only warns ([9d5a738](https://github.com/getplumber/plumber/commit/9d5a738d84ae11803353d32ede929d185cbd133d))
+
+
+### 📚 Documentation
+
+* **score:** the signed score push, the provenance keys and PLUMBER_SCORE_PAYLOAD_OUT ([602acc3](https://github.com/getplumber/plumber/commit/602acc35ca8b2f646e220004f55e147015112273))
+
 ## [0.7.17](https://github.com/getplumber/plumber/compare/v0.7.16...v0.7.17) (2026-10-30)
 
 
