@@ -468,6 +468,7 @@ func TestValidControlNames(t *testing.T) {
 		"pullRequestTargetMustNotCheckoutHead",
 		"reusableWorkflowsMustNotInheritSecrets",
 		"securityJobsMustNotBeWeakened",
+		"tagMustBeProtected",
 		"untrustedTriggersMustNotWriteCache",
 		"workflowMustIncludeRequiredActions",
 		"workflowMustNotExportEntireSecretsContext",
@@ -487,6 +488,39 @@ func TestValidControlNames(t *testing.T) {
 		if names[i] != expected[i] {
 			t.Fatalf("ValidControlNames()[%d] = %q, want %q", i, names[i], expected[i])
 		}
+	}
+}
+
+// tagMustBeProtected has no default pattern: unset and empty both give a
+// non-nil empty list, which the rule reads as "rules on all tags". A nil
+// would reach Rego as null. requireCreationRestricted defaults to on.
+func TestTagProtectionControlConfigDefaults(t *testing.T) {
+	var nilCfg *TagProtectionControlConfig
+	if got := nilCfg.EffectiveNamePatterns(); got == nil || len(got) != 0 {
+		t.Errorf("nil config EffectiveNamePatterns() = %#v, want []string{}", got)
+	}
+	if !nilCfg.IsCreationRestrictionRequired() {
+		t.Error("nil config must require creation to be restricted")
+	}
+
+	unset := &TagProtectionControlConfig{}
+	if got := unset.EffectiveNamePatterns(); got == nil || len(got) != 0 {
+		t.Errorf("unset namePatterns EffectiveNamePatterns() = %#v, want []string{}", got)
+	}
+
+	empty := &TagProtectionControlConfig{NamePatterns: []string{}}
+	if got := empty.EffectiveNamePatterns(); len(got) != 0 {
+		t.Errorf("explicit empty namePatterns EffectiveNamePatterns() = %v, want []", got)
+	}
+
+	custom := &TagProtectionControlConfig{NamePatterns: []string{"release-*"}}
+	if got := custom.EffectiveNamePatterns(); len(got) != 1 || got[0] != "release-*" {
+		t.Errorf("custom namePatterns EffectiveNamePatterns() = %v, want [release-*]", got)
+	}
+
+	off := false
+	if (&TagProtectionControlConfig{RequireCreationRestricted: &off}).IsCreationRestrictionRequired() {
+		t.Error("requireCreationRestricted: false must turn the creation requirement off")
 	}
 }
 

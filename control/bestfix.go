@@ -93,7 +93,7 @@ func (b BestFix) MarshalJSON() ([]byte, error) {
 // subject without ever carrying a secret or settings value, includePath
 // included, so a job-less include finding (ISSUE-404) names its include
 // path instead of falling through to an empty subject.
-var bestFixSubjectKeys = []string{"uses", "image", "expression", "variableName", "branchName", "url", "includePath"}
+var bestFixSubjectKeys = []string{"uses", "image", "expression", "variableName", "branchName", "tagPattern", "url", "includePath"}
 
 // bestFixWins reports whether a candidate (gain, code, hash) beats
 // whatever ComputeBestFix has kept as best so far: the largest gain

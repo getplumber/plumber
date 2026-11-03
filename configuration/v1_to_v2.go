@@ -71,6 +71,7 @@ func controlsConfigIsZero(c ControlsConfig) bool {
 	return c.ContainerImageMustNotUseForbiddenTags == nil &&
 		c.ContainerImageMustComeFromAuthorizedSources == nil &&
 		c.BranchMustBeProtected == nil &&
+		c.TagMustBeProtected == nil &&
 		c.MergeRequestApprovalRulesMustRequireMinimumApprovals == nil &&
 		c.MergeRequestApprovalRulesMustCoverAllProtectedBranches == nil &&
 		c.MergeRequestApprovalSettingsMustBeCompliant == nil &&
@@ -105,6 +106,7 @@ func controlsConfigEqual(a, b ControlsConfig) bool {
 	return a.ContainerImageMustNotUseForbiddenTags == b.ContainerImageMustNotUseForbiddenTags &&
 		a.ContainerImageMustComeFromAuthorizedSources == b.ContainerImageMustComeFromAuthorizedSources &&
 		a.BranchMustBeProtected == b.BranchMustBeProtected &&
+		a.TagMustBeProtected == b.TagMustBeProtected &&
 		a.MergeRequestApprovalRulesMustRequireMinimumApprovals == b.MergeRequestApprovalRulesMustRequireMinimumApprovals &&
 		a.MergeRequestApprovalRulesMustCoverAllProtectedBranches == b.MergeRequestApprovalRulesMustCoverAllProtectedBranches &&
 		a.MergeRequestApprovalSettingsMustBeCompliant == b.MergeRequestApprovalSettingsMustBeCompliant &&

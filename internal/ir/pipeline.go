@@ -25,6 +25,11 @@ type NormalizedPipeline struct {
 	Branches      []Branch          `json:"branches,omitempty"`
 	Dependabot    *DependabotConfig `json:"dependabot,omitempty"`
 
+	// TagProtection is the repository's tag protection rules and its
+	// existing tag names, read by tagMustBeProtected (ISSUE-510). nil when
+	// the collection did not run, so the rule abstains.
+	TagProtection *TagProtection `json:"tagProtection,omitempty"`
+
 	// WorkflowStates maps a GitHub Actions workflow file's path, exactly
 	// as the workflows listing endpoint returns it (e.g.
 	// ".github/workflows/ci.yml", matching Job.OriginFile), to its state
@@ -934,6 +939,62 @@ type Branch struct {
 	MinMergeAccessLevel       int    `json:"minMergeAccessLevel,omitempty"`
 	ProtectionDetailsKnown    bool   `json:"protectionDetailsKnown,omitempty"`
 }
+
+// TagProtection is what tagMustBeProtected reads: the provider's tag
+// protection rules and the repository's existing tags. Known is false when
+// either could not be read authoritatively (missing token scope, a 404 on
+// an instance without rulesets), and the rule then abstains rather than
+// flag every pattern: no data never reads as "no protection".
+//
+// Patterns in Include, Exclude and Tags share one glob dialect, matched
+// with "/" as the separator: `*` stops at a slash, `**` crosses it. Each
+// collector translates its provider's own wildcard syntax into it
+// (GitHub's fnmatch already stops at a slash; GitLab's `*` does not, so it
+// becomes `**`), so the rule never has to know which provider it reads.
+type TagProtection struct {
+	Known bool                `json:"known"`
+	Rules []TagProtectionRule `json:"rules,omitempty"`
+	// Tags are the existing tag names, refs/tags/ stripped. The listing
+	// is capped; TagsTruncated says the cap was hit, which can only hide
+	// a finding (a matching tag not seen), never invent one.
+	Tags          []string `json:"tags,omitempty"`
+	TagsTruncated bool     `json:"tagsTruncated,omitempty"`
+}
+
+// TagProtectionOrNil returns p.TagProtection, nil-safe on p.
+func (p *NormalizedPipeline) TagProtectionOrNil() *TagProtection {
+	if p == nil {
+		return nil
+	}
+	return p.TagProtection
+}
+
+// TagProtectionRule is one rule protecting tags: a GitLab protected tag,
+// or an active GitHub tag ruleset (repository or inherited from the
+// organization). Rules are judged per protection across all of them, the
+// way GitHub layers rulesets: one rule blocking updates and another
+// restricting creation on the same pattern together protect it.
+type TagProtectionRule struct {
+	// ID is the protected tag's name on GitLab, the ruleset id on GitHub.
+	ID     string `json:"id"`
+	Name   string `json:"name,omitempty"`
+	Source string `json:"source"`
+	// Include and Exclude are the tag name patterns the rule targets,
+	// in the shared glob dialect above.
+	Include           []string `json:"include"`
+	Exclude           []string `json:"exclude,omitempty"`
+	BlocksUpdate      bool     `json:"blocksUpdate"`
+	BlocksDeletion    bool     `json:"blocksDeletion"`
+	RestrictsCreation bool     `json:"restrictsCreation"`
+}
+
+// TagProtectionRule.Source values.
+const (
+	TagRuleSourceProtectedTag        = "protected_tag"
+	TagRuleSourceRepositoryRuleset   = "repository_ruleset"
+	TagRuleSourceOrganizationRuleset = "organization_ruleset"
+	TagRuleSourceEnterpriseRuleset   = "enterprise_ruleset"
+)
 
 // MRApprovalRule is one merge-request approval rule (GitLab: Settings >
 // Merge requests > Approval rules). It carries the rule's stable identity

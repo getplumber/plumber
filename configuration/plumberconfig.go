@@ -38,6 +38,9 @@ var validControlSchema = map[string][]string{
 		"allowForcePush", "codeOwnerApprovalRequired",
 		"minMergeAccessLevel", "minPushAccessLevel",
 	},
+	"tagMustBeProtected": {
+		"enabled", "namePatterns", "requireCreationRestricted",
+	},
 	"mergeRequestApprovalRulesMustRequireMinimumApprovals": {
 		"enabled", "minimumRequiredApprovals",
 	},
@@ -322,6 +325,11 @@ type ControlsConfig struct {
 
 	// BranchMustBeProtected control configuration
 	BranchMustBeProtected *BranchProtectionControlConfig `yaml:"branchMustBeProtected,omitempty"`
+
+	// TagMustBeProtected control configuration: release tag patterns must
+	// be immutable (update and deletion blocked) with creation restricted
+	// (ISSUE-510).
+	TagMustBeProtected *TagProtectionControlConfig `yaml:"tagMustBeProtected,omitempty"`
 
 	// MergeRequestApprovalRulesMustRequireMinimumApprovals control
 	// configuration (GitLab only). Flags approval rules covering all
@@ -963,6 +971,50 @@ type BranchProtectionControlConfig struct {
 
 	// MinPushAccessLevel minimum access level required to push (0=No one, 30=Developer, 40=Maintainer)
 	MinPushAccessLevel *int `yaml:"minPushAccessLevel,omitempty"`
+}
+
+// TagProtectionControlConfig configuration for the tag protection control
+type TagProtectionControlConfig struct {
+	// Enabled controls whether this check runs
+	Enabled *bool `yaml:"enabled,omitempty"`
+
+	// NamePatterns is a list of tag name patterns that must be protected
+	// (supports wildcards), each checked on its own. Empty or unset (the
+	// default) requires instead that rules on all tags (a GitHub ruleset
+	// on ~ALL, a GitLab protected tag `*`) protect every tag.
+	NamePatterns []string `yaml:"namePatterns,omitempty"`
+
+	// RequireCreationRestricted, when true (the default), also requires
+	// tag creation to be restricted, on top of update and deletion.
+	RequireCreationRestricted *bool `yaml:"requireCreationRestricted,omitempty"`
+}
+
+// IsEnabled returns whether the control is enabled
+// Returns false if not properly configured
+func (c *TagProtectionControlConfig) IsEnabled() bool {
+	if c == nil || c.Enabled == nil {
+		return false
+	}
+	return *c.Enabled
+}
+
+// EffectiveNamePatterns returns the configured tag patterns, or an empty
+// (non-nil) list when namePatterns is unset: empty selects the all-tags
+// check.
+func (c *TagProtectionControlConfig) EffectiveNamePatterns() []string {
+	if c == nil || c.NamePatterns == nil {
+		return []string{}
+	}
+	return c.NamePatterns
+}
+
+// IsCreationRestrictionRequired reports whether tag creation must be
+// restricted. Defaults to true when unset.
+func (c *TagProtectionControlConfig) IsCreationRestrictionRequired() bool {
+	if c == nil || c.RequireCreationRestricted == nil {
+		return true
+	}
+	return *c.RequireCreationRestricted
 }
 
 // HardcodedJobsControlConfig configuration for the hardcoded jobs control
