@@ -627,10 +627,10 @@ var controlsIndependentOfMergedConfig = map[string]bool{
 	"mergeRequestSettingsMustBeCompliant": true,
 	// Reads the project's linked security policy project over GraphQL.
 	"projectMustHaveSecurityPolicySource": true,
-	// Reads the provider's tag protection rules and tag names. On GitHub it
-	// also reads the workflows' tag triggers, but without them it still
-	// checks the configured patterns: a missing pipeline can only hide a
-	// finding (a trigger-only pattern), never invent one.
+	// Reads the provider's tag protection rules and tag names. It also
+	// reads the pipeline's tag triggers, but only for severity and to put
+	// an untagged pattern in use: without them a finding can only be
+	// understated or hidden, never invented.
 	"tagMustBeProtected": true,
 }
 

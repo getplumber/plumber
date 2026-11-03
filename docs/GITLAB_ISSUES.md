@@ -196,14 +196,22 @@ functionMustComeFromAuthorizedSources:
 
 **Severity:** `critical` (`high` when no job runs on tag pipelines) • **Control:** `tagMustBeProtected`
 
-A release tag pattern is in use but is not a
+Tags are in use but are not covered by a
 [protected tag](https://docs.gitlab.com/user/project/protected_tags/), or
-its protection lets Developers create matching tags. Anyone allowed to
-push a tag can then move a release or forge one, and a tag pipeline
-publishes it.
+the protection lets Developers create them. Anyone allowed to push a tag
+can then move a release or forge one, and a tag pipeline publishes it.
 
-A pattern is only checked while it is in use: an existing tag matches
-it. The finding is critical when a job runs on tag pipelines
+What must be covered depends on `namePatterns`:
+
+- **Empty (the default):** all tags, through a protected tag `*`. A
+  protected tag `v*` does not count. One finding, `tagPattern: "*"`.
+  This is the recommended setup: one rule protects every tag.
+- **A list of patterns:** each pattern on its own, one finding per
+  pattern.
+
+Nothing is checked until tags are in use: the project has a tag (one
+matching the pattern, for a configured pattern), or a job runs on tag
+pipelines. The finding is critical when a job runs on tag pipelines
 (`only: [tags]`, or a `rules:` entry on `$CI_COMMIT_TAG`), high
 otherwise. A protected tag blocks updates and deletions by itself;
 creation counts as restricted when it is left to Maintainers (the
@@ -218,8 +226,9 @@ publish:
     - ./publish.sh
 ```
 
-**Fix.** Settings > Repository > Protected tags: protect `v*` with
-**Allowed to create** set to Maintainers (or a narrower set).
+**Fix.** Settings > Repository > Protected tags: protect `*` (or each
+configured pattern) with **Allowed to create** set to Maintainers (or a
+narrower set).
 
 **Token.** `read_api`, to list protected tags and tags. Without it the
 control reports "not evaluated", never a false positive. Not evaluated
@@ -230,9 +239,9 @@ in platform mode yet: the platform snapshot carries no tag data.
 ```yaml
 tagMustBeProtected:
   enabled: true
-  # Tag name patterns that must be protected (supports wildcards)
-  namePatterns:
-    - v*
+  # Tag name patterns that must be protected, each on its own.
+  # Empty (default): a protected tag `*` must cover every tag.
+  namePatterns: []
   # Also require tag creation to be restricted
   requireCreationRestricted: true
 ```

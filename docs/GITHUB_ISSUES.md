@@ -1859,26 +1859,36 @@ jobs:
 
 **Severity:** `critical` (`high` when no workflow runs on a tag push) • **Control:** `tagMustBeProtected`
 
-A release tag pattern is in use but anyone with push access can move,
-delete or create a matching tag. Tags are what release workflows run on
-and what consumers pin to, so a moved tag ships code nobody reviewed
-under a name everyone trusts: the tj-actions/changed-files compromise
-re-pointed existing version tags to a malicious commit.
+Tags are in use but anyone with push access can move, delete or create
+them. Tags are what release workflows run on and what consumers pin to,
+so a moved tag ships code nobody reviewed under a name everyone trusts:
+the tj-actions/changed-files compromise re-pointed existing version tags
+to a malicious commit.
 
-The patterns checked are `namePatterns` (default `v*`) plus every
-`on.push.tags` pattern of a workflow. A pattern is only checked while it
-is in use: an existing tag matches it, or a workflow triggers on it, so
-a repository that never tags stays quiet. The finding is critical when a
-workflow runs on a tag push (`on.push.tags`, `on.push.tags-ignore`, or
-`on: release`), high otherwise.
-
-A pattern is protected when active tag
+Tags are protected when active tag
 [rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets)
-(the repository's own or inherited from the organization) cover it with
+(the repository's own or inherited from the organization) cover them with
 **Restrict updates**, **Restrict deletions** and, unless
 `requireCreationRestricted: false`, **Restrict creations**. The rules may
 come from different rulesets. A ruleset in `evaluate` mode does not
 count: it reports, it does not block.
+
+What must be covered depends on `namePatterns`:
+
+- **Empty (the default):** all tags. The rulesets must target **All tags**
+  (`~ALL`) and exclude nothing; a ruleset on `v*` or `*` does not count.
+  One finding, `tagPattern: "~ALL"`. This is the recommended setup: one
+  ruleset protects every tag, including the ones nobody thought to list.
+- **A list of patterns:** each pattern on its own, one finding per
+  pattern. A ruleset covers a pattern when it targets the pattern itself
+  (or all tags) and every existing tag the pattern matches.
+
+Nothing is checked until tags are in use: the repository has a tag, or a
+workflow runs on tags (for a configured pattern, an existing tag matches
+it or a workflow triggers on exactly it). Workflow `on.push.tags`
+patterns never add a pattern of their own. The finding is critical when
+a workflow runs on a matching tag push (`on.push.tags`,
+`on.push.tags-ignore`, or `on: release`), high otherwise.
 
 ```yaml
 # ❌ before — release workflow on v* tags, no tag ruleset
@@ -1894,7 +1904,7 @@ jobs:
 ```
 
 **Fix.** Settings > Rules > Rulesets > New tag ruleset: enforcement
-**Active**, target `v*` (or all tags), enable Restrict creations,
+**Active**, target **All tags** (or the configured patterns), enable Restrict creations,
 Restrict updates and Restrict deletions, and add the release automation
 (a GitHub App or the repository admin role) to the bypass list.
 
@@ -1909,9 +1919,9 @@ positive.
 ```yaml
 tagMustBeProtected:
   enabled: true
-  # Tag name patterns that must be protected; workflow tag triggers are added
-  namePatterns:
-    - v*
+  # Tag name patterns that must be protected, each on its own.
+  # Empty (default): rulesets on All tags (~ALL) must cover every tag.
+  namePatterns: []
   # Also require tag creation to be restricted
   requireCreationRestricted: true
 ```

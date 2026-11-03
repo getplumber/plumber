@@ -963,18 +963,15 @@ type BranchProtectionControlConfig struct {
 	MinPushAccessLevel *int `yaml:"minPushAccessLevel,omitempty"`
 }
 
-// defaultTagNamePatterns is what tagMustBeProtected requires when
-// namePatterns is unset: the conventional release tag shape.
-var defaultTagNamePatterns = []string{"v*"}
-
 // TagProtectionControlConfig configuration for the tag protection control
 type TagProtectionControlConfig struct {
 	// Enabled controls whether this check runs
 	Enabled *bool `yaml:"enabled,omitempty"`
 
 	// NamePatterns is a list of tag name patterns that must be protected
-	// (supports wildcards). Unset means ["v*"]; an explicit empty list
-	// leaves only the patterns read off workflow tag triggers.
+	// (supports wildcards), each checked on its own. Empty or unset (the
+	// default) requires instead that rules on all tags (a GitHub ruleset
+	// on ~ALL, a GitLab protected tag `*`) protect every tag.
 	NamePatterns []string `yaml:"namePatterns,omitempty"`
 
 	// RequireCreationRestricted, when true (the default), also requires
@@ -991,12 +988,12 @@ func (c *TagProtectionControlConfig) IsEnabled() bool {
 	return *c.Enabled
 }
 
-// EffectiveNamePatterns returns the configured tag patterns, or the
-// default ["v*"] when namePatterns is unset (nil). An explicit empty list
-// stays empty.
+// EffectiveNamePatterns returns the configured tag patterns, or an empty
+// (non-nil) list when namePatterns is unset: empty selects the all-tags
+// check.
 func (c *TagProtectionControlConfig) EffectiveNamePatterns() []string {
 	if c == nil || c.NamePatterns == nil {
-		return append([]string(nil), defaultTagNamePatterns...)
+		return []string{}
 	}
 	return c.NamePatterns
 }

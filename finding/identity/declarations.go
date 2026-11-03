@@ -193,7 +193,7 @@ var declarations = map[string][]string{
 	"ISSUE-505": {"file", "job", "branchName"},
 	// MR settings not compliant: singleton finding (one per project); the platform IdOnly was empty, so the identity is the code alone. Deliberate consequence: changing WHICH settings deviate does not re-key the finding.
 	"ISSUE-506": {},
-	// Tag pattern not protected: one finding per tag pattern, keyed on the pattern (configured or read off a workflow tag trigger). Which protections are missing is data only, so tightening one of them does not re-key the finding.
+	// Tag pattern not protected: one finding per configured tag pattern, keyed on the pattern; with no pattern configured, one finding keyed on the provider's all-tags target (`~ALL` on GitHub, `*` on GitLab). Which protections are missing is data only, so tightening one of them does not re-key the finding.
 	"ISSUE-510": {"tagPattern"},
 	// Security policy project not linked: singleton finding (one per project); the platform IdOnly was empty, so the identity is the code alone.
 	"ISSUE-601": {},

@@ -1,11 +1,19 @@
-# tag-unprotected — flag release tag patterns in use whose tags anyone
-# with push access can move, delete or create (#398).
+# tag-unprotected — flag release tags anyone with push access can move,
+# delete or create (#398).
 #
-# The patterns checked are the ones declared in .plumber.yaml
-# (tagMustBeProtected.namePatterns) plus the tag patterns GitHub
-# workflows trigger on (`on.push.tags`). A pattern is only checked while
-# it is in use: an existing tag matches it, or a workflow triggers on it,
-# so a repository that never tags stays quiet.
+# Two modes, chosen by tagMustBeProtected.namePatterns:
+#
+#   - empty or unset (the default): all tags must be protected by rules
+#     that target every tag (a GitHub ruleset on ~ALL, a GitLab protected
+#     tag `*`, both collected as `**`) and exclude none. One finding,
+#     keyed on that all-tags target. See "All-tags mode" below.
+#   - a list of patterns: each pattern is checked on its own, one finding
+#     per pattern.
+#
+# Workflow tag triggers never add a pattern to check. They raise a
+# finding to critical, and a trigger on exactly a configured pattern puts
+# it in use before any tag exists. Either way a repository that never
+# tags and never runs on tags stays quiet.
 #
 # A pattern is protected when the provider's rules block tag updates and
 # deletions on it, and restrict tag creation unless
@@ -16,7 +24,8 @@
 #
 # The collectors translate both providers' wildcards into one glob
 # dialect (see ir.TagProtection), so nothing here is provider specific
-# except the GitLab tag-trigger shape in _gitlab_runs_on_tags.
+# except the GitLab tag-trigger shape in _gitlab_runs_on_tags and the
+# all-tags label each provider's UI shows (_all_tags_label).
 package tag_unprotected
 
 import rego.v1
@@ -55,19 +64,17 @@ _strip(s) := trim_prefix(s, "refs/tags/")
 
 _live(job) if object.get(job, "inert", "") == ""
 
+# _required_patterns: the configured patterns, the only ones a finding
+# is ever raised on. Empty selects the all-tags mode.
 _required_patterns contains p if {
 	some raw in object.get(_config, "namePatterns", [])
 	p := _strip(raw)
 	p != ""
 }
 
-_required_patterns contains p if {
-	some p in _workflow_tag_patterns
-}
-
-# _workflow_tag_patterns: the tag patterns live GitHub workflows run on.
-# A `!` entry negates an earlier one and an expression cannot be read
-# statically; neither is a pattern to protect.
+# _workflow_tag_patterns: the tag patterns live GitHub workflows run on,
+# read for severity only. A `!` entry negates an earlier one and an
+# expression cannot be read statically; neither names tags.
 _workflow_tag_patterns contains p if {
 	some job in _jobs
 	_live(job)
@@ -83,20 +90,12 @@ _matching_tags(pattern, tp) := {t |
 	_tag_matches(pattern, t)
 }
 
-# _tag_matches: a workflow pattern is a GitHub filter pattern, where `+`
-# and `?` quantify the character before them; a configured pattern is a
-# glob.
-_tag_matches(pattern, t) if {
-	pattern in _workflow_tag_patterns
-	regex.match(_filter_regex(pattern), t)
-}
+# _tag_matches: a configured pattern is a glob.
+_tag_matches(pattern, t) if glob.match(pattern, ["/"], t)
 
-_tag_matches(pattern, t) if {
-	not pattern in _workflow_tag_patterns
-	glob.match(pattern, ["/"], t)
-}
-
-# _filter_regex: a GitHub filter pattern as an anchored regex. `*` stops
+# _filter_regex: a workflow pattern is a GitHub filter pattern, where `+`
+# and `?` quantify the character before them, read here as an anchored
+# regex to tell which existing tags a trigger fires on. `*` stops
 # at `/`, `**` does not; `+`, `?`, `[...]` and `\` escapes read the same
 # in both.
 _filter_regex(p) := concat("", ["^", body, "$"]) if {
@@ -126,7 +125,10 @@ _pattern_triggered(pattern, tp) if {
 # Those raise the severity but never put a pattern in use on their own.
 _triggered(pattern, tp) if _pattern_triggered(pattern, tp)
 
-_triggered(_, _) if {
+_triggered(_, _) if _runs_on_unnamed_tags
+
+# _runs_on_unnamed_tags: a live job runs on tags without naming a pattern.
+_runs_on_unnamed_tags if {
 	some job in _jobs
 	_live(job)
 	"release" in object.get(job, "triggers", [])
@@ -134,13 +136,13 @@ _triggered(_, _) if {
 
 # A push trigger with tags-ignore runs on every tag it does not ignore
 # (GitHub rejects tags and tags-ignore on the same event).
-_triggered(_, _) if {
+_runs_on_unnamed_tags if {
 	some job in _jobs
 	_live(job)
 	count(object.get(job, "pushTagsIgnore", [])) > 0
 }
 
-_triggered(_, _) if {
+_runs_on_unnamed_tags if {
 	some job in _jobs
 	_live(job)
 	_gitlab_runs_on_tags(job)
@@ -242,3 +244,83 @@ _message(pattern, missing) := sprintf("Tag pattern `%s` is not protected.", [pat
 _required_protections := ["update", "deletion", "creation"] if {
 	object.get(_config, "requireCreationRestricted", true) == true
 } else := ["update", "deletion"]
+
+# --- All-tags mode (namePatterns empty or unset, the default) ---
+#
+# One rule on every tag is the recommended setup, so with no configured
+# pattern the question becomes: do active rules targeting all tags, with
+# no exclusion, provide every required protection? Such rules layer, one
+# protection each, like the per-pattern check. A rule on `v*` or `*`
+# does not count: `*` stops at a slash, and neither covers every tag.
+
+_all_tags_mode if count(_required_patterns) == 0
+
+deny contains finding if {
+	_all_tags_mode
+	tp := input.pipeline.tagProtection
+	tp.known == true
+	_all_tags_in_use(tp)
+	missing := _all_tags_missing(tp)
+	count(missing) > 0
+	finding := {
+		"code":     "ISSUE-510",
+		"severity": "critical",
+		"message":  _all_tags_message(missing),
+		"type":     "unprotected",
+		# The all-tags target as the provider's UI names it: the finding's
+		# identity, stable across runs on one provider.
+		"tagPattern":         _all_tags_label,
+		"missingProtections": missing,
+		"triggered":          _is_all_tags_triggered,
+		"occurrenceSeverity": _all_tags_occurrence_severity,
+	}
+}
+
+_all_tags_label := "~ALL" if input.pipeline.provider == "github"
+
+else := "*"
+
+# _all_tags_in_use: the repository has a tag, or a live job runs on tags.
+_all_tags_in_use(tp) if count(object.get(tp, "tags", [])) > 0
+
+_all_tags_in_use(_) if _runs_on_any_tags
+
+# _runs_on_any_tags: a live job runs on a tag push, whatever its patterns
+# (expressions and `!` entries included), or on tags without naming one.
+_runs_on_any_tags if {
+	some job in _jobs
+	_live(job)
+	count(object.get(job, "pushTags", [])) > 0
+}
+
+_runs_on_any_tags if _runs_on_unnamed_tags
+
+_is_all_tags_triggered if {
+	_runs_on_any_tags
+} else := false
+
+_all_tags_occurrence_severity := "critical" if {
+	_runs_on_any_tags
+} else := "high"
+
+_all_tags_missing(tp) := [m |
+	some m in _required_protections
+	not _all_tags_has(m, tp)
+]
+
+_protection_field := {
+	"update": "blocksUpdate",
+	"deletion": "blocksDeletion",
+	"creation": "restrictsCreation",
+}
+
+_all_tags_has(m, tp) if {
+	some rule in object.get(tp, "rules", [])
+	object.get(rule, _protection_field[m], false) == true
+	"**" in object.get(rule, "include", [])
+	count(object.get(rule, "exclude", [])) == 0
+}
+
+_all_tags_message(missing) := sprintf("Tags are not protected by a rule on all tags (`%s`).", [_all_tags_label]) if {
+	count(missing) == count(_required_protections)
+} else := sprintf("Tags are not fully protected by rules on all tags (`%s`), %s.", [_all_tags_label, concat(" and ", [_clauses[m] | some m in missing])])

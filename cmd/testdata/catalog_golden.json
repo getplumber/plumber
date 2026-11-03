@@ -1869,12 +1869,12 @@
             "name": "namePatterns",
             "type": "array",
             "optional": true,
-            "description": "List of tag name patterns that must be protected; supports wildcards. The tag patterns of workflow push triggers are added to it. A pattern is only checked when an existing tag matches it or a workflow triggers on it.",
+            "description": "List of tag name patterns that must be protected; supports wildcards. Empty or unset (the default): rules on all tags (a GitHub ruleset on ~ALL, a GitLab protected tag `*`) with no exclusion must protect every tag. Otherwise each pattern is checked on its own, once an existing tag matches it or a workflow triggers on it. Workflow tag triggers never add a pattern.",
             "elem": {
               "type": "string",
               "optional": false
             },
-            "default": "v*"
+            "default": "[]"
           },
           {
             "name": "requireCreationRestricted",
@@ -2932,8 +2932,8 @@
       "code": "ISSUE-510",
       "severity": "critical",
       "title": "Tag pattern not protected",
-      "description": "A release tag pattern in use (an existing tag matches it, or a workflow triggers on it) is not fully protected: anyone with push access can move, delete or create a release tag, and ship code that consumers pinned to that tag, or that a tag-triggered release workflow publishes, without review.",
-      "remediation": "Protect the tag pattern. On GitLab: Settings \u003e Repository \u003e Protected tags, add the pattern with Maintainers (or a narrower set) allowed to create. On GitHub: Settings \u003e Rules \u003e Rulesets, add an active tag ruleset targeting the pattern with Restrict creations, Restrict updates and Restrict deletions, and grant your release automation a bypass.",
+      "description": "Tags in use (all tags by default, or the configured patterns) are not fully protected: anyone with push access can move, delete or create a release tag, and ship code that consumers pinned to that tag, or that a tag-triggered release workflow publishes, without review.",
+      "remediation": "Protect all tags with one rule. On GitLab: Settings \u003e Repository \u003e Protected tags, add `*` with Maintainers (or a narrower set) allowed to create. On GitHub: Settings \u003e Rules \u003e Rulesets, add an active tag ruleset targeting All tags with Restrict creations, Restrict updates and Restrict deletions, and grant your release automation a bypass. With namePatterns configured, target those patterns instead.",
       "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-510",
       "controlName": "tagMustBeProtected"
     },

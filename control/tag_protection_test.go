@@ -102,8 +102,8 @@ func TestTagLaneCollected(t *testing.T) {
 	}
 }
 
-// The control's engine config carries the effective patterns (the v*
-// default when unset) and the creation requirement.
+// The control's engine config carries the effective patterns (an empty
+// list when unset, never null) and the creation requirement.
 func TestBuildEngineConfig_TagMustBeProtected(t *testing.T) {
 	off := false
 	cfg := buildEngineConfig(&configuration.ControlsConfig{
@@ -113,8 +113,8 @@ func TestBuildEngineConfig_TagMustBeProtected(t *testing.T) {
 	if !ok {
 		t.Fatalf("tagMustBeProtected missing from engine config: %v", cfg)
 	}
-	if p, _ := entry["namePatterns"].([]string); len(p) != 1 || p[0] != "v*" {
-		t.Errorf("namePatterns = %v, want [v*]", entry["namePatterns"])
+	if p, ok := entry["namePatterns"].([]string); !ok || p == nil || len(p) != 0 {
+		t.Errorf("namePatterns = %#v, want []string{}", entry["namePatterns"])
 	}
 	if entry["requireCreationRestricted"] != false {
 		t.Errorf("requireCreationRestricted = %v, want false", entry["requireCreationRestricted"])

@@ -1057,12 +1057,13 @@ func defaultBranchPatterns() string {
 }
 
 // defaultTagProtection is the tagMustBeProtected block the wizard writes
-// with the access controls: the embedded default's patterns, enabled. The
-// wizard asks nothing about it; the defaults are the release-tag
-// convention and an edit away from any other.
+// with the access controls, enabled. The wizard asks nothing about it.
+// The embedded default lists no pattern, which requires rules on all tags
+// (the recommended setup); an empty list is omitted from the YAML, and an
+// absent namePatterns means the same thing.
 func defaultTagProtection() *configuration.TagProtectionControlConfig {
-	patterns := []string{"v*"}
-	if c := defaultGitLabControls().TagMustBeProtected; c != nil && c.NamePatterns != nil {
+	var patterns []string
+	if c := defaultGitLabControls().TagMustBeProtected; c != nil && len(c.NamePatterns) > 0 {
 		patterns = c.NamePatterns
 	}
 	return &configuration.TagProtectionControlConfig{

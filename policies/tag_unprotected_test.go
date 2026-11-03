@@ -2,6 +2,7 @@ package policies_test
 
 import (
 	"context"
+	"maps"
 	"reflect"
 	"sort"
 	"testing"
@@ -78,24 +79,36 @@ func TestIssue507_TagProtection(t *testing.T) {
 			want: []string{},
 		},
 		{
-			name: "a workflow tag trigger puts its pattern in use with no tag yet",
-			p:    gh(&ir.TagProtection{Known: true}, ir.Job{Name: "release/publish", PushTags: []string{"release-*"}}),
-			want: []string{"release-*"},
+			name: "a trigger on a configured pattern puts it in use with no tag yet",
+			p:    gh(&ir.TagProtection{Known: true}, ir.Job{Name: "release/publish", PushTags: []string{"v*"}}),
+			want: []string{"v*"},
 		},
 		{
-			name: "negated and expression trigger patterns are not patterns to protect",
-			p:    gh(&ir.TagProtection{Known: true}, ir.Job{Name: "release/publish", PushTags: []string{"!v*-rc*", "${{ inputs.x }}"}}),
+			name: "a trigger on a pattern that is not configured is never flagged",
+			p:    gh(&ir.TagProtection{Known: true}, ir.Job{Name: "release/publish", PushTags: []string{"release-*"}}),
+			want: []string{},
+		},
+		{
+			name: "negated and expression trigger patterns put nothing in use",
+			p:    gh(&ir.TagProtection{Known: true}, ir.Job{Name: "release/publish", PushTags: []string{"!v*", "${{ inputs.x }}"}}),
 			want: []string{},
 		},
 		{
 			name: "an inert job's trigger does not count",
-			p:    gh(&ir.TagProtection{Known: true}, ir.Job{Name: "release/publish", PushTags: []string{"release-*"}, Inert: "disabled"}),
+			p:    gh(&ir.TagProtection{Known: true}, ir.Job{Name: "release/publish", PushTags: []string{"v*"}, Inert: "disabled"}),
 			want: []string{},
 		},
 		{
 			name: "refs/tags/ prefixes are stripped",
-			p:    gh(&ir.TagProtection{Known: true, Rules: []ir.TagProtectionRule{fullTagRule("v*")}}, ir.Job{Name: "release/publish", PushTags: []string{"refs/tags/v*"}}),
+			p:    gh(&ir.TagProtection{Known: true, Tags: []string{"v1.0.0"}, Rules: []ir.TagProtectionRule{fullTagRule("v*")}}, ir.Job{Name: "release/publish", PushTags: []string{"refs/tags/v*"}}),
+			cfg:  map[string]any{"tagMustBeProtected": map[string]any{"namePatterns": []any{"refs/tags/v*"}}},
 			want: []string{},
+		},
+		{
+			name: "a refs/tags/ prefixed configured pattern is flagged under its stripped name",
+			p:    gh(&ir.TagProtection{Known: true, Tags: []string{"v1.0.0"}}),
+			cfg:  map[string]any{"tagMustBeProtected": map[string]any{"namePatterns": []any{"refs/tags/v*"}}},
+			want: []string{"v*"},
 		},
 		{
 			name: "unknown protection abstains",
@@ -162,45 +175,22 @@ func TestIssue507_TagProtection(t *testing.T) {
 			want: []string{"v*"},
 		},
 		{
-			name: "configured and workflow patterns are both checked, deduplicated",
-			p:    gh(&ir.TagProtection{Known: true, Tags: []string{"v1.0.0"}}, ir.Job{Name: "a/x", PushTags: []string{"v*", "release-*"}}, ir.Job{Name: "b/y", PushTags: []string{"release-*"}}),
-			want: []string{"release-*", "v*"},
+			name: "only configured patterns are flagged, never workflow ones",
+			p:    gh(&ir.TagProtection{Known: true, Tags: []string{"v1.0.0", "release-1"}}, ir.Job{Name: "a/x", PushTags: []string{"v*", "release-*"}}, ir.Job{Name: "b/y", PushTags: []string{"v[0-9]+.[0-9]+.[0-9]+"}}),
+			want: []string{"v*"},
 		},
 		{
-			name: "a v* rule covers a filter pattern with quantifiers",
-			p:    gh(&ir.TagProtection{Known: true, Tags: []string{"v1.2.3"}, Rules: []ir.TagProtectionRule{fullTagRule("v*")}}, ir.Job{Name: "r/p", PushTags: []string{"v[0-9]+.[0-9]+.[0-9]+"}}),
-			cfg:  map[string]any{"tagMustBeProtected": map[string]any{"namePatterns": []any{}}},
-			want: []string{},
+			name: "several configured patterns are each checked",
+			p:    gh(&ir.TagProtection{Known: true, Tags: []string{"v1.0.0", "release-1"}, Rules: []ir.TagProtectionRule{fullTagRule("v*")}}),
+			cfg:  map[string]any{"tagMustBeProtected": map[string]any{"namePatterns": []any{"v*", "release-*"}}},
+			want: []string{"release-*"},
 		},
 		{
-			// GitHub filter `+` quantifies, so the trigger fires on v1.2.3,
-			// which the rule excludes. Read as a glob it would match no tag.
-			name: "an excluded tag a quantified filter pattern fires on is flagged",
-			p: gh(&ir.TagProtection{Known: true, Tags: []string{"v1.2.3"}, Rules: []ir.TagProtectionRule{{
-				ID: "1", Include: []string{"**"}, Exclude: []string{"v1.*"},
-				BlocksUpdate: true, BlocksDeletion: true, RestrictsCreation: true,
-			}}}, ir.Job{Name: "r/p", PushTags: []string{"v[0-9]+.[0-9]+.[0-9]+"}}),
-			cfg:  map[string]any{"tagMustBeProtected": map[string]any{"namePatterns": []any{}}},
-			want: []string{"v[0-9]+.[0-9]+.[0-9]+"},
-		},
-		{
-			name: "a filter pattern with quantifiers and no rule is flagged",
-			p:    gh(&ir.TagProtection{Known: true, Tags: []string{"v1.2.3"}}, ir.Job{Name: "r/p", PushTags: []string{"v[0-9]+.[0-9]+.[0-9]+"}}),
-			cfg:  map[string]any{"tagMustBeProtected": map[string]any{"namePatterns": []any{}}},
-			want: []string{"v[0-9]+.[0-9]+.[0-9]+"},
-		},
-		{
-			// `?` makes the s optional, so releases?-* fires on releases-1,
-			// which the release-* rule leaves open.
-			name: "an optional character in a filter pattern",
-			p:    gh(&ir.TagProtection{Known: true, Tags: []string{"releases-1"}, Rules: []ir.TagProtectionRule{fullTagRule("release-*")}}, ir.Job{Name: "r/p", PushTags: []string{"releases?-*"}}),
-			cfg:  map[string]any{"tagMustBeProtected": map[string]any{"namePatterns": []any{}}},
-			want: []string{"releases?-*"},
-		},
-		{
-			name: "a rule covering every tag of an optional-character pattern",
-			p:    gh(&ir.TagProtection{Known: true, Tags: []string{"release-1", "releases-1"}, Rules: []ir.TagProtectionRule{fullTagRule("release*")}}, ir.Job{Name: "r/p", PushTags: []string{"releases?-*"}}),
-			cfg:  map[string]any{"tagMustBeProtected": map[string]any{"namePatterns": []any{}}},
+			// A configured pattern is a glob even when a workflow names the
+			// same text: `+` is literal here, so it matches no tag.
+			name: "a configured pattern is read as a glob, not a filter",
+			p:    gh(&ir.TagProtection{Known: true, Tags: []string{"v1.2.3"}}),
+			cfg:  map[string]any{"tagMustBeProtected": map[string]any{"namePatterns": []any{"v[0-9]+.[0-9]+.[0-9]+"}}},
 			want: []string{},
 		},
 	}
@@ -308,5 +298,136 @@ func TestIssue507_OccurrenceSeverity(t *testing.T) {
 				t.Errorf("triggered = %v, want %v", got, tc.want == "critical")
 			}
 		})
+	}
+}
+
+// With namePatterns empty or unset (the default), every tag must be
+// protected by rules on all tags (GitHub ~ALL, GitLab `*`, both `**`)
+// that exclude none. One finding, keyed on the provider's all-tags label.
+func TestIssue510_AllTags(t *testing.T) {
+	emptyCfg := func(extra map[string]any) map[string]any {
+		c := map[string]any{"namePatterns": []any{}}
+		maps.Copy(c, extra)
+		return map[string]any{"tagMustBeProtected": c}
+	}
+	gh := func(tp *ir.TagProtection, jobs ...ir.Job) *ir.NormalizedPipeline {
+		return &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, ProjectPath: "o/r", TagProtection: tp, Jobs: jobs}
+	}
+	gl := func(tp *ir.TagProtection, jobs ...ir.Job) *ir.NormalizedPipeline {
+		return &ir.NormalizedPipeline{Provider: ir.ProviderGitLab, ProjectPath: "g/p", TagProtection: tp, Jobs: jobs}
+	}
+	tagged := func(rules ...ir.TagProtectionRule) *ir.TagProtection {
+		return &ir.TagProtection{Known: true, Tags: []string{"v1.0.0", "nightly"}, Rules: rules}
+	}
+	withExclude := fullTagRule("**")
+	withExclude.Exclude = []string{"nightly"}
+	all := []any{"update", "deletion", "creation"}
+
+	cases := []struct {
+		name        string
+		p           *ir.NormalizedPipeline
+		cfg         map[string]any
+		want        []string
+		wantMissing []any
+	}{
+		{name: "an all-tags rule passes", p: gh(tagged(fullTagRule("**"))), cfg: emptyCfg(nil), want: []string{}},
+		{name: "unset namePatterns means all tags", p: gh(tagged(fullTagRule("v*"))), cfg: map[string]any{"tagMustBeProtected": map[string]any{}}, want: []string{"~ALL"}, wantMissing: all},
+		{name: "no control config at all means all tags", p: gh(tagged()), cfg: map[string]any{}, want: []string{"~ALL"}, wantMissing: all},
+		{name: "blank patterns only mean all tags", p: gh(tagged()), cfg: emptyCfg(map[string]any{"namePatterns": []any{"", "refs/tags/"}}), want: []string{"~ALL"}, wantMissing: all},
+		{name: "a v* rule is not all tags", p: gh(tagged(fullTagRule("v*"))), cfg: emptyCfg(nil), want: []string{"~ALL"}, wantMissing: all},
+		{name: "a * rule is not all tags", p: gh(tagged(fullTagRule("*"))), cfg: emptyCfg(nil), want: []string{"~ALL"}, wantMissing: all},
+		{name: "an all-tags rule with an exclusion does not count", p: gh(tagged(withExclude)), cfg: emptyCfg(nil), want: []string{"~ALL"}, wantMissing: all},
+		{
+			name: "all-tags rules layer per protection",
+			p: gh(tagged(
+				ir.TagProtectionRule{ID: "1", Include: []string{"**"}, BlocksUpdate: true, BlocksDeletion: true},
+				ir.TagProtectionRule{ID: "2", Include: []string{"**"}, RestrictsCreation: true},
+			)),
+			cfg:  emptyCfg(nil),
+			want: []string{},
+		},
+		{
+			name:        "a missing creation rule is reported alone",
+			p:           gh(tagged(ir.TagProtectionRule{ID: "1", Include: []string{"**"}, BlocksUpdate: true, BlocksDeletion: true})),
+			cfg:         emptyCfg(nil),
+			want:        []string{"~ALL"},
+			wantMissing: []any{"creation"},
+		},
+		{
+			name: "no creation rule passes when creation is not required",
+			p:    gh(tagged(ir.TagProtectionRule{ID: "1", Include: []string{"**"}, BlocksUpdate: true, BlocksDeletion: true})),
+			cfg:  emptyCfg(map[string]any{"requireCreationRestricted": false}),
+			want: []string{},
+		},
+		{name: "a repository that never tags stays quiet", p: gh(&ir.TagProtection{Known: true}), cfg: emptyCfg(nil), want: []string{}},
+		{name: "unknown protection abstains", p: gh(&ir.TagProtection{Known: false, Tags: []string{"v1.0.0"}}), cfg: emptyCfg(nil), want: []string{}},
+		{name: "no collection abstains", p: gh(nil, ir.Job{Name: "r/p", PushTags: []string{"v*"}}), cfg: emptyCfg(nil), want: []string{}},
+		{name: "a tag trigger alone puts tags in use", p: gh(&ir.TagProtection{Known: true}, ir.Job{Name: "r/p", PushTags: []string{"release-*"}}), cfg: emptyCfg(nil), want: []string{"~ALL"}, wantMissing: all},
+		{name: "a release trigger alone puts tags in use", p: gh(&ir.TagProtection{Known: true}, ir.Job{Name: "r/p", Triggers: []string{"release"}}), cfg: emptyCfg(nil), want: []string{"~ALL"}, wantMissing: all},
+		{name: "an inert tag trigger does not", p: gh(&ir.TagProtection{Known: true}, ir.Job{Name: "r/p", PushTags: []string{"v*"}, Inert: "disabled"}), cfg: emptyCfg(nil), want: []string{}},
+		{name: "workflow patterns add no finding of their own", p: gh(tagged(fullTagRule("**")), ir.Job{Name: "r/p", PushTags: []string{"release-*"}}), cfg: emptyCfg(nil), want: []string{}},
+		{name: "a configured pattern leaves all-tags mode", p: gh(tagged(fullTagRule("v*"))), cfg: map[string]any{"tagMustBeProtected": map[string]any{"namePatterns": []any{"v*"}}}, want: []string{}},
+		{name: "a GitLab protected tag * (collected as **) passes", p: gl(tagged(ir.TagProtectionRule{ID: "*", Source: ir.TagRuleSourceProtectedTag, Include: []string{"**"}, BlocksUpdate: true, BlocksDeletion: true, RestrictsCreation: true})), cfg: emptyCfg(nil), want: []string{}},
+		{name: "a GitLab protected tag v* is not all tags", p: gl(tagged(ir.TagProtectionRule{ID: "v*", Source: ir.TagRuleSourceProtectedTag, Include: []string{"v**"}, BlocksUpdate: true, BlocksDeletion: true, RestrictsCreation: true})), cfg: emptyCfg(nil), want: []string{"*"}, wantMissing: all},
+		{name: "a GitLab tag job alone puts tags in use", p: gl(&ir.TagProtection{Known: true}, ir.Job{Name: "release", Only: []string{"tags"}}), cfg: emptyCfg(nil), want: []string{"*"}, wantMissing: all},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := evalTagFindings(t, tc.p, tc.cfg)
+			if got := tagPatterns(f); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("flagged patterns = %v, want %v", got, tc.want)
+			}
+			if tc.wantMissing != nil {
+				if got := f[0].Data["missingProtections"]; !reflect.DeepEqual(got, tc.wantMissing) {
+					t.Errorf("missingProtections = %v, want %v", got, tc.wantMissing)
+				}
+			}
+		})
+	}
+}
+
+// The all-tags messages name the provider's all-tags target, and the
+// finding is critical when any live job runs on tags, whatever its
+// pattern, high otherwise.
+func TestIssue510_AllTagsMessageAndSeverity(t *testing.T) {
+	cfg := map[string]any{"tagMustBeProtected": map[string]any{"namePatterns": []any{}}}
+	p := &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, TagProtection: &ir.TagProtection{Known: true, Tags: []string{"v1.0.0"}}}
+
+	f := evalTagFindings(t, p, cfg)
+	if len(f) != 1 {
+		t.Fatalf("want 1 finding, got %d", len(f))
+	}
+	if got, want := f[0].Message, "Tags are not protected by a rule on all tags (`~ALL`)."; got != want {
+		t.Errorf("message = %q, want %q", got, want)
+	}
+	if f[0].Severity != "critical" || f[0].Data["occurrenceSeverity"] != "high" || f[0].Data["triggered"] != false {
+		t.Errorf("untriggered: severity = %v, occurrenceSeverity = %v, triggered = %v", f[0].Severity, f[0].Data["occurrenceSeverity"], f[0].Data["triggered"])
+	}
+
+	p.TagProtection.Rules = []ir.TagProtectionRule{{ID: "1", Include: []string{"**"}, BlocksDeletion: true}}
+	f = evalTagFindings(t, p, cfg)
+	if len(f) != 1 {
+		t.Fatalf("want 1 finding, got %d", len(f))
+	}
+	if got, want := f[0].Message, "Tags are not fully protected by rules on all tags (`~ALL`), tag updates are not blocked and tag creation is not restricted."; got != want {
+		t.Errorf("message = %q, want %q", got, want)
+	}
+
+	for name, job := range map[string]ir.Job{
+		"push tags expression": {Name: "r/p", PushTags: []string{"${{ inputs.tag }}"}},
+		"tags-ignore":          {Name: "r/p", Triggers: []string{"push"}, PushTagsIgnore: []string{"*-rc*"}},
+		"release":              {Name: "r/p", Triggers: []string{"release"}},
+	} {
+		p.Jobs = []ir.Job{job}
+		f = evalTagFindings(t, p, cfg)
+		if len(f) != 1 || f[0].Data["occurrenceSeverity"] != "critical" || f[0].Data["triggered"] != true {
+			t.Errorf("%s: want one critical, triggered finding, got %+v", name, f)
+		}
+	}
+
+	gl := &ir.NormalizedPipeline{Provider: ir.ProviderGitLab, TagProtection: &ir.TagProtection{Known: true, Tags: []string{"v1.0.0"}}}
+	f = evalTagFindings(t, gl, cfg)
+	if len(f) != 1 || f[0].Message != "Tags are not protected by a rule on all tags (`*`)." {
+		t.Errorf("GitLab: want the `*` label, got %+v", f)
 	}
 }

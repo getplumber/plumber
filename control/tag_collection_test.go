@@ -172,18 +172,20 @@ func tagFindingPatterns(findings []opaengine.Finding) []string {
 	return out
 }
 
-// The collected GitLab tags reach the policy through RunAnalysis: an
-// unprotected v* tag is a finding, a protected one is not. Without the
-// pipeline wiring in runRegoEngine the policy reads no tag data and both
-// cases come out clean.
+// The collected GitLab tags reach the policy through RunAnalysis. With
+// the default (no namePatterns) every tag needs a protected tag `*`: none,
+// or only `v*`, is a finding keyed `*`; `*` is clean. Without the pipeline
+// wiring in runRegoEngine the policy reads no tag data and every case
+// comes out clean.
 func TestRunAnalysis_TagProtectionReachesThePolicy(t *testing.T) {
 	cases := []struct {
 		name          string
 		protectedTags string
 		want          []string
 	}{
-		{name: "unprotected tag pattern", want: []string{"v*"}},
-		{name: "protected tag pattern", protectedTags: `[{"name":"v*","create_access_levels":[{"access_level":40}]}]`},
+		{name: "no protected tag", want: []string{"*"}},
+		{name: "a protected v* is not all tags", protectedTags: `[{"name":"v*","create_access_levels":[{"access_level":40}]}]`, want: []string{"*"}},
+		{name: "a protected * covers all tags", protectedTags: `[{"name":"*","create_access_levels":[{"access_level":40}]}]`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -292,9 +294,9 @@ func TestRunGitHubAnalysis_TagProtection(t *testing.T) {
 		wantGap      bool
 	}{
 		{
-			name:         "unprotected tag pattern",
+			name:         "unprotected tags",
 			tp:           &ir.TagProtection{Known: true, Tags: []string{"v1.0.0"}},
-			wantPatterns: []string{"v*"},
+			wantPatterns: []string{"~ALL"},
 		},
 		{
 			name:         "fetch failure",

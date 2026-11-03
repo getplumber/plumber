@@ -129,8 +129,8 @@ func TestApplyAccessControls_TagProtection(t *testing.T) {
 		if c == nil || !c.IsEnabled() {
 			t.Fatalf("%s: tagMustBeProtected should be emitted enabled, got %+v", provider, c)
 		}
-		if got := c.EffectiveNamePatterns(); len(got) != 1 || got[0] != "v*" {
-			t.Errorf("%s: namePatterns = %v, want [v*]", provider, got)
+		if got := c.EffectiveNamePatterns(); len(got) != 0 {
+			t.Errorf("%s: namePatterns = %v, want none (rules on all tags)", provider, got)
 		}
 		if !c.IsCreationRestrictionRequired() {
 			t.Errorf("%s: requireCreationRestricted should default to true", provider)
