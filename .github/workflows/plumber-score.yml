@@ -1,0 +1,24 @@
+name: Plumber Score
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+permissions: read-all
+jobs:
+  plumber:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: getplumber/plumber@v0.7.18
+        with:
+          score-push: true
+          min-points: 90
+          upload-sarif: false # plumber-action.yml already uploads the SARIF
