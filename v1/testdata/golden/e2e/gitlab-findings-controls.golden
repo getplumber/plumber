@@ -1,0 +1,1108 @@
+$ plumber analyze gitlab.com/getplumber/examples/plumber-cli-e2e --branch findings --controls pipelineMustNotEnableDebugTrace --print=false -o report.json
+exit: 1
+--- stdout
+
+--- stderr
+No .plumber.yaml found; using Plumber's built-in default configuration.
+Generate your own with 'plumber config generate' ('plumber config init' for the interactive wizard); see the default with 'plumber config view'.
+Using remote CI configuration from branch: findings
+Results written to: report.json
+Blocked: score 80.0/100 pts (B) is below the minimum of 100 pts required to pass
+
+--- file report.json
+{
+  "projectPath": "getplumber/examples/plumber-cli-e2e",
+  "projectId": 88292493,
+  "defaultBranch": "main",
+  "ciConfigSource": "remote",
+  "ciValid": true,
+  "ciMissing": false,
+  "pipelineOriginMetrics": {
+    "jobHardcoded": 3,
+    "jobTotal": 34,
+    "originComponent": 0,
+    "originGitLabCatalog": 0,
+    "originLocal": 0,
+    "originOutdated": 0,
+    "originProject": 0,
+    "originRemote": 1,
+    "originTemplate": 2,
+    "originTotal": 4
+  },
+  "pipelineImageMetrics": {
+    "total": 13
+  },
+  "minPoints": 100,
+  "passed": false,
+  "plumberScore": {
+    "profileId": "scoring-v4",
+    "counts": {
+      "critical": 1,
+      "high": 0,
+      "medium": 0,
+      "low": 0
+    },
+    "rawPoints": 80,
+    "rawPointsUnclamped": 80,
+    "finalPoints": 80,
+    "score": "B",
+    "criticalMalusApplied": false,
+    "losses": [],
+    "codeLosses": [
+      {
+        "code": "ISSUE-203",
+        "severity": "critical",
+        "count": 1,
+        "weight": 20,
+        "uncappedLoss": 20,
+        "cappedLoss": 20
+      }
+    ],
+    "otherFindings": {
+      "count": 1,
+      "counts": {
+        "critical": 1,
+        "high": 0,
+        "medium": 0,
+        "low": 0
+      },
+      "uncappedLoss": 20,
+      "cap": 30,
+      "cappedLoss": 20,
+      "capApplied": false
+    },
+    "situation": "Repository: public. Default branch: main, protection unknown. Pipeline: 34 jobs in 1 pipeline.",
+    "bestFix": {
+      "anchorHash": "23777729168243c28a9049b5985a5a13b9a55f8d3579a06f3bb3a8c28db23845",
+      "code": "ISSUE-203",
+      "subject": "CI_DEBUG_TRACE",
+      "pointsGained": 20,
+      "newPoints": 100,
+      "newLetter": "A",
+      "sentence": "Fixing Pipeline enables CI debug trace (`CI_DEBUG_TRACE`) recovers 20 points and moves the score to A."
+    }
+  },
+  "branchProtectionResult": {
+    "category": "Access and Authorization",
+    "controlName": "branchMustBeProtected",
+    "data": [],
+    "enabled": false,
+    "metrics": {
+      "branches": 0,
+      "branchesToProtect": 0,
+      "nonCompliantBranches": 0,
+      "projectsCorrectlyProtected": 0,
+      "totalProtectedBranches": 0,
+      "unprotectedBranches": 0
+    },
+    "name": "Branch must be protected",
+    "status": "skipped",
+    "version": "0.2.0"
+  },
+  "cicdVariablesMaskedResult": {
+    "category": "CI/CD Variables",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "cicdVariablesMustBeMasked",
+    "issues": [],
+    "metrics": {
+      "totalVariablesChecked": 0,
+      "unmaskedFound": 0
+    },
+    "name": "CI/CD variables must be masked",
+    "skipped": true,
+    "status": "skipped",
+    "version": "0.1.0"
+  },
+  "cicdVariablesProtectedResult": {
+    "category": "CI/CD Variables",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "cicdVariablesMustBeProtected",
+    "issues": [],
+    "metrics": {
+      "totalVariablesChecked": 0,
+      "unprotectedFound": 0
+    },
+    "name": "CI/CD variables must be protected",
+    "skipped": true,
+    "status": "skipped",
+    "version": "0.1.0"
+  },
+  "componentAuthorizedSourcesResult": {
+    "category": "Pipeline Composition",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "componentMustComeFromAuthorizedSources",
+    "issues": [],
+    "metrics": {
+      "authorized": 0,
+      "total": 0,
+      "unauthorized": 0
+    },
+    "name": "Components must come from authorized sources",
+    "skipped": true,
+    "status": "skipped",
+    "version": "0.1.0"
+  },
+  "debugTraceResult": {
+    "category": "CI/CD Variables",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "pipelineMustNotEnableDebugTrace",
+    "issues": [
+      {
+        "baseSeverity": "critical",
+        "code": "ISSUE-203",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-203",
+        "fingerprint": "f95a8b2af97767ab",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-203"
+            },
+            {
+              "key": "file",
+              "value": ""
+            },
+            {
+              "key": "job",
+              "value": ""
+            },
+            {
+              "key": "variableName",
+              "value": "CI_DEBUG_TRACE"
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "location": "root_variables",
+        "role": "Privilege: on no attack path",
+        "severity": "critical",
+        "title": "Pipeline enables CI debug trace",
+        "value": "true",
+        "valueProvenance": "ci_file",
+        "variableName": "CI_DEBUG_TRACE"
+      }
+    ],
+    "metrics": {
+      "forbiddenFound": 1,
+      "totalVariablesChecked": 51
+    },
+    "name": "Pipeline must not enable debug trace",
+    "skipped": false,
+    "status": "failed",
+    "version": "0.1.0"
+  },
+  "dockerInDockerResult": {
+    "category": "Pipeline Composition",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "pipelineMustNotUseDockerInDocker",
+    "issues": [],
+    "metrics": {
+      "dindServicesFound": 0,
+      "insecureDaemonFound": 0,
+      "totalJobsChecked": 34
+    },
+    "name": "Pipeline must not use Docker-in-Docker",
+    "skipped": true,
+    "status": "skipped",
+    "version": "0.1.0"
+  },
+  "forbiddenVersionsIncludesResult": {
+    "category": "Pipeline Composition",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "includesMustNotUseForbiddenVersions",
+    "issues": [],
+    "metrics": {
+      "total": 3,
+      "usingAuthorizedVersion": 3,
+      "usingForbiddenVersion": 0
+    },
+    "name": "Includes must not use forbidden versions",
+    "skipped": true,
+    "status": "skipped",
+    "version": "0.1.0"
+  },
+  "functionAuthorizedSourcesResult": {
+    "category": "Pipeline Composition",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "functionMustComeFromAuthorizedSources",
+    "issues": [],
+    "metrics": {
+      "authorized": 0,
+      "deprecated": 0,
+      "total": 0,
+      "unauthorized": 0
+    },
+    "name": "Functions must come from authorized sources",
+    "skipped": true,
+    "status": "skipped",
+    "version": "0.1.0"
+  },
+  "hardcodedJobsResult": {
+    "category": "Pipeline Composition",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "pipelineMustNotIncludeHardcodedJobs",
+    "issues": [],
+    "metrics": {
+      "ciInvalid": 0,
+      "ciMissing": 0,
+      "hardcodedJobs": 3,
+      "total": 34
+    },
+    "name": "Pipeline must not include hardcoded jobs",
+    "skipped": true,
+    "status": "skipped",
+    "version": "0.1.0"
+  },
+  "imageAuthorizedSourcesResult": {
+    "category": "CI/CD Container Images",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "containerImageMustComeFromAuthorizedSources",
+    "issues": [],
+    "metrics": {
+      "authorized": 7,
+      "ciInvalid": 0,
+      "ciMissing": 0,
+      "total": 13,
+      "unauthorized": 0,
+      "unresolvedRefs": 6
+    },
+    "name": "Container images must come from authorized sources",
+    "skipped": true,
+    "status": "skipped",
+    "version": "0.1.0"
+  },
+  "imageForbiddenTagsResult": {
+    "category": "CI/CD Container Images",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "containerImageMustNotUseForbiddenTags",
+    "issues": [],
+    "metrics": {
+      "ciInvalid": 0,
+      "ciMissing": 0,
+      "notPinnedByDigest": 7,
+      "pinnedByDigest": 0,
+      "total": 13,
+      "unresolvedRefs": 6,
+      "usingForbiddenTags": 0
+    },
+    "mustBePinnedByDigest": true,
+    "name": "Container images must not use forbidden reference",
+    "skipped": true,
+    "status": "skipped",
+    "version": "0.4.0"
+  },
+  "includeRefConfusionResult": {
+    "category": "Pipeline Composition",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "externalRefsMustNotCollide",
+    "issues": [],
+    "metrics": {
+      "ambiguousRefs": 0,
+      "ciInvalid": 0,
+      "ciMissing": 0,
+      "total": 3
+    },
+    "name": "Includes must not use ambiguous tag/branch refs",
+    "skipped": true,
+    "status": "skipped",
+    "version": "0.1.0"
+  },
+  "jobVariablesOverrideResult": {
+    "category": "CI/CD Variables",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "pipelineMustNotOverrideJobVariables",
+    "issues": [],
+    "metrics": {
+      "overriddenFound": 0,
+      "totalVariablesChecked": 0
+    },
+    "name": "Pipeline must not override job variables",
+    "skipped": true,
+    "status": "skipped",
+    "version": "0.1.0"
+  },
+  "mrApprovalRulesCoverAllBranchesResult": {
+    "category": "Access and Authorization",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "mergeRequestApprovalRulesMustCoverAllProtectedBranches",
+    "issues": [],
+    "metrics": {
+      "allProtectedBranchesRuleMissing": 0
+    },
+    "name": "MR approval rules must cover all protected branches",
+    "skipped": true,
+    "status": "skipped",
+    "version": "0.1.0"
+  },
+  "mrApprovalRulesMinApprovalsResult": {
+    "category": "Access and Authorization",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "mergeRequestApprovalRulesMustRequireMinimumApprovals",
+    "issues": [],
+    "metrics": {
+      "rulesBelowMinimum": 0
+    },
+    "name": "MR approval rules must require a minimum number of approvals",
+    "skipped": true,
+    "status": "skipped",
+    "version": "0.1.0"
+  },
+  "mrApprovalSettingsResult": {
+    "category": "Access and Authorization",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "mergeRequestApprovalSettingsMustBeCompliant",
+    "issues": [],
+    "metrics": {
+      "hasNonCompliantSettings": 0
+    },
+    "name": "MR approval settings must be compliant",
+    "skipped": true,
+    "status": "skipped",
+    "version": "0.1.0"
+  },
+  "mrSettingsResult": {
+    "category": "Access and Authorization",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "mergeRequestSettingsMustBeCompliant",
+    "issues": [],
+    "metrics": {
+      "hasNonCompliantSettings": 0
+    },
+    "name": "MR settings must be compliant",
+    "skipped": true,
+    "status": "skipped",
+    "version": "0.1.0"
+  },
+  "outdatedIncludesResult": {
+    "category": "Pipeline Composition",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "includesMustBeUpToDate",
+    "issues": [],
+    "metrics": {
+      "ciInvalid": 0,
+      "ciMissing": 0,
+      "originOutdated": 0,
+      "total": 3
+    },
+    "name": "Includes must be up to date",
+    "skipped": true,
+    "status": "skipped",
+    "version": "0.1.0"
+  },
+  "requiredComponentsResult": {
+    "category": "Pipeline Composition",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "pipelineMustIncludeComponent",
+    "issues": [],
+    "metrics": {
+      "anySatisfiedGroup": false,
+      "ciInvalid": 0,
+      "ciMissing": 0,
+      "satisfiedGroups": 0,
+      "totalGroups": 0
+    },
+    "name": "Pipeline must include required components",
+    "overriddenIssues": [],
+    "requirementGroups": [],
+    "skipped": true,
+    "status": "skipped",
+    "version": "0.2.0"
+  },
+  "requiredTemplatesResult": {
+    "category": "Pipeline Composition",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "pipelineMustIncludeTemplate",
+    "issues": [],
+    "metrics": {
+      "anySatisfiedGroup": false,
+      "ciInvalid": 0,
+      "ciMissing": 0,
+      "satisfiedGroups": 0,
+      "totalGroups": 0
+    },
+    "name": "Pipeline must include required templates",
+    "overriddenIssues": [],
+    "requirementGroups": [],
+    "skipped": true,
+    "status": "skipped",
+    "version": "0.2.0"
+  },
+  "securityJobsWeakenedResult": {
+    "category": "Pipeline Composition",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "securityJobsMustNotBeWeakened",
+    "issues": [],
+    "metrics": {
+      "securityJobsFound": 17,
+      "weakenedJobs": 0
+    },
+    "name": "Security jobs must not be weakened",
+    "skipped": true,
+    "status": "skipped",
+    "version": "0.1.0"
+  },
+  "securityPolicyProjectResult": {
+    "category": "Security Source",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "projectMustHaveSecurityPolicySource",
+    "issues": [],
+    "metrics": {
+      "projectWithoutExpectedSecurityPolicy": 0
+    },
+    "name": "Project must have a security policy source",
+    "skipped": true,
+    "status": "skipped",
+    "version": "0.1.0"
+  },
+  "unverifiedScriptsResult": {
+    "category": "Pipeline Composition",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "pipelineMustNotExecuteUnverifiedScripts",
+    "issues": [],
+    "metrics": {
+      "jobsChecked": 34,
+      "totalScriptLinesChecked": 49,
+      "unverifiedScriptsFound": 0
+    },
+    "name": "Pipeline must not execute unverified scripts",
+    "skipped": true,
+    "status": "skipped",
+    "version": "0.1.0"
+  },
+  "variableInjectionResult": {
+    "category": "CI/CD Variables",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "pipelineMustNotUseUnsafeVariableExpansion",
+    "issues": [],
+    "metrics": {
+      "jobsChecked": 34,
+      "totalScriptLinesChecked": 49,
+      "unsafeExpansionsFound": 0
+    },
+    "name": "Pipeline must not use unsafe variable expansion",
+    "skipped": true,
+    "status": "skipped",
+    "version": "0.1.0"
+  },
+  "analyzeBranch": "findings",
+  "analyzedCiConfig": {
+    "content": "---\nvariables:\n  SECURE_ANALYZERS_PREFIX: \"$CI_TEMPLATE_REGISTRY_HOST/security-products\"\n  SAST_IMAGE_SUFFIX: ''\n  SAST_EXCLUDED_ANALYZERS: ''\n  DEFAULT_SAST_EXCLUDED_PATHS: spec, test, tests, tmp\n  SAST_EXCLUDED_PATHS: \"$DEFAULT_SAST_EXCLUDED_PATHS\"\n  SCAN_KUBERNETES_MANIFESTS: 'false'\n  GITLAB_ADVANCED_SAST_EXT_INCREMENTAL_ENABLED: 'true'\n  SECRET_DETECTION_IMAGE_SUFFIX: ''\n  SECRETS_ANALYZER_VERSION: '7'\n  SECRET_DETECTION_EXCLUDED_PATHS: ''\n  CI_DEBUG_TRACE: 'true'\nsast:\n  stage: test\n  artifacts:\n    access: developer\n    reports:\n      sast:\n      - gl-sast-report.json\n    paths:\n    - gl-sast-report.json\n  rules:\n  - when: never\n  variables:\n    SEARCH_MAX_DEPTH: 4\n  script:\n  - echo \"$CI_JOB_NAME is used for configuration only, and its script should not be\n    executed\"\n  - exit 1\n\".sast-analyzer\":\n  stage: test\n  artifacts:\n    access: developer\n    reports:\n      sast: gl-sast-report.json\n    paths:\n    - gl-sast-report.json\n  rules:\n  - when: never\n  variables:\n    SEARCH_MAX_DEPTH: 4\n  script:\n  - \"/analyzer run\"\n  extends: sast\n  allow_failure: true\n\".deprecated-16.8\":\n  stage: test\n  artifacts:\n    access: developer\n    reports:\n      sast: gl-sast-report.json\n    paths:\n    - gl-sast-report.json\n  rules:\n  - when: never\n  variables:\n    SEARCH_MAX_DEPTH: 4\n  script:\n  - echo \"This job was deprecated in GitLab 16.8 and removed in GitLab 17.0\"\n  - echo \"For more information see https://docs.gitlab.com/update/deprecations/#sast-analyzer-coverage-changing-in-gitlab-170\"\n  - exit 1\n  extends: \".sast-analyzer\"\n  allow_failure: true\n\".gitlab-advanced-sast-exist-rules\":\n  exists:\n  - \"**/{*.py,*.go,*.java,*.jsp,*.js,*.jsx,*.ts,*.tsx,*.cjs,*.mjs,*.cs,*.rb,*.php}\"\ngitlab-advanced-sast:\n  stage: test\n  artifacts:\n    access: developer\n    reports:\n      sast:\n      - gl-sast-report.json\n    paths:\n    - gl-sast-report.json\n    - ts-cache.sqlite.gz\n  rules:\n  - if: \"$SAST_DISABLED == 'true' || $SAST_DISABLED == '1'\"\n    when: never\n  - if: \"$SAST_EXCLUDED_ANALYZERS =~ /(^|[,[:space:]])gitlab-advanced-sast([,[:space:]]|$)/\"\n    when: never\n  - if: \"$GITLAB_ADVANCED_SAST_ENABLED != 'true' \u0026\u0026 $GITLAB_ADVANCED_SAST_ENABLED\n      != '1'\"\n    when: never\n  - if: $AST_ENABLE_MR_PIPELINES == \"true\" \u0026\u0026 $CI_PIPELINE_SOURCE == \"merge_request_event\"\n      \u0026\u0026 $GITLAB_FEATURES =~ /\\bsast_advanced\\b/\n    exists:\n    - \"**/{*.py,*.go,*.java,*.jsp,*.js,*.jsx,*.ts,*.tsx,*.cjs,*.mjs,*.cs,*.rb,*.php}\"\n  - if: $AST_ENABLE_MR_PIPELINES == \"true\" \u0026\u0026 $CI_OPEN_MERGE_REQUESTS\n    when: never\n  - if: \"$CI_COMMIT_BRANCH \u0026\u0026 $GITLAB_FEATURES =~ /\\\\bsast_advanced\\\\b/\"\n    exists:\n    - \"**/{*.py,*.go,*.java,*.jsp,*.js,*.jsx,*.ts,*.tsx,*.cjs,*.mjs,*.cs,*.rb,*.php}\"\n  variables:\n    SEARCH_MAX_DEPTH: 20\n    SAST_ANALYZER_IMAGE_TAG: '2'\n    SAST_ANALYZER_IMAGE: \"$SECURE_ANALYZERS_PREFIX/gitlab-advanced-sast:$SAST_ANALYZER_IMAGE_TAG$SAST_IMAGE_SUFFIX\"\n  script:\n  - \"/analyzer run\"\n  extends: \".sast-analyzer\"\n  allow_failure: true\n  image:\n    name: \"$SAST_ANALYZER_IMAGE\"\n  cache:\n    key: scan-metrics-$CI_COMMIT_REF_SLUG\n    fallback_keys:\n    - scan-metrics-$CI_DEFAULT_BRANCH\n    paths:\n    - scan_metrics.csv\n  timeout: 3h\nbandit-sast:\n  stage: test\n  artifacts:\n    access: developer\n    reports:\n      sast:\n      - gl-sast-report.json\n    paths:\n    - gl-sast-report.json\n  rules:\n  - when: never\n  variables:\n    SEARCH_MAX_DEPTH: 4\n  script:\n  - echo \"This job was deprecated in GitLab 14.8 and removed in GitLab 15.4\"\n  - echo \"For more information see https://gitlab.com/gitlab-org/gitlab/-/issues/352554\"\n  - exit 1\n  extends: \".sast-analyzer\"\n  allow_failure: true\nbrakeman-sast:\n  stage: test\n  artifacts:\n    access: developer\n    reports:\n      sast:\n      - gl-sast-report.json\n    paths:\n    - gl-sast-report.json\n  rules:\n  - when: never\n  variables:\n    SEARCH_MAX_DEPTH: 4\n  script:\n  - echo \"This job was deprecated in GitLab 16.8 and removed in GitLab 17.0\"\n  - echo \"For more information see https://docs.gitlab.com/update/deprecations/#sast-analyzer-coverage-changing-in-gitlab-170\"\n  - exit 1\n  extends: \".deprecated-16.8\"\n  allow_failure: true\neslint-sast:\n  stage: test\n  artifacts:\n    access: developer\n    reports:\n      sast:\n      - gl-sast-report.json\n    paths:\n    - gl-sast-report.json\n  rules:\n  - when: never\n  variables:\n    SEARCH_MAX_DEPTH: 4\n  script:\n  - echo \"This job was deprecated in GitLab 14.8 and removed in GitLab 15.4\"\n  - echo \"For more information see https://gitlab.com/gitlab-org/gitlab/-/issues/352554\"\n  - exit 1\n  extends: \".sast-analyzer\"\n  allow_failure: true\nflawfinder-sast:\n  stage: test\n  artifacts:\n    access: developer\n    reports:\n      sast:\n      - gl-sast-report.json\n    paths:\n    - gl-sast-report.json\n  rules:\n  - when: never\n  variables:\n    SEARCH_MAX_DEPTH: 4\n  script:\n  - echo \"This job was deprecated in GitLab 16.8 and removed in GitLab 17.0\"\n  - echo \"For more information see https://docs.gitlab.com/update/deprecations/#sast-analyzer-coverage-changing-in-gitlab-170\"\n  - exit 1\n  extends: \".deprecated-16.8\"\n  allow_failure: true\nkubesec-sast:\n  stage: test\n  artifacts:\n    access: developer\n    reports:\n      sast:\n      - gl-sast-report.json\n    paths:\n    - gl-sast-report.json\n  rules:\n  - if: \"$SAST_DISABLED == 'true' || $SAST_DISABLED == '1'\"\n    when: never\n  - if: \"$SAST_EXCLUDED_ANALYZERS =~ /kubesec/\"\n    when: never\n  - if: $AST_ENABLE_MR_PIPELINES == \"true\" \u0026\u0026 $CI_PIPELINE_SOURCE == \"merge_request_event\"\n      \u0026\u0026 $SCAN_KUBERNETES_MANIFESTS == 'true'\n  - if: $AST_ENABLE_MR_PIPELINES == \"true\" \u0026\u0026 $CI_OPEN_MERGE_REQUESTS\n    when: never\n  - if: \"$CI_COMMIT_BRANCH \u0026\u0026 $SCAN_KUBERNETES_MANIFESTS == 'true'\"\n  variables:\n    SEARCH_MAX_DEPTH: 4\n    SAST_ANALYZER_IMAGE_TAG: 6\n    SAST_ANALYZER_IMAGE: \"$SECURE_ANALYZERS_PREFIX/kubesec:$SAST_ANALYZER_IMAGE_TAG\"\n  script:\n  - \"/analyzer run\"\n  extends: \".sast-analyzer\"\n  allow_failure: true\n  image:\n    name: \"$SAST_ANALYZER_IMAGE\"\ngosec-sast:\n  stage: test\n  artifacts:\n    access: developer\n    reports:\n      sast:\n      - gl-sast-report.json\n    paths:\n    - gl-sast-report.json\n  rules:\n  - when: never\n  variables:\n    SEARCH_MAX_DEPTH: 4\n  script:\n  - echo \"This job was deprecated in GitLab 14.8 and removed in GitLab 15.4\"\n  - echo \"For more information see https://gitlab.com/gitlab-org/gitlab/-/issues/352554\"\n  - exit 1\n  extends: \".sast-analyzer\"\n  allow_failure: true\nmobsf-android-sast:\n  stage: test\n  artifacts:\n    access: developer\n    reports:\n      sast:\n      - gl-sast-report.json\n    paths:\n    - gl-sast-report.json\n  rules:\n  - when: never\n  variables:\n    SEARCH_MAX_DEPTH: 4\n  script:\n  - echo \"This job was deprecated in GitLab 16.8 and removed in GitLab 17.0\"\n  - echo \"For more information see https://docs.gitlab.com/update/deprecations/#sast-analyzer-coverage-changing-in-gitlab-170\"\n  - exit 1\n  extends: \".deprecated-16.8\"\n  allow_failure: true\nmobsf-ios-sast:\n  stage: test\n  artifacts:\n    access: developer\n    reports:\n      sast:\n      - gl-sast-report.json\n    paths:\n    - gl-sast-report.json\n  rules:\n  - when: never\n  variables:\n    SEARCH_MAX_DEPTH: 4\n  script:\n  - echo \"This job was deprecated in GitLab 16.8 and removed in GitLab 17.0\"\n  - echo \"For more information see https://docs.gitlab.com/update/deprecations/#sast-analyzer-coverage-changing-in-gitlab-170\"\n  - exit 1\n  extends: \".deprecated-16.8\"\n  allow_failure: true\nnodejs-scan-sast:\n  stage: test\n  artifacts:\n    access: developer\n    reports:\n      sast:\n      - gl-sast-report.json\n    paths:\n    - gl-sast-report.json\n  rules:\n  - when: never\n  variables:\n    SEARCH_MAX_DEPTH: 4\n  script:\n  - echo \"This job was deprecated in GitLab 16.8 and removed in GitLab 17.0\"\n  - echo \"For more information see https://docs.gitlab.com/update/deprecations/#sast-analyzer-coverage-changing-in-gitlab-170\"\n  - exit 1\n  extends: \".deprecated-16.8\"\n  allow_failure: true\nphpcs-security-audit-sast:\n  stage: test\n  artifacts:\n    access: developer\n    reports:\n      sast:\n      - gl-sast-report.json\n    paths:\n    - gl-sast-report.json\n  rules:\n  - when: never\n  variables:\n    SEARCH_MAX_DEPTH: 4\n  script:\n  - echo \"This job was deprecated in GitLab 16.8 and removed in GitLab 17.0\"\n  - echo \"For more information see https://docs.gitlab.com/update/deprecations/#sast-analyzer-coverage-changing-in-gitlab-170\"\n  - exit 1\n  extends: \".deprecated-16.8\"\n  allow_failure: true\n\".pmd-apex-exist-rules\":\n  exists:\n  - \"**/*.cls\"\npmd-apex-sast:\n  stage: test\n  artifacts:\n    access: developer\n    reports:\n      sast:\n      - gl-sast-report.json\n    paths:\n    - gl-sast-report.json\n  rules:\n  - if: \"$SAST_DISABLED == 'true' || $SAST_DISABLED == '1'\"\n    when: never\n  - if: \"$SAST_EXCLUDED_ANALYZERS =~ /pmd-apex/\"\n    when: never\n  - if: $AST_ENABLE_MR_PIPELINES == \"true\" \u0026\u0026 $CI_PIPELINE_SOURCE == \"merge_request_event\"\n    exists:\n    - \"**/*.cls\"\n  - if: $AST_ENABLE_MR_PIPELINES == \"true\" \u0026\u0026 $CI_OPEN_MERGE_REQUESTS\n    when: never\n  - if: \"$CI_COMMIT_BRANCH\"\n    exists:\n    - \"**/*.cls\"\n  variables:\n    SEARCH_MAX_DEPTH: 4\n    SAST_ANALYZER_IMAGE_TAG: 6\n    SAST_ANALYZER_IMAGE: \"$SECURE_ANALYZERS_PREFIX/pmd-apex:$SAST_ANALYZER_IMAGE_TAG\"\n  script:\n  - \"/analyzer run\"\n  extends: \".sast-analyzer\"\n  allow_failure: true\n  image:\n    name: \"$SAST_ANALYZER_IMAGE\"\n\".semgrep-exist-rules\":\n  exists:\n  - \"**/{*.py,*.js,*.jsx,*.ts,*.tsx,*.cjs,*.mjs,*.c,*.cc,*.cpp,*.c++,*.cp,*.cxx,*.h,*.hpp,*.go,*.java,*.cs,*.scala,*.sc,*.php,*.swift,*.m,*.rb,*.kt,*.properties,application*.yml,bootstrap*.yml,application*.yaml,bootstrap*.yaml}\"\n\".semgrep-with-advanced-sast-exist-rules\":\n  exists:\n  - \"**/{*.c,*.cc,*.cpp,*.c++,*.cp,*.cxx,*.h,*.hpp,*.scala,*.sc,*.swift,*.m,*.kt,*.properties,application*.yml,bootstrap*.yml,application*.yaml,bootstrap*.yaml}\"\nsecurity-code-scan-sast:\n  stage: test\n  artifacts:\n    access: developer\n    reports:\n      sast:\n      - gl-sast-report.json\n    paths:\n    - gl-sast-report.json\n  rules:\n  - when: never\n  variables:\n    SEARCH_MAX_DEPTH: 4\n  script:\n  - echo \"This job was deprecated in GitLab 15.9 and removed in GitLab 16.0\"\n  - echo \"For more information see https://gitlab.com/gitlab-org/gitlab/-/issues/390416\"\n  - exit 1\n  extends: \".sast-analyzer\"\n  allow_failure: true\nsemgrep-sast:\n  stage: test\n  artifacts:\n    access: developer\n    reports:\n      sast:\n      - gl-sast-report.json\n    paths:\n    - gl-sast-report.json\n  rules:\n  - if: \"$SAST_DISABLED == 'true' || $SAST_DISABLED == '1'\"\n    when: never\n  - if: \"$SAST_EXCLUDED_ANALYZERS =~ /semgrep/\"\n    when: never\n  - if: $AST_ENABLE_MR_PIPELINES == \"true\" \u0026\u0026 $CI_PIPELINE_SOURCE == \"merge_request_event\"\n      \u0026\u0026 $GITLAB_FEATURES =~ /\\bsast_advanced\\b/ \u0026\u0026 $SAST_EXCLUDED_ANALYZERS !~ /(^|[,[:space:]])gitlab-advanced-sast([,[:space:]]|$)/\n      \u0026\u0026 ($GITLAB_ADVANCED_SAST_ENABLED == 'true' || $GITLAB_ADVANCED_SAST_ENABLED\n      == '1')\n    variables:\n      SAST_EXCLUDED_PATHS: \"$DEFAULT_SAST_EXCLUDED_PATHS, **/*.py, **/*.go, **/*.java,\n        **/*.js, **/*.jsx, **/*.ts, **/*.tsx, **/*.cjs, **/*.mjs, **/*.cs, **/*.rb,\n        **/*.php\"\n      SAST_SEMGREP_EXCLUDED_PATHS: \"**/*.py, **/*.go, **/*.java, **/*.js, **/*.jsx,\n        **/*.ts, **/*.tsx, **/*.cjs, **/*.mjs, **/*.cs, **/*.rb, **/*.php\"\n    exists:\n    - \"**/{*.c,*.cc,*.cpp,*.c++,*.cp,*.cxx,*.h,*.hpp,*.scala,*.sc,*.swift,*.m,*.kt,*.properties,application*.yml,bootstrap*.yml,application*.yaml,bootstrap*.yaml}\"\n  - if: $CI_PIPELINE_SOURCE == \"merge_request_event\" \u0026\u0026 $GITLAB_FEATURES =~ /\\bsast_advanced\\b/\n      \u0026\u0026 $SAST_EXCLUDED_ANALYZERS !~ /(^|[,[:space:]])gitlab-advanced-sast([,[:space:]]|$)/\n      \u0026\u0026 ($GITLAB_ADVANCED_SAST_ENABLED == 'true' || $GITLAB_ADVANCED_SAST_ENABLED\n      == '1')\n    when: never\n  - if: $AST_ENABLE_MR_PIPELINES == \"true\" \u0026\u0026 $CI_PIPELINE_SOURCE == \"merge_request_event\"\n    exists:\n    - \"**/{*.py,*.js,*.jsx,*.ts,*.tsx,*.cjs,*.mjs,*.c,*.cc,*.cpp,*.c++,*.cp,*.cxx,*.h,*.hpp,*.go,*.java,*.cs,*.scala,*.sc,*.php,*.swift,*.m,*.rb,*.kt,*.properties,application*.yml,bootstrap*.yml,application*.yaml,bootstrap*.yaml}\"\n  - if: $AST_ENABLE_MR_PIPELINES == \"true\" \u0026\u0026 $CI_OPEN_MERGE_REQUESTS\n    when: never\n  - if: \"$CI_COMMIT_BRANCH \u0026\u0026 $GITLAB_FEATURES =~ /\\\\bsast_advanced\\\\b/ \u0026\u0026 $SAST_EXCLUDED_ANALYZERS\n      !~ /(^|[,[:space:]])gitlab-advanced-sast([,[:space:]]|$)/ \u0026\u0026 ($GITLAB_ADVANCED_SAST_ENABLED\n      == 'true' || $GITLAB_ADVANCED_SAST_ENABLED == '1')\"\n    variables:\n      SAST_EXCLUDED_PATHS: \"$DEFAULT_SAST_EXCLUDED_PATHS, **/*.py, **/*.go, **/*.java,\n        **/*.js, **/*.jsx, **/*.ts, **/*.tsx, **/*.cjs, **/*.mjs, **/*.cs, **/*.rb,\n        **/*.php\"\n      SAST_SEMGREP_EXCLUDED_PATHS: \"**/*.py, **/*.go, **/*.java, **/*.js, **/*.jsx,\n        **/*.ts, **/*.tsx, **/*.cjs, **/*.mjs, **/*.cs, **/*.rb, **/*.php\"\n    exists:\n    - \"**/{*.c,*.cc,*.cpp,*.c++,*.cp,*.cxx,*.h,*.hpp,*.scala,*.sc,*.swift,*.m,*.kt,*.properties,application*.yml,bootstrap*.yml,application*.yaml,bootstrap*.yaml}\"\n  - if: \"$CI_COMMIT_BRANCH \u0026\u0026 $GITLAB_FEATURES =~ /\\\\bsast_advanced\\\\b/ \u0026\u0026 $SAST_EXCLUDED_ANALYZERS\n      !~ /(^|[,[:space:]])gitlab-advanced-sast([,[:space:]]|$)/ \u0026\u0026 ($GITLAB_ADVANCED_SAST_ENABLED\n      == 'true' || $GITLAB_ADVANCED_SAST_ENABLED == '1')\"\n    when: never\n  - if: \"$CI_COMMIT_BRANCH\"\n    exists:\n    - \"**/{*.py,*.js,*.jsx,*.ts,*.tsx,*.cjs,*.mjs,*.c,*.cc,*.cpp,*.c++,*.cp,*.cxx,*.h,*.hpp,*.go,*.java,*.cs,*.scala,*.sc,*.php,*.swift,*.m,*.rb,*.kt,*.properties,application*.yml,bootstrap*.yml,application*.yaml,bootstrap*.yaml}\"\n  variables:\n    SEARCH_MAX_DEPTH: 20\n    SAST_ANALYZER_IMAGE_TAG: 6\n    SAST_ANALYZER_IMAGE: \"$SECURE_ANALYZERS_PREFIX/semgrep:$SAST_ANALYZER_IMAGE_TAG$SAST_IMAGE_SUFFIX\"\n  script:\n  - \"/analyzer run\"\n  extends: \".sast-analyzer\"\n  allow_failure: true\n  image:\n    name: \"$SAST_ANALYZER_IMAGE\"\n\".sobelow-exist-rules\":\n  exists:\n  - \"**/mix.exs\"\nsobelow-sast:\n  stage: test\n  artifacts:\n    access: developer\n    reports:\n      sast:\n      - gl-sast-report.json\n    paths:\n    - gl-sast-report.json\n  rules:\n  - if: \"$SAST_DISABLED == 'true' || $SAST_DISABLED == '1'\"\n    when: never\n  - if: \"$SAST_EXCLUDED_ANALYZERS =~ /sobelow/\"\n    when: never\n  - if: $AST_ENABLE_MR_PIPELINES == \"true\" \u0026\u0026 $CI_PIPELINE_SOURCE == \"merge_request_event\"\n    exists:\n    - \"**/mix.exs\"\n  - if: $AST_ENABLE_MR_PIPELINES == \"true\" \u0026\u0026 $CI_OPEN_MERGE_REQUESTS\n    when: never\n  - if: \"$CI_COMMIT_BRANCH\"\n    exists:\n    - \"**/mix.exs\"\n  variables:\n    SEARCH_MAX_DEPTH: 4\n    SAST_ANALYZER_IMAGE_TAG: 6\n    SAST_ANALYZER_IMAGE: \"$SECURE_ANALYZERS_PREFIX/sobelow:$SAST_ANALYZER_IMAGE_TAG\"\n  script:\n  - \"/analyzer run\"\n  extends: \".sast-analyzer\"\n  allow_failure: true\n  image:\n    name: \"$SAST_ANALYZER_IMAGE\"\n\".spotbugs-exist-rules\":\n  exists:\n  - \"**/*.groovy\"\nspotbugs-sast:\n  stage: test\n  artifacts:\n    access: developer\n    reports:\n      sast:\n      - gl-sast-report.json\n    paths:\n    - gl-sast-report.json\n  rules:\n  - if: \"$SAST_EXCLUDED_ANALYZERS =~ /spotbugs/\"\n    when: never\n  - if: \"$SAST_DISABLED == 'true' || $SAST_DISABLED == '1'\"\n    when: never\n  - if: $AST_ENABLE_MR_PIPELINES == \"true\" \u0026\u0026 $CI_PIPELINE_SOURCE == \"merge_request_event\"\n    exists:\n    - \"**/*.groovy\"\n  - if: $AST_ENABLE_MR_PIPELINES == \"true\" \u0026\u0026 $CI_OPEN_MERGE_REQUESTS\n    when: never\n  - if: \"$CI_COMMIT_BRANCH\"\n    exists:\n    - \"**/*.groovy\"\n  variables:\n    SEARCH_MAX_DEPTH: 4\n    SAST_ANALYZER_IMAGE_TAG: 5\n    SAST_ANALYZER_IMAGE: \"$SECURE_ANALYZERS_PREFIX/spotbugs:$SAST_ANALYZER_IMAGE_TAG\"\n  script:\n  - \"/analyzer run\"\n  extends: \".sast-analyzer\"\n  allow_failure: true\n  image:\n    name: \"$SAST_ANALYZER_IMAGE\"\n\".gitlab-advanced-sast-cpp-exist-rules\":\n  exists:\n  - \"**/{*.c,*.cc,*.cpp,*.c++,*.cp,*.cxx,*.h,*.hpp}\"\ngitlab-advanced-sast-cpp:\n  stage: test\n  artifacts:\n    access: developer\n    reports:\n      sast:\n      - gl-sast-report.json\n    paths:\n    - gl-sast-report.json\n  rules:\n  - if: \"$SAST_DISABLED == 'true' || $SAST_DISABLED == '1'\"\n    when: never\n  - if: \"$SAST_EXCLUDED_ANALYZERS =~ /gitlab-advanced-sast-cpp/\"\n    when: never\n  - if: \"$GITLAB_ADVANCED_SAST_CPP_ENABLED != 'true' \u0026\u0026 $GITLAB_ADVANCED_SAST_CPP_ENABLED\n      != '1'\"\n    when: never\n  - if: $AST_ENABLE_MR_PIPELINES == \"true\" \u0026\u0026 $CI_PIPELINE_SOURCE == \"merge_request_event\"\n      \u0026\u0026 $GITLAB_FEATURES =~ /\\bsast_advanced\\b/\n    exists:\n    - \"**/{*.c,*.cc,*.cpp,*.c++,*.cp,*.cxx,*.h,*.hpp}\"\n  - if: $AST_ENABLE_MR_PIPELINES == \"true\" \u0026\u0026 $CI_OPEN_MERGE_REQUESTS\n    when: never\n  - if: \"$CI_COMMIT_BRANCH \u0026\u0026 $GITLAB_FEATURES =~ /\\\\bsast_advanced\\\\b/\"\n    exists:\n    - \"**/{*.c,*.cc,*.cpp,*.c++,*.cp,*.cxx,*.h,*.hpp}\"\n  variables:\n    SEARCH_MAX_DEPTH: 20\n    SAST_ANALYZER_IMAGE_TAG: 1\n    SAST_ANALYZER_IMAGE: \"$SECURE_ANALYZERS_PREFIX/clangsa:$SAST_ANALYZER_IMAGE_TAG$SAST_IMAGE_SUFFIX\"\n  script:\n  - \"/analyzer run\"\n  extends: \".sast-analyzer\"\n  allow_failure: true\n  image:\n    name: \"$SAST_ANALYZER_IMAGE\"\n\".gitlab-advanced-sast-ext-exist-rules\":\n  exists:\n  - \"**/*.swift\"\n  - \"**/*.m\"\n  - \"**/*.mm\"\n  - \"**/*.dart\"\n  - \"**/*.scala\"\n  - \"**/*.sc\"\n  - \"**/*.kt\"\n  - \"**/*.kts\"\n  - \"**/*.rs\"\ngitlab-advanced-sast-ext:\n  stage: test\n  artifacts:\n    access: developer\n    reports:\n      sast:\n      - gl-sast-report.json\n    paths:\n    - gl-sast-report.json\n  rules:\n  - if: \"$SAST_DISABLED == 'true' || $SAST_DISABLED == '1'\"\n    when: never\n  - if: \"$SAST_EXCLUDED_ANALYZERS =~ /gitlab-advanced-sast-ext/\"\n    when: never\n  - if: \"$GITLAB_ADVANCED_SAST_ENABLED != 'true' \u0026\u0026 $GITLAB_ADVANCED_SAST_ENABLED\n      != '1'\"\n    when: never\n  - if: $AST_ENABLE_MR_PIPELINES == \"true\" \u0026\u0026 $CI_PIPELINE_SOURCE == \"merge_request_event\"\n      \u0026\u0026 $GITLAB_FEATURES =~ /\\bsast_advanced\\b/\n    exists:\n    - \"**/*.swift\"\n    - \"**/*.m\"\n    - \"**/*.mm\"\n    - \"**/*.dart\"\n    - \"**/*.scala\"\n    - \"**/*.sc\"\n    - \"**/*.kt\"\n    - \"**/*.kts\"\n    - \"**/*.rs\"\n  - if: $AST_ENABLE_MR_PIPELINES == \"true\" \u0026\u0026 $CI_OPEN_MERGE_REQUESTS\n    when: never\n  - if: \"$CI_COMMIT_BRANCH \u0026\u0026 $GITLAB_FEATURES =~ /\\\\bsast_advanced\\\\b/\"\n    exists:\n    - \"**/*.swift\"\n    - \"**/*.m\"\n    - \"**/*.mm\"\n    - \"**/*.dart\"\n    - \"**/*.scala\"\n    - \"**/*.sc\"\n    - \"**/*.kt\"\n    - \"**/*.kts\"\n    - \"**/*.rs\"\n  variables:\n    SEARCH_MAX_DEPTH: 20\n    SAST_ANALYZER_IMAGE_TAG: 0\n    SAST_ANALYZER_IMAGE: \"$SECURE_ANALYZERS_PREFIX/gitlab-advanced-sast-ext:$SAST_ANALYZER_IMAGE_TAG$SAST_IMAGE_SUFFIX\"\n    GITLAB_ADVANCED_SAST_EXT_STORE: \"$CI_PROJECT_DIR/.sat-store\"\n  script:\n  - \"/analyzer run\"\n  extends: \".sast-analyzer\"\n  allow_failure: true\n  image:\n    name: \"$SAST_ANALYZER_IMAGE\"\n  cache:\n    key: sat-store-$CI_COMMIT_REF_SLUG\n    fallback_keys:\n    - sat-store-$CI_DEFAULT_BRANCH\n    paths:\n    - \".sat-store/\"\n\".secret-analyzer\":\n  stage: test\n  image: \"$SECURE_ANALYZERS_PREFIX/secrets:$SECRETS_ANALYZER_VERSION$SECRET_DETECTION_IMAGE_SUFFIX\"\n  services: []\n  allow_failure: true\n  variables:\n    GIT_DEPTH: '50'\n  artifacts:\n    access: developer\n    reports:\n      secret_detection: gl-secret-detection-report.json\n    paths:\n    - gl-secret-detection-report.json\nsecret_detection:\n  stage: test\n  image: \"$SECURE_ANALYZERS_PREFIX/secrets:$SECRETS_ANALYZER_VERSION$SECRET_DETECTION_IMAGE_SUFFIX\"\n  services: []\n  allow_failure: true\n  variables:\n    GIT_DEPTH: '50'\n  artifacts:\n    access: developer\n    reports:\n      secret_detection:\n      - gl-secret-detection-report.json\n    paths:\n    - gl-secret-detection-report.json\n  extends: \".secret-analyzer\"\n  rules:\n  - if: \"$SECRET_DETECTION_DISABLED == 'true' || $SECRET_DETECTION_DISABLED == '1'\"\n    when: never\n  - if: $AST_ENABLE_MR_PIPELINES == \"true\" \u0026\u0026 $CI_PIPELINE_SOURCE == \"merge_request_event\"\n  - if: $AST_ENABLE_MR_PIPELINES == \"true\" \u0026\u0026 $CI_OPEN_MERGE_REQUESTS\n    when: never\n  - if: \"$CI_COMMIT_BRANCH\"\n  script:\n  - \"/analyzer run\"\nstages:\n- \".pre\"\n- build\n- test\n- deploy\n- \".post\"\nbuild:\n  stage: build\n  image: node:latest\n  script:\n  - npm install -g some-build-tool\n  - curl -sSL https://get.example.com/install.sh | bash\nuntrusted-registry:\n  stage: test\n  image: registry.example.com/team/tool:1.0\n  script:\n  - tool --check\ndeploy:\n  stage: deploy\n  image: alpine:latest\n  script:\n  - echo \"deploying $CI_COMMIT_MESSAGE\"\n",
+    "merged": true,
+    "path": ".gitlab-ci.yml"
+  },
+  "capabilities": [
+    {
+      "kind": "secret_detection",
+      "job": "secret_detection",
+      "tool": "gitlab-secret-detection",
+      "evidence": "images"
+    }
+  ],
+  "headCommitSha": "11483f88a750137f6a848bf8e92a92bf5534a8cb",
+  "plumberConfig": {
+    "effectivePolicy": {
+      "github": {
+        "controls": {
+          "actionRefsMustExistUpstream": {
+            "enabled": true
+          },
+          "actionsMustBePinnedByCommitSha": {
+            "enabled": true,
+            "trustedOwners": [
+              "actions",
+              "github",
+              "dependabot"
+            ]
+          },
+          "actionsMustNotBeArchived": {
+            "enabled": true
+          },
+          "actionsMustNotCarryKnownCVEs": {
+            "enabled": true
+          },
+          "actionsMustNotExecuteMutableRemoteCode": {
+            "enabled": true
+          },
+          "branchMustBeProtected": {
+            "allowForcePush": false,
+            "codeOwnerApprovalRequired": false,
+            "defaultMustBeProtected": true,
+            "enabled": true,
+            "namePatterns": [
+              "main",
+              "master",
+              "release/*",
+              "production",
+              "dev"
+            ]
+          },
+          "checkoutMustNotPersistCredentials": {
+            "enabled": true
+          },
+          "containerImageMustNotUseForbiddenTags": {
+            "containerImagesMustBePinnedByDigest": true,
+            "enabled": true,
+            "tags": [
+              "latest",
+              "dev",
+              "development",
+              "staging",
+              "main",
+              "master"
+            ]
+          },
+          "externalRefsMustNotCollide": {
+            "enabled": true
+          },
+          "githubActionMustComeFromAuthorizedSources": {
+            "enabled": true,
+            "minimumStars": 20000,
+            "trustGithubOfficialActions": true,
+            "trustSameOrgActions": true,
+            "trustedGithubActions": [
+              "aws-actions/*",
+              "google-github-actions/*",
+              "googleapis/*",
+              "Azure/*",
+              "cloudflare/*",
+              "hashicorp/*",
+              "pulumi/*",
+              "digitalocean/*",
+              "ibm/*",
+              "oracle-actions/*",
+              "canonical/*",
+              "fastly/*",
+              "docker/*",
+              "gradle/*",
+              "goreleaser/*",
+              "bazel-contrib/*",
+              "jfrog/*",
+              "jfrog-fastci/*",
+              "dagger/*",
+              "buildkite/*",
+              "CircleCI-Public/*",
+              "earthly/*",
+              "pypa/*",
+              "ruby/*",
+              "denoland/*",
+              "oven-sh/*",
+              "astral-sh/*",
+              "golangci/*",
+              "dart-lang/*",
+              "erlef/*",
+              "haskell-actions/*",
+              "julia-actions/*",
+              "ocaml/*",
+              "conda-incubator/*",
+              "r-lib/*",
+              "sbt/*",
+              "VirtusLab/*",
+              "gleam-lang/*",
+              "getplumber/*",
+              "step-security/*",
+              "ossf/*",
+              "sigstore/*",
+              "slsa-framework/*",
+              "aquasecurity/*",
+              "anchore/*",
+              "snyk/*",
+              "SonarSource/*",
+              "trufflesecurity/*",
+              "gitleaks/*",
+              "chainguard-dev/*",
+              "GitGuardian/*",
+              "bridgecrewio/*",
+              "zaproxy/*",
+              "Checkmarx/*",
+              "veracode/*",
+              "tenable/*",
+              "semgrep/*",
+              "in-toto/*",
+              "sonatype/*",
+              "sonatype-nexus-community/*",
+              "checkmarx-ts/*",
+              "Qualys/*",
+              "orcasecurity/*",
+              "oxsecurity/*",
+              "codecov/*",
+              "getsentry/*",
+              "DataDog/*",
+              "cypress-io/*",
+              "CodSpeedHQ/*",
+              "codspeedhq/*",
+              "JetBrains/*",
+              "microsoft/*",
+              "atlassian/*",
+              "Shopify/*",
+              "netlify/*",
+              "planetscale/*",
+              "supabase/*",
+              "expo/*",
+              "grafana/*",
+              "honeycombio/*",
+              "newrelic/*",
+              "saucelabs/*",
+              "mongodb/*",
+              "adobe/*",
+              "facebook/*",
+              "helm/*",
+              "kubernetes-sigs/*",
+              "opentofu/*",
+              "ansible/*",
+              "ansible-community/*",
+              "pnpm/*",
+              "anthropics/*",
+              "openai/*",
+              "slackapi/*",
+              "google/*",
+              "golang/*",
+              "dependabot/*",
+              "rubygems/*",
+              "apple-actions/*",
+              "redhat-actions/*",
+              "graalvm/*",
+              "arduino/*",
+              "msys2/*",
+              "android-actions/*",
+              "changesets/*",
+              "tauri-apps/*",
+              "biomejs/*",
+              "bufbuild/*",
+              "reviewdog/*",
+              "hadolint/*",
+              "gittools/*",
+              "fsfe/*",
+              "cachix/*",
+              "nix-community/*",
+              "DeterminateSystems/*",
+              "1Password/*",
+              "tailscale/*",
+              "octokit/*",
+              "NuGet/*",
+              "depot/*",
+              "chromaui/*",
+              "signpath/*",
+              "rust-lang/*",
+              "apache/*",
+              "Homebrew/*",
+              "PyO3/*",
+              "EmbarkStudios/*",
+              "bytecodealliance/*",
+              "emscripten-core/*",
+              "devcontainers/*",
+              "renovatebot/*",
+              "prefix-dev/*",
+              "scientific-python/*",
+              "browserstack/*",
+              "digicert/*",
+              "zizmorcore/*",
+              "go-task/*",
+              "namespacelabs/*",
+              "voidzero-dev/*",
+              "crowdin/*",
+              "linear/*",
+              "qltysh/*",
+              "flatpak/*",
+              "peter-evans/*",
+              "azure/*",
+              "sonarsource/*",
+              "datadog/*",
+              "jetbrains/*",
+              "shopify/*",
+              "gitguardian/*",
+              "checkmarx/*",
+              "qualys/*",
+              "circleci-public/*",
+              "virtuslab/*",
+              "nuget/*",
+              "determinatesystems/*",
+              "1password/*",
+              "apple-Actions/*",
+              "embarkstudios/*",
+              "pyo3/*",
+              "homebrew/*"
+            ]
+          },
+          "pipelineMustNotEnableDebugTrace": {
+            "enabled": true,
+            "forbiddenVariables": [
+              "ACTIONS_STEP_DEBUG",
+              "ACTIONS_RUNNER_DEBUG"
+            ]
+          },
+          "pipelineMustNotExecuteUnverifiedScripts": {
+            "enabled": true,
+            "trustedUrls": []
+          },
+          "pipelineMustNotUseDockerInDocker": {
+            "detectInsecureDaemon": true,
+            "enabled": true
+          },
+          "pullRequestTargetMustNotCheckoutHead": {
+            "enabled": true
+          },
+          "reusableWorkflowsMustNotInheritSecrets": {
+            "enabled": true
+          },
+          "securityJobsMustNotBeWeakened": {
+            "allowFailureMustBeFalse": {
+              "enabled": true
+            },
+            "enabled": true,
+            "rulesMustNotBeRedefined": {
+              "enabled": true
+            },
+            "securityJobPatterns": [
+              "*codeql*",
+              "*dependency-review*",
+              "*trufflehog*",
+              "*gitleaks*",
+              "*osv-scanner*",
+              "*semgrep*",
+              "*trivy*",
+              "*snyk*",
+              "*-sast",
+              "*-sast-*",
+              "*-scan",
+              "*scan*",
+              "*-security",
+              "*-security-*",
+              "*-audit",
+              "*-audit-*",
+              "*secret*detect*",
+              "*detect*secret*"
+            ],
+            "whenMustNotBeManual": {
+              "enabled": true
+            }
+          },
+          "untrustedTriggersMustNotWriteCache": {
+            "enabled": true,
+            "exemptJobs": [],
+            "exemptWorkflows": []
+          },
+          "workflowMustIncludeRequiredActions": {
+            "enabled": false,
+            "requiredGroups": []
+          },
+          "workflowMustNotExportEntireSecretsContext": {
+            "enabled": true
+          },
+          "workflowMustNotGrantPermissionsWriteAll": {
+            "enabled": true
+          },
+          "workflowMustNotInjectUserInputInScripts": {
+            "enabled": true
+          },
+          "workflowMustNotUseDangerousTriggers": {
+            "enabled": true
+          },
+          "workflowMustNotWriteUntrustedContentToGitHubEnv": {
+            "enabled": true
+          },
+          "workflowsMustBeValid": {
+            "enabled": true
+          },
+          "workflowsMustDeclarePermissions": {
+            "enabled": true
+          }
+        }
+      },
+      "gitlab": {
+        "controls": {
+          "branchMustBeProtected": {
+            "allowForcePush": false,
+            "codeOwnerApprovalRequired": false,
+            "defaultMustBeProtected": true,
+            "enabled": true,
+            "minMergeAccessLevel": 30,
+            "minPushAccessLevel": 40,
+            "namePatterns": [
+              "main",
+              "master",
+              "release/*",
+              "production",
+              "dev"
+            ]
+          },
+          "cicdVariablesMustBeMasked": {
+            "enabled": false
+          },
+          "cicdVariablesMustBeProtected": {
+            "enabled": false
+          },
+          "componentMustComeFromAuthorizedSources": {
+            "enabled": true,
+            "trustGitlabOfficialComponents": true,
+            "trustSameGroupComponents": true,
+            "trustSameInstanceComponents": true,
+            "trustedComponents": [
+              "gitlab.com/getplumber/*"
+            ]
+          },
+          "containerImageMustComeFromAuthorizedSources": {
+            "enabled": true,
+            "trustDockerHubOfficialImages": true,
+            "trustedUrls": [
+              "docker.io/library/*",
+              "docker.io/docker:*",
+              "docker.io/getplumber/plumber:*",
+              "docker.io/getplumber/plumber@sha256:*",
+              "getplumber/plumber:*",
+              "$CI_REGISTRY_IMAGE:*",
+              "$CI_REGISTRY_IMAGE/*",
+              "$CI_REGISTRY/*",
+              "${CI_REGISTRY}/*",
+              "${CI_REGISTRY_IMAGE}:*",
+              "${CI_REGISTRY_IMAGE}/*",
+              "${CI_DEPENDENCY_PROXY_DIRECT_GROUP_IMAGE_PREFIX}/*",
+              "registry.gitlab.com/security-products/*",
+              "registry.gitlab.com/gitlab-org/*",
+              "registry.gitlab.com/pipeline-components/*",
+              "docker.io/node:*",
+              "docker.io/python:*",
+              "docker.io/golang:*",
+              "docker.io/rust:*",
+              "docker.io/alpine:*",
+              "docker.io/ubuntu:*",
+              "docker.io/debian:*",
+              "docker.io/curlimages/*",
+              "docker.io/alpine/*",
+              "docker.io/golangci/*",
+              "docker.io/koalaman/*",
+              "docker.io/hadolint/*",
+              "docker.io/semgrep/*",
+              "docker.io/sonarsource/*",
+              "docker.io/aquasec/*",
+              "docker.io/cypress/*",
+              "docker.io/gittools/*",
+              "docker.io/renovate/*",
+              "docker.io/gitlab/*",
+              "docker.io/lycheeverse/*",
+              "docker.io/hugomods/*",
+              "docker.io/fsfe/*",
+              "docker.io/hashicorp/*",
+              "docker.io/cimg/*",
+              "docker.io/circleci/*",
+              "docker.io/amazon/*",
+              "docker.io/google/*",
+              "docker.io/nvidia/*",
+              "docker.io/bitnami/*",
+              "docker.io/intel/*",
+              "docker.io/rocm/*",
+              "docker.io/redhat/*",
+              "docker.io/opensuse/*",
+              "docker.io/gentoo/*",
+              "docker.io/nixos/*",
+              "docker.io/rustlang/*",
+              "docker.io/amd64/*",
+              "docker.io/arm32v6/*",
+              "docker.io/arm32v7/*",
+              "docker.io/arm64v8/*",
+              "docker.io/i386/*",
+              "docker.io/ppc64le/*",
+              "docker.io/riscv64/*",
+              "docker.io/s390x/*",
+              "docker.io/continuumio/*",
+              "docker.io/oven/*",
+              "docker.io/snapcore/*",
+              "docker.io/bufbuild/*",
+              "docker.io/getsentry/*",
+              "docker.io/zricethezav/*",
+              "docker.io/pandoc/*",
+              "docker.io/bats/*",
+              "docker.io/davidanson/*",
+              "docker.io/jdkato/*",
+              "mcr.microsoft.com/*",
+              "quay.io/buildah/*",
+              "quay.io/podman/*",
+              "quay.io/containers/*",
+              "quay.io/centos/*",
+              "quay.io/pypa/*",
+              "quay.io/gnome_infrastructure/*",
+              "ghcr.io/astral-sh/*",
+              "ghcr.io/renovatebot/*",
+              "ghcr.io/containerbase/*",
+              "ghcr.io/canonical/*",
+              "ghcr.io/graalvm/*",
+              "ghcr.io/terraform-linters/*",
+              "ghcr.io/prefix-dev/*",
+              "ghcr.io/cirruslabs/*",
+              "ghcr.io/streetsidesoftware/*",
+              "ghcr.io/igorshubovych/*",
+              "ghcr.io/tcort/*",
+              "gcr.io/kaniko-project/*",
+              "gcr.io/go-containerregistry/*",
+              "gcr.io/google.com/cloudsdktool/*",
+              "gcr.io/oss-fuzz-base/*",
+              "nvcr.io/nvidia/*",
+              "registry.suse.com/*",
+              "registry.fedoraproject.org/*",
+              "registry.hub.docker.com/library/*",
+              "library/*",
+              "redhat/*",
+              "opensuse/*"
+            ]
+          },
+          "containerImageMustNotUseForbiddenTags": {
+            "containerImagesMustBePinnedByDigest": true,
+            "enabled": true,
+            "tags": [
+              "latest",
+              "dev",
+              "development",
+              "staging",
+              "main",
+              "master"
+            ]
+          },
+          "externalRefsMustNotCollide": {
+            "enabled": true
+          },
+          "functionMustComeFromAuthorizedSources": {
+            "enabled": true,
+            "trustSameGroupFunctions": true,
+            "trustedFunctions": []
+          },
+          "includesMustBeUpToDate": {
+            "enabled": true
+          },
+          "includesMustNotUseForbiddenVersions": {
+            "defaultBranchIsForbiddenVersion": true,
+            "enabled": true,
+            "forbiddenVersions": [
+              "latest",
+              "~latest",
+              "main",
+              "master",
+              "HEAD"
+            ]
+          },
+          "mergeRequestApprovalRulesMustCoverAllProtectedBranches": {
+            "enabled": false
+          },
+          "mergeRequestApprovalRulesMustRequireMinimumApprovals": {
+            "enabled": false,
+            "minimumRequiredApprovals": 1
+          },
+          "mergeRequestApprovalSettingsMustBeCompliant": {
+            "enabled": false
+          },
+          "mergeRequestSettingsMustBeCompliant": {
+            "enabled": false
+          },
+          "pipelineMustIncludeComponent": {
+            "enabled": false,
+            "requiredGroups": []
+          },
+          "pipelineMustIncludeTemplate": {
+            "enabled": false,
+            "requiredGroups": []
+          },
+          "pipelineMustNotEnableDebugTrace": {
+            "enabled": true,
+            "forbiddenVariables": [
+              "CI_DEBUG_TRACE",
+              "CI_DEBUG_SERVICES"
+            ]
+          },
+          "pipelineMustNotExecuteUnverifiedScripts": {
+            "enabled": true,
+            "trustedUrls": []
+          },
+          "pipelineMustNotIncludeHardcodedJobs": {
+            "enabled": false
+          },
+          "pipelineMustNotOverrideJobVariables": {
+            "enabled": true,
+            "variables": [
+              "SECURE_ANALYZERS_PREFIX",
+              "SAST_DISABLED",
+              "SAST_EXCLUDED_PATHS",
+              "SAST_EXCLUDED_ANALYZERS",
+              "SECRET_DETECTION_DISABLED",
+              "SECRET_DETECTION_EXCLUDED_PATHS",
+              "CONTAINER_SCANNING_DISABLED",
+              "DAST_DISABLED",
+              "DEPENDENCY_SCANNING_DISABLED",
+              "LICENSE_SCANNING_DISABLED"
+            ]
+          },
+          "pipelineMustNotUseDockerInDocker": {
+            "detectInsecureDaemon": true,
+            "enabled": true
+          },
+          "pipelineMustNotUseUnsafeVariableExpansion": {
+            "allowedPatterns": [],
+            "dangerousVariables": [
+              "CI_MERGE_REQUEST_TITLE",
+              "CI_MERGE_REQUEST_DESCRIPTION",
+              "CI_COMMIT_MESSAGE",
+              "CI_COMMIT_TITLE",
+              "CI_COMMIT_TAG_MESSAGE",
+              "CI_COMMIT_REF_NAME",
+              "CI_COMMIT_REF_SLUG",
+              "CI_COMMIT_BRANCH",
+              "CI_MERGE_REQUEST_SOURCE_BRANCH_NAME",
+              "CI_EXTERNAL_PULL_REQUEST_SOURCE_BRANCH_NAME"
+            ],
+            "enabled": true
+          },
+          "projectMustHaveSecurityPolicySource": {
+            "enabled": false
+          },
+          "securityJobsMustNotBeWeakened": {
+            "allowFailureMustBeFalse": {
+              "enabled": false
+            },
+            "enabled": true,
+            "rulesMustNotBeRedefined": {
+              "enabled": true
+            },
+            "securityJobPatterns": [
+              "*-sast",
+              "secret_detection",
+              "container_scanning",
+              "*_dependency_scanning",
+              "gemnasium-*",
+              "dast",
+              "dast_*",
+              "license_scanning"
+            ],
+            "whenMustNotBeManual": {
+              "enabled": true
+            }
+          }
+        }
+      },
+      "version": "2.0"
+    },
+    "hash": "sha256:a83c2047c684f448868a9bc6f90eac8940d488a3f68a9e409d296785a3497e1f",
+    "source": "built-in default"
+  }
+}
+

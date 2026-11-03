@@ -1,0 +1,211 @@
+$ plumber analyze gitlab.com/getplumber/examples/plumber-cli-e2e --branch findings --no-controls --pbom pbom.json
+exit: 0
+--- stdout
+
+  ██████╗ ██╗     ██╗   ██╗ ███╗   ███╗██████╗ ███████╗██████╗
+  ██╔══██╗██║     ██║   ██║ ████╗ ████║██╔══██╗██╔════╝██╔══██╗
+  ██████╔╝██║     ██║   ██║ ██╔████╔██║██████╔╝█████╗  ██████╔╝
+  ██╔═══╝ ██║     ██║   ██║ ██║╚██╔╝██║██╔══██╗██╔══╝  ██╔══██╗
+  ██║     ███████╗╚██████╔╝ ██║ ╚═╝ ██║██████╔╝███████╗██║  ██║
+  ╚═╝     ╚══════╝ ╚═════╝  ╚═╝     ╚═╝╚═════╝ ╚══════╝╚═╝  ╚═╝
+  CI/CD Security Scanner  vdev
+  Share your feedback: https://getplumber.io/discord
+
+
+  Project    getplumber/examples/plumber-cli-e2e
+  Platform   GitLab · https://gitlab.com
+  Config     built-in default
+  CI config  fetched from GitLab
+  Controls   none (--no-controls)
+
+────────────────────
+Summary
+────────────────────
+
+  Status: PASSED ✓ (no controls requested, nothing to score)
+
+
+ ──────────────────────────────────────────────────────────────────────────────
+ Plumber Score
+
+ No control was run (--no-controls)
+ No Plumber Score: nothing was evaluated, so this run makes no claim
+ about the pipeline.
+ The artifacts it wrote contain the collected inventory only.
+
+ ──────────────────────────────────────────────────────────────────────────────
+
+
+--- stderr
+No .plumber.yaml found; using Plumber's built-in default configuration.
+Generate your own with 'plumber config generate' ('plumber config init' for the interactive wizard); see the default with 'plumber config view'.
+Using remote CI configuration from branch: findings
+PBOM written to: pbom.json
+
+--- file pbom.json
+{
+  "pbomVersion": "1.0.0",
+  "generatedAt": "<TIME>",
+  "project": {
+    "path": "getplumber/examples/plumber-cli-e2e",
+    "id": 88292493,
+    "provider": "gitlab",
+    "url": "https://gitlab.com",
+    "gitlabUrl": "https://gitlab.com",
+    "branch": "findings",
+    "commitSHA": "11483f88a750137f6a848bf8e92a92bf5534a8cb",
+    "ref": "findings"
+  },
+  "summary": {
+    "totalImages": 12,
+    "uniqueRegistries": 3,
+    "totalIncludes": 3,
+    "components": 0,
+    "projectIncludes": 0,
+    "localIncludes": 0,
+    "remoteIncludes": 1,
+    "templates": 2,
+    "actions": 0,
+    "reusableWorkflows": 0
+  },
+  "containerImages": [
+    {
+      "image": "docker.io/alpine:latest",
+      "registry": "docker.io",
+      "name": "alpine",
+      "tag": "latest",
+      "jobs": [
+        "deploy"
+      ]
+    },
+    {
+      "image": "docker.io/node:latest",
+      "registry": "docker.io",
+      "name": "node",
+      "tag": "latest",
+      "jobs": [
+        "build"
+      ]
+    },
+    {
+      "image": "registry.example.com/team/tool:1.0",
+      "registry": "registry.example.com",
+      "name": "team/tool",
+      "tag": "1.0",
+      "jobs": [
+        "untrusted-registry"
+      ]
+    },
+    {
+      "image": "registry.gitlab.com/security-products/clangsa:1$SAST_IMAGE_SUFFIX",
+      "registry": "registry.gitlab.com",
+      "name": "security-products/clangsa",
+      "tag": "1$SAST_IMAGE_SUFFIX",
+      "jobs": [
+        "gitlab-advanced-sast-cpp"
+      ],
+      "unresolved": true
+    },
+    {
+      "image": "registry.gitlab.com/security-products/gitlab-advanced-sast-ext:0$SAST_IMAGE_SUFFIX",
+      "registry": "registry.gitlab.com",
+      "name": "security-products/gitlab-advanced-sast-ext",
+      "tag": "0$SAST_IMAGE_SUFFIX",
+      "jobs": [
+        "gitlab-advanced-sast-ext"
+      ],
+      "unresolved": true
+    },
+    {
+      "image": "registry.gitlab.com/security-products/gitlab-advanced-sast:2$SAST_IMAGE_SUFFIX",
+      "registry": "registry.gitlab.com",
+      "name": "security-products/gitlab-advanced-sast",
+      "tag": "2$SAST_IMAGE_SUFFIX",
+      "jobs": [
+        "gitlab-advanced-sast"
+      ],
+      "unresolved": true
+    },
+    {
+      "image": "registry.gitlab.com/security-products/kubesec:6",
+      "registry": "registry.gitlab.com",
+      "name": "security-products/kubesec",
+      "tag": "6",
+      "jobs": [
+        "kubesec-sast"
+      ]
+    },
+    {
+      "image": "registry.gitlab.com/security-products/pmd-apex:6",
+      "registry": "registry.gitlab.com",
+      "name": "security-products/pmd-apex",
+      "tag": "6",
+      "jobs": [
+        "pmd-apex-sast"
+      ]
+    },
+    {
+      "image": "registry.gitlab.com/security-products/secrets:7$SECRET_DETECTION_IMAGE_SUFFIX",
+      "registry": "registry.gitlab.com",
+      "name": "security-products/secrets",
+      "tag": "7$SECRET_DETECTION_IMAGE_SUFFIX",
+      "jobs": [
+        ".secret-analyzer",
+        "secret_detection"
+      ],
+      "unresolved": true
+    },
+    {
+      "image": "registry.gitlab.com/security-products/semgrep:6$SAST_IMAGE_SUFFIX",
+      "registry": "registry.gitlab.com",
+      "name": "security-products/semgrep",
+      "tag": "6$SAST_IMAGE_SUFFIX",
+      "jobs": [
+        "semgrep-sast"
+      ],
+      "unresolved": true
+    },
+    {
+      "image": "registry.gitlab.com/security-products/sobelow:6",
+      "registry": "registry.gitlab.com",
+      "name": "security-products/sobelow",
+      "tag": "6",
+      "jobs": [
+        "sobelow-sast"
+      ]
+    },
+    {
+      "image": "registry.gitlab.com/security-products/spotbugs:5",
+      "registry": "registry.gitlab.com",
+      "name": "security-products/spotbugs",
+      "tag": "5",
+      "jobs": [
+        "spotbugs-sast"
+      ]
+    }
+  ],
+  "includes": [
+    {
+      "type": "remote",
+      "location": "https://gitlab.com/gitlab-org/gitlab/-/raw/master/lib/gitlab/ci/templates/Jobs/SAST.gitlab-ci.yml"
+    },
+    {
+      "type": "template",
+      "location": "Security/Secret-Detection.gitlab-ci.yml"
+    },
+    {
+      "type": "template",
+      "location": "Jobs/Secret-Detection.gitlab-ci.yml",
+      "nested": true
+    }
+  ],
+  "capabilities": [
+    {
+      "kind": "secret_detection",
+      "job": "secret_detection",
+      "tool": "gitlab-secret-detection",
+      "evidence": "images"
+    }
+  ]
+}
+

@@ -1,0 +1,32 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+# write-all again. ISSUE-803 (high).
+permissions: write-all
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    # No `environment:` gate on a job that consumes a publish secret. ISSUE-305 (medium).
+    steps:
+      - uses: actions/checkout@v4 # persists credentials. ISSUE-307 (high).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: https://registry.npmjs.org
+      # Cache key is not scoped to the ref, so a poisoned cache from an untrusted
+      # branch can be restored into the release build. ISSUE-705 (high).
+      - uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ hashFiles('**/package-lock.json') }}
+      - run: npm ci
+      - run: npm run build
+      # Long-lived NPM_TOKEN instead of OIDC trusted publishing (ISSUE-421, high),
+      # and the published artifact is never signed (ISSUE-712, medium).
+      - run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -1,0 +1,172 @@
+$ plumber analyze gitlab.com/getplumber/examples/plumber-cli-e2e --branch findings --config overlay.plumber.yaml --skip-controls pipelineMustNotEnableDebugTrace
+exit: 1
+--- stdout
+
+  ██████╗ ██╗     ██╗   ██╗ ███╗   ███╗██████╗ ███████╗██████╗
+  ██╔══██╗██║     ██║   ██║ ████╗ ████║██╔══██╗██╔════╝██╔══██╗
+  ██████╔╝██║     ██║   ██║ ██╔████╔██║██████╔╝█████╗  ██████╔╝
+  ██╔═══╝ ██║     ██║   ██║ ██║╚██╔╝██║██╔══██╗██╔══╝  ██╔══██╗
+  ██║     ███████╗╚██████╔╝ ██║ ╚═╝ ██║██████╔╝███████╗██║  ██║
+  ╚═╝     ╚══════╝ ╚═════╝  ╚═╝     ╚═╝╚═════╝ ╚══════╝╚═╝  ╚═╝
+  CI/CD Security Scanner  vdev
+  Share your feedback: https://getplumber.io/discord
+
+
+  Project    getplumber/examples/plumber-cli-e2e
+  Platform   GitLab · https://gitlab.com
+  Config     overlay.plumber.yaml
+  CI config  fetched from GitLab
+
+────────────────────
+✓ Passed Controls (10)
+────────────────────
+
+  ✓ Branch must be protected
+  ✓ Includes must not use ambiguous tag/branch refs
+  ✓ Includes must be up to date
+  ✓ Includes must not use forbidden versions
+  ✓ Components must come from authorized sources
+  ✓ Functions must come from authorized sources
+  ✓ Pipeline must not use unsafe variable expansion
+  ✓ Security jobs must not be weakened
+  ✓ Pipeline must not override job variables
+  ✓ Pipeline must not use Docker-in-Docker
+
+────────────────────
+• Skipped Controls (11)
+────────────────────
+
+  • MR approval rules must require a minimum number of approvals (disabled in configuration)
+  • MR approval rules must cover all protected branches (disabled in configuration)
+  • MR approval settings must be compliant (disabled in configuration)
+  • MR settings must be compliant (disabled in configuration)
+  • CI/CD variables must be protected (disabled in configuration)
+  • CI/CD variables must be masked (disabled in configuration)
+  • Project must have a security policy source (disabled in configuration)
+  • Pipeline must not include hardcoded jobs (disabled in configuration)
+  • Pipeline must include required components (disabled in configuration)
+  • Pipeline must include required templates (disabled in configuration)
+  • Pipeline must not enable debug trace (disabled in configuration)
+
+────────────────────
+✗ Attack paths (8)
+────────────────────
+
+ LOW   Attack path 8
+       Entry  https://get.example.com/install.sh (script downloaded and run at build time)
+       │
+       └──▶ runs in job `build` ─▶ reaches secrets Plumber could not list
+
+       So     if this script is compromised or malicious,
+              an attacker can read the secrets Plumber could not list
+       Note   Plumber could not list the secrets
+       Note   Plumber could not read: secrets Plumber could not list
+       Fix    download the script, check its checksum, then run it
+       ↳ details: run `plumber explain -a 8`
+
+  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+
+ LOW   Attack path 7
+       Entry  registry.gitlab.com/security-products/spotbugs:5 (mutable image tag)
+       │
+       └──▶ runs in job `spotbugs-sast` ─▶ reaches secrets Plumber could not list
+
+       So     if this image is compromised, an attacker can read the secrets Plumber could not list
+       Note   Plumber could not list the secrets
+       Note   Plumber could not read: secrets Plumber could not list
+       Fix    pin the image by digest
+       ↳ details: run `plumber explain -a 7`
+
+  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+
+ LOW   Attack path 6
+       Entry  docker.io/node:latest (mutable image tag)
+       │
+       └──▶ runs in job `build` ─▶ reaches secrets Plumber could not list
+
+       So     if this image is compromised, an attacker can read the secrets Plumber could not list
+       Note   Plumber could not list the secrets
+       Note   Plumber could not read: secrets Plumber could not list
+       Fix    pin the image by digest
+       ↳ details: run `plumber explain -a 6`
+
+  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+
+ LOW   Attack path 5
+       Entry  registry.example.com/team/tool:1.0 (untrusted and mutable image)
+       │
+       └──▶ runs in job `untrusted-registry` ─▶ reaches secrets Plumber could not list
+
+       So     if this image is compromised or malicious,
+              an attacker can read the secrets Plumber could not list
+       Note   Plumber could not list the secrets
+       Note   Plumber could not read: secrets Plumber could not list
+       Fix    use an image from a trusted registry and pin it by digest
+       ↳ details: run `plumber explain -a 5`
+
+  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+
+ LOW   Attack path 4
+       Entry  registry.gitlab.com/security-products/pmd-apex:6 (mutable image tag)
+       │
+       └──▶ runs in job `pmd-apex-sast` ─▶ reaches secrets Plumber could not list
+
+       So     if this image is compromised, an attacker can read the secrets Plumber could not list
+       Note   Plumber could not list the secrets
+       Note   Plumber could not read: secrets Plumber could not list
+       Fix    pin the image by digest
+       ↳ details: run `plumber explain -a 4`
+
+  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+
+ LOW   Attack path 3
+       Entry  registry.gitlab.com/security-products/sobelow:6 (mutable image tag)
+       │
+       └──▶ runs in job `sobelow-sast` ─▶ reaches secrets Plumber could not list
+
+       So     if this image is compromised, an attacker can read the secrets Plumber could not list
+       Note   Plumber could not list the secrets
+       Note   Plumber could not read: secrets Plumber could not list
+       Fix    pin the image by digest
+       ↳ details: run `plumber explain -a 3`
+
+  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+
+ LOW   Attack path 2
+       Entry  registry.gitlab.com/security-products/kubesec:6 (mutable image tag)
+       │
+       └──▶ runs in job `kubesec-sast` ─▶ reaches secrets Plumber could not list
+
+       So     if this image is compromised, an attacker can read the secrets Plumber could not list
+       Note   Plumber could not list the secrets
+       Note   Plumber could not read: secrets Plumber could not list
+       Fix    pin the image by digest
+       ↳ details: run `plumber explain -a 2`
+
+  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+
+ LOW   Attack path 1
+       Entry  docker.io/alpine:latest (mutable image tag)
+       │
+       └──▶ runs in job `deploy` ─▶ reaches secrets Plumber could not list
+
+       So     if this image is compromised, an attacker can read the secrets Plumber could not list
+       Note   Plumber could not list the secrets
+       Note   Plumber could not read: secrets Plumber could not list
+       Fix    pin the image by digest
+       ↳ details: run `plumber explain -a 1`
+
+────────────────────
+Score
+────────────────────
+
+ ██████╗   Plumber Score  76 / 100  █████████████████████░░░░░░░
+ ██╔══██╗  Status: FAILED (gate blocks at 100 pts)
+ ██████╔╝
+ ██╔══██╗  Worst case: if this image is compromised, an attacker can read the secrets Plumber could
+ ██████╔╝  not list (attack path 1: docker.io/alpine:latest)
+ ╚═════╝   Best fix: pin the image by digest (image docker.io/alpine:latest), +3 pts, 79 / 100 (B)
+
+--- stderr
+Using remote CI configuration from branch: findings
+

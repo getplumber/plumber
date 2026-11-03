@@ -1,0 +1,84 @@
+# INTENTIONALLY INSECURE — this workflow exists to trip Plumber controls.
+# It has no `name:` (ISSUE-601) and no `concurrency:` (ISSUE-418).
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Grants every scope to GITHUB_TOKEN. ISSUE-803 (high).
+permissions: write-all
+
+env:
+  # Streams secrets into job logs at debug verbosity. ISSUE-203 (critical).
+  ACTIONS_STEP_DEBUG: true
+  # Re-enables ::set-env:: / ::add-path:: style command injection. ISSUE-208 (high).
+  ACTIONS_ALLOW_UNSECURE_COMMANDS: "true"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      # Mutable, non-digest tag from the forbidden list. ISSUE-102 (medium) + ISSUE-103 (high).
+      image: node:latest
+      credentials:
+        username: ci-bot
+        # Registry password hardcoded in plaintext. ISSUE-704 (critical).
+        password: sup3rs3cr3t-do-not-commit
+    steps:
+      # actions/* is a trusted owner (no ISSUE-701) but credentials persist by
+      # default into .git/config. ISSUE-307 (high).
+      - uses: actions/checkout@v4
+
+      # Third-party action pinned by tag, with a published advisory, from an
+      # owner outside the authorized allowlist.
+      # ISSUE-701 (high) + ISSUE-703 (critical, API) + ISSUE-713 (high).
+      - uses: tj-actions/changed-files@v45.0.0
+
+      # Third-party action pinned to a 40-char SHA that does not exist in the
+      # upstream repo (a real action, but this commit was never pushed there),
+      # from an owner outside the authorized allowlist.
+      # ISSUE-707 impostor-commit (critical, API) + ISSUE-713 (high).
+      - uses: dorny/paths-filter@1c9b1f1aaa2222bbbb3333cccc4444dddd5555ee
+
+      # Unpinned package install. ISSUE-214 (medium).
+      - name: install tooling
+        run: npm install -g some-build-tool
+
+      # Pipes a remote script straight into a shell. ISSUE-411 (high).
+      - name: bootstrap
+        run: curl -sSL https://get.example.com/install.sh | bash
+
+      # Untrusted PR title interpolated into the shell. ISSUE-207 (critical).
+      - name: greet
+        run: echo "Building PR ${{ github.event.pull_request.title }}"
+
+      # Untrusted input written to $GITHUB_ENV. ISSUE-209 (critical).
+      - name: export title
+        run: echo "PR_TITLE=${{ github.event.pull_request.title }}" >> "$GITHUB_ENV"
+
+      # Whole github context serialized into a command. ISSUE-213 (high).
+      - name: dump context
+        run: echo '${{ toJson(github) }}'
+
+      # Entire secrets context exported as one blob. ISSUE-309 (critical).
+      - name: export secrets
+        env:
+          ALL_SECRETS: ${{ toJson(secrets) }}
+        run: echo "$ALL_SECRETS" > /tmp/secrets.json
+
+      # Uploads the entire workspace, including .git. ISSUE-419 (medium).
+      - uses: actions/upload-artifact@v4
+        with:
+          name: everything
+          path: .
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v2 # Actions must not use ambiguous tag/branch refs. ISSUE-710 (Medium)
+        with:
+          sarif_file: results.sarif
+
+  auto-approve:
+    # github.actor is attacker-spoofable. ISSUE-210 (high).
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "auto-approving"

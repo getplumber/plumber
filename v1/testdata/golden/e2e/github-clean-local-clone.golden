@@ -1,0 +1,69 @@
+$ plumber analyze --score
+exit: 0
+--- stdout
+
+  ██████╗ ██╗     ██╗   ██╗ ███╗   ███╗██████╗ ███████╗██████╗
+  ██╔══██╗██║     ██║   ██║ ████╗ ████║██╔══██╗██╔════╝██╔══██╗
+  ██████╔╝██║     ██║   ██║ ██╔████╔██║██████╔╝█████╗  ██████╔╝
+  ██╔═══╝ ██║     ██║   ██║ ██║╚██╔╝██║██╔══██╗██╔══╝  ██╔══██╗
+  ██║     ███████╗╚██████╔╝ ██║ ╚═╝ ██║██████╔╝███████╗██║  ██║
+  ╚═╝     ╚══════╝ ╚═════╝  ╚═╝     ╚═╝╚═════╝ ╚══════╝╚═╝  ╚═╝
+  CI/CD Security Scanner  vdev
+  Share your feedback: https://getplumber.io/discord
+
+
+  Project    getplumber-examples/plumber-cli-e2e
+  Platform   GitHub
+  Auth       GITHUB_TOKEN env var
+  Config     built-in default
+  CI config  local file
+
+────────────────────
+✓ Passed Controls (23)
+────────────────────
+
+  ✓ Container images must not use forbidden reference (pinned by digest)
+  ✓ Third-party actions must be pinned by commit SHA
+  ✓ Actions must come from authorized sources
+  ✓ Branch must be protected
+  ✓ Security jobs must not be weakened
+  ✓ Workflows must not use Docker-in-Docker
+  ✓ Pipeline must not execute unverified scripts
+  ✓ Reusable workflows must not inherit secrets
+  ✓ Workflows must not expose all secrets at once
+  ✓ Workflows must not inject user input in scripts
+  ✓ Workflows must not write untrusted content to $GITHUB_ENV
+  ✓ Workflows must not use dangerous triggers
+  ✓ Checkout must not persist credentials
+  ✓ Workflows must declare permissions
+  ✓ Workflow files must be valid
+  ✓ Workflow must not grant write-all permissions
+  ✓ Actions must not use ambiguous tag/branch refs
+  ✓ Actions must not reference archived repositories
+  ✓ Actions must pin commits that exist upstream
+  ✓ Actions must not carry known CVEs
+  ✓ Actions must not execute mutable remote code
+  ✓ Untrusted triggers must not write the cache
+  ✓ Pipeline must not enable debug trace
+
+────────────────────
+• Skipped Controls (1)
+────────────────────
+
+  • Workflows must include required actions (disabled in configuration)
+
+────────────────────
+Score
+────────────────────
+
+  █████╗   Plumber Score  100 / 100  ████████████████████████████
+ ██╔══██╗  Status: PASSED (gate at 100 pts)
+ ███████║
+ ██╔══██║  Best fix: nothing to fix
+ ██║  ██║
+ ╚═╝  ╚═╝
+
+--- stderr
+No .plumber.yaml found; using Plumber's built-in default configuration.
+Generate your own with 'plumber config generate' ('plumber config init' for the interactive wizard); see the default with 'plumber config view'.
+

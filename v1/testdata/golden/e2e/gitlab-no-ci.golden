@@ -1,0 +1,74 @@
+$ plumber analyze gitlab.com/getplumber/examples/plumber-cli-e2e --branch no-ci
+exit: 1
+--- stdout
+
+  ██████╗ ██╗     ██╗   ██╗ ███╗   ███╗██████╗ ███████╗██████╗
+  ██╔══██╗██║     ██║   ██║ ████╗ ████║██╔══██╗██╔════╝██╔══██╗
+  ██████╔╝██║     ██║   ██║ ██╔████╔██║██████╔╝█████╗  ██████╔╝
+  ██╔═══╝ ██║     ██║   ██║ ██║╚██╔╝██║██╔══██╗██╔══╝  ██╔══██╗
+  ██║     ███████╗╚██████╔╝ ██║ ╚═╝ ██║██████╔╝███████╗██║  ██║
+  ╚═╝     ╚══════╝ ╚═════╝  ╚═╝     ╚═╝╚═════╝ ╚══════╝╚═╝  ╚═╝
+  CI/CD Security Scanner  vdev
+  Share your feedback: https://getplumber.io/discord
+
+
+  Project    getplumber/examples/plumber-cli-e2e
+  Platform   GitLab · https://gitlab.com
+  Config     built-in default
+  CI config  fetched from GitLab
+
+  ⚠ WARNING: No controls could be evaluated!
+  CI configuration file is missing from the project.
+
+────────────────────
+✓ Passed Controls (14)
+────────────────────
+
+  ✓ Container images must not use forbidden reference (pinned by digest)
+  ✓ Container images must come from authorized sources
+  ✓ Branch must be protected
+  ✓ Includes must not use ambiguous tag/branch refs
+  ✓ Includes must be up to date
+  ✓ Includes must not use forbidden versions
+  ✓ Components must come from authorized sources
+  ✓ Functions must come from authorized sources
+  ✓ Pipeline must not enable debug trace
+  ✓ Pipeline must not use unsafe variable expansion
+  ✓ Security jobs must not be weakened
+  ✓ Pipeline must not execute unverified scripts
+  ✓ Pipeline must not override job variables
+  ✓ Pipeline must not use Docker-in-Docker
+
+────────────────────
+• Skipped Controls (10)
+────────────────────
+
+  • MR approval rules must require a minimum number of approvals (disabled in configuration)
+  • MR approval rules must cover all protected branches (disabled in configuration)
+  • MR approval settings must be compliant (disabled in configuration)
+  • MR settings must be compliant (disabled in configuration)
+  • CI/CD variables must be protected (disabled in configuration)
+  • CI/CD variables must be masked (disabled in configuration)
+  • Project must have a security policy source (disabled in configuration)
+  • Pipeline must not include hardcoded jobs (disabled in configuration)
+  • Pipeline must include required components (disabled in configuration)
+  • Pipeline must include required templates (disabled in configuration)
+
+────────────────────
+Score
+────────────────────
+
+ ██████╗   Plumber Score  withheld
+ ╚════██╗  Status: NOTHING CHECKED (no control was evaluated)
+   ███╔═╝
+   ╚══╝    Why: every enabled control needs configuration or was skipped
+   ██╗     Next: enable or configure at least one control, then re-run
+   ╚═╝
+
+--- stderr
+No .plumber.yaml found; using Plumber's built-in default configuration.
+Generate your own with 'plumber config generate' ('plumber config init' for the interactive wizard); see the default with 'plumber config view'.
+Using remote CI configuration from branch: no-ci
+time="<TIME>" level=error msg="Unable to get project's CI conf file" action=GetFullGitlabCI context=platform/gitlab err="<nil>" errPlatform="404 Not Found" projectPath=getplumber/examples/plumber-cli-e2e
+time="<TIME>" level=warning msg="Unable to retrieve project's CI configuration (404). CI is missing but project exists. Data collection will continue with limited data." context=platform/gitlab/collector dataCollection=GitlabPipelineOrigin dataCollectionVersion=0.2.0 error="404 Not Found" project=getplumber/examples/plumber-cli-e2e
+

@@ -1,0 +1,35 @@
+name: Plumber
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Least-privilege: read the repo, write SARIF to code scanning.
+# id-token is for publishing the live Plumber Score badge (default branch only).
+permissions:
+  contents: read
+  security-events: write
+  id-token: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - uses: getplumber/plumber@e9ad2dc6d6faa2dfd84395aac18e461284062640 # v0.7.16
+        with:
+          # This repo is built to stay at the top grade. Gate on the Plumber
+          # Score letter and fail the build on any regression below an A;
+          # findings still upload to code scanning.
+          platform: https://demo-github.getplumber.tech
+          min-score: A
+          # Publish the live A badge to score.getplumber.io (default branch only).
+          score-push: true

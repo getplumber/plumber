@@ -1,0 +1,19 @@
+name: Reusable build
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      # Forbidden mutable tag, not pinned by digest (ISSUE-102, ISSUE-103).
+      image: node:latest
+    steps:
+      # Tag ref instead of a SHA, credentials persisted (ISSUE-307).
+      - uses: actions/checkout@v4
+      # Remote script piped into a shell (ISSUE-411).
+      - run: curl -sSL https://get.example.com/install.sh | bash
