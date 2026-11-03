@@ -218,7 +218,8 @@ func swapTagFetch(t *testing.T, fn func(host, owner, repo string) (*ir.TagProtec
 }
 
 // On GitHub the tag enrichment fills the pipeline, and its outcome reaches
-// the run: a failed fetch degrades it, an unreadable answer (no scope, a
+// the run: an unprotected tag is a finding, a fully protecting ruleset is
+// clean, a failed fetch degrades the run, an unreadable answer (no scope, a
 // plan without rulesets) leaves tagMustBeProtected not evaluated only.
 func TestRunGitHubAnalysisRemote_TagProtection(t *testing.T) {
 	cases := []struct {
@@ -226,9 +227,16 @@ func TestRunGitHubAnalysisRemote_TagProtection(t *testing.T) {
 		tp           *ir.TagProtection
 		err          error
 		wantKnown    bool
+		wantPatterns []string
 		wantDegraded bool
 		wantGap      bool
 	}{
+		{
+			name:         "unprotected tags",
+			tp:           &ir.TagProtection{Known: true, Tags: []string{"v1.0.0"}},
+			wantKnown:    true,
+			wantPatterns: []string{"~ALL"},
+		},
 		{
 			name:      "readable repository",
 			tp:        &ir.TagProtection{Known: true, Rules: []ir.TagProtectionRule{{ID: "1", Include: []string{"**"}, BlocksUpdate: true, BlocksDeletion: true, RestrictsCreation: true}}, Tags: []string{"v1.0.0"}},
@@ -268,6 +276,9 @@ func TestRunGitHubAnalysisRemote_TagProtection(t *testing.T) {
 			tp := result.GitHubPipeline.TagProtectionOrNil()
 			if tp == nil || tp.Known != tc.wantKnown {
 				t.Fatalf("pipeline tag protection = %+v, want Known=%v", tp, tc.wantKnown)
+			}
+			if got := tagFindingPatterns(result.Findings); strings.Join(got, ",") != strings.Join(tc.wantPatterns, ",") {
+				t.Errorf("ISSUE-510 patterns = %v, want %v", got, tc.wantPatterns)
 			}
 			if got := result.DataCollectionDegraded && hasTagDegradedReason(result); got != tc.wantDegraded {
 				t.Errorf("degraded with a tag reason = %v, want %v (reasons %v)", got, tc.wantDegraded, result.DegradedReasons)
