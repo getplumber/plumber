@@ -5,7 +5,7 @@ This directory holds its test suite, which runs the built `plumber` binary on ev
 compares the output with golden files.
 
 - Branch from `v1` and open your PR against `v1`.
-- Run `make test-integration` before pushing. It needs no token and no network.
-- If you change an output on purpose, run `make test-integration UPDATE=1` and review the diff.
+- Run `make -C v1 test-integration` before pushing. It needs no token and no network.
+- If you change an output on purpose, run `make -C v1 test-integration UPDATE=1` and review the diff.
 
 The rules, the layout and how to add a case are in [AGENTS.md](AGENTS.md).

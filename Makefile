@@ -1,4 +1,4 @@
-.PHONY: build clean test test-integration lint deadcode vuln
+.PHONY: build clean test lint deadcode vuln
 
 # Binary name
 BINARY=plumber
@@ -18,12 +18,6 @@ build-all:
 # Run tests
 test:
 	go test ./...
-
-# CLI suite of the refactoring (v1/*_test.go, see v1/AGENTS.md). UPDATE=1
-# rewrites the golden files; review the diff.
-# Local rows: every input that makes no backend request. No token, no network.
-test-integration:
-	go test -tags cli -count=1 -run 'TestCoverage|TestIntegration' ./v1/ $(if $(UPDATE),-args -update)
 
 # Lint (mirrors CI configuration — requires golangci-lint v2+)
 lint:

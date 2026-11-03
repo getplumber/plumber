@@ -1,0 +1,72 @@
+name: v1
+
+# CI of the CLI refactoring branch (getplumber/monorepo#640, v1/AGENTS.md).
+# Main's workflows don't run on PRs to v1, and this one doesn't run on main.
+
+on:
+  push:
+    branches: [v1]
+  pull_request:
+    branches: [v1]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.10'
+
+      - name: Build
+        run: go build ./...
+
+      - name: Unit tests
+        run: go test ./...
+
+  # Every CLI input that makes no backend request, run offline with no token.
+  cli-local:
+    name: CLI suite (local)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.10'
+
+      - name: Run the local rows
+        run: make -C v1 test-integration
+
+  lint:
+    name: Lint (v1)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.10'
+
+      # Same version and arguments as `make -C v1 lint`, so local and CI agree.
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.15.0
+          working-directory: v1
+          args: -c .golangci.yml ./...

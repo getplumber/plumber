@@ -5,6 +5,8 @@ name: Scripts tests
 
 on:
   pull_request:
+    # Not on PRs to v1: that branch has .github/workflows/v1.yml.
+    branches: [main]
     paths:
       - .github/scripts/**
       - .github/workflows/scripts-test.yml

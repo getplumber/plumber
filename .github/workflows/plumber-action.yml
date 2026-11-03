@@ -12,6 +12,8 @@ on:
   push:
     branches: [main]
   pull_request:
+    # Not on PRs to v1: that branch has .github/workflows/v1.yml.
+    branches: [main]
   workflow_dispatch:
 
 permissions: {}
