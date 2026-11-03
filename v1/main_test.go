@@ -9,13 +9,15 @@
 //   - integration_test.go: the local rows, which cover every input that
 //     makes no backend request. They run with no token and with every proxy
 //     pointed at a closed port, so a row that tries the network fails.
-//     TestCoverage also lives there. `make test-integration` (#641).
+//     TestCoverage also lives there. `make -C v1 test-integration` (#641).
 //
 // UPDATE=1 rewrites the golden files; review the diff before committing it.
 package v1
 
 import (
 	"bytes"
+	"cmp"
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -25,7 +27,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -102,9 +104,9 @@ func TestMain(m *testing.M) {
 	plumberBin = filepath.Join(dir, "plumber")
 	// -buildvcs=false keeps the version "dev". Outputs stay stable, and the
 	// update check (cmd/update_check.go) skips dev builds.
-	build := exec.Command("go", "build", "-buildvcs=false", "-o", plumberBin, "github.com/getplumber/plumber")
+	build := exec.CommandContext(context.Background(), "go", "build", "-buildvcs=false", "-o", plumberBin, "github.com/getplumber/plumber")
 	build.Stdout, build.Stderr = os.Stderr, os.Stderr
-	if err := build.Run(); err != nil {
+	if err = build.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "build plumber:", err)
 		os.Exit(1)
 	}
@@ -114,13 +116,16 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	code := m.Run()
-	_ = os.RemoveAll(dir)
+	if err = os.RemoveAll(dir); err != nil {
+		fmt.Fprintln(os.Stderr, "remove the build dir:", err)
+	}
 	os.Exit(code)
 }
 
 // runCases runs each row as a parallel subtest and compares it with its
 // golden file.
 func runCases(t *testing.T, cases []cliCase) {
+	t.Helper()
 	for _, c := range cases {
 		t.Run(string(c.mode)+"/"+c.name, func(t *testing.T) {
 			t.Parallel() // each row has its own work dir and home
@@ -132,7 +137,7 @@ func runCases(t *testing.T, cases []cliCase) {
 
 // allCases returns every row: the local rows and the generated --help rows.
 func allCases() []cliCase {
-	return append(append([]cliCase(nil), localCases...), helpCases()...)
+	return slices.Concat(localCases, helpCases())
 }
 
 // helpCases returns a --help row for every command of the tree.
@@ -143,7 +148,7 @@ func helpCases() []cliCase {
 		if len(cmd.path) > 0 {
 			name += "-" + strings.Join(cmd.path, "-")
 		}
-		args := append(append([]string(nil), cmd.path...), "--help")
+		args := append(slices.Clone(cmd.path), "--help")
 		out = append(out, run(name, 0, args...))
 	}
 	return out
@@ -161,7 +166,7 @@ func inputsOf(args []string) []string {
 		if strings.HasPrefix(a, "-") {
 			continue
 		}
-		next := strings.TrimSpace(strings.Join(append(append([]string(nil), path...), a), " "))
+		next := strings.TrimSpace(strings.Join(append(slices.Clone(path), a), " "))
 		if _, ok := byPath[next]; !ok {
 			break
 		}
@@ -210,7 +215,7 @@ func longFlag(arg string, cmd, root command) string {
 }
 
 var (
-	commandLine = regexp.MustCompile(`^  (\S+)\s{2,}`)
+	commandLine = regexp.MustCompile(`^ {2}(\S+)\s{2,}`)
 	flagLine    = regexp.MustCompile(`^\s+(?:-(\w), )?--([\w-]+)`)
 )
 
@@ -221,19 +226,19 @@ func readTree() ([]command, error) {
 	for len(queue) > 0 {
 		path := queue[0]
 		queue = queue[1:]
-		help, err := exec.Command(plumberBin, append(append([]string(nil), path...), "--help")...).Output()
+		help, err := exec.CommandContext(context.Background(), plumberBin, append(slices.Clone(path), "--help")...).Output()
 		if err != nil {
 			return nil, fmt.Errorf("plumber %s --help: %w", strings.Join(path, " "), err)
 		}
 		cmd := command{path: path, flags: map[string]string{}}
 		section := ""
-		for _, line := range strings.Split(string(help), "\n") {
+		for line := range strings.SplitSeq(string(help), "\n") {
 			switch {
 			case strings.HasSuffix(line, ":") && !strings.HasPrefix(line, " "):
 				section = line
 			case section == "Available Commands:":
 				if m := commandLine.FindStringSubmatch(line); m != nil {
-					queue = append(queue, append(append([]string(nil), path...), m[1]))
+					queue = append(queue, append(slices.Clone(path), m[1]))
 				}
 			case section == "Flags:":
 				if m := flagLine.FindStringSubmatch(line); m != nil {
@@ -243,8 +248,8 @@ func readTree() ([]command, error) {
 		}
 		out = append(out, cmd)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		return strings.Join(out[i].path, " ") < strings.Join(out[j].path, " ")
+	slices.SortFunc(out, func(a, b command) int {
+		return cmp.Compare(strings.Join(a.path, " "), strings.Join(b.path, " "))
 	})
 	return out, nil
 }
@@ -305,11 +310,11 @@ func runCase(t *testing.T, c cliCase) string {
 	env := caseEnv(sb)
 
 	for _, args := range c.setup {
-		if _, _, code := runPlumber(sb.work, env, args); code != 0 {
+		if _, _, code := runPlumber(t.Context(), sb.work, env, args); code != 0 {
 			t.Fatalf("setup `plumber %s` exited %d", strings.Join(args, " "), code)
 		}
 	}
-	stdout, stderr, code := runPlumber(sb.work, env, c.args)
+	stdout, stderr, code := runPlumber(t.Context(), sb.work, env, c.args)
 	if c.sorted {
 		stdout, stderr = sortLines(stdout), sortLines(stderr)
 	}
@@ -338,14 +343,14 @@ func transcript(t *testing.T, c cliCase, work, stdout, stderr string, code int) 
 // sortLines returns s with its lines sorted.
 func sortLines(s string) string {
 	lines := strings.Split(s, "\n")
-	sort.Strings(lines)
+	slices.Sort(lines)
 	return strings.Join(lines, "\n")
 }
 
 // runPlumber runs the built binary in dir with exactly env. A run that could
 // not start returns exit code -1 with the error appended to stderr.
-func runPlumber(dir string, env, args []string) (stdout, stderr string, code int) {
-	cmd := exec.Command(plumberBin, args...)
+func runPlumber(ctx context.Context, dir string, env, args []string) (stdout, stderr string, code int) {
+	cmd := exec.CommandContext(ctx, plumberBin, args...)
 	cmd.Dir, cmd.Env = dir, env
 	var o, e bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &o, &e
@@ -353,8 +358,7 @@ func runPlumber(dir string, env, args []string) (stdout, stderr string, code int
 	if err == nil {
 		return o.String(), e.String(), 0
 	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
+	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
 		return o.String(), e.String(), exitErr.ExitCode()
 	}
 	return o.String(), e.String() + err.Error(), -1
@@ -394,13 +398,13 @@ func compareGolden(t *testing.T, path, got string) {
 	}
 	want, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("no golden file %s: run `make test-integration UPDATE=1` and review it", path)
+		t.Fatalf("no golden file %s: run `make -C v1 test-integration UPDATE=1` and review it", path)
 	}
 	if string(want) == got {
 		return
 	}
 	wantLines, gotLines := strings.Split(string(want), "\n"), strings.Split(got, "\n")
-	for i := 0; i < len(wantLines) || i < len(gotLines); i++ {
+	for i := range max(len(wantLines), len(gotLines)) {
 		var w, g string
 		if i < len(wantLines) {
 			w = wantLines[i]

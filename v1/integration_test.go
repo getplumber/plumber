@@ -141,7 +141,8 @@ const needsProvider = "needs a provider: covered by the e2e suite (monorepo#651)
 var hiddenCommands = [][]string{{"score-compare"}}
 
 func TestIntegration(t *testing.T) {
-	runCases(t, append(append([]cliCase(nil), localCases...), helpCases()...))
+	t.Parallel()
+	runCases(t, allCases())
 }
 
 // TestCoverage fails when a command or a flag of the binary has no row, and
@@ -159,6 +160,19 @@ func TestCoverage(t *testing.T) {
 	for _, c := range localCases {
 		commands[inputsOf(c.args)[0]] = true
 	}
+	checkTree(t, covered, commands)
+	for k := range untested {
+		if covered[k] {
+			t.Errorf("%q is covered by a row now: remove it from untested", k)
+		}
+	}
+	checkGoldens(t)
+}
+
+// checkTree reports every command of the binary with no row in localCases,
+// and every flag no row uses and untested does not list.
+func checkTree(t *testing.T, covered, commands map[string]bool) {
+	t.Helper()
 	for _, cmd := range tree {
 		name := strings.Join(cmd.path, " ")
 		key := strings.TrimSpace("plumber " + name)
@@ -172,12 +186,12 @@ func TestCoverage(t *testing.T) {
 			}
 		}
 	}
-	for k := range untested {
-		if covered[k] {
-			t.Errorf("%q is covered by a row now: remove it from untested", k)
-		}
-	}
+}
 
+// checkGoldens reports golden files that no row writes anymore. With -update
+// it deletes them.
+func checkGoldens(t *testing.T) {
+	t.Helper()
 	want := map[string]bool{}
 	for _, c := range allCases() {
 		want[filepath.Join(string(c.mode), c.name+".golden")] = true

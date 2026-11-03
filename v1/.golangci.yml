@@ -1,0 +1,202 @@
+version: "2"
+
+# Lint config for the v1 refactoring (getplumber/monorepo#640). Run it with
+# `make -C v1 lint` before opening a PR. The rules check for bugs and for
+# current, idiomatic Go (v1/AGENTS.md has agents use the use-modern-go skill).
+# Linters that only enforce a personal taste stay off (see the list at the
+# end of `linters`).
+
+run:
+  # Every file in v1/ has the `cli` build tag. Without it nothing is linted.
+  build-tags:
+    - cli
+  tests: true
+
+# Report every issue. The default caps (3 identical issues, 50 per linter,
+# one per line) hide most of them.
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  uniq-by-line: false
+
+linters:
+  # standard: errcheck, govet, ineffassign, staticcheck, unused.
+  default: standard
+  enable:
+    # Correctness.
+    - asasalint
+    - bidichk
+    - bodyclose
+    - contextcheck
+    - durationcheck
+    - errchkjson
+    - errorlint
+    - exhaustive
+    - fatcontext
+    - forcetypeassert
+    - gocheckcompilerdirectives
+    - gochecksumtype
+    - gosec
+    - makezero
+    - musttag
+    - nilerr
+    - nilnesserr
+    - nilnil
+    - noctx
+    - reassign
+    - recvcheck
+    - rowserrcheck
+    - unparam
+    - wastedassign
+    # Current, idiomatic Go.
+    - copyloopvar
+    - errname
+    - exptostd
+    - intrange
+    - mirror
+    - modernize
+    - perfsprint
+    - predeclared
+    - unconvert
+    - usestdlibvars
+    # Tests.
+    - thelper
+    - tparallel
+    - usetesting
+    # Readability and complexity.
+    - asciicheck
+    - canonicalheader
+    - cyclop
+    - dogsled
+    - dupl
+    - dupword
+    - embeddedstructfieldcheck
+    - gochecknoinits
+    - gocognit
+    - goconst
+    - gocritic
+    - godoclint
+    - godot
+    - goprintffuncname
+    - iface
+    - inamedparam
+    - interfacebloat
+    - misspell
+    - nakedret
+    - nestif
+    - revive
+    - whitespace
+    # Hygiene.
+    - forbidigo
+    - nolintlint
+  # Off on purpose:
+  #   lll                 gofmt sets no line length, and neither do we.
+  #   varnamelen          short names are fine in a small scope.
+  #   wsl_v5, nlreturn    blank-line rules are a matter of taste.
+  #   exhaustruct         the code relies on zero values.
+  #   err113, wrapcheck   fmt.Errorf with %w is fine.
+  #   gochecknoglobals    cobra commands are package-level variables.
+  #   testpackage         the suite is the internal package v1.
+  #   paralleltest        TestMain builds one binary that the rows share.
+  #   mnd                 too noisy on exit codes and test data.
+  #   funlen              the row tables are long functions by design.
+  #   depguard            needs a list of banned imports we don't have yet.
+
+  settings:
+    cyclop:
+      max-complexity: 15
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+    exhaustive:
+      default-signifies-exhaustive: true
+    forbidigo:
+      forbid:
+        - pattern: ^print(ln)?$
+          msg: use fmt or the testing log instead of the builtin.
+    gocognit:
+      min-complexity: 30
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+        - performance
+      disabled-checks:
+        - whyNoLint # nolintlint checks the same thing.
+        # Don't pass pointers only to save bytes.
+        - hugeParam
+        - rangeValCopy
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment # reorders struct fields to save memory.
+    nestif:
+      min-complexity: 5
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+    revive:
+      rules:
+        - name: atomic
+        - name: bare-return
+        - name: comment-spacings
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: datarace
+        - name: deep-exit
+        - name: defer
+        - name: early-return
+        - name: empty-block
+        - name: error-naming
+        - name: error-return
+        - name: error-strings
+        - name: errorf
+        - name: exported
+        - name: identical-branches
+        - name: if-return
+        - name: import-shadowing
+        - name: indent-error-flow
+        - name: modifies-value-receiver
+        - name: package-comments
+        - name: receiver-naming
+        - name: redefines-builtin-id
+        - name: redundant-import-alias
+        - name: struct-tag
+        - name: superfluous-else
+        - name: unconditional-recursion
+        - name: unexported-return
+        - name: unnecessary-stmt
+        - name: unused-parameter
+        - name: unused-receiver
+        - name: use-any
+        - name: use-errors-new
+        - name: var-naming
+        - name: waitgroup-by-value
+    staticcheck:
+      checks:
+        - all
+
+  exclusions:
+    rules:
+      # Tests run the binary they just built, on fixture paths they create,
+      # and write golden files to the repo. These gosec rules are for
+      # untrusted input, so they don't apply there:
+      #   G122, G703  path races and traversal on files under testdata/
+      #   G204        exec of the built binary
+      #   G301, G306  0755/0644 on work dirs and golden files
+      #   G304        reading files by a variable path
+      - path: _test\.go
+        linters:
+          - gosec
+        text: G(122|204|301|304|306|703)
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    gofmt:
+      simplify: true
+    goimports:
+      local-prefixes:
+        - github.com/getplumber/plumber
