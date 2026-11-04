@@ -22,6 +22,8 @@ inputs:
     default: "v0.4.16"
   threshold:
     default: "100"
+  actions-lock-version:
+    default: "0.4.1"
 EOF
   cat > "$1/templates/plumber.yml" <<EOF
     image:
@@ -42,6 +44,7 @@ if grep -qF "default: \"getplumber/plumber@sha256:${NEW}\" #v0.4.17" "$d/templat
 if grep -q "$OLD" "$d/templates/plumber.yml"; then ko "previous digest is gone"; else ok "previous digest is gone"; fi
 if grep -qF 'default: "v0.4.17"' "$d/action.yml" && grep -qF '(e.g. v0.4.17)' "$d/action.yml"; then ok "action.yml version and hint bumped"; else ko "action.yml version and hint bumped"; fi
 if grep -qF 'default: "100"' "$d/action.yml"; then ok "other defaults untouched"; else ko "other defaults untouched"; fi
+if grep -qF 'default: "0.4.1"' "$d/action.yml"; then ok "actions-lock-version default untouched"; else ko "actions-lock-version default untouched"; fi
 if [ "$(cat "$d/README.md")" = "      - uses: getplumber/plumber@<version>" ]; then ok "README untouched"; else ko "README untouched"; fi
 no_backup "$d" "no backup files left"
 
