@@ -23,6 +23,10 @@ type jobLocations struct {
 	// pair only when they agree script for script.
 	scripts      [][]int
 	scriptValues []string
+	// uses is every uses: step in order and withText its with: as written
+	// (scalarWith), the same pairing as the two lists above.
+	uses     []string
+	withText []map[string]string
 }
 
 // scanGitHubJobLocations returns the locations of every job of a
@@ -68,6 +72,10 @@ func scanGitHubJobLocations(data []byte) map[string]jobLocations {
 					loc.scripts = append(loc.scripts, scalarLines(run))
 					loc.scriptValues = append(loc.scriptValues, run.Value)
 				}
+				if uses := mappingValue(step, "uses"); isNonEmptyString(uses) {
+					loc.uses = append(loc.uses, uses.Value)
+					loc.withText = append(loc.withText, scalarWith(step))
+				}
 			}
 		}
 		out[jobs.Content[i].Value] = loc
@@ -89,6 +97,11 @@ func applyJobLocations(job *ir.Job, loc jobLocations) {
 	}
 	if len(loc.scripts) > 0 && slices.Equal(loc.scriptValues, job.Scripts) {
 		job.ScriptLines = loc.scripts
+	}
+	if len(loc.uses) == len(job.Uses) && slices.EqualFunc(loc.uses, job.Uses, func(u string, a ir.Action) bool { return u == a.Uses }) {
+		for i := range job.Uses {
+			job.Uses[i].WithText = loc.withText[i]
+		}
 	}
 	if loc.image > 0 {
 		if job.Image != nil {
@@ -113,6 +126,30 @@ func clearJobLocations(job *ir.Job) {
 	for k := range job.MatrixImages {
 		job.MatrixImages[k].Line = 0
 	}
+}
+
+// isLiteralText reports a scalar the runner passes on as written: a string,
+// or a boolean, which differs at most in case and comparisons ignore case.
+// A number is not one: 1.10 reaches the action as 1.1.
+func isLiteralText(n *yamlv3.Node) bool {
+	return n != nil && n.Kind == yamlv3.ScalarNode && (n.Tag == "!!str" || n.Tag == "!!bool")
+}
+
+// scalarWith returns the string and boolean values a step's own with:
+// mapping writes, as written. Anything else (a number, a null, a list, an
+// alias, a merged key) has no entry, which reads as a value not known.
+func scalarWith(step *yamlv3.Node) map[string]string {
+	with := mappingValue(step, "with")
+	if with == nil || with.Kind != yamlv3.MappingNode {
+		return nil
+	}
+	out := map[string]string{}
+	for i := 0; i+1 < len(with.Content); i += 2 {
+		if v := with.Content[i+1]; isLiteralText(v) {
+			out[with.Content[i].Value] = v.Value
+		}
+	}
+	return out
 }
 
 // containerImageLine is the line of a container: reference, in its
