@@ -1478,6 +1478,13 @@ when a later step packs `.git` into an uploaded artifact (escalated to
 code runs in the job (covered by ISSUE-802 / ISSUE-804). This low-tier
 finding is a heads-up to add the one-liner.
 
+A checkout inside a composite action is judged too, unless a literal
+input turns it off: with `repo-checkout: false` passed to
+`golang/govulncheck-action`, its `if: inputs.repo-checkout != 'false'`
+checkout never runs and is not reported. This holds for every control
+that reads nested references, as long as the `if:` only compares
+`inputs.<name>` with strings.
+
 ```yaml
 # ❌ before — token persisted
 - uses: actions/checkout@v4
