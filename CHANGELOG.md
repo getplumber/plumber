@@ -1,3 +1,23 @@
+## [0.7.19](https://github.com/getplumber/plumber/compare/v0.7.18...v0.7.19) (2026-11-05)
+
+
+### 🐛 Bug Fixes
+
+* **github:** a composite step a literal input turns off is not analyzed ([eab2f54](https://github.com/getplumber/plumber/commit/eab2f54432c15ae36c35888539a6a6b46120f899)), closes [#591](https://github.com/getplumber/plumber/issues/591)
+
+
+### 📚 Documentation
+
+* document the workflow lockfile and give it a code owner entry ([665cfc5](https://github.com/getplumber/plumber/commit/665cfc5a22e4290b6fdc297253b7e5e3c3625cfd))
+
+
+### 👷 CI/CD
+
+* lock workflow actions and verify the lockfile on PRs ([6c31fa3](https://github.com/getplumber/plumber/commit/6c31fa39ab9a2555a5ad5a4b0ec558315fbd7ea1))
+* **score:** publish the Plumber Score with the released action, the source build no longer pushes ([c78b489](https://github.com/getplumber/plumber/commit/c78b4890d7094599c61283d818ab23c76d79cdf2))
+* verify the workflow lockfile with gh-actions-lock v0.3.0 ([e11334e](https://github.com/getplumber/plumber/commit/e11334ec49b7b6ef0f64cd2280bae4b6d85d985e))
+* verify the workflow lockfile with gh-actions-lock v0.4.0 ([247fced](https://github.com/getplumber/plumber/commit/247fced0138c734934d797fd61f42484b4c1f6b6))
+
 ## [0.7.18](https://github.com/getplumber/plumber/compare/v0.7.17...v0.7.18) (2026-11-02)
 
 
