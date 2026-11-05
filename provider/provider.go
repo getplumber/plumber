@@ -65,6 +65,13 @@ type CIEnvMapping struct {
 	// (e.g. "CI_COMMIT_REF_NAME" / "GITHUB_REF_NAME"). It is the
 	// authoritative ref in CI, preferred over the resolved default branch.
 	RefName string
+	// MergeRequestSourceSHA is the env var that holds the source branch
+	// head of a merge request pipeline whose CommitSHA is an ephemeral merge
+	// commit on no ref ("CI_MERGE_REQUEST_SOURCE_BRANCH_SHA", set by GitLab
+	// only for merged results pipelines and merge trains). Empty for a
+	// provider that has no such variable: GitHub exposes a pull request's
+	// head sha through the event payload, not the environment.
+	MergeRequestSourceSHA string
 }
 
 // PostActionSummary bundles the gate outcome needed by PostAnalysisActions

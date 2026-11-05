@@ -404,6 +404,33 @@ func TestPlatformAnalyzedSha(t *testing.T) {
 			t.Fatalf("got %q", got)
 		}
 	})
+	// A merged results pipeline (or a merge train) runs on an ephemeral merge
+	// commit that no branch or tag points to, and GitLab refuses to merge a
+	// configuration at such a commit ("a commit not associated with a Git
+	// reference (a detached commit)", customer report 2026-11-05). The source
+	// branch head is on a real ref and carries the configuration under
+	// review, so that is the commit the platform is asked to resolve at.
+	t.Run("a merged results pipeline resolves at the source branch head", func(t *testing.T) {
+		t.Setenv(env, "mergecommit")
+		t.Setenv(p.CIEnvVars().MergeRequestSourceSHA, "sourcehead")
+		if got, fromAnchor := platformAnalyzedSha(p, &configuration.Configuration{}, anchor); got != "sourcehead" || fromAnchor {
+			t.Fatalf("got %q, want the source branch head", got)
+		}
+	})
+	t.Run("a source sha equal to the commit sha changes nothing", func(t *testing.T) {
+		t.Setenv(env, "cisha")
+		t.Setenv(p.CIEnvVars().MergeRequestSourceSHA, "cisha")
+		if got, fromAnchor := platformAnalyzedSha(p, &configuration.Configuration{}, anchor); got != "cisha" || fromAnchor {
+			t.Fatalf("got %q", got)
+		}
+	})
+	t.Run("a source sha without a commit sha is not a CI job", func(t *testing.T) {
+		t.Setenv(env, "")
+		t.Setenv(p.CIEnvVars().MergeRequestSourceSHA, "sourcehead")
+		if got, fromAnchor := platformAnalyzedSha(p, &configuration.Configuration{}, anchor); got != "anchorsha" || !fromAnchor {
+			t.Fatalf("got %q, want the anchor's sha: the source sha alone says nothing", got)
+		}
+	})
 
 	t.Run("falls back to the anchor for the default branch", func(t *testing.T) {
 		t.Setenv(env, "")

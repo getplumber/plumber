@@ -204,6 +204,9 @@ func (p *GitLabProvider) CIEnvVars() CIEnvMapping {
 		RepoPath:  "CI_PROJECT_PATH",
 		CommitSHA: "CI_COMMIT_SHA",
 		RefName:   "CI_COMMIT_REF_NAME",
+		// Set by GitLab only on merged results pipelines and merge trains,
+		// where CI_COMMIT_SHA is the ephemeral merge commit.
+		MergeRequestSourceSHA: "CI_MERGE_REQUEST_SOURCE_BRANCH_SHA",
 	}
 }
 

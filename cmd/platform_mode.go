@@ -197,7 +197,9 @@ func ciConfigPathForDigest(conf *configuration.Configuration, snapshotPath strin
 // platformAnalyzedSha is the commit the resolve request asks about.
 //
 // In CI the environment knows it, and that is the authoritative answer: it
-// is the exact commit the job checked out.
+// is the exact commit the job checked out, except on a merged results
+// pipeline or a merge train, where the resolution moves to the source
+// branch head (see the body).
 //
 // Outside CI - analyzing a remote project with --project - there is no such
 // variable, and the resolve endpoint rejects an empty sha outright. The
@@ -214,7 +216,21 @@ func ciConfigPathForDigest(conf *configuration.Configuration, snapshotPath strin
 // describe output states so a local-uncommitted-edits divergence is not
 // read as a contradiction (see ConfigResolution.ShaFromAnchor).
 func platformAnalyzedSha(p providerPkg.Provider, conf *configuration.Configuration, anchor *platform.ResolutionAnchor) (sha string, fromAnchor bool) {
-	if sha := strings.TrimSpace(os.Getenv(p.CIEnvVars().CommitSHA)); sha != "" {
+	vars := p.CIEnvVars()
+	if sha := strings.TrimSpace(os.Getenv(vars.CommitSHA)); sha != "" {
+		// A merged results pipeline (or a merge train) runs on an ephemeral
+		// merge commit that no branch or tag points to, and the git host
+		// refuses to merge a configuration at such a commit ("a commit not
+		// associated with a Git reference (a detached commit)", customer
+		// report 2026-11-05). The source branch head is on a real ref and
+		// carries the configuration under review, so the platform is asked
+		// to resolve at that commit instead. The run is still reported at
+		// CommitSHA everywhere else: only the resolution moves.
+		if vars.MergeRequestSourceSHA != "" {
+			if src := strings.TrimSpace(os.Getenv(vars.MergeRequestSourceSHA)); src != "" && src != sha {
+				return src, false
+			}
+		}
 		return sha, false
 	}
 	if anchor == nil || strings.TrimSpace(anchor.Sha) == "" {
