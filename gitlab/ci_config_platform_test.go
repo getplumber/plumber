@@ -351,6 +351,41 @@ func TestPlatformMergedConfigUsesTheServedMergeVerdict(t *testing.T) {
 	})
 }
 
+// TestPlatformMergeVerdict_ResolvedInvalidShowsTheHostsErrors pins the
+// resolve-sourced INVALID verdict (customer report 2026-11-05): when the
+// platform's resolve answer carries GitLab's own ci_errors, the run reports
+// THOSE, verbatim, so the user reads the reason (an include the platform's
+// token cannot read, a broken job) instead of the generic sentence. The
+// generic sentence stays the fallback for a host that sent no message.
+func TestPlatformMergeVerdict_ResolvedInvalidShowsTheHostsErrors(t *testing.T) {
+	t.Run("the host's errors are reported verbatim", func(t *testing.T) {
+		conf := platformConf(platform.SourceResolved, "")
+		conf.PlatformRun.Config.Valid = false
+		conf.PlatformRun.Config.CiErrors = []string{"Project `dep/library/ci` not found or access denied!", "jobs config should contain at least one visible job"}
+		resp, engaged := platformMergedConfig(conf)
+		if !engaged {
+			t.Fatal("platform mode must be engaged")
+		}
+		if resp.CiConfig.Status != "INVALID" {
+			t.Fatalf("status = %q, want INVALID", resp.CiConfig.Status)
+		}
+		if len(resp.CiConfig.Errors) != 2 || resp.CiConfig.Errors[0] != "Project `dep/library/ci` not found or access denied!" {
+			t.Fatalf("errors = %v, want the host's own sentences", resp.CiConfig.Errors)
+		}
+	})
+	t.Run("no message from the host keeps the generic sentence", func(t *testing.T) {
+		conf := platformConf(platform.SourceResolved, "")
+		conf.PlatformRun.Config.Valid = false
+		resp, _ := platformMergedConfig(conf)
+		if resp.CiConfig.Status != "INVALID" {
+			t.Fatalf("status = %q, want INVALID", resp.CiConfig.Status)
+		}
+		if len(resp.CiConfig.Errors) != 1 || resp.CiConfig.Errors[0] != genericInvalidMergeError {
+			t.Fatalf("errors = %v, want the generic sentence alone", resp.CiConfig.Errors)
+		}
+	})
+}
+
 // TestGetFullGitlabCIUsesTheServedRawConfig covers the run with no checkout
 // of the analyzed project: a ci_config_path pointing into another project,
 // GIT_STRATEGY none, a sparse checkout, or a job whose file read was

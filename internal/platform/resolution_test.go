@@ -241,6 +241,24 @@ func TestResolveRunConfig_InvalidMergeIsReportedAsResolved(t *testing.T) {
 	}
 }
 
+// TestResolveRunConfig_InvalidMergeCarriesTheHostsErrors: the git host's
+// own sentences about an INVALID merge travel with the resolution, so the
+// run can show the user WHY instead of a generic line (customer report
+// 2026-11-05: "the git host reported this CI configuration as invalid" with
+// no reason, where GitLab had said which include the token cannot read).
+func TestResolveRunConfig_InvalidMergeCarriesTheHostsErrors(t *testing.T) {
+	f := &fakeResolver{result: &ResolvedConfig{MergedYaml: "", ResolvedSha: "s", Valid: false, Source: "resolved",
+		CiErrors: []string{"Project `dep/library/ci` not found or access denied!"}}}
+	snap := snapWith(t, "b: 2\n", "aaa", "1", "s0", "main")
+	got := resolveRunConfigSync(f, snap, "grp/proj", "s", "bbb", "")
+	if got.Valid {
+		t.Fatal("Valid must carry the host's INVALID verdict through")
+	}
+	if len(got.CiErrors) != 1 || got.CiErrors[0] != "Project `dep/library/ci` not found or access denied!" {
+		t.Fatalf("the host's errors must travel with the resolution, got %v", got.CiErrors)
+	}
+}
+
 // TestResolveRunConfig_ServedIncludesTravelWithTheirConfig pins the
 // attribution half of the resolve response.
 //

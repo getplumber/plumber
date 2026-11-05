@@ -206,7 +206,8 @@ const maxServedRawConfigBytes = 2 << 20 // 2 MiB
 // document came from the resolve endpoint for THIS branch while
 // merged_yaml_status describes the anchor's, and reporting one document's
 // verdict about another is a diagnosis nothing gathered. The resolve
-// endpoint answers that case itself, through ConfigInvalid.
+// endpoint answers that case itself, through ConfigInvalid, and carries the
+// host's own sentences through ConfigErrors.
 //
 // This is deliberately NOT the test the include attribution passes. The
 // endpoint can serve attribution for the document it returned, which makes
@@ -248,6 +249,12 @@ func platformMergeVerdict(conf *configuration.Configuration) (string, []string) 
 	}
 
 	if conf.PlatformRun.ConfigInvalid() {
+		// The host's own sentences first (the include its token cannot
+		// read, the job it refused): they are what the user can act on.
+		// The generic sentence is only what is left when it sent none.
+		if errs := conf.PlatformRun.ConfigErrors(); len(errs) > 0 {
+			return mergeStatusInvalid, errs
+		}
 		return mergeStatusInvalid, []string{genericInvalidMergeError}
 	}
 	return mergeStatusValid, nil
