@@ -491,3 +491,19 @@ func TestRunContextAccessorsJoinPendingResolution(t *testing.T) {
 		t.Fatal("MergedYAML never answered after the resolution settled")
 	}
 }
+
+// TestDescribeConfig_ForkPipelineNamesTheReason: a run on a merge request
+// from a fork has no commit the platform can resolve against the target
+// project (customer report 2026-11-05, innersource instances live on fork
+// merge requests). The source line says so in words, beside the reason
+// code, so a reader does not go looking for a platform outage.
+func TestDescribeConfig_ForkPipelineNamesTheReason(t *testing.T) {
+	rc := &RunContext{Config: &ConfigResolution{Source: SourceUnavailable, Reason: ReasonForkPipeline, Digest: DigestDiverged, LocalDigest: "abc", DigestVersion: "1"}}
+	out := strings.Join(rc.describeConfig(), "\n")
+	if !strings.Contains(out, "UNAVAILABLE ("+ReasonForkPipeline+")") {
+		t.Fatalf("the reason code is missing:\n%s", out)
+	}
+	if !strings.Contains(out, "merge request from a fork") {
+		t.Fatalf("the fork note is missing:\n%s", out)
+	}
+}

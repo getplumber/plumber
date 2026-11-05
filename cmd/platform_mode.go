@@ -132,7 +132,7 @@ func setupPlatformMode(p providerPkg.Provider, conf *configuration.Configuration
 	// digest against, so digesting over anything else can never cache-hit on
 	// a project with a custom path.
 	localDigest, abortReason := computeLocalCIDigest(conf, rc.SnapshotCIConfigPath())
-	sha, shaFromAnchor := platformAnalyzedSha(p, conf, ctx.Snapshot.Anchor())
+	sha, shaFromAnchor, noShaReason := platformAnalyzedSha(p, conf, ctx.Snapshot.Anchor())
 	// Started, not awaited: on a divergent digest the resolve request is in
 	// flight when setup returns, and the first consumer that needs the
 	// merged config joins on it (RunContext.MergedYAML). The local work in
@@ -140,6 +140,13 @@ func setupPlatformMode(p providerPkg.Provider, conf *configuration.Configuration
 	// endpoint costs its timeout in parallel rather than before any of it.
 	rc.Config = platform.StartRunConfigResolution(client, ctx.Snapshot, projectPath, sha, localDigest, abortReason)
 	rc.Config.ShaFromAnchor = shaFromAnchor
+	// A withheld sha has a reason of its own (a merge request from a fork):
+	// name it on the unavailable resolution, so the describe output says
+	// why instead of the generic "resolution unavailable". The snapshot
+	// path needs no sha, so a matching digest is unaffected.
+	if noShaReason != "" && rc.Config.Source == platform.SourceUnavailable {
+		rc.Config.Reason = noShaReason
+	}
 	return rc, nil
 }
 
@@ -215,9 +222,27 @@ func ciConfigPathForDigest(conf *configuration.Configuration, snapshotPath strin
 // then evaluates the project's remote state at that commit, which the
 // describe output states so a local-uncommitted-edits divergence is not
 // read as a contradiction (see ConfigResolution.ShaFromAnchor).
-func platformAnalyzedSha(p providerPkg.Provider, conf *configuration.Configuration, anchor *platform.ResolutionAnchor) (sha string, fromAnchor bool) {
+// reason is why a sha was withheld on purpose (platform.ReasonForkPipeline),
+// empty when a sha is returned or when there is simply none to return.
+//
+// A merge request from a FORK (the source project path differs from the
+// job's project path): the configuration under review lives in the source
+// project, and the platform resolves against the job's project, so neither
+// the merge commit nor the fork's head is a commit it can merge there (the
+// git host answers "a commit not associated with a Git reference"). No sha
+// is returned: the run reports the merged config unavailable, with the
+// pipeline controls not_evaluable, rather than an INVALID verdict nothing
+// established (I5). A matching digest never reaches this point, so a fork
+// whose CI file equals the target's keeps the snapshot path.
+func platformAnalyzedSha(p providerPkg.Provider, conf *configuration.Configuration, anchor *platform.ResolutionAnchor) (sha string, fromAnchor bool, reason string) {
 	vars := p.CIEnvVars()
 	if sha := strings.TrimSpace(os.Getenv(vars.CommitSHA)); sha != "" {
+		if vars.MergeRequestSourceProjectPath != "" {
+			src := strings.TrimSpace(os.Getenv(vars.MergeRequestSourceProjectPath))
+			if src != "" && !strings.EqualFold(src, strings.TrimSpace(os.Getenv(vars.RepoPath))) {
+				return "", false, platform.ReasonForkPipeline
+			}
+		}
 		// A merged results pipeline (or a merge train) runs on an ephemeral
 		// merge commit that no branch or tag points to, and the git host
 		// refuses to merge a configuration at such a commit ("a commit not
@@ -228,13 +253,13 @@ func platformAnalyzedSha(p providerPkg.Provider, conf *configuration.Configurati
 		// CommitSHA everywhere else: only the resolution moves.
 		if vars.MergeRequestSourceSHA != "" {
 			if src := strings.TrimSpace(os.Getenv(vars.MergeRequestSourceSHA)); src != "" && src != sha {
-				return src, false
+				return src, false, ""
 			}
 		}
-		return sha, false
+		return sha, false, ""
 	}
 	if anchor == nil || strings.TrimSpace(anchor.Sha) == "" {
-		return "", false
+		return "", false, ""
 	}
 	// conf.Branch empty means the run analyzes the project's default
 	// branch, which is what the anchor's ref is.
@@ -243,9 +268,9 @@ func platformAnalyzedSha(p providerPkg.Provider, conf *configuration.Configurati
 		branch = strings.TrimSpace(conf.Branch)
 	}
 	if branch == "" || branch == anchor.Ref {
-		return anchor.Sha, true
+		return anchor.Sha, true, ""
 	}
-	return "", false
+	return "", false, ""
 }
 
 // applyCollectionScope records the control configurations whose UNION drives

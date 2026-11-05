@@ -72,6 +72,13 @@ type CIEnvMapping struct {
 	// provider that has no such variable: GitHub exposes a pull request's
 	// head sha through the event payload, not the environment.
 	MergeRequestSourceSHA string
+	// MergeRequestSourceProjectPath is the env var that holds the path of
+	// the project a merge request comes FROM ("CI_MERGE_REQUEST_SOURCE_PROJECT_PATH",
+	// set by GitLab on every merge request pipeline). When it differs from
+	// RepoPath the merge request comes from a fork: the configuration under
+	// review lives in another project. Empty for a provider without such a
+	// variable (GitHub carries it in the event payload).
+	MergeRequestSourceProjectPath string
 }
 
 // PostActionSummary bundles the gate outcome needed by PostAnalysisActions
