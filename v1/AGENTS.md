@@ -51,6 +51,12 @@ skills reads the file and applies it.
 8. Run `make -C v1 lint` before you open a PR. It must report 0 issues. Use the golangci-lint
    version `.github/workflows/v1.yml` pins (v2.15.0). Fix what it reports. A `//nolint` names one
    linter and says why.
+9. Every change belongs to a step of [#640](https://github.com/getplumber/monorepo/issues/640):
+   one issue per step, one PR per issue. #640 only lists the steps; each issue explains its work.
+   New work gets a new step in #640 and a new issue, linked as a sub-issue.
+10. After a PR merges into `next-v1`, check its issue against what merged. `Closes` does nothing
+    here because `next-v1` is not the default branch, so close the issue by hand when everything
+    is done. Anything missing becomes a new step.
 
 ## Commands
 
@@ -112,4 +118,4 @@ fix to `next-v1` and the golden diff shows it.
 
 ## Issues
 
-- #640 refactoring (tracking), #641 step 1 local suite, #651 step 2 E2E suite.
+- #640 lists every step of the refactoring and its issue.
