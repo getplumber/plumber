@@ -70,3 +70,30 @@ jobs:
           version: v2.15.0
           working-directory: v1
           args: -c .golangci.yml ./...
+
+  # Rule 2 of v1/AGENTS.md. A sync from main changes files everywhere, so it
+  # skips this job, but only from this repository: a fork can pick any branch name.
+  scope:
+    name: Changes stay in v1/
+    if: >-
+      github.event_name == 'pull_request' &&
+      !(startsWith(github.head_ref, 'sync/') &&
+      github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      # HEAD is the PR merge commit and HEAD^1 its base. --no-renames lists both
+      # sides of a move, so moving a file into v1/ still reports where it came from.
+      - name: Check changed paths
+        run: |
+          outside="$(git diff --no-renames --name-only HEAD^1 HEAD \
+            | grep -Ev '^(v1/|\.agents/|\.claude/|\.github/|skills-lock\.json$)' || true)"
+          if [ -n "$outside" ]; then
+            echo "Changes outside v1/ (rule 2 of v1/AGENTS.md):"
+            echo "$outside"
+            exit 1
+          fi

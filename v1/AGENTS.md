@@ -16,9 +16,9 @@ sh .agents/skills/use-modern-go/scripts/run-tool.sh list --file-path <file.go>
 Read the whole output and follow the guidelines it returns, even where nearby code uses an older
 pattern. An agent that cannot load skills reads the file and runs the script.
 
-Run the humanizer skill ([`.agents/skills/humanizer/SKILL.md`](../.agents/skills/humanizer/SKILL.md)) on every
-comment and every piece of documentation you write: code comments, Markdown, commit messages and PR
-descriptions. An agent that cannot load skills reads the file and applies it.
+Run the humanizer skill ([`.agents/skills/humanizer/SKILL.md`](../.agents/skills/humanizer/SKILL.md)) on the
+documentation you write: Markdown, commit messages and PR descriptions. An agent that cannot load
+skills reads the file and applies it.
 
 ## Rules
 
@@ -29,7 +29,8 @@ descriptions. An agent that cannot load skills reads the file and applies it.
    places, leave the files that come from `main` as they are and add new ones instead, like
    `.github/workflows/v1.yml`. The only edit allowed in a file from `main` is the
    `branches: [main]` filter on the `pull_request` trigger of its workflows. If something outside
-   `v1/` needs a fix, fix it on `main` and the next sync brings it.
+   `v1/` needs a fix, fix it on `main` and the next sync brings it. The `scope` job of
+   `.github/workflows/v1.yml` fails a PR that changes other paths.
 3. Branch from `v1` and open PRs against `v1`, never `main`:
    `git fetch origin && git switch -c <branch> origin/v1`.
 4. A maintainer merges `main` into `v1` by hand, through a PR:
@@ -88,8 +89,10 @@ v1/
 ## Wiring outside `v1/`
 
 - `.github/workflows/v1.yml`: the only CI of `v1`, on pushes and PRs to `v1`. Jobs: build and
-  unit tests (`go build ./...`, `go test ./...`), the CLI suite, and golangci-lint on `v1/`
-  through `golangci/golangci-lint-action` (same version and arguments as `make -C v1 lint`).
+  unit tests (`go build ./...`, `go test ./...`), the CLI suite, golangci-lint on `v1/`
+  through `golangci/golangci-lint-action` (same version and arguments as `make -C v1 lint`), and
+  `scope`, which checks the paths a PR changes (rule 2). `scope` skips `sync/` branches of this
+  repository, because a sync from `main` changes files everywhere.
 - `branches: [main]` on the `pull_request` trigger of `plumber-action.yml`,
   `claude-pr-checks.yml`, `install-channels.yml` and `scripts-test.yml`, so they don't run on PRs
   to `v1`. GitHub reads a PR's workflows from the PR's own tree and has no per-branch switch, so
