@@ -253,6 +253,24 @@ func TestResolveConfig_InvalidConfigIsA200(t *testing.T) {
 	}
 }
 
+// TestResolveConfig_DecodesCiErrorsFromTheWire pins the decode of the
+// resolve response's ci_errors: GitLab's own sentences about an INVALID
+// merge, served by the platform since 2026-08-27 and dropped on the floor
+// by this client until 2026-11-05 (a customer saw only the generic "the git
+// host reported this CI configuration as invalid" with no reason).
+func TestResolveConfig_DecodesCiErrorsFromTheWire(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"merged_yaml":"","resolved_sha":"cafe","valid":false,"source":"resolved","ci_errors":["Project `+"`"+`dep/library/ci`+"`"+` not found or access denied!","jobs config should contain at least one visible job"]}`)
+	})
+	got, err := c.ResolveConfig("a/b", "cafe", "", "")
+	if err != nil {
+		t.Fatalf("valid:false is a 200, not an error: %v", err)
+	}
+	if len(got.CiErrors) != 2 || got.CiErrors[0] != "Project `dep/library/ci` not found or access denied!" {
+		t.Fatalf("ci_errors not decoded: %+v", got.CiErrors)
+	}
+}
+
 // TestResolveConfig_DecodesIncludesFromTheWire pins the wire-level decode
 // of the resolve response's includes list, in the same per-entry shape as
 // snapshot.data.includes (location, raw, blob, contextProject, type,

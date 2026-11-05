@@ -112,6 +112,19 @@ func (r *RunContext) ConfigInvalid() bool {
 	return r.Config != nil && r.Config.Available() && !r.Config.Valid
 }
 
+// ConfigErrors returns what the git host said about the INVALID merge of
+// the configuration this run evaluates, verbatim, and nothing when the
+// configuration is not INVALID (ConfigInvalid) or the host sent no message.
+// It is the resolve lane's counterpart of SnapshotMergeVerdict's errs: the
+// sentence a user needs to act (which include the platform's token cannot
+// read, which job is broken) rather than a generic "invalid".
+func (r *RunContext) ConfigErrors() []string {
+	if !r.ConfigInvalid() || len(r.Config.CiErrors) == 0 {
+		return nil
+	}
+	return append([]string(nil), r.Config.CiErrors...)
+}
+
 // Includes returns the per-include attribution for the configuration this
 // run actually evaluates, and whether any is available.
 //

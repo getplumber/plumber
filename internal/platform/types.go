@@ -483,6 +483,11 @@ type ResolvedConfig struct {
 	// INVALID - a user error in the pushed config, not a resolution
 	// failure. Still a 200.
 	Valid bool `json:"valid"`
+	// CiErrors is what the git host said about an INVALID merge, verbatim
+	// (an include the platform's token cannot read, a job with no script).
+	// Served by the platform since 2026-08-27; absent on a VALID merge. It
+	// is what the run shows the user in place of a generic sentence.
+	CiErrors []string `json:"ci_errors,omitempty"`
 
 	// Source is "cache" or "resolved".
 	Source string `json:"source"`
