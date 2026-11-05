@@ -1,3 +1,10 @@
+## [0.7.21](https://github.com/getplumber/plumber/compare/v0.7.20...v0.7.21) (2026-11-05)
+
+
+### 🐛 Bug Fixes
+
+* **platform:** a merged results pipeline resolves its configuration at the source branch head ([1a8ee58](https://github.com/getplumber/plumber/commit/1a8ee584c05af0010a97ab18c597673dcdd15b1c))
+
 ## [0.7.20](https://github.com/getplumber/plumber/compare/v0.7.19...v0.7.20) (2026-11-05)
 
 
