@@ -4,7 +4,7 @@ The Plumber CLI is being refactored ([getplumber/monorepo#640](https://github.co
 This directory holds its test suite, which runs the built `plumber` binary on every CLI input and
 compares the output with golden files.
 
-- Branch from `v1` and open your PR against `v1`.
+- Branch from `next-v1` and open your PR against `next-v1`.
 - Run `make -C v1 test-integration` before pushing. It needs no token and no network.
 - If you change an output on purpose, run `make -C v1 test-integration UPDATE=1` and review the diff.
 - Start AI coding agents from `v1/`, so they load its instructions before they create a branch.

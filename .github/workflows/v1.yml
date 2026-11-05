@@ -1,13 +1,13 @@
 name: v1
 
 # CI of the CLI refactoring branch (getplumber/monorepo#640, v1/AGENTS.md).
-# Main's workflows don't run on PRs to v1, and this one doesn't run on main.
+# Main's workflows don't run on PRs to next-v1, and this one doesn't run on main.
 
 on:
   push:
-    branches: [v1]
+    branches: [next-v1]
   pull_request:
-    branches: [v1]
+    branches: [next-v1]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
