@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -24,6 +25,7 @@ import (
 	"github.com/cli/go-gh/v2/pkg/api"
 	yamlv3 "gopkg.in/yaml.v3"
 
+	"github.com/getplumber/plumber/internal/expr"
 	"github.com/getplumber/plumber/internal/ir"
 	"github.com/getplumber/plumber/utils"
 )
@@ -452,7 +454,9 @@ func contentsReader(rest *api.RESTClient, owner, repo, ref string) func(rel stri
 type nestedStep struct {
 	uses, name, ifCond, comment string
 	with                        map[string]any
-	line                        int
+	// withText is the with: as written (scalarWith).
+	withText map[string]string
+	line     int
 }
 
 // parseCompositeSteps reads a definition (spec 4.2): runs.using ==
@@ -507,6 +511,11 @@ func parseCompositeSteps(text string) (composite bool, steps []nestedStep, err e
 		if len(st.With) > 0 {
 			s.with = st.With
 		}
+		if n.Kind == yamlv3.AliasNode && n.Alias != nil {
+			s.withText = scalarWith(n.Alias)
+		} else {
+			s.withText = scalarWith(n)
+		}
 		if v := ownUses(n); v != nil {
 			s.line, s.comment = v.Line, lineComment(v)
 		} else if n.Kind == yamlv3.AliasNode && n.Alias != nil {
@@ -519,6 +528,71 @@ func parseCompositeSteps(text string) (composite bool, steps []nestedStep, err e
 		}
 	}
 	return true, steps, nil
+}
+
+// parseInputDefaults reads the literal defaults a definition declares, by
+// lowercased input name, since input names are case-insensitive. A default
+// that is an expression or not literal text is left out, and so is any
+// inputs: of another shape: that costs the default, never the expansion.
+func parseInputDefaults(text string) map[string]string {
+	var doc struct {
+		Inputs yamlv3.Node `yaml:"inputs"`
+	}
+	if err := yamlv3.Unmarshal([]byte(text), &doc); err != nil || doc.Inputs.Kind != yamlv3.MappingNode {
+		return nil
+	}
+	out := map[string]string{}
+	for i := 0; i+1 < len(doc.Inputs.Content); i += 2 {
+		def := mappingValue(doc.Inputs.Content[i+1], "default")
+		if isLiteralText(def) && !strings.Contains(def.Value, "${{") {
+			out[strings.ToLower(doc.Inputs.Content[i].Value)] = def.Value
+		}
+	}
+	return out
+}
+
+// inputScope is what the inputs of one composite are known to hold on one
+// path, by lowercased name. An input with no entry is not known.
+type inputScope map[string]string
+
+// Resolve implements expr.Facts.
+func (s inputScope) Resolve(ref string) (string, bool) {
+	name, ok := expr.InputName(ref)
+	if !ok {
+		return "", false
+	}
+	v, ok := s[strings.ToLower(name)]
+	return v, ok
+}
+
+// literal is text with its `${{ inputs.x }}` replaced, false when an
+// expression is left in it.
+func (s inputScope) literal(text string) (string, bool) {
+	out := inputExpr.ReplaceAllStringFunc(text, func(m string) string {
+		if v, ok := s[strings.ToLower(inputExpr.FindStringSubmatch(m)[1])]; ok {
+			return v
+		}
+		return m
+	})
+	return out, !strings.Contains(out, "${{")
+}
+
+// callScope is the scope of c for one call: its defaults, overridden by
+// what the caller passes, read in up, the scope of the caller. A value
+// passed but not literal hides the default: the step gets that value.
+func callScope(c *nestedContainer, with map[string]any, text map[string]string, up inputScope) inputScope {
+	s := inputScope{}
+	maps.Copy(s, c.inputDefaults)
+	for name := range with {
+		delete(s, strings.ToLower(name))
+	}
+	for name, written := range text {
+		delete(s, strings.ToLower(name))
+		if v, ok := up.literal(written); ok {
+			s[strings.ToLower(name)] = v
+		}
+	}
+	return s
 }
 
 // maxCompositeAliasNodes bounds the nodes one definition's steps reach
@@ -583,6 +657,8 @@ type nestedContainer struct {
 	direct, queued bool
 	defPath        string
 	steps          []nestedStep
+	// inputDefaults is parseInputDefaults of the definition.
+	inputDefaults map[string]string
 	// reason is why the container was not expanded, "" when it was read.
 	reason string
 	// invalid is a reference refused before any fetch (refused).
@@ -793,6 +869,7 @@ func (w *nestedWalk) visit(c *nestedContainer) {
 		return
 	}
 	c.steps = steps
+	c.inputDefaults = parseInputDefaults(text)
 	for _, s := range steps {
 		child, _ := w.containerFor(s.uses)
 		w.enqueue(child, false)
@@ -829,7 +906,7 @@ func (w *nestedWalk) splice(job *ir.Job) []ir.UnexpandedAction {
 			continue
 		}
 		chain := append(slices.Clone(e.Via), e.Uses)
-		w.expand(s, c, e, chain, map[string]bool{c.key: true})
+		w.expand(s, c, e, chain, map[string]bool{c.key: true}, callScope(c, e.With, e.WithText, nil))
 	}
 	job.Uses = s.out
 	return s.unexpanded
@@ -844,15 +921,21 @@ func viaOf(chain []string) []string {
 
 // expand appends c's steps after outer. onChain is the cycle guard of one
 // path: a step back to a container already on it is the runner's own
-// loop and is not listed again (spec 4.3).
-func (w *nestedWalk) expand(s *jobSplice, c *nestedContainer, outer ir.Action, chain []string, onChain map[string]bool) {
+// loop and is not listed again (spec 4.3). A step whose if: is false from
+// the literal inputs of this call never runs, so neither it nor what it
+// pulls in is listed. The containers stay per reference, so scope is
+// carried along the path: another call may run the same step.
+func (w *nestedWalk) expand(s *jobSplice, c *nestedContainer, outer ir.Action, chain []string, onChain map[string]bool, scope inputScope) {
 	if c.reason != "" {
 		s.unexpanded = append(s.unexpanded, ir.UnexpandedAction{Uses: chain[len(chain)-1], Via: viaOf(chain), Reason: c.reason, Invalid: c.invalid && c.reason == ir.UnexpandedFetch})
 		return
 	}
 	for _, step := range c.steps {
-		child, expr := w.containerFor(step.uses)
-		if expr {
+		if expr.EvalLiteralInputs(step.ifCond, scope) == expr.False {
+			continue
+		}
+		child, dynamic := w.containerFor(step.uses)
+		if dynamic {
 			s.unexpanded = append(s.unexpanded, ir.UnexpandedAction{Uses: step.uses, Via: slices.Clone(chain), Reason: ir.UnexpandedExpression})
 			continue
 		}
@@ -878,7 +961,7 @@ func (w *nestedWalk) expand(s *jobSplice, c *nestedContainer, outer ir.Action, c
 			continue
 		}
 		onChain[child.key] = true
-		w.expand(s, child, outer, append(slices.Clone(chain), step.uses), onChain)
+		w.expand(s, child, outer, append(slices.Clone(chain), step.uses), onChain, callScope(child, step.with, step.withText, scope))
 		delete(onChain, child.key)
 	}
 }

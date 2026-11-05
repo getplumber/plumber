@@ -2,11 +2,15 @@ package cmd
 
 import (
 	"bytes"
+	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -16,6 +20,32 @@ import (
 	"github.com/getplumber/plumber/control"
 	providerPkg "github.com/getplumber/plumber/provider"
 )
+
+// stubSigner is a test double for scoreSigner: it returns the configured
+// bundle or error without ever talking to Fulcio/Rekor, and records the
+// bytes it was asked to sign when signed is set.
+type stubSigner struct {
+	bundle []byte
+	err    error
+	signed *[]byte
+}
+
+func (s stubSigner) Sign(_ context.Context, payload []byte) ([]byte, error) {
+	if s.signed != nil {
+		*s.signed = append([]byte(nil), payload...)
+	}
+	return s.bundle, s.err
+}
+
+// withScoreSigner swaps newScoreSignerFn so maybePushScore uses the given
+// stub signer regardless of provider or environment, restoring the real
+// implementation when the test ends.
+func withScoreSigner(t *testing.T, s scoreSigner) {
+	t.Helper()
+	old := newScoreSignerFn
+	newScoreSignerFn = func(providerPkg.Provider) scoreSigner { return s }
+	t.Cleanup(func() { newScoreSignerFn = old })
+}
 
 func TestHostOf(t *testing.T) {
 	cases := map[string]string{
@@ -81,12 +111,13 @@ func TestFetchGitHubActionsIDToken(t *testing.T) {
 }
 
 func TestPostScoreReport(t *testing.T) {
-	var gotAuth, gotCT, gotPath string
+	var gotAuth, gotCT, gotPath, gotBundle string
 	var gotBody []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
 		gotCT = r.Header.Get("Content-Type")
 		gotPath = r.URL.Path
+		gotBundle = r.Header.Get("Plumber-Sigstore-Bundle")
 		gotBody, _ = io.ReadAll(r.Body)
 		if r.URL.Path == "/forbidden" {
 			http.Error(w, "nope", http.StatusForbidden)
@@ -96,14 +127,25 @@ func TestPostScoreReport(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if err := postScoreReport(srv.URL+"/github.com/o/r", "tok", []byte(`{"a":1}`)); err != nil {
+	if err := postScoreReport(srv.URL+"/github.com/o/r", "tok", []byte(`{"a":1}`), nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if gotAuth != "Bearer tok" || gotCT != "application/json" || gotPath != "/github.com/o/r" || string(gotBody) != `{"a":1}` {
 		t.Fatalf("auth=%q ct=%q path=%q body=%q", gotAuth, gotCT, gotPath, gotBody)
 	}
+	if gotBundle != "" {
+		t.Fatalf("bundle header = %q, want empty when bundle is nil", gotBundle)
+	}
 
-	if err := postScoreReport(srv.URL+"/forbidden", "tok", []byte("{}")); err == nil {
+	bundle := []byte(`{"mediaType":"x"}`)
+	if err := postScoreReport(srv.URL+"/github.com/o/r", "tok", []byte(`{"a":1}`), bundle); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if want := base64.StdEncoding.EncodeToString(bundle); gotBundle != want {
+		t.Fatalf("bundle header = %q, want %q", gotBundle, want)
+	}
+
+	if err := postScoreReport(srv.URL+"/forbidden", "tok", []byte("{}"), nil); err == nil {
 		t.Fatal("expected a non-2xx error")
 	}
 }
@@ -240,6 +282,233 @@ func TestMaybePushScore_FullFlow(t *testing.T) {
 
 	if gotPath != "/github.com/octo/repo" || gotAuth != "Bearer id-tok" || string(gotBody) != `{"plumberScore":{"score":"A"}}` {
 		t.Fatalf("push not received as expected: path=%q auth=%q body=%q", gotPath, gotAuth, gotBody)
+	}
+}
+
+// TestMaybePushScore_SendsBundleHeader proves the score push carries the
+// Sigstore bundle (protojson, base64) under scoreBundleHeader when signing
+// succeeds, and that a successful signature prints the Rekor index line
+// (read from the bundle's first transparency log entry).
+func TestMaybePushScore_SendsBundleHeader(t *testing.T) {
+	p, ok := providerPkg.Get("github")
+	if !ok {
+		t.Skip("github provider not registered")
+	}
+
+	oidc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{"value": "id-tok"})
+	}))
+	defer oidc.Close()
+
+	bundleJSON := []byte(`{"mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json","verificationMaterial":{"tlogEntries":[{"logIndex":"4242"}]}}`)
+	var gotHeader string
+	score := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeader = r.Header.Get("Plumber-Sigstore-Bundle")
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer score.Close()
+
+	withScoreSigner(t, stubSigner{bundle: bundleJSON})
+	t.Setenv(scoreSignEnv, "true") // the stub score service is self-hosted
+	defer func(pp bool, e string) { pushScore, scoreEndpoint = pp, e }(pushScore, scoreEndpoint)
+	pushScore, scoreEndpoint = true, score.URL
+	t.Setenv("GITHUB_ACTIONS", "true")
+	t.Setenv("GITHUB_REPOSITORY", "octo/repo")
+	t.Setenv("GITHUB_SERVER_URL", "https://github.com")
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", oidc.URL)
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "req")
+
+	conf := &configuration.Configuration{PlumberConfig: &configuration.PlumberConfig{}}
+	stderr := captureStderr(t, func() {
+		maybePushScore(p, conf, []byte(`{"plumberScore":{"score":"A"}}`), "main")
+	})
+
+	want := base64.StdEncoding.EncodeToString(bundleJSON)
+	if gotHeader != want {
+		t.Fatalf("bundle header = %q, want %q", gotHeader, want)
+	}
+	if !strings.Contains(stderr, "Rekor index 4242") {
+		t.Fatalf("expected the Rekor index line, got %q", stderr)
+	}
+}
+
+// TestMaybePushScore_SigningFailureWarnsAndPushesWithoutBundle proves a
+// signing failure never blocks the push: the score still goes out, without a
+// bundle, and the operator sees a one-line warning naming the report as not
+// signed.
+func TestMaybePushScore_SigningFailureWarnsAndPushesWithoutBundle(t *testing.T) {
+	p, ok := providerPkg.Get("github")
+	if !ok {
+		t.Skip("github provider not registered")
+	}
+
+	oidc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{"value": "id-tok"})
+	}))
+	defer oidc.Close()
+
+	var gotHeader string
+	pushed := false
+	score := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pushed = true
+		gotHeader = r.Header.Get("Plumber-Sigstore-Bundle")
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer score.Close()
+
+	withScoreSigner(t, stubSigner{err: errors.New("fulcio down")})
+	t.Setenv(scoreSignEnv, "true") // the stub score service is self-hosted
+	defer func(pp bool, e string) { pushScore, scoreEndpoint = pp, e }(pushScore, scoreEndpoint)
+	pushScore, scoreEndpoint = true, score.URL
+	t.Setenv("GITHUB_ACTIONS", "true")
+	t.Setenv("GITHUB_REPOSITORY", "octo/repo")
+	t.Setenv("GITHUB_SERVER_URL", "https://github.com")
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", oidc.URL)
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "req")
+
+	conf := &configuration.Configuration{PlumberConfig: &configuration.PlumberConfig{}}
+	stderr := captureStderr(t, func() {
+		maybePushScore(p, conf, []byte(`{}`), "main")
+	})
+
+	if !pushed || gotHeader != "" {
+		t.Fatalf("pushed=%v header=%q", pushed, gotHeader)
+	}
+	if !strings.Contains(stderr, "not signed") {
+		t.Fatalf("expected a one-line warning, got %q", stderr)
+	}
+}
+
+// TestMaybePushScore_PayloadOutWritesExactBytes proves PLUMBER_SCORE_PAYLOAD_OUT
+// writes the exact bytes maybePushScore posts (the publish payload, which
+// buildPublishPayload already trimmed down), not a re-derived copy, so an
+// e2e can diff the file against what the Rekor entry actually signs.
+func TestMaybePushScore_PayloadOutWritesExactBytes(t *testing.T) {
+	p, ok := providerPkg.Get("gitlab")
+	if !ok {
+		t.Skip("gitlab provider not registered")
+	}
+
+	score := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer score.Close()
+
+	defer func(pp bool, e string) { pushScore, scoreEndpoint = pp, e }(pushScore, scoreEndpoint)
+	pushScore, scoreEndpoint = true, score.URL
+	t.Setenv("GITLAB_CI", "true")
+	t.Setenv("CI_PROJECT_PATH", "group/repo")
+	t.Setenv("CI_SERVER_URL", "https://gitlab.com")
+	t.Setenv(gitlabScoreTokenEnv, "tok")
+
+	out := filepath.Join(t.TempDir(), "payload.json")
+	t.Setenv("PLUMBER_SCORE_PAYLOAD_OUT", out)
+
+	conf := &configuration.Configuration{PlumberConfig: &configuration.PlumberConfig{}}
+	payload := []byte(`{"plumberScore":{"score":"A"}}`)
+	maybePushScore(p, conf, payload, "main")
+
+	got, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("payload file not written: %v", err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("payload file = %q, want %q", got, payload)
+	}
+}
+
+// TestMaybePushScore_SignedPostedAndWrittenBytesAreIdentical locks the
+// feature's central guarantee on the signed path: the bytes handed to the
+// signer, the body the score service receives and the PLUMBER_SCORE_PAYLOAD_OUT
+// file are all exactly the payload, so the Rekor entry binds the pushed body.
+func TestMaybePushScore_SignedPostedAndWrittenBytesAreIdentical(t *testing.T) {
+	p, ok := providerPkg.Get("github")
+	if !ok {
+		t.Skip("github provider not registered")
+	}
+
+	oidc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{"value": "id-tok"})
+	}))
+	defer oidc.Close()
+
+	var posted []byte
+	score := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		posted, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer score.Close()
+
+	var signed []byte
+	bundleJSON := []byte(`{"verificationMaterial":{"tlogEntries":[{"logIndex":"7"}]}}`)
+	withScoreSigner(t, stubSigner{bundle: bundleJSON, signed: &signed})
+	t.Setenv(scoreSignEnv, "true") // the stub score service is self-hosted
+	defer func(pp bool, e string) { pushScore, scoreEndpoint = pp, e }(pushScore, scoreEndpoint)
+	pushScore, scoreEndpoint = true, score.URL
+	t.Setenv("GITHUB_ACTIONS", "true")
+	t.Setenv("GITHUB_REPOSITORY", "octo/repo")
+	t.Setenv("GITHUB_SERVER_URL", "https://github.com")
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", oidc.URL)
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "req")
+	out := filepath.Join(t.TempDir(), "payload.json")
+	t.Setenv("PLUMBER_SCORE_PAYLOAD_OUT", out)
+
+	conf := &configuration.Configuration{PlumberConfig: &configuration.PlumberConfig{}}
+	payload := []byte(`{"plumberScore":{"score":"A","points":97}}`)
+	_ = captureStderr(t, func() { maybePushScore(p, conf, payload, "main") })
+
+	written, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("payload file not written: %v", err)
+	}
+	if !bytes.Equal(signed, payload) {
+		t.Fatalf("signed bytes = %q, want %q", signed, payload)
+	}
+	if !bytes.Equal(posted, payload) {
+		t.Fatalf("posted body = %q, want %q", posted, payload)
+	}
+	if !bytes.Equal(written, payload) {
+		t.Fatalf("payload file = %q, want %q", written, payload)
+	}
+}
+
+// TestMaybePushScore_PayloadOutWriteErrorStillPushes proves a
+// PLUMBER_SCORE_PAYLOAD_OUT that cannot be written (here, a directory) never
+// stops the push: the score still goes out, and stderr names the failure
+// with "payload not written" rather than staying silent about it.
+func TestMaybePushScore_PayloadOutWriteErrorStillPushes(t *testing.T) {
+	p, ok := providerPkg.Get("gitlab")
+	if !ok {
+		t.Skip("gitlab provider not registered")
+	}
+
+	pushed := false
+	score := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		pushed = true
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer score.Close()
+
+	defer func(pp bool, e string) { pushScore, scoreEndpoint = pp, e }(pushScore, scoreEndpoint)
+	pushScore, scoreEndpoint = true, score.URL
+	t.Setenv("GITLAB_CI", "true")
+	t.Setenv("CI_PROJECT_PATH", "group/repo")
+	t.Setenv("CI_SERVER_URL", "https://gitlab.com")
+	t.Setenv(gitlabScoreTokenEnv, "tok")
+
+	// A directory path: os.WriteFile fails on it.
+	t.Setenv("PLUMBER_SCORE_PAYLOAD_OUT", t.TempDir())
+
+	conf := &configuration.Configuration{PlumberConfig: &configuration.PlumberConfig{}}
+	stderr := captureStderr(t, func() {
+		maybePushScore(p, conf, []byte(`{"plumberScore":{"score":"A"}}`), "main")
+	})
+
+	if !pushed {
+		t.Fatal("the push must still happen when the payload file cannot be written")
+	}
+	if !strings.Contains(stderr, "payload not written") {
+		t.Fatalf("expected a %q warning, got %q", "payload not written", stderr)
 	}
 }
 

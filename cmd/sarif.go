@@ -140,23 +140,23 @@ type sarifResult struct {
 	// results — evaluated-clean, skipped-by-config, and
 	// could-not-fully-evaluate respectively. When Kind is anything
 	// other than "fail" the spec requires Level to be "none".
-	Kind      string          `json:"kind,omitempty"`
-	Level     string          `json:"level"`
-	Message   sarifText       `json:"message"`
-	Locations []sarifLocation `json:"locations,omitempty"`
-	// RelatedLocations carries, on a nested finding only, the line of the
-	// container that holds the reference (spec section 6, maintainer review
-	// of PR 549): the primary location stays the workflow step the user
-	// edits, so Code Scanning keeps accepting the upload.
-	RelatedLocations []sarifLocation `json:"relatedLocations,omitempty"`
-	Properties       map[string]any  `json:"properties,omitempty"`
+	Kind    string    `json:"kind,omitempty"`
+	Level   string    `json:"level"`
+	Message sarifText `json:"message"`
+	// Locations holds exactly one location, always a file of the scanned
+	// repository: a nested finding's is the workflow step that pulls the
+	// chain in, never the container that holds the reference. Code Scanning
+	// rejects the WHOLE upload when any location, a related one included,
+	// carries a URI whose scheme is not the checkout's (invoke-ai/InvokeAI
+	// run 41127816328, 2026-10-30: `SARIF URI scheme "https" did not match
+	// the checkout URI scheme "file"`), so the container line travels in the
+	// message (sarifContainerNote) and in the `url` property instead.
+	Locations  []sarifLocation `json:"locations,omitempty"`
+	Properties map[string]any  `json:"properties,omitempty"`
 }
 
 type sarifLocation struct {
 	PhysicalLocation sarifPhysical `json:"physicalLocation"`
-	// Message says what a related location is (SARIF 2.1.0 section
-	// 3.28.5), never set on a primary location.
-	Message *sarifText `json:"message,omitempty"`
 }
 
 type sarifPhysical struct {
@@ -172,30 +172,32 @@ type sarifRegion struct {
 	StartLine int `json:"startLine"`
 }
 
-// sarifContainerLocation is the related location of a nested finding
-// (spec section 6, maintainer review of PR 549): the container line that
-// holds the reference, as the absolute blob URL the finding links to
-// (without its line fragment) with the line as its region, since Code
-// Scanning renders a related location and not the url property. nil for a
-// direct finding, for one under a local outermost composite (its container
-// is a file of the scanned repository, ruling L2), and when the finding
-// carries no web link.
-func sarifContainerLocation(f opaengine.Finding) []sarifLocation {
+// sarifContainerNote is the tail of a nested finding's message (spec section
+// 6, amended 2026-10-30): the container line that holds the reference, as an
+// embedded link (SARIF 2.1.0 section 3.11.6, the syntax sarifMessage already
+// uses for the issue code) to the blob URL the finding links to. It is a
+// message and not a related location because Code Scanning rejects the whole
+// upload for a location URI outside the checkout. Empty for a direct finding,
+// for one under a local outermost composite (its container is a file of the
+// scanned repository, ruling L2), and when the finding carries no web link.
+func sarifContainerNote(f opaengine.Finding) string {
 	if !control.NestedRemediationApplies(reasonsArrayToStrings(f.Data["via"])) {
-		return nil
+		return ""
 	}
 	definedIn, _ := f.Data["definedIn"].(string)
 	repo, ref, file, line, ok := ir.SplitDefinedIn(definedIn)
 	web := strings.HasPrefix(f.URL, "https://") || strings.HasPrefix(f.URL, "http://")
 	if !ok || repo == "" || line <= 0 || !web {
-		return nil
+		return ""
 	}
-	uri, _, _ := strings.Cut(f.URL, "#")
-	return []sarifLocation{{
-		PhysicalLocation: sarifPhysical{ArtifactLocation: sarifArtifact{URI: uri}, Region: &sarifRegion{StartLine: line}},
-		Message:          &sarifText{Text: fmt.Sprintf("defined in %s@%s, %s line %d", repo, ref, file, line)},
-	}}
+	return fmt.Sprintf(" (defined in [%s@%s, %s line %d](%s))", sarifLinkEscaper.Replace(repo), sarifLinkEscaper.Replace(ref), sarifLinkEscaper.Replace(file), line, sarifLinkTargetEscaper.Replace(f.URL))
 }
+
+// sarifLinkTargetEscaper percent-encodes, in an embedded link's target, the
+// parentheses that would end the target early (section 3.11.6 delimits it
+// with `(` and `)`): a container path may carry them, and the encoded URL
+// stays the same resource.
+var sarifLinkTargetEscaper = strings.NewReplacer("(", "%28", ")", "%29")
 
 func sarifLevel(sev string) string {
 	switch control.IssueSeverity(sev) {
@@ -465,7 +467,7 @@ func buildSARIF(findings []opaengine.Finding, fallbackURI, provider string) sari
 			RuleID:  f.Code,
 			Kind:    "fail",
 			Level:   sarifLevel(severity),
-			Message: sarifText{Text: sarifMessage(f, info)},
+			Message: sarifText{Text: sarifMessage(f, info) + sarifContainerNote(f)},
 		}
 		// The explanation (the path's plain-language sentence, written only
 		// on the finding that anchors a path) rides on the message itself:
@@ -548,7 +550,6 @@ func buildSARIF(findings []opaengine.Finding, fallbackURI, provider string) sari
 				ArtifactLocation: sarifArtifact{URI: fallbackURI},
 			}}}
 		}
-		res.RelatedLocations = sarifContainerLocation(f)
 		results = append(results, res)
 	}
 

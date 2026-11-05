@@ -1,3 +1,45 @@
+## [0.7.19](https://github.com/getplumber/plumber/compare/v0.7.18...v0.7.19) (2026-11-05)
+
+
+### 🐛 Bug Fixes
+
+* **github:** a composite step a literal input turns off is not analyzed ([eab2f54](https://github.com/getplumber/plumber/commit/eab2f54432c15ae36c35888539a6a6b46120f899)), closes [#591](https://github.com/getplumber/plumber/issues/591)
+
+
+### 📚 Documentation
+
+* document the workflow lockfile and give it a code owner entry ([665cfc5](https://github.com/getplumber/plumber/commit/665cfc5a22e4290b6fdc297253b7e5e3c3625cfd))
+
+
+### 👷 CI/CD
+
+* lock workflow actions and verify the lockfile on PRs ([6c31fa3](https://github.com/getplumber/plumber/commit/6c31fa39ab9a2555a5ad5a4b0ec558315fbd7ea1))
+* **score:** publish the Plumber Score with the released action, the source build no longer pushes ([c78b489](https://github.com/getplumber/plumber/commit/c78b4890d7094599c61283d818ab23c76d79cdf2))
+* verify the workflow lockfile with gh-actions-lock v0.3.0 ([e11334e](https://github.com/getplumber/plumber/commit/e11334ec49b7b6ef0f64cd2280bae4b6d85d985e))
+* verify the workflow lockfile with gh-actions-lock v0.4.0 ([247fced](https://github.com/getplumber/plumber/commit/247fced0138c734934d797fd61f42484b4c1f6b6))
+
+## [0.7.18](https://github.com/getplumber/plumber/compare/v0.7.17...v0.7.18) (2026-11-02)
+
+
+### ✨ Features
+
+* **report:** cliVersion, configFileSha256 and the Actions run in the JSON report ([fdd8faf](https://github.com/getplumber/plumber/commit/fdd8faf3f9fae31c09bb4d9708bc40e12f2bc3a7))
+* **score:** a keyless Sigstore signer for the score push on GitHub Actions ([f341aee](https://github.com/getplumber/plumber/commit/f341aeeb428663368ff6db148bfd348571924ed4))
+* **score:** PLUMBER_SCORE_PAYLOAD_OUT writes the exact pushed bytes ([c93d1ce](https://github.com/getplumber/plumber/commit/c93d1ce6cd33c7ab3a49ac2b249d386b3e873d59))
+* **score:** the score push carries the Sigstore bundle, a signing failure only warns ([9d5a738](https://github.com/getplumber/plumber/commit/9d5a738d84ae11803353d32ede929d185cbd133d))
+
+
+### 📚 Documentation
+
+* **score:** the signed score push, the provenance keys and PLUMBER_SCORE_PAYLOAD_OUT ([602acc3](https://github.com/getplumber/plumber/commit/602acc35ca8b2f646e220004f55e147015112273))
+
+## [0.7.17](https://github.com/getplumber/plumber/compare/v0.7.16...v0.7.17) (2026-10-30)
+
+
+### 🐛 Bug Fixes
+
+* **cmd:** the SARIF names a nested finding's container in its message, never in a location outside the checkout ([5b53f2b](https://github.com/getplumber/plumber/commit/5b53f2b22df4c14fdf23cea4e00b3c525548bbc1))
+
 ## [0.7.16](https://github.com/getplumber/plumber/compare/v0.7.15...v0.7.16) (2026-10-28)
 
 

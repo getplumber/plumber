@@ -1,0 +1,36 @@
+name: Lockfile
+
+# Fails when .github/workflows/actions.lock is out of sync with the workflows,
+# or when a locked commit no longer verifies upstream (moved tag, renamed or
+# replaced repository). No paths filter: this is meant to be a required check,
+# and a filtered required check never reports on PRs it skips.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  verify:
+    name: Lockfile
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install gh-actions-lock
+        run: gh extension install github/gh-actions-lock --pin v0.4.0
+      - name: Verify the lockfile
+        run: gh actions-lock --verify
