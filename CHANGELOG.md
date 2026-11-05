@@ -1,3 +1,10 @@
+## [0.7.20](https://github.com/getplumber/plumber/compare/v0.7.19...v0.7.20) (2026-11-05)
+
+
+### 🐛 Bug Fixes
+
+* **platform:** an INVALID merge from the resolve endpoint reports the git host's own errors ([3beb903](https://github.com/getplumber/plumber/commit/3beb9034e9138416ea7869c5af62456c29208c01))
+
 ## [0.7.19](https://github.com/getplumber/plumber/compare/v0.7.18...v0.7.19) (2026-11-05)
 
 
