@@ -36,6 +36,12 @@ const (
 	// performed: the timebox was exceeded, the git host was unreachable, no
 	// org token is configured, or the project was never onboarded.
 	ReasonResolutionUnavailable = "resolution_unavailable"
+	// ReasonForkPipeline is this CLI's own: the job runs a merge request
+	// from a fork, so the configuration under review lives in the source
+	// project while the platform resolves against the job's project, and
+	// no commit of this run is one it can merge there. Nothing is asked;
+	// the merged config is reported unavailable, never INVALID.
+	ReasonForkPipeline = "fork_pipeline"
 )
 
 // UnavailableError reports a 503 from the resolve endpoint. It is a normal

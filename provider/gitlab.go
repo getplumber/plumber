@@ -207,6 +207,9 @@ func (p *GitLabProvider) CIEnvVars() CIEnvMapping {
 		// Set by GitLab only on merged results pipelines and merge trains,
 		// where CI_COMMIT_SHA is the ephemeral merge commit.
 		MergeRequestSourceSHA: "CI_MERGE_REQUEST_SOURCE_BRANCH_SHA",
+		// Set on every merge request pipeline; differs from CI_PROJECT_PATH
+		// when the merge request comes from a fork.
+		MergeRequestSourceProjectPath: "CI_MERGE_REQUEST_SOURCE_PROJECT_PATH",
 	}
 }
 

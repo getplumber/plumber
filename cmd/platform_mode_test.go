@@ -400,7 +400,7 @@ func TestPlatformAnalyzedSha(t *testing.T) {
 
 	t.Run("the CI environment wins when present", func(t *testing.T) {
 		t.Setenv(env, "cisha")
-		if got, fromAnchor := platformAnalyzedSha(p, &configuration.Configuration{}, anchor); got != "cisha" || fromAnchor {
+		if got, fromAnchor, _ := platformAnalyzedSha(p, &configuration.Configuration{}, anchor); got != "cisha" || fromAnchor {
 			t.Fatalf("got %q", got)
 		}
 	})
@@ -413,28 +413,55 @@ func TestPlatformAnalyzedSha(t *testing.T) {
 	t.Run("a merged results pipeline resolves at the source branch head", func(t *testing.T) {
 		t.Setenv(env, "mergecommit")
 		t.Setenv(p.CIEnvVars().MergeRequestSourceSHA, "sourcehead")
-		if got, fromAnchor := platformAnalyzedSha(p, &configuration.Configuration{}, anchor); got != "sourcehead" || fromAnchor {
+		if got, fromAnchor, _ := platformAnalyzedSha(p, &configuration.Configuration{}, anchor); got != "sourcehead" || fromAnchor {
 			t.Fatalf("got %q, want the source branch head", got)
 		}
 	})
 	t.Run("a source sha equal to the commit sha changes nothing", func(t *testing.T) {
 		t.Setenv(env, "cisha")
 		t.Setenv(p.CIEnvVars().MergeRequestSourceSHA, "cisha")
-		if got, fromAnchor := platformAnalyzedSha(p, &configuration.Configuration{}, anchor); got != "cisha" || fromAnchor {
+		if got, fromAnchor, _ := platformAnalyzedSha(p, &configuration.Configuration{}, anchor); got != "cisha" || fromAnchor {
 			t.Fatalf("got %q", got)
 		}
 	})
 	t.Run("a source sha without a commit sha is not a CI job", func(t *testing.T) {
 		t.Setenv(env, "")
 		t.Setenv(p.CIEnvVars().MergeRequestSourceSHA, "sourcehead")
-		if got, fromAnchor := platformAnalyzedSha(p, &configuration.Configuration{}, anchor); got != "anchorsha" || !fromAnchor {
+		if got, fromAnchor, _ := platformAnalyzedSha(p, &configuration.Configuration{}, anchor); got != "anchorsha" || !fromAnchor {
 			t.Fatalf("got %q, want the anchor's sha: the source sha alone says nothing", got)
+		}
+	})
+	// A merge request from a FORK: the configuration under review lives in
+	// the source project, and the platform resolves against the project the
+	// job belongs to, so neither the merge commit nor the fork's head is a
+	// commit it can merge there (GitLab answers "a commit not associated
+	// with a Git reference"). No sha is returned, with the reason, so the
+	// run reports the config unavailable (controls not_evaluable) instead of
+	// an INVALID verdict nothing established.
+	t.Run("a merge request from a fork yields no sha and names the reason", func(t *testing.T) {
+		t.Setenv(env, "mergecommit")
+		t.Setenv(p.CIEnvVars().RepoPath, "group/target")
+		t.Setenv(p.CIEnvVars().MergeRequestSourceProjectPath, "someone/fork-of-target")
+		t.Setenv(p.CIEnvVars().MergeRequestSourceSHA, "forkhead")
+		got, fromAnchor, reason := platformAnalyzedSha(p, &configuration.Configuration{}, anchor)
+		if got != "" || fromAnchor || reason != platform.ReasonForkPipeline {
+			t.Fatalf("got %q fromAnchor=%v reason=%q, want no sha and the fork reason", got, fromAnchor, reason)
+		}
+	})
+	t.Run("a merge request from the same project is not a fork", func(t *testing.T) {
+		t.Setenv(env, "mergecommit")
+		t.Setenv(p.CIEnvVars().RepoPath, "group/target")
+		t.Setenv(p.CIEnvVars().MergeRequestSourceProjectPath, "group/target")
+		t.Setenv(p.CIEnvVars().MergeRequestSourceSHA, "sourcehead")
+		got, _, reason := platformAnalyzedSha(p, &configuration.Configuration{}, anchor)
+		if got != "sourcehead" || reason != "" {
+			t.Fatalf("got %q reason=%q, want the source head and no reason", got, reason)
 		}
 	})
 
 	t.Run("falls back to the anchor for the default branch", func(t *testing.T) {
 		t.Setenv(env, "")
-		if got, fromAnchor := platformAnalyzedSha(p, &configuration.Configuration{}, anchor); got != "anchorsha" || !fromAnchor {
+		if got, fromAnchor, _ := platformAnalyzedSha(p, &configuration.Configuration{}, anchor); got != "anchorsha" || !fromAnchor {
 			t.Fatalf("got %q, want the anchor's sha", got)
 		}
 	})
@@ -442,7 +469,7 @@ func TestPlatformAnalyzedSha(t *testing.T) {
 	t.Run("falls back when --branch names the anchor's own ref", func(t *testing.T) {
 		t.Setenv(env, "")
 		conf := &configuration.Configuration{Branch: "main"}
-		if got, fromAnchor := platformAnalyzedSha(p, conf, anchor); got != "anchorsha" || !fromAnchor {
+		if got, fromAnchor, _ := platformAnalyzedSha(p, conf, anchor); got != "anchorsha" || !fromAnchor {
 			t.Fatalf("got %q", got)
 		}
 	})
@@ -453,18 +480,18 @@ func TestPlatformAnalyzedSha(t *testing.T) {
 	t.Run("refuses to reuse the anchor for a DIFFERENT branch", func(t *testing.T) {
 		t.Setenv(env, "")
 		conf := &configuration.Configuration{Branch: "feature-x"}
-		if got, _ := platformAnalyzedSha(p, conf, anchor); got != "" {
+		if got, _, _ := platformAnalyzedSha(p, conf, anchor); got != "" {
 			t.Fatalf("got %q, want no sha: the anchor describes %q, not %q", got, anchor.Ref, conf.Branch)
 		}
 	})
 
 	t.Run("no anchor and no CI env yields no sha", func(t *testing.T) {
 		t.Setenv(env, "")
-		if got, _ := platformAnalyzedSha(p, &configuration.Configuration{}, nil); got != "" {
+		if got, _, _ := platformAnalyzedSha(p, &configuration.Configuration{}, nil); got != "" {
 			t.Fatalf("got %q", got)
 		}
 		empty := &platform.ResolutionAnchor{Ref: "main"}
-		if got, _ := platformAnalyzedSha(p, &configuration.Configuration{}, empty); got != "" {
+		if got, _, _ := platformAnalyzedSha(p, &configuration.Configuration{}, empty); got != "" {
 			t.Fatalf("got %q", got)
 		}
 	})

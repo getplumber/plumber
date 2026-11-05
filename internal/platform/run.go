@@ -621,6 +621,9 @@ func (r *RunContext) describeConfig() []string {
 		out = append(out, line)
 	case SourceUnavailable:
 		out = append(out, "ci config source: UNAVAILABLE ("+r.UnavailableReason()+") - controls reading the merged config report not_evaluable")
+		if r.UnavailableReason() == ReasonForkPipeline {
+			out = append(out, "  note: merge request from a fork: the configuration under review lives in the source project, which the platform cannot resolve against this one; the pipeline controls run again once the change is merged")
+		}
 	}
 	return out
 }
