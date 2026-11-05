@@ -93,8 +93,10 @@ func TestActionTemplateGrantsActionsRead(t *testing.T) {
 // going, and a lockfile that fails verification, which fails the job. The
 // logic lives in the composite action's run: blocks, so the test reads
 // the shape of the file: the verify step warns and records "missing", the
-// skip branches record "skipped", and the Enforce gate step only exits 1
-// on "failed" and "error", the statuses that must fail the job.
+// skip branches record "skipped" while github.com and *.ghe.com go on to
+// verify, a verification that cannot run records "error", and the Enforce
+// gate step only exits 1 on "failed" and "error", the statuses that must
+// fail the job, ahead of the exit code handling where soft-fail applies.
 func TestActionMissingLockfileOnlyWarns(t *testing.T) {
 	raw, err := os.ReadFile("../action.yml")
 	if err != nil {
@@ -110,13 +112,24 @@ func TestActionMissingLockfileOnlyWarns(t *testing.T) {
 	if !found {
 		t.Fatal("the verify step has no lockfile presence check")
 	}
-	missing, _, found := strings.Cut(afterSkips, "\n        fi\n")
+	missing, afterMissing, found := strings.Cut(afterSkips, "\n        fi\n")
 	if !found {
 		t.Fatal("the lockfile presence check has no closing fi")
+	}
+	setup, afterSetup, found := strings.Cut(afterMissing, "if gh actions-lock --verify; then")
+	if !found {
+		t.Fatal("the verify step does not run gh actions-lock --verify")
+	}
+	verdict, _, found := strings.Cut(afterSetup, "\n        fi\n")
+	if !found {
+		t.Fatal("the gh actions-lock --verify check has no closing fi")
 	}
 
 	if got := strings.Count(skips, "status skipped"); got != 2 {
 		t.Errorf("the project and GHES branches must record status skipped, found %d", got)
+	}
+	if !strings.Contains(skips, `""|github.com|*.ghe.com) ;;`) {
+		t.Error("github.com and *.ghe.com must go on to verify the lockfile, not take the GHES skip")
 	}
 	if !strings.Contains(missing, `echo "::warning file=${lockfile}::No workflow lockfile`) {
 		t.Error("the verify step must emit a ::warning when the lockfile is missing")
@@ -132,14 +145,30 @@ func TestActionMissingLockfileOnlyWarns(t *testing.T) {
 			t.Errorf("a missing lockfile must not record %q: the Enforce gate would fail the job", status)
 		}
 	}
+	if got := strings.Count(setup, "status error"); got != 2 {
+		t.Errorf("the gh-missing and install-failure branches must record status error, found %d", got)
+	}
+	for _, status := range []string{"status skipped", "status missing"} {
+		if strings.Contains(setup, status) {
+			t.Errorf("a verification that cannot run must not record %q: the job would pass unverified", status)
+		}
+	}
+	for _, status := range []string{"status passed", "status failed"} {
+		if !strings.Contains(verdict, status) {
+			t.Errorf("the gh actions-lock --verify check must record %q", status)
+		}
+	}
 
 	_, gate, found := strings.Cut(action, "- name: Enforce gate")
 	if !found {
 		t.Fatal("action.yml has no Enforce gate step")
 	}
-	_, afterCase, found := strings.Cut(gate, `case "${LOCKFILE_STATUS:-}" in`)
+	beforeCase, afterCase, found := strings.Cut(gate, `case "${LOCKFILE_STATUS:-}" in`)
 	if !found {
 		t.Fatal("the Enforce gate has no lockfile status case")
+	}
+	if strings.Contains(beforeCase, `code="${EXIT_CODE`) {
+		t.Error("the Enforce gate must check the lockfile status before the exit code, or a passing score hides a failed lockfile")
 	}
 	arms, _, found := strings.Cut(afterCase, "esac")
 	if !found {
