@@ -31,13 +31,13 @@ skills reads the file and applies it.
    `branches: [main]` filter on the `pull_request` trigger of its workflows. If something outside
    `v1/` needs a fix, fix it on `main` and the next sync brings it. The `scope` job of
    `.github/workflows/v1.yml` fails a PR that changes other paths.
-3. Branch from `next-v1` and open PRs against `next-v1`, never `main`:
-   `git fetch origin && git switch -c <branch> origin/next-v1`.
-4. A maintainer merges `main` into `next-v1` by hand, through a PR:
-   `git switch -c sync/main-into-next-v1 origin/next-v1 && git merge origin/main`, then `gh pr create --base next-v1`.
+3. Branch from `release/v1` and open PRs against `release/v1`, never `main`:
+   `git fetch origin && git switch -c <branch> origin/release/v1`.
+4. A maintainer merges `main` into `release/v1` by hand, through a PR:
+   `git switch -c sync/main-into-release-v1 origin/release/v1 && git merge origin/main`, then `gh pr create --base release/v1`.
    `.github/workflows/v1.yml` runs the suite on that PR. A red result means a command, flag, output
    format or control changed on `main`: add or refresh the rows before merging. On a conflict in a
-   workflow's `pull_request` trigger, keep next-v1's `branches: [main]`.
+   workflow's `pull_request` trigger, keep release/v1's `branches: [main]`.
 5. `main_test.go` has `TestMain` and the shared helpers, and `integration_test.go` has the rows
    (`localCases`). Each CLI input has one table row. When you add or change a command, a flag, an
    output format or an exit code, add or update its row in the same PR. `TestCoverage` fails when
@@ -54,8 +54,8 @@ skills reads the file and applies it.
 9. Every change belongs to a step of [#640](https://github.com/getplumber/monorepo/issues/640):
    one issue per step, one PR per issue. #640 only lists the steps; each issue explains its work.
    New work gets a new step in #640 and a new issue, linked as a sub-issue.
-10. After a PR merges into `next-v1`, check its issue against what merged. `Closes` does nothing
-    here because `next-v1` is not the default branch, so close the issue by hand when everything
+10. After a PR merges into `release/v1`, check its issue against what merged. `Closes` does nothing
+    here because `release/v1` is not the default branch, so close the issue by hand when everything
     is done. Anything missing becomes a new step.
 
 ## Commands
@@ -94,14 +94,14 @@ v1/
 
 ## Wiring outside `v1/`
 
-- `.github/workflows/v1.yml`: the only CI of `next-v1`, on pushes and PRs to `next-v1`. Jobs: build and
+- `.github/workflows/v1.yml`: the only CI of `release/v1`, on pushes and PRs to `release/v1`. Jobs: build and
   unit tests (`go build ./...`, `go test ./...`), the CLI suite, golangci-lint on `v1/`
   through `golangci/golangci-lint-action` (same version and arguments as `make -C v1 lint`), and
   `scope`, which checks the paths a PR changes (rule 2). `scope` skips `sync/` branches of this
   repository, because a sync from `main` changes files everywhere.
 - `branches: [main]` on the `pull_request` trigger of `plumber-action.yml`,
   `claude-pr-checks.yml`, `install-channels.yml` and `scripts-test.yml`, so they don't run on PRs
-  to `next-v1`. GitHub reads a PR's workflows from the PR's own tree and has no per-branch switch, so
+  to `release/v1`. GitHub reads a PR's workflows from the PR's own tree and has no per-branch switch, so
   this filter is the only way. `ci.yml` and `codeql.yml` already have it; `release.yml` and
   `scorecard.yml` don't run on PRs.
 - `.agents/skills/`, symlinked from `.claude/skills/`, and `skills-lock.json`: the humanizer skill
@@ -110,7 +110,7 @@ v1/
 ## Known CLI quirks the suite records
 
 Goldens record current behavior, quirks included. Fix a quirk on `main`; the next sync brings the
-fix to `next-v1` and the golden diff shows it.
+fix to `release/v1` and the golden diff shows it.
 - `plumber --version` is an unknown flag (exit 2); only `plumber version` works.
 - `config view --explain` prints its provenance lines in random order (map iteration in
   `cmd/config_explain.go`), so its row compares sorted lines.

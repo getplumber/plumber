@@ -5,7 +5,7 @@ name: Scripts tests
 
 on:
   pull_request:
-    # Not on PRs to next-v1: that branch has .github/workflows/v1.yml.
+    # Not on PRs to release/v1: that branch has .github/workflows/v1.yml.
     branches: [main]
     paths:
       - .github/scripts/**
