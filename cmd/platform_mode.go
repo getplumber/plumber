@@ -140,14 +140,22 @@ func setupPlatformMode(p providerPkg.Provider, conf *configuration.Configuration
 	// endpoint costs its timeout in parallel rather than before any of it.
 	rc.Config = platform.StartRunConfigResolution(client, ctx.Snapshot, projectPath, sha, localDigest, abortReason)
 	rc.Config.ShaFromAnchor = shaFromAnchor
-	// A withheld sha has a reason of its own (a merge request from a fork):
-	// name it on the unavailable resolution, so the describe output says
-	// why instead of the generic "resolution unavailable". The snapshot
-	// path needs no sha, so a matching digest is unaffected.
-	if noShaReason != "" && rc.Config.Source == platform.SourceUnavailable {
-		rc.Config.Reason = noShaReason
-	}
+	applyNoShaReason(rc.Config, noShaReason)
 	return rc, nil
+}
+
+// applyNoShaReason names, on the resolution, why a sha was withheld on
+// purpose (a merge request from a fork), so the describe output says that
+// instead of the generic "resolution unavailable". It applies only to a
+// resolution that is unavailable BECAUSE it needed a sha and got none: a
+// divergent digest. A matching digest takes the snapshot path and never
+// needs a sha; when that path is unavailable (a snapshot with no merged
+// config) it is for its own reason, which stays.
+func applyNoShaReason(cfg *platform.ConfigResolution, reason string) {
+	if reason == "" || cfg == nil || cfg.Source != platform.SourceUnavailable || !cfg.Digest.Divergent() {
+		return
+	}
+	cfg.Reason = reason
 }
 
 // computeLocalCIDigest computes this checkout's CI config digest, the key
