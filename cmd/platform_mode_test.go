@@ -619,3 +619,38 @@ func TestCheckoutGateSeparatesTwoQuestions(t *testing.T) {
 		})
 	}
 }
+
+// TestApplyNoShaReason pins the join between platformAnalyzedSha's withheld
+// sha and the describe output (bot review of PR 602): the reason lands only
+// on a resolution that is unavailable BECAUSE no sha was handed over, that
+// is a divergent digest with nothing to resolve at. A matching digest whose
+// snapshot carries no merged config is unavailable for its own reason and
+// keeps it: that run never needed a sha, so the fork says nothing about it.
+func TestApplyNoShaReason(t *testing.T) {
+	t.Run("a divergent, unavailable resolution takes the fork reason", func(t *testing.T) {
+		cfg := &platform.ConfigResolution{Source: platform.SourceUnavailable, Reason: platform.ReasonResolutionUnavailable, Digest: platform.DigestDiverged}
+		applyNoShaReason(cfg, platform.ReasonForkPipeline)
+		if cfg.Reason != platform.ReasonForkPipeline {
+			t.Fatalf("reason = %q, want the fork reason", cfg.Reason)
+		}
+	})
+	t.Run("a matching digest with an empty merged config keeps its own reason", func(t *testing.T) {
+		cfg := &platform.ConfigResolution{Source: platform.SourceUnavailable, Reason: platform.ReasonResolutionUnavailable, Digest: platform.DigestMatch}
+		applyNoShaReason(cfg, platform.ReasonForkPipeline)
+		if cfg.Reason != platform.ReasonResolutionUnavailable {
+			t.Fatalf("reason = %q, want the resolution's own reason: no sha was needed", cfg.Reason)
+		}
+	})
+	t.Run("a resolved configuration and an empty reason change nothing", func(t *testing.T) {
+		cfg := &platform.ConfigResolution{Source: platform.SourceSnapshot, Digest: platform.DigestMatch}
+		applyNoShaReason(cfg, platform.ReasonForkPipeline)
+		if cfg.Reason != "" {
+			t.Fatalf("reason = %q, want none on a resolved configuration", cfg.Reason)
+		}
+		cfg = &platform.ConfigResolution{Source: platform.SourceUnavailable, Reason: platform.ReasonResolutionUnavailable, Digest: platform.DigestDiverged}
+		applyNoShaReason(cfg, "")
+		if cfg.Reason != platform.ReasonResolutionUnavailable {
+			t.Fatalf("reason = %q, want it untouched by an empty reason", cfg.Reason)
+		}
+	})
+}
