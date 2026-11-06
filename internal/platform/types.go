@@ -326,6 +326,17 @@ type SnapshotData struct {
 	//
 	// Trust it only at SchemaVersion "2" or later - see DegradedFieldsTrusted.
 	DegradedFields []string `json:"degraded_fields,omitempty"`
+
+	// CarriedFields maps a lane name (the same stable identifiers as
+	// DegradedFields) to the time of the collection pass that lane's value
+	// really comes from, per platform ruling R1, 2026-11-06 (carried
+	// snapshot lanes): when GitLab refuses one lane of a nightly snapshot,
+	// the platform keeps that lane's previous value for up to two days and
+	// dates it here. A carried lane is NOT degraded: controls keep
+	// evaluating on it. The CLI only reports it, so the operator knows that
+	// lane is older than collected_at. Additive: absent or empty means no
+	// lane was carried, exactly as before the ruling.
+	CarriedFields map[string]time.Time `json:"carried_fields,omitempty"`
 }
 
 // The closed set of lane identifiers DegradedFields may carry. Anything

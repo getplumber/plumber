@@ -490,6 +490,28 @@ func (r *RunContext) DegradedLanes() []string {
 	return out
 }
 
+// CarriedLanes returns the snapshot lanes the platform carried from an
+// earlier pass, sorted, and the oldest of their pass times. Empty names
+// (and a zero time) when nothing was carried. Platform ruling R1,
+// 2026-11-06 (carried snapshot lanes): reporting only, a carried lane still
+// evaluates.
+func (r *RunContext) CarriedLanes() ([]string, time.Time) {
+	snap := r.Snapshot()
+	if snap.Data == nil || len(snap.Data.CarriedFields) == 0 {
+		return nil, time.Time{}
+	}
+	names := make([]string, 0, len(snap.Data.CarriedFields))
+	var oldest time.Time
+	for name, at := range snap.Data.CarriedFields {
+		names = append(names, name)
+		if len(names) == 1 || at.Before(oldest) {
+			oldest = at
+		}
+	}
+	sort.Strings(names)
+	return names, oldest
+}
+
 // DegradationKnowable reports whether this run can distinguish an honestly
 // empty lane from a failed one. False on a pre-v2 snapshot, where absence
 // proves nothing.
@@ -535,6 +557,11 @@ func (r *RunContext) Describe() []string {
 		out = append(out, "snapshot collected_at: "+collected)
 	} else {
 		out = append(out, "snapshot: none cached for this project yet")
+	}
+	// A carried lane evaluates on a value older than collected_at (platform
+	// ruling R1, 2026-11-06, carried snapshot lanes); name it and its date.
+	if carried, oldest := r.CarriedLanes(); len(carried) > 0 {
+		out = append(out, "snapshot lanes carried from "+oldest.UTC().Format(time.RFC3339)+": "+strings.Join(carried, ", "))
 	}
 	if missing := r.MissingSnapshotFields(); len(missing) > 0 {
 		out = append(out, "snapshot missing lanes: "+strings.Join(missing, ", "))
