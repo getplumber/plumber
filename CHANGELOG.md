@@ -1,3 +1,20 @@
+## [0.7.22](https://github.com/getplumber/plumber/compare/v0.7.21...v0.7.22) (2026-11-06)
+
+
+### 🐛 Bug Fixes
+
+* **platform:** a merge request from a fork reports its configuration unavailable instead of invalid ([8a10aea](https://github.com/getplumber/plumber/commit/8a10aea0e850a2ec94a34e328b7965bb976ca360))
+
+
+### 📚 Documentation
+
+* **readme:** drop the signing subsection and the scoring sentence ([01466e1](https://github.com/getplumber/plumber/commit/01466e1fa3abdd5017e36d0bb24ad3958b6b13ca))
+
+
+### ✅ Tests
+
+* **cmd:** the fork reason joins the resolution through one tested function ([17aa1b4](https://github.com/getplumber/plumber/commit/17aa1b443095b14378d8847d50772ad4faec01fa))
+
 ## [0.7.21](https://github.com/getplumber/plumber/compare/v0.7.20...v0.7.21) (2026-11-05)
 
 
