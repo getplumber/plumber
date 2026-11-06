@@ -535,9 +535,19 @@ func TestDescribe_NamesCarriedSnapshotLanes(t *testing.T) {
 	const lanes = `"merged_yaml":"a: 1\n","branch_protection":{},"mr_approvals":{},"variables":{}`
 	baseline := describe(t, `{"schema_version":"2",`+lanes+`,"degraded_fields":["includes_jobs"]}`)
 
+	t.Run("one carried lane names its own pass", func(t *testing.T) {
+		out := strings.Join(describe(t, `{"schema_version":"2",`+lanes+`,"carried_fields":{"mr_approvals":"2026-11-05T03:00:00Z"}}`), "\n")
+		want := "snapshot lanes carried from 2026-11-05T03:00:00Z: mr_approvals"
+		if !strings.Contains(out, want) {
+			t.Fatalf("Describe() missing %q:\n%s", want, out)
+		}
+	})
+
+	// The oldest pass belongs to the alphabetically LAST lane, so taking the
+	// first sorted lane's time instead of the minimum would fail here.
 	t.Run("two carried lanes name the oldest pass and the sorted lanes", func(t *testing.T) {
 		out := describe(t, `{"schema_version":"2",`+lanes+`,"degraded_fields":["includes_jobs"],`+
-			`"carried_fields":{"variables":"2026-11-05T03:00:00Z","branch_protection":"2026-11-04T03:00:00+02:00"}}`)
+			`"carried_fields":{"branch_protection":"2026-11-05T03:00:00Z","variables":"2026-11-04T03:00:00+02:00"}}`)
 		want := "snapshot lanes carried from 2026-11-04T01:00:00Z: branch_protection, variables"
 		idx := -1
 		for i, l := range out {
