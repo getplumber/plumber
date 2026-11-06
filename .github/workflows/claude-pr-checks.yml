@@ -13,7 +13,7 @@ name: Claude PR checks
 
 on:
   pull_request:
-    # Not on PRs to next-v1: that branch has .github/workflows/v1.yml.
+    # Not on PRs to release/v1: that branch has .github/workflows/v1.yml.
     branches: [main]
     # `synchronize` re-reviews on every push; the concurrency group below
     # cancels in-progress runs so rapid pushes only pay for the latest.
