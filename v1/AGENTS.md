@@ -1,7 +1,7 @@
 # v1: the CLI refactoring
 
 Instructions for AI coding agents and people working on the Plumber CLI refactoring,
-tracked in [getplumber/monorepo#640](https://github.com/getplumber/monorepo/issues/640).
+tracked on the [CLI Refactoring board](https://github.com/orgs/getplumber/projects/1/views/18).
 
 ## Code style
 
@@ -23,7 +23,7 @@ skills reads the file and applies it.
 ## Rules
 
 1. Everything for the refactoring goes in `v1/`: code, tests, fixtures, golden files and docs.
-   The CLI code stays where it is until step 4 of #640 moves it.
+   The CLI code stays where it is until getplumber/monorepo#684 moves it.
 2. Don't create, modify or delete anything outside `v1/`, except in `.agents/`, `.claude/`,
    `.github/` and `skills-lock.json`, for the wiring listed under "Wiring outside `v1/`". In those
    places, leave the files that come from `main` as they are and add new ones instead, like
@@ -51,12 +51,12 @@ skills reads the file and applies it.
 8. Run `make -C v1 lint` before you open a PR. It must report 0 issues. Use the golangci-lint
    version `.github/workflows/v1.yml` pins (v2.15.0). Fix what it reports. A `//nolint` names one
    linter and says why.
-9. Every change belongs to a step of [#640](https://github.com/getplumber/monorepo/issues/640):
-   one issue per step, one PR per issue. #640 only lists the steps; each issue explains its work.
-   New work gets a new step in #640 and a new issue, linked as a sub-issue.
+9. Every change belongs to an issue: one issue per change, one PR per issue. Issues live in
+   `getplumber/monorepo`, on the [board](https://github.com/orgs/getplumber/projects/1/views/18)
+   with the Topic "CLI Refactoring", and each one explains its work. Open one with `/open-issue`, which first checks that it is really needed.
 10. After a PR merges into `release/v1`, check its issue against what merged. `Closes` does nothing
     here because `release/v1` is not the default branch, so close the issue by hand when everything
-    is done. Anything missing becomes a new step.
+    is done. Anything missing becomes a new issue.
 
 ## Commands
 
@@ -118,4 +118,4 @@ fix to `release/v1` and the golden diff shows it.
 
 ## Issues
 
-- #640 lists every step of the refactoring and its issue.
+- The [board](https://github.com/orgs/getplumber/projects/1/views/18) lists every issue of the refactoring.
