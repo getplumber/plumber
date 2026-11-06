@@ -76,7 +76,7 @@ semantic-release 23.1.1 computes the version from the conventional commits since
 
 When only commits of the last row landed, `plan` finds nothing to release and the run stops there.
 
-The release commit is `chore(release): X.Y.Z [skip ci]`. `[skip ci]` is what stops it from starting another run.
+The release commit is `chore(release): X.Y.Z [skip ci]`, and `[skip ci]` stops it from starting another run.
 
 semantic-release calls three scripts through `@semantic-release/exec`:
 
@@ -114,7 +114,7 @@ Up to v0.5.15 the image was built after the tag, so the digest could only land i
 3. `release` pins that digest in the release commit, then tags that commit.
 4. `docker-tags` adds the version tags and `latest` to that same digest.
 
-Nothing public moves before the release exists: an image with no tag is not picked up by anyone, and `latest` moves last.
+Nothing public moves before the release exists: the image has no tag until then, and `latest` moves last.
 
 If a commit lands on `main` between `plan` and `release`, the image may no longer match what the release would be. `release` then refuses, either on the version mismatch (`PLANNED_VERSION`) or because the branch is behind. The next push to `main` releases both changes.
 
@@ -132,7 +132,7 @@ If a commit lands on `main` between `plan` and `release`, the image may no longe
 4. Second commit, tagged `vX.Y.Z`: rewrites the README's own SHA-pinned usage examples to the SHA of the first commit.
 5. Pushes `main` and the tag with `git push --atomic`, so neither can land without the other.
 6. The GitLab tag pipeline (the `create-release` job of the component's `.gitlab-ci.yml`) creates the release. The CI/CD Catalog only accepts a release created by CI, so this is the only valid path.
-7. Polls the GitLab Releases API for up to 10 minutes, and fails if the release does not appear. A successful push proves nothing about the pipeline.
+7. Polls the GitLab Releases API for up to 10 minutes, and fails if the release does not appear, because a successful push says nothing about the pipeline.
 
 There are two commits because a commit cannot contain its own SHA. The Catalog page renders the README from the tag, and that README must show a real, current commit. Its examples point one commit behind the tag, which behaves the same: the second commit only changes the README.
 
@@ -153,7 +153,7 @@ This workflow installs Plumber the way users do, and fails when a channel does n
 | `mise` | `mise install github:getplumber/plumber@latest` |
 | `go-install` | `go install github.com/getplumber/plumber@latest`, retried for up to 20 minutes because the module proxy lags |
 
-A red run means a channel is stale, not that the release is broken. See [Known gaps](#known-gaps) for when it really runs.
+A red run means a channel is stale, not that the release is broken. See [Known gaps](#known-gaps) for when it runs today.
 
 ## What a release publishes
 
@@ -190,7 +190,7 @@ Use **Re-run failed jobs**, never **Re-run all jobs**. Once the tag exists, a fu
 
 ## Known gaps
 
-- **`install-channels.yml` does not run on a release.** It declares `release: published`, and its header says the release is created with a GitHub App token so that the event fires. `upload-release` actually creates it with `github.token`, and events caused by that token start no workflow. The releases are authored by `github-actions[bot]`, and the run history shows only `schedule` and `pull_request` runs. A stale channel is therefore found by the Monday run, not right after the release.
-- **`CONTRIBUTING.md` says `chore` triggers no release.** `.releaserc.json` gives it a patch, and that is what happens.
-- **`CONTRIBUTING.md` lists a manual step that no longer exists.** It asks to update `@vX.Y.Z` usage comments in `templates/plumber.yml`, but those comments use a `<version>` placeholder.
-- **`CONTRIBUTING.md` says the tag appears about ten minutes after the push.** It took about 4.5 minutes for v0.7.21.
+- `install-channels.yml` does not run on a release. It declares `release: published`, and its header says the release is created with a GitHub App token so that the event fires. `upload-release` creates it with `github.token`, and events caused by that token start no workflow. The releases are authored by `github-actions[bot]`, and the run history shows only `schedule` and `pull_request` runs. A stale channel is therefore found by the Monday run, not right after the release.
+- `CONTRIBUTING.md` says `chore` triggers no release, but `.releaserc.json` gives it a patch.
+- `CONTRIBUTING.md` lists a manual step that no longer exists. It asks to update `@vX.Y.Z` usage comments in `templates/plumber.yml`, but those comments use a `<version>` placeholder.
+- `CONTRIBUTING.md` says the tag appears about ten minutes after the push. It took about 4.5 minutes for v0.7.21.
