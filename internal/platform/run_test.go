@@ -543,6 +543,18 @@ func TestDescribe_NamesCarriedSnapshotLanes(t *testing.T) {
 		}
 	})
 
+	// Same pass time on every lane isolates the sort from the oldest-time
+	// logic; the keys arrive in reverse order and map iteration is random,
+	// so a dropped sort fails here almost every run.
+	t.Run("carried lanes are named in sorted order whatever their input order", func(t *testing.T) {
+		out := strings.Join(describe(t, `{"schema_version":"2",`+lanes+`,"carried_fields":{`+
+			`"variables":"2026-11-05T05:00:00+02:00","mr_approvals":"2026-11-05T05:00:00+02:00","branch_protection":"2026-11-05T05:00:00+02:00"}}`), "\n")
+		want := "snapshot lanes carried from 2026-11-05T03:00:00Z: branch_protection, mr_approvals, variables"
+		if !strings.Contains(out, want) {
+			t.Fatalf("Describe() missing %q:\n%s", want, out)
+		}
+	})
+
 	// The oldest pass belongs to the alphabetically LAST lane, so taking the
 	// first sorted lane's time instead of the minimum would fail here.
 	t.Run("two carried lanes name the oldest pass and the sorted lanes", func(t *testing.T) {
