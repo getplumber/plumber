@@ -1,3 +1,16 @@
+## [0.7.23](https://github.com/getplumber/plumber/compare/v0.7.22...v0.7.23) (2026-11-07)
+
+
+### ✨ Features
+
+* **platform:** the banner names the snapshot lanes carried from an earlier pass ([fa02563](https://github.com/getplumber/plumber/commit/fa02563f58ff31ea559f99ad49f8930378a96cf3))
+
+
+### ✅ Tests
+
+* **platform:** the carried-lanes order test feeds the lanes out of order ([a521840](https://github.com/getplumber/plumber/commit/a52184025e04bca12aea7fb1c1d3987c2617b68d))
+* **platform:** the carried-lanes test puts the oldest pass on the last lane ([ae251b7](https://github.com/getplumber/plumber/commit/ae251b7060d63418fce4a54efb7726e4ef8455c1))
+
 ## [0.7.22](https://github.com/getplumber/plumber/compare/v0.7.21...v0.7.22) (2026-11-06)
 
 
