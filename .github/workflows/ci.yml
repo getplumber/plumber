@@ -74,14 +74,14 @@ jobs:
         with:
           go-version: '1.26.10'
 
-      # TestCorpus is left out here and run by the Corpus job below without
-      # the race detector. The corpus replays 210 captured repositories
+      # TestCorpus is left out here and run by the Corpus job below, in
+      # parallel with this one. The corpus replays 210 captured repositories
       # through the policy engine: 90 of the 91 seconds of test time in the
       # control package, and the race detector multiplies OPA evaluation by
       # about six, so it alone made this job the longest of the workflow
-      # (4.5 min of a 5 min PR). The other 735 tests of the package keep
-      # running under -race, which is where the engine's concurrency is
-      # exercised; the corpus is a deterministic replay. The pattern is
+      # (4.5 min of a 5 min PR). Both jobs keep -race: TestCorpus is the only
+      # test of the package that evaluates policies concurrently (t.Parallel),
+      # so it is what race-checks the engine's shared caches. The pattern is
       # anchored: -skip and -run are regular expressions, and the five
       # TestCorpus* siblings (the corpus's own checks) stay in this run.
       - name: Run tests
@@ -108,10 +108,10 @@ jobs:
 
       # The precision gate of the control package (see corpus_test.go):
       # every known path of an incident found at its tier, no clean case
-      # above its bound. Run without -race, see the Test job for why. Only
+      # above its bound. Under -race, see the Test job for why. Only
       # TestCorpus itself: its TestCorpus* siblings run in the Test job.
       - name: Run the corpus
-        run: go test ./control -run '^TestCorpus$' -count=1 -timeout 15m
+        run: go test ./control -race -run '^TestCorpus$' -count=1 -timeout 15m
 
   lint:
     name: Lint
@@ -125,46 +125,20 @@ jobs:
         with:
           go-version: '1.26.10'
 
-      # Two things are cached between runs. The linter binary, keyed on its
-      # commit pin alone: building it from source took most of the two
-      # minutes this step used to cost, and the pin is immutable, so the
-      # binary is too (bump the pin in the key below with the one in the
-      # step). And ~/.cache/golangci-lint, where the linter keeps its
-      # analysis results and re-analyzes only the packages whose inputs
-      # changed; the key's go.sum and sha parts let a code change reuse the
-      # closest previous cache through restore-keys.
-      - name: Restore the golangci-lint binary and cache
-        id: lint-cache
-        uses: actions/cache@v6.1.0
-        with:
-          path: |
-            ~/go/bin/golangci-lint
-            ~/.cache/golangci-lint
-          key: golangci-lint-${{ runner.os }}-5d1e709b-${{ hashFiles('go.sum') }}-${{ github.sha }}
-          restore-keys: |
-            golangci-lint-${{ runner.os }}-5d1e709b-${{ hashFiles('go.sum') }}-
-            golangci-lint-${{ runner.os }}-5d1e709b-
-
-      # Run golangci-lint via `go install` instead of the third-party
-      # golangci-lint-action wrapper — no external action is trusted, and
-      # the linter is built from an immutable commit pin (v2.10.1). Go's
-      # module checksum database (sum.golang.org) verifies the download
-      # cryptographically, so no separate checksum step is needed. The
-      # install is skipped when the cache above brought the binary back.
+      # golangci-lint-action downloads the pinned release binary, verifies
+      # its checksum, and caches the linter's analysis results between runs
+      # so only the packages whose inputs changed are re-analyzed. The
+      # action itself is pinned to a commit in actions.lock.
       - name: golangci-lint
-        run: |
-          if [ ! -x "$HOME/go/bin/golangci-lint" ]; then
-            go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@5d1e709b7be35cb2025444e19de266b056b7b7ee # v2.10.1
-          fi
-          golangci-lint version
-          golangci-lint run
+        uses: golangci/golangci-lint-action@v9.3.0
+        with:
+          version: v2.10.1
 
       # Whole-program dead code check. The `unused` linter can't flag
       # unreachable exported functions or code kept alive only by its own
       # tests; deadcode does reachability analysis from main. The tool
       # always exits 0, so fail on any output. Built from an immutable
-      # commit pin like golangci-lint; sum.golang.org verifies the
-      # download cryptographically.
+      # commit pin; sum.golang.org verifies the download cryptographically.
       #
       # finding/identity is exempt: it publishes the finding-identity recipe
       # for consumers outside this module (#403), so reachability from our own
@@ -221,10 +195,11 @@ jobs:
         with:
           persist-credentials: false
 
-      # The image is the Dockerfile plus the Go module graph. On a pull
-      # request the build and the scan run only when one of those changed
-      # against the base branch; every push to main scans. Plain git, no
-      # changed-files action.
+      # The image is the Dockerfile, its build context (.dockerignore) and
+      # the Go module graph. On a pull request the build and the scan run
+      # only when one of those changed against the base branch; every push
+      # to main scans. If the base commit cannot be fetched, scan anyway.
+      # Plain git, no changed-files action.
       - name: Decide whether the image can have changed
         id: changes
         env:
@@ -237,14 +212,18 @@ jobs:
             echo "push: scanning"
             exit 0
           fi
-          git fetch --quiet --depth=1 origin "$BASE_SHA"
-          changed="$(git diff --name-only "$BASE_SHA" HEAD -- Dockerfile go.mod go.sum .github/workflows/ci.yml)"
+          if ! git fetch --quiet --depth=1 origin "$BASE_SHA"; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "base $BASE_SHA could not be fetched: scanning"
+            exit 0
+          fi
+          changed="$(git diff --name-only "$BASE_SHA" HEAD -- Dockerfile .dockerignore go.mod go.sum .github/workflows/ci.yml)"
           if [ -n "$changed" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
             echo "image inputs changed:"; echo "$changed"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
-            echo "no change to Dockerfile, go.mod, go.sum or this workflow: image scan skipped"
+            echo "no change to Dockerfile, .dockerignore, go.mod, go.sum or this workflow: image scan skipped"
           fi
 
       - name: Build Docker image
