@@ -734,6 +734,7 @@ github:
         - docker/build-push-action
         - ossf/scorecard-action
         - anchore/scan-action
+        - golangci/golangci-lint-action # Lint job (ci.yml)
 
     # ===========================================
     # Container images must not use forbidden reference
