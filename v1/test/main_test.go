@@ -1,6 +1,6 @@
 //go:build cli
 
-// Package v1 holds the CLI test suite of the refactoring (getplumber/monorepo#640).
+// Package test holds the CLI test suite of the refactoring (getplumber/monorepo#640).
 //
 // Each CLI input is one table row, run against the built binary as a
 // subprocess and compared with a golden file. The suite has two files:
@@ -12,7 +12,7 @@
 //     TestCoverage also lives there. `make -C v1 test-integration` (#641).
 //
 // UPDATE=1 rewrites the golden files; review the diff before committing it.
-package v1
+package test
 
 import (
 	"bytes"

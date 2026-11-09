@@ -96,7 +96,7 @@ linters:
   #   exhaustruct         the code relies on zero values.
   #   err113, wrapcheck   fmt.Errorf with %w is fine.
   #   gochecknoglobals    cobra commands are package-level variables.
-  #   testpackage         the suite is the internal package v1.
+  #   testpackage         the suite is the internal package test.
   #   paralleltest        TestMain builds one binary that the rows share.
   #   mnd                 too noisy on exit codes and test data.
   #   funlen              the row tables are long functions by design.
@@ -181,7 +181,7 @@ linters:
       # Tests run the binary they just built, on fixture paths they create,
       # and write golden files to the repo. These gosec rules are for
       # untrusted input, so they don't apply there:
-      #   G122, G703  path races and traversal on files under testdata/
+      #   G122, G703  path races and traversal on files under test/testdata/
       #   G204        exec of the built binary
       #   G301, G306  0755/0644 on work dirs and golden files
       #   G304        reading files by a variable path

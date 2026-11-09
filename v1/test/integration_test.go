@@ -1,6 +1,6 @@
 //go:build cli
 
-package v1
+package test
 
 import (
 	"io/fs"

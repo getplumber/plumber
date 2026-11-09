@@ -38,10 +38,10 @@ skills reads the file and applies it.
    `.github/workflows/v1.yml` runs the suite on that PR. A red result means a command, flag, output
    format or control changed on `main`: add or refresh the rows before merging. On a conflict in a
    workflow's `pull_request` trigger, keep release/v1's `branches: [main]`.
-5. `main_test.go` has `TestMain` and the shared helpers, and `integration_test.go` has the rows
-   (`localCases`). Each CLI input has one table row. When you add or change a command, a flag, an
-   output format or an exit code, add or update its row in the same PR. `TestCoverage` fails when
-   a command or flag of the binary has no row.
+5. `test/main_test.go` has `TestMain` and the shared helpers, and `test/integration_test.go` has
+   the rows (`localCases`). Each CLI input has one table row. When you add or change a command, a
+   flag, an output format or an exit code, add or update its row in the same PR. `TestCoverage`
+   fails when a command or flag of the binary has no row.
 6. Rows cover every input that makes no backend request (`version`, `--help`, `catalog`,
    `explain`, `capabilities`, `config …`, `score-compare`, `completion`, usage errors, and
    `analyze` inputs rejected before any request). They run with no token and every proxy pointed
@@ -77,19 +77,20 @@ v1/
   AGENTS.md, CLAUDE.md, README.md
   Makefile                       targets test-integration and lint
   .golangci.yml                  golangci-lint v2 config for v1/ (`cli` build tag)
-  main_test.go                   TestMain (builds the binary, reads the command tree), row type, golden helpers
-  integration_test.go            rows `localCases`, `untested`, TestIntegration, TestCoverage
-  testdata/
-    inputs/                      files copied into a row's work dir (configs, analyze reports)
-    golden/local/                one <row>.golden per row: command, exit code, stdout, stderr, files
+  test/
+    main_test.go                 TestMain (builds the binary, reads the command tree), row type, golden helpers
+    integration_test.go          rows `localCases`, `untested`, TestIntegration, TestCoverage
+    testdata/
+      inputs/                    files copied into a row's work dir (configs, analyze reports)
+      golden/local/              one <row>.golden per row: command, exit code, stdout, stderr, files
 ```
 
 ## Adding a case
 
 - New CLI input with no backend request: add a `run(...)` row to `localCases` and put input files
-  in `testdata/inputs/`.
+  in `test/testdata/inputs/`.
 - Input that cannot be tested here because it writes to a real project or needs CI OIDC, a
-  platform or a provider: add it to `untested` in `integration_test.go` with the reason. Every
+  platform or a provider: add it to `untested` in `test/integration_test.go` with the reason. Every
   entry is an input this suite does not cover, so add one only when there is no other way.
 
 ## Wiring outside `v1/`
