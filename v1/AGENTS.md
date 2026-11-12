@@ -38,11 +38,12 @@ skills reads the file and applies it.
    `.github/workflows/v1.yml` runs the suite on that PR. A red result means a command, flag, output
    format or control changed on `main`: add or refresh the rows before merging. On a conflict in a
    workflow's `pull_request` trigger, keep release/v1's `branches: [main]`.
-5. `test/main_test.go` has `TestMain` and the shared helpers, and `test/integration_test.go` has
-   the rows (`localCases`). Each CLI input has one table row. When you add or change a command, a
-   flag, an output format or an exit code, add or update its row in the same PR. `TestCoverage`
-   fails when a command or flag of the binary has no row.
-6. Rows cover every input that makes no backend request (`version`, `--help`, `catalog`,
+5. The suite is a firewall for the refactoring, not a coverage gate: a row exists because a
+   behavior is worth protecting. `test/main_test.go` has `TestMain` and the shared helpers. Each
+   other file is one command group with its own table-driven test (`TestConfig` in
+   `config_test.go`, and so on). When you add or change a command, a flag, an output format or an
+   exit code, add or update its row in the same PR.
+6. Rows only cover inputs that make no backend request (`version`, `--help`, `catalog`,
    `explain`, `capabilities`, `config …`, `score-compare`, `completion`, usage errors, and
    `analyze` inputs rejected before any request). They run with no token and every proxy pointed
    at a closed port, so a row that tries the network fails.
@@ -63,7 +64,7 @@ skills reads the file and applies it.
 From the repository root (`v1/Makefile`):
 
 ```sh
-make -C v1 test-integration            # rows + coverage guard. Offline, no token. Run before every push.
+make -C v1 test-integration            # every row. Offline, no token. Run before every push.
 make -C v1 test-integration UPDATE=1   # rewrite the golden files (review the diff)
 make -C v1 lint                        # golangci-lint with v1/.golangci.yml. Run before every PR.
 ```
@@ -78,20 +79,28 @@ v1/
   Makefile                       targets test-integration and lint
   .golangci.yml                  golangci-lint v2 config for v1/ (`cli` build tag)
   test/
-    main_test.go                 TestMain (builds the binary, reads the command tree), row type, golden helpers
-    integration_test.go          rows `localCases`, `untested`, TestIntegration, TestCoverage
+    main_test.go                 TestMain (builds the binary), row type `cliCase`, sandbox, golden helpers
+    root_test.go                 TestRoot: help, version, catalog, capabilities, unknown command or flag
+    analyze_test.go              TestAnalyze: analyze inputs rejected before any request
+    completion_test.go           TestCompletion
+    config_test.go               TestConfig
+    explain_test.go              TestExplain
+    score_compare_test.go        TestScoreCompare
+    help_test.go                 TestHelpFlag: one --help row per command
     testdata/
       inputs/                    files copied into a row's work dir (configs, analyze reports)
-      golden/local/              one <row>.golden per row: command, exit code, stdout, stderr, files
+      golden/                    one <row>.golden per row: command, exit code, stdout, stderr, files
 ```
 
 ## Adding a case
 
-- New CLI input with no backend request: add a `run(...)` row to `localCases` and put input files
-  in `test/testdata/inputs/`.
-- Input that cannot be tested here because it writes to a real project or needs CI OIDC, a
-  platform or a provider: add it to `untested` in `test/integration_test.go` with the reason. Every
-  entry is an input this suite does not cover, so add one only when there is no other way.
+- Add a row to the table of the command's file and put input files in `test/testdata/inputs/`.
+  A new command group gets its own `<group>_test.go`.
+- A new command also gets a `--help` row in `help_test.go`, so a flag lost later shows in a golden
+  diff.
+- Run `make -C v1 test-integration UPDATE=1` to write the golden file, then read it.
+- When you remove a row, delete its golden file: nothing else reports it.
+- Inputs that need a provider, a platform or CI OIDC are the e2e suite's job (monorepo#651).
 
 ## Wiring outside `v1/`
 

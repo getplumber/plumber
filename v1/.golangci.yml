@@ -189,6 +189,10 @@ linters:
         linters:
           - gosec
         text: G(122|204|301|304|306|703)
+      # Rows spell out their CLI arguments; constants would hide what they run.
+      - path: _test\.go
+        linters:
+          - goconst
 
 formatters:
   enable:
