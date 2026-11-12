@@ -16,6 +16,13 @@ sh .agents/skills/use-modern-go/scripts/run-tool.sh list --file-path <file.go>
 Read the whole output and follow the guidelines it returns, even where nearby code uses an older
 pattern. An agent that cannot load skills reads the file and runs the script.
 
+For what the skill doesn't cover (naming, error messages, doc comments, API shape and tests), follow
+the [Google Go Style Guide](https://google.github.io/styleguide/go/guide) and its
+[Style Decisions](https://google.github.io/styleguide/go/decisions) and
+[Best Practices](https://google.github.io/styleguide/go/best-practices). Where the two disagree, the
+skill wins: use the newer API even where nearby code doesn't, and compare errors with `errors.Is`,
+which `errorlint` requires.
+
 Run the humanizer skill ([`.agents/skills/humanizer/SKILL.md`](../.agents/skills/humanizer/SKILL.md)) on the
 documentation you write: Markdown, commit messages and PR descriptions. An agent that cannot load
 skills reads the file and applies it.
