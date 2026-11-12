@@ -21,11 +21,11 @@ func TestConfig(t *testing.T) {
 		{name: "config", args: []string{"config"}},
 
 		// generate.
-		{name: "config-generate", args: []string{"config", "generate"}, files: []string{".plumber.yaml"}},
+		{name: "config-generate", args: []string{"config", "generate"}, outputFiles: []string{".plumber.yaml"}},
 		{
-			name:  "config-generate-overlay",
-			args:  []string{"config", "generate", "--overlay", "-o", "overlay.yaml"},
-			files: []string{"overlay.yaml"},
+			name:        "config-generate-overlay",
+			args:        []string{"config", "generate", "--overlay", "-o", "overlay.yaml"},
+			outputFiles: []string{"overlay.yaml"},
 		},
 		{
 			name:  "config-generate-exists",
@@ -91,16 +91,16 @@ func TestConfig(t *testing.T) {
 		// resolve.
 		{name: "config-resolve", args: []string{"config", "resolve", "-c", overlay}, inputs: []string{overlay}},
 		{
-			name:   "config-resolve-to-file",
-			args:   []string{"config", "resolve", "--config", overlay, "--output", "resolved.yaml"},
-			inputs: []string{overlay},
-			files:  []string{"resolved.yaml"},
+			name:        "config-resolve-to-file",
+			args:        []string{"config", "resolve", "--config", overlay, "--output", "resolved.yaml"},
+			inputs:      []string{overlay},
+			outputFiles: []string{"resolved.yaml"},
 		},
 		{
-			name:   "config-resolve-short-output",
-			args:   []string{"config", "resolve", "-c", overlay, "-o", "resolved.yaml"},
-			inputs: []string{overlay},
-			files:  []string{"resolved.yaml"},
+			name:        "config-resolve-short-output",
+			args:        []string{"config", "resolve", "-c", overlay, "-o", "resolved.yaml"},
+			inputs:      []string{overlay},
+			outputFiles: []string{"resolved.yaml"},
 		},
 
 		// diff.
@@ -114,36 +114,36 @@ func TestConfig(t *testing.T) {
 		// slim.
 		{name: "config-slim", args: []string{"config", "slim", "-c", "full.yaml"}, setup: generateFull},
 		{
-			name:  "config-slim-to-file",
-			args:  []string{"config", "slim", "--config", "full.yaml", "--output", "slim.yaml"},
-			setup: generateFull,
-			files: []string{"slim.yaml"},
+			name:        "config-slim-to-file",
+			args:        []string{"config", "slim", "--config", "full.yaml", "--output", "slim.yaml"},
+			setup:       generateFull,
+			outputFiles: []string{"slim.yaml"},
 		},
 		{
-			name:  "config-slim-short-output",
-			args:  []string{"config", "slim", "-c", "full.yaml", "-o", "slim.yaml"},
-			setup: generateFull,
-			files: []string{"slim.yaml"},
+			name:        "config-slim-short-output",
+			args:        []string{"config", "slim", "-c", "full.yaml", "-o", "slim.yaml"},
+			setup:       generateFull,
+			outputFiles: []string{"slim.yaml"},
 		},
 
 		// migrate.
 		{
-			name:   "config-migrate",
-			args:   []string{"config", "migrate", "--input", legacy},
-			inputs: []string{legacy},
-			files:  []string{legacy + ".v2"},
+			name:        "config-migrate",
+			args:        []string{"config", "migrate", "--input", legacy},
+			inputs:      []string{legacy},
+			outputFiles: []string{legacy + ".v2"},
 		},
 		{
-			name:   "config-migrate-output",
-			args:   []string{"config", "migrate", "--input", legacy, "--output", "migrated.yaml"},
-			inputs: []string{legacy},
-			files:  []string{"migrated.yaml"},
+			name:        "config-migrate-output",
+			args:        []string{"config", "migrate", "--input", legacy, "--output", "migrated.yaml"},
+			inputs:      []string{legacy},
+			outputFiles: []string{"migrated.yaml"},
 		},
 		{
-			name:   "config-migrate-in-place",
-			args:   []string{"config", "migrate", "--input", legacy, "--in-place"},
-			inputs: []string{legacy},
-			files:  []string{legacy, legacy + ".bak"},
+			name:        "config-migrate-in-place",
+			args:        []string{"config", "migrate", "--input", legacy, "--in-place"},
+			inputs:      []string{legacy},
+			outputFiles: []string{legacy, legacy + ".bak"},
 		},
 		{
 			name:   "config-migrate-up-to-date",

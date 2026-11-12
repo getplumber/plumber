@@ -179,11 +179,11 @@ linters:
   exclusions:
     rules:
       # Tests run the binary they just built, on fixture paths they create,
-      # and write golden files to the repo. These gosec rules are for
+      # and write their inputs into work dirs. These gosec rules are for
       # untrusted input, so they don't apply there:
       #   G122, G703  path races and traversal on files under test/testdata/
       #   G204        exec of the built binary
-      #   G301, G306  0755/0644 on work dirs and golden files
+      #   G301, G306  0755/0644 on work dirs and inputs
       #   G304        reading files by a variable path
       - path: _test\.go
         linters:

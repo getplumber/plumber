@@ -14,10 +14,10 @@ func TestScoreCompare(t *testing.T) {
 			inputs: []string{"score-compare"},
 		},
 		{
-			name:   "score-compare-to-file",
-			args:   []string{"score-compare", "--input", "score-compare", "--output", "report.md"},
-			inputs: []string{"score-compare"},
-			files:  []string{"report.md"},
+			name:        "score-compare-to-file",
+			args:        []string{"score-compare", "--input", "score-compare", "--output", "report.md"},
+			inputs:      []string{"score-compare"},
+			outputFiles: []string{"report.md"},
 		},
 		{name: "score-compare-missing-input", args: []string{"score-compare"}, exit: 2},
 	}

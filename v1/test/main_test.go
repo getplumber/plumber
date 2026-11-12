@@ -6,47 +6,41 @@
 // want to protect and compares each run with a golden file, so a refactoring
 // that changes a behavior goes red. It is not a coverage gate.
 //
-// main_test.go builds the binary and holds the helpers. Every other file is
-// one command group with its own table-driven test (TestConfig in
-// config_test.go, and so on). help_test.go has a --help row for every
-// command, so a flag lost in the refactoring shows up.
+// main_test.go builds the binary and runs the rows; sandbox_test.go holds the
+// sandbox a row runs in, and golden_test.go reads and compares the golden
+// files. Every other file is one command group with its own table-driven
+// test (TestConfig in config_test.go, and so on). help_test.go has a --help
+// row for every command, so a flag lost in the refactoring shows up.
+//
+// A golden file is a YAML document that holds the fields of the golden
+// struct: the call, its exit code, stdout, stderr and the files it wrote.
 //
 // Rows make no backend request: they run with no token and with every proxy
 // pointed at a closed port, so a row that tries the network fails.
 //
-// UPDATE=1 rewrites the golden files; review the diff before committing it.
+// The suite never writes a golden file: write or edit it by hand. A missing
+// one fails its row.
 package test
 
 import (
-	"bytes"
 	"context"
-	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
-	"runtime"
 	"slices"
 	"strings"
 	"testing"
 )
 
-var update = flag.Bool("update", false, "rewrite the golden files")
-
-// closedPort refuses every connection. Rows send all their traffic there, so
-// any request fails instead of reaching a backend.
-const closedPort = "http://127.0.0.1:9"
-
 // cliCase is one row of a table: one plumber call and what it must produce.
 type cliCase struct {
-	name   string     // golden file: testdata/golden/<name>.golden
-	args   []string   // arguments of the plumber call under test
-	exit   int        // expected exit code
-	inputs []string   // paths under testdata/inputs copied into the work dir
-	setup  [][]string // plumber calls run first, in the same work dir and home (not compared)
-	files  []string   // files the call writes, compared with the golden
+	name        string     // golden file: testdata/golden/<name>.yaml
+	args        []string   // arguments of the plumber call under test
+	exit        int        // expected exit code
+	inputs      []string   // paths under testdata/inputs copied into the work dir
+	setup       [][]string // plumber calls run first, in the same work dir and home (not compared)
+	outputFiles []string   // files the call writes, compared with the golden
 	// sortLines compares the output lines sorted, for a call that prints them
 	// in random order (a CLI bug).
 	sortLines bool
@@ -55,7 +49,6 @@ type cliCase struct {
 var plumberBin string
 
 func TestMain(m *testing.M) {
-	flag.Parse()
 	dir, err := os.MkdirTemp("", "plumber-v1-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -77,101 +70,48 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// sandbox is the private file system of one row.
-type sandbox struct {
-	root string // parent of work and home, also TMPDIR
-	work string // working directory of the plumber calls
-	home string
-}
-
-// newSandbox creates the work dir and home of a row and copies its inputs
-// into the work dir.
-func newSandbox(t *testing.T, tt cliCase) sandbox {
-	t.Helper()
-	root := t.TempDir()
-	// macOS returns a symlinked temp dir; resolve it so normalize matches the
-	// paths the CLI prints.
-	if r, err := filepath.EvalSymlinks(root); err == nil {
-		root = r
-	}
-	sb := sandbox{root: root, work: filepath.Join(root, "work"), home: filepath.Join(root, "home")}
-	if err := os.Mkdir(sb.home, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(sb.work, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for _, in := range tt.inputs {
-		copyInput(t, filepath.Join("testdata", "inputs", in), filepath.Join(sb.work, in))
-	}
-	return sb
-}
-
-// env returns the environment of a row. Every proxy points at closedPort, so
-// a request fails instead of reaching a backend.
-func (sb sandbox) env() []string {
-	return []string{
-		"PATH=" + os.Getenv("PATH"),
-		"HOME=" + sb.home,
-		"XDG_CACHE_HOME=" + filepath.Join(sb.home, ".cache"),
-		"XDG_CONFIG_HOME=" + filepath.Join(sb.home, ".config"),
-		"GH_CONFIG_DIR=" + filepath.Join(sb.home, "gh"), // no `gh auth token` fallback
-		"TMPDIR=" + sb.root,
-		"TERM=dumb",
-		"HTTPS_PROXY=" + closedPort,
-		"HTTP_PROXY=" + closedPort,
-		"ALL_PROXY=" + closedPort,
-		"NO_PROXY=",
-	}
-}
-
-// runCase runs the setup calls and the call under test in a fresh sandbox,
-// and compares the normalized transcript (exit code, stdout, stderr and the
-// files the call wrote) with testdata/golden/<name>.golden.
+// runCase compares a run of tt with testdata/golden/<name>.yaml.
 func runCase(t *testing.T, tt cliCase) {
 	t.Helper()
-	sb := newSandbox(t, tt)
-	env := sb.env()
-
-	for _, args := range tt.setup {
-		if _, _, code := runPlumber(t.Context(), sb.work, env, args); code != 0 {
-			t.Fatalf("setup `plumber %s` exited %d", strings.Join(args, " "), code)
-		}
-	}
-	stdout, stderr, code := runPlumber(t.Context(), sb.work, env, tt.args)
-	if tt.sortLines {
-		stdout, stderr = sortLines(stdout), sortLines(stderr)
-	}
-	call := strings.Join(tt.args, " ")
-	if code != tt.exit {
-		t.Errorf("plumber %s: exit code = %d, want %d\nstdout:\n%s\nstderr:\n%s", call, code, tt.exit, stdout, stderr)
-	}
-
-	got := sb.normalize(transcript(t, tt, sb.work, stdout, stderr, code))
-
-	diff, err := checkGolden(filepath.Join("testdata", "golden", tt.name+".golden"), got)
+	path := filepath.Join("testdata", "golden", tt.name+".yaml")
+	want, err := readGolden(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if diff != "" {
-		t.Errorf("plumber %s: %s\nrefresh on purpose with UPDATE=1 and review the diff", call, diff)
+	got := run(t, tt)
+	if diff := want.cmp(got); diff != "" {
+		t.Errorf("%s: output differs from %s:\n%s", got.Command, path, diff)
 	}
 }
 
-// transcript formats a call and its results the way golden files store them.
-func transcript(t *testing.T, tt cliCase, work, stdout, stderr string, code int) string {
+// run runs the setup calls and the call under test in a fresh sandbox, checks
+// the exit code, and returns the normalized result (exit code, stdout, stderr
+// and the files the call wrote).
+func run(t *testing.T, tt cliCase) *golden {
 	t.Helper()
-	var b strings.Builder
-	fmt.Fprintf(&b, "$ plumber %s\nexit: %d\n--- stdout\n%s\n--- stderr\n%s\n", strings.Join(tt.args, " "), code, stdout, stderr)
-	for _, f := range tt.files {
-		data, err := os.ReadFile(filepath.Join(work, f))
-		if err != nil {
-			t.Errorf("plumber %s did not write %s: %v", strings.Join(tt.args, " "), f, err)
-			continue
+	sb := newSandbox(t, tt)
+
+	for _, args := range tt.setup {
+		if _, stderr, code := sb.runPlumber(t.Context(), args); code != 0 {
+			t.Fatalf("setup `plumber %s` exited %d\nstderr:\n%s", strings.Join(args, " "), code, stderr)
 		}
-		fmt.Fprintf(&b, "--- file %s\n%s\n", f, data)
 	}
-	return b.String()
+	stdout, stderr, code := sb.runPlumber(t.Context(), tt.args)
+
+	command := "plumber " + strings.Join(tt.args, " ")
+	if code != tt.exit {
+		t.Errorf("%s: exit code = %d, want %d", command, code, tt.exit)
+	}
+
+	got, err := sb.newGolden(tt, command, stdout, stderr, code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Sort after normalizing, so the order doesn't depend on the sandbox paths.
+	if tt.sortLines {
+		got.Stdout, got.Stderr = sortLines(got.Stdout), sortLines(got.Stderr)
+	}
+	return got
 }
 
 // sortLines returns s with its lines sorted.
@@ -179,92 +119,4 @@ func sortLines(s string) string {
 	lines := strings.Split(s, "\n")
 	slices.Sort(lines)
 	return strings.Join(lines, "\n")
-}
-
-// runPlumber runs the built binary in dir with exactly env. A run that could
-// not start returns exit code -1 with the error appended to stderr.
-func runPlumber(ctx context.Context, dir string, env, args []string) (stdout, stderr string, code int) {
-	cmd := exec.CommandContext(ctx, plumberBin, args...)
-	cmd.Dir, cmd.Env = dir, env
-	var o, e bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &o, &e
-	err := cmd.Run()
-	if err == nil {
-		return o.String(), e.String(), 0
-	}
-	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
-		return o.String(), e.String(), exitErr.ExitCode()
-	}
-	return o.String(), e.String() + err.Error(), -1
-}
-
-var (
-	timestamp = regexp.MustCompile(`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?`)
-	urnUUID   = regexp.MustCompile(`urn:uuid:[0-9a-f-]{36}`) // CycloneDX serialNumber, random per run
-	epochMs   = regexp.MustCompile(`\b1[78]\d{11}\b`)        // epoch milliseconds, 2023-2033 (OCSF time, correlation_uid)
-)
-
-// normalize replaces what changes from one run to the next: the sandbox
-// paths and timestamps.
-func (sb sandbox) normalize(s string) string {
-	cache := filepath.Join(sb.home, ".cache")
-	if runtime.GOOS == "darwin" {
-		cache = filepath.Join(sb.home, "Library", "Caches")
-	}
-	s = strings.NewReplacer(cache, "<CACHE>", sb.work, "<WORK>", sb.home, "<HOME>", sb.root, "<TMP>").Replace(s)
-	s = timestamp.ReplaceAllString(s, "<TIME>")
-	s = epochMs.ReplaceAllString(s, "<EPOCH>")
-	return urnUUID.ReplaceAllString(s, "urn:uuid:<UUID>")
-}
-
-// checkGolden compares got with the golden file at path. It returns "" when
-// they match, or describes the first line that differs. With -update it
-// rewrites the file instead.
-func checkGolden(path, got string) (diff string, err error) {
-	if *update {
-		return "", os.WriteFile(path, []byte(got), 0o644)
-	}
-	want, err := os.ReadFile(path)
-	if err != nil {
-		return "", fmt.Errorf("create the golden file with `make -C v1 test-integration UPDATE=1` and review it: %w", err)
-	}
-	if string(want) == got {
-		return "", nil
-	}
-	wantLines, gotLines := strings.Split(string(want), "\n"), strings.Split(got, "\n")
-	for i := range max(len(wantLines), len(gotLines)) {
-		w, g := lineAt(wantLines, i), lineAt(gotLines, i)
-		if w != g {
-			return fmt.Sprintf("output differs from %s at line %d:\n  got:  %q\n  want: %q", path, i+1, g, w), nil
-		}
-	}
-	return "", nil
-}
-
-// lineAt returns lines[i], or "" past the end.
-func lineAt(lines []string, i int) string {
-	if i < len(lines) {
-		return lines[i]
-	}
-	return ""
-}
-
-// copyInput copies the file or directory src to dst.
-func copyInput(t *testing.T, src, dst string) {
-	t.Helper()
-	info, err := os.Stat(src)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.IsDir() {
-		err = os.CopyFS(dst, os.DirFS(src))
-	} else {
-		var data []byte
-		if data, err = os.ReadFile(src); err == nil {
-			err = os.WriteFile(dst, data, 0o644)
-		}
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
 }

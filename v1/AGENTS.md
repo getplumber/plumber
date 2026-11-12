@@ -46,16 +46,18 @@ skills reads the file and applies it.
    format or control changed on `main`: add or refresh the rows before merging. On a conflict in a
    workflow's `pull_request` trigger, keep release/v1's `branches: [main]`.
 5. The suite is a firewall for the refactoring, not a coverage gate: a row exists because a
-   behavior is worth protecting. `test/main_test.go` has `TestMain` and the shared helpers. Each
-   other file is one command group with its own table-driven test (`TestConfig` in
+   behavior is worth protecting. `test/main_test.go` has `TestMain` and `runCase`,
+   `sandbox_test.go` the sandbox a row runs in and `golden_test.go` the golden files. Each other
+   file is one command group with its own table-driven test (`TestConfig` in
    `config_test.go`, and so on). When you add or change a command, a flag, an output format or an
    exit code, add or update its row in the same PR.
 6. Rows only cover inputs that make no backend request (`version`, `--help`, `catalog`,
    `explain`, `capabilities`, `config …`, `score-compare`, `completion`, usage errors, and
    `analyze` inputs rejected before any request). They run with no token and every proxy pointed
    at a closed port, so a row that tries the network fails.
-7. Read the diff of every golden file you change. `UPDATE=1` rewrites them; explain each change
-   in the PR.
+7. The suite never writes a golden file, and a missing one fails its row. Write or change a golden
+   file by hand (or have an agent edit it) from the call's real output, and explain each change in
+   the PR.
 8. Run `make -C v1 lint` before you open a PR. It must report 0 issues. Use the golangci-lint
    version `.github/workflows/v1.yml` pins (v2.15.0). Fix what it reports. A `//nolint` names one
    linter and says why.
@@ -71,9 +73,8 @@ skills reads the file and applies it.
 From the repository root (`v1/Makefile`):
 
 ```sh
-make -C v1 test-integration            # every row. Offline, no token. Run before every push.
-make -C v1 test-integration UPDATE=1   # rewrite the golden files (review the diff)
-make -C v1 lint                        # golangci-lint with v1/.golangci.yml. Run before every PR.
+make -C v1 test-integration   # every row. Offline, no token. Run before every push.
+make -C v1 lint               # golangci-lint with v1/.golangci.yml. Run before every PR.
 ```
 
 `make test` (`go test ./...`) does not run this suite because its files have the `cli` build tag.
@@ -86,7 +87,9 @@ v1/
   Makefile                       targets test-integration and lint
   .golangci.yml                  golangci-lint v2 config for v1/ (`cli` build tag)
   test/
-    main_test.go                 TestMain (builds the binary), row type `cliCase`, sandbox, golden helpers
+    main_test.go                 TestMain (builds the binary), row type `cliCase`, runCase
+    sandbox_test.go              sandbox: work dir, home, env, runPlumber, normalize, newGolden
+    golden_test.go               golden struct, readGolden, cmp
     root_test.go                 TestRoot: help, version, catalog, capabilities, unknown command or flag
     analyze_test.go              TestAnalyze: analyze inputs rejected before any request
     completion_test.go           TestCompletion
@@ -96,7 +99,7 @@ v1/
     help_test.go                 TestHelpFlag: one --help row per command
     testdata/
       inputs/                    files copied into a row's work dir (configs, analyze reports)
-      golden/                    one <row>.golden per row: command, exit code, stdout, stderr, files
+      golden/                    one <row>.yaml per row (struct `golden`): command, exit, stdout, stderr, files
 ```
 
 ## Adding a case
@@ -105,7 +108,11 @@ v1/
   A new command group gets its own `<group>_test.go`.
 - A new command also gets a `--help` row in `help_test.go`, so a flag lost later shows in a golden
   diff.
-- Run `make -C v1 test-integration UPDATE=1` to write the golden file, then read it.
+- Write `test/testdata/golden/<name>.yaml` by hand: `command`, `exit`, `stdout`, `stderr`, and
+  `files` with one entry per `outputFiles` path. Write sandbox paths and run-dependent values as
+  `<WORK>`, `<HOME>`, `<TMP>`, `<CACHE>`, `<TIME>`, `<EPOCH>` and `urn:uuid:<UUID>`. A field you
+  leave out is empty (`exit` is 0), and an unknown key fails the row. Then run
+  `make -C v1 test-integration`: a mismatch names the field and its first differing line.
 - When you remove a row, delete its golden file: nothing else reports it.
 - Inputs that need a provider, a platform or CI OIDC are the e2e suite's job (monorepo#651).
 
