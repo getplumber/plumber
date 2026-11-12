@@ -26,6 +26,10 @@ var fetchGitHubDefaultBranch = func(host, owner, repo string) (string, error) {
 // which otherwise needs network and auth.
 var scanGitHubWorkflowsRemote = githubpkg.ScanGitHubWorkflowsRemote
 
+// fetchGitHubTagProtection is a test seam over the tag rulesets and tags
+// fetch, which otherwise needs network and auth.
+var fetchGitHubTagProtection = githubpkg.FetchGitHubTagProtection
+
 // fetchGitHubEnvironments is a test seam over the environments lookup.
 // The default honors PLUMBER_DISABLE_GITHUB_API (same contract as
 // fetchGitHubDefaultBranch above) so offline test suites never hit the
@@ -323,6 +327,30 @@ func eligibleDefaultTokenWorkflow(pipeline *ir.NormalizedPipeline, workflowPath 
 	return matched
 }
 
+// enrichGitHubTags fills pipeline.TagProtection for tagMustBeProtected
+// (ISSUE-510) when tagLaneCollected says this run collects it. A token
+// that cannot read the rulesets or the tags leaves TagProtection with
+// Known=false, which the rule abstains on and markTagProtectionGap turns
+// into "not evaluated". Returns true when the fetch failed outright
+// (network, 5xx, rate limit), so the caller degrades the run instead of
+// letting an empty answer pass (#220).
+func enrichGitHubTags(l *logrus.Entry, pipeline *ir.NormalizedPipeline, host string, conf *configuration.Configuration, projectPath string) (fetchFailed bool) {
+	if pipeline == nil || !tagLaneCollected(conf, projectPath) {
+		return false
+	}
+	owner, repo, _ := gitHubOwnerRepo(projectPath)
+	tp, err := fetchGitHubTagProtection(host, owner, repo)
+	pipeline.TagProtection = tp
+	if err != nil {
+		l.WithError(err).Warn("GitHub tag protection fetch failed; tagMustBeProtected will report not evaluated")
+		return true
+	}
+	if tp != nil && !tp.Known {
+		l.Info("GitHub tag rulesets or tags are not readable with this token; tagMustBeProtected will report not evaluated")
+	}
+	return false
+}
+
 // enrichGitHubBranches populates pipeline.Branches via the GitHub
 // REST API when the user has enabled the branchMustBeProtected
 // control AND that control is currently shipping (not benched) on
@@ -533,6 +561,7 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 		}
 		branchFetchFailed = enrichGitHubBranches(l, pipeline, conf.GithubAPIHost, branchScope, conf.ProjectPath, onProgress)
 	}
+	tagFetchFailed := enrichGitHubTags(l, pipeline, conf.GithubAPIHost, conf, conf.ProjectPath)
 
 	// After every enrichment lane above (environments, workflow states,
 	// branches) and before the situation facts are evaluated below: a job
@@ -580,6 +609,10 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 		invalidInactive = len(pipeline.InvalidWorkflows)
 	}
 	applyGitHubDegraded(result, 0, invalidInactive, branchFetchFailed)
+	if tagFetchFailed {
+		markDegraded(result, degradedReasonTagProtectionPrefix+"; tag controls were not evaluated")
+	}
+	markTagProtectionGap(result, GitHubControls(conf.PlumberConfig))
 	applyNestedActions(result, pipeline)
 	// Resolve the local clone's HEAD SHA so source links in the report
 	// point at the exact commit being analysed instead of a mutable
@@ -683,6 +716,7 @@ func RunGitHubAnalysisRemote(conf *configuration.Configuration, owner, repo, ref
 		}
 		branchFetchFailed = enrichGitHubBranches(l, pipeline, conf.GithubAPIHost, branchScope, owner+"/"+repo, onProgress)
 	}
+	tagFetchFailed := enrichGitHubTags(l, pipeline, conf.GithubAPIHost, conf, owner+"/"+repo)
 
 	// Same ordering as the local path: after every enrichment lane, before
 	// the situation facts are evaluated below.
@@ -725,6 +759,10 @@ func RunGitHubAnalysisRemote(conf *configuration.Configuration, owner, repo, ref
 		invalidInactive = len(pipeline.InvalidWorkflows)
 	}
 	applyGitHubDegraded(result, len(partial), invalidInactive, branchFetchFailed)
+	if tagFetchFailed {
+		markDegraded(result, degradedReasonTagProtectionPrefix+"; tag controls were not evaluated")
+	}
+	markTagProtectionGap(result, GitHubControls(conf.PlumberConfig))
 	applyNestedActions(result, pipeline)
 	// An enabled control asserting nothing until its substantive fields are set is not a clean
 	// pass either (#459): it is not_evaluable, config_required, same as any other lane gap. Runs

@@ -16,6 +16,12 @@ absence from this file does not mean a rule doesn't exist — see
 | [ISSUE-414](#issue-414--component-authorized-sources) | `component-authorized-sources` | high |
 | [ISSUE-415](#issue-415--function-authorized-sources) | `function-authorized-sources` | high |
 
+### Access & authorisation — `5xx`
+
+| Code | Name | Severity |
+| :--- | :--- | :--- |
+| [ISSUE-510](#issue-510--tag-unprotected) | `tag-unprotected` | **critical** |
+
 ### Run / output conventions
 
 - Every finding prints a clickable `↳ at <file>:<line>` — `Ctrl+click`
@@ -182,4 +188,60 @@ functionMustComeFromAuthorizedSources:
   # Additional trusted function source URLs and patterns (wildcards
   # supported), e.g. registry.example.com/platform-team/*
   trustedFunctions: []
+```
+
+---
+
+## ISSUE-510 — `tag-unprotected`
+
+**Severity:** `critical` (`high` when no job runs on tag pipelines) • **Control:** `tagMustBeProtected`
+
+Tags are in use but are not covered by a
+[protected tag](https://docs.gitlab.com/user/project/protected_tags/), or
+the protection lets Developers create them. Anyone allowed to push a tag
+can then move a release or forge one, and a tag pipeline publishes it.
+
+What must be covered depends on `namePatterns`:
+
+- **Empty (the default):** all tags, through a protected tag `*`. A
+  protected tag `v*` does not count. One finding, `tagPattern: "*"`.
+  This is the recommended setup: one rule protects every tag.
+- **A list of patterns:** each pattern on its own, one finding per
+  pattern.
+
+Nothing is checked until tags are in use: the project has a tag (one
+matching the pattern, for a configured pattern), or a job runs on tag
+pipelines. The finding is critical when a job runs on tag pipelines
+(`only: [tags]`, or a `rules:` entry on `$CI_COMMIT_TAG`), high
+otherwise. A protected tag blocks updates and deletions by itself;
+creation counts as restricted when it is left to Maintainers (the
+default), No one, or named users, groups or deploy keys.
+
+```yaml
+# ❌ before — tag pipeline publishes, v* tags are not protected
+publish:
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - ./publish.sh
+```
+
+**Fix.** Settings > Repository > Protected tags: protect `*` (or each
+configured pattern) with **Allowed to create** set to Maintainers (or a
+narrower set).
+
+**Token.** `read_api`, to list protected tags and tags. Without it the
+control reports "not evaluated", never a false positive. Not evaluated
+in platform mode yet: the platform snapshot carries no tag data.
+
+**Config.**
+
+```yaml
+tagMustBeProtected:
+  enabled: true
+  # Tag name patterns that must be protected, each on its own.
+  # Empty (default): a protected tag `*` must cover every tag.
+  namePatterns: []
+  # Also require tag creation to be restricted
+  requireCreationRestricted: true
 ```

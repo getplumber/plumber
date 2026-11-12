@@ -78,6 +78,18 @@ var controlFieldDocs = map[string]FieldDoc{
 	"branchMustBeProtected.minPushAccessLevel": {
 		Description: "Minimum access level required to push (0 = No one, 30 = Developer, 40 = Maintainer).",
 	},
+	"tagMustBeProtected.enabled": {
+		Description: "Turns the control on; when false or absent the control is skipped.",
+	},
+	"tagMustBeProtected.namePatterns": {
+		Description: "List of tag name patterns that must be protected; supports wildcards. Empty or unset (the default): rules on all tags (a GitHub ruleset on ~ALL, a GitLab protected tag `*`) with no exclusion must protect every tag. Otherwise each pattern is checked on its own, once an existing tag matches it or a workflow triggers on it. Workflow tag triggers never add a pattern.",
+		Default:     "[]",
+	},
+	"tagMustBeProtected.requireCreationRestricted": {
+		Description: "When true, tag creation must also be restricted, on top of tag updates and deletions being blocked.",
+		Default:     "true",
+		Toggle:      true,
+	},
 	"mergeRequestApprovalRulesMustRequireMinimumApprovals.enabled": {
 		Description: "Turns the control on; when false or absent the control is skipped.",
 	},

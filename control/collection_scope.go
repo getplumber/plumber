@@ -56,8 +56,10 @@ const (
 	laneGitLabProtection     = "gitlab_protection"
 	laneGitLabVariables      = "gitlab_variables"
 	laneGitLabSecurityPolicy = "gitlab_security_policy"
+	laneGitLabTagProtection  = "gitlab_tag_protection"
 	laneGitHubBranches       = "github_branches"
 	laneGitHubActionSource   = "github_action_source"
+	laneGitHubTags           = "github_tags"
 )
 
 // markLaneCollected records that a gated collection ran this run.
@@ -88,6 +90,24 @@ func markGitHubLanes(result *AnalysisResult, conf *configuration.Configuration, 
 	if branchLaneCollected(conf, projectPath, branchScope) {
 		result.markLaneCollected(laneGitHubBranches)
 	}
+	if tagLaneCollected(conf, projectPath) {
+		result.markLaneCollected(laneGitHubTags)
+	}
+}
+
+// tagLaneCollected reports whether this run collects GitHub's tag
+// protection (enrichGitHubTags): some collecting configuration enables
+// tagMustBeProtected, it is not benched, and projectPath names a
+// repository. Unlike the branch lane it needs no scope merge: the fetch
+// reads every tag ruleset and tag whatever the patterns.
+func tagLaneCollected(conf *configuration.Configuration, projectPath string) bool {
+	if conf == nil || configuration.IsBenched(configuration.ProviderGitHub, controlTagMustBeProtected) {
+		return false
+	}
+	if _, _, ok := gitHubOwnerRepo(projectPath); !ok {
+		return false
+	}
+	return anyCollectionConfig(conf, tagProtectionControlEnabledFor(configuration.ProviderGitHub))
 }
 
 // collectionBranchProtectionConfig returns the configuration GitHub's
@@ -194,10 +214,12 @@ var controlsByGatedLane = map[string]map[string][]string{
 			controlCicdVariablesMustBeMasked,
 		},
 		laneGitLabSecurityPolicy: {controlSecurityPolicy},
+		laneGitLabTagProtection:  {controlTagMustBeProtected},
 	},
 	configuration.ProviderGitHub: {
 		laneGitHubBranches:     {controlBranchMustBeProtected},
 		laneGitHubActionSource: {controlMutableRemoteExec},
+		laneGitHubTags:         {controlTagMustBeProtected},
 	},
 }
 

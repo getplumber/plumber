@@ -278,6 +278,8 @@ func buildLegacyResult(e control.ControlEntry, result *control.AnalysisResult, p
 		return "mrApprovalSettingsResult", buildMRApprovalSettingsBlock(common, findings)
 	case "mergeRequestSettingsMustBeCompliant":
 		return "mrSettingsResult", buildMRSettingsBlock(common, findings)
+	case "tagMustBeProtected":
+		return "tagProtectionResult", buildTagProtectionBlock(common, result, findings)
 	}
 	return "", nil
 }
@@ -386,6 +388,36 @@ func buildMRSettingsBlock(c legacyCommon, findings []opaengine.Finding) map[stri
 		"issues": projectFindings(findings, "job"),
 		"metrics": map[string]any{
 			"hasNonCompliantSettings": len(findings),
+		},
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
+	}
+}
+
+// buildTagProtectionBlock emits the tagMustBeProtected (ISSUE-510) block on
+// both providers. The findings are repository-level (no file/job): each
+// issue carries the tagPattern and its missingProtections. tagRules and
+// tagsChecked describe what the collection read; both stay 0 when it did
+// not run or could not read the provider.
+func buildTagProtectionBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
+	rules, tags := 0, 0
+	if result != nil {
+		p := result.Pipeline
+		if p == nil {
+			p = result.GitHubPipeline
+		}
+		if tp := p.TagProtectionOrNil(); tp != nil && tp.Known {
+			rules, tags = len(tp.Rules), len(tp.Tags)
+		}
+	}
+	return map[string]any{
+		"issues": projectFindings(findings, "job"),
+		"metrics": map[string]any{
+			"unprotectedTagPatterns": len(findings),
+			"tagRules":               rules,
+			"tagsChecked":            tags,
 		},
 		"version":   "0.1.0",
 		"ciValid":   c.CiValid,

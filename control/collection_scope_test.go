@@ -679,6 +679,7 @@ func TestControlsByGatedLane_Row62_MirrorsTheGatesItStandsFor(t *testing.T) {
 			laneGitLabProtection:     protectionDataNeeded,
 			laneGitLabVariables:      cicdVariableControlEnabled,
 			laneGitLabSecurityPolicy: securityPolicyControlEnabled,
+			laneGitLabTagProtection:  tagProtectionControlEnabledFor(configuration.ProviderGitLab),
 		},
 		configuration.ProviderGitHub: {
 			// The one lane whose gate needs the collector's own inputs: the
@@ -687,6 +688,9 @@ func TestControlsByGatedLane_Row62_MirrorsTheGatesItStandsFor(t *testing.T) {
 				return branchLaneCollected(conf, "acme/app", collectionBranchProtectionConfig(conf))
 			},
 			laneGitHubActionSource: shouldScanMutableExec,
+			laneGitHubTags: func(conf *configuration.Configuration) bool {
+				return tagLaneCollected(conf, "acme/app")
+			},
 		},
 	}
 
