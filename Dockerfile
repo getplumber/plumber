@@ -1,7 +1,8 @@
 # Build stage
-# golang:1.26-alpine — pinned to a digest shipping Go 1.26.10 (crypto/x509
-# security fix, on top of 1.26.9's stdlib advisories GO-2026-5026,
-# GO-2026-5972, GO-2026-6089, GO-2026-6090, all High).
+# golang:1.26-alpine, pinned to a digest shipping Go 1.26.11 (net/http fix
+# for GO-2026-6859, on top of 1.26.10's crypto/x509 security fix and 1.26.9's
+# stdlib advisories GO-2026-5026, GO-2026-5972, GO-2026-6089, GO-2026-6090,
+# all High).
 # Bump this digest when go.mod's `toolchain` is raised so the bundled compiler
 # carries stdlib security fixes.
 #
@@ -9,7 +10,7 @@
 # build and cross-compiles for the target (TARGETOS/TARGETARCH below), instead
 # of running under QEMU emulation for every non-native platform of a
 # multi-arch build.
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine@sha256:9ce231b28998b32e116927c61aa5c406183061d4f3f2d61b292c88e7f6bdf7ca AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine@sha256:30b1e546a9c7fa3b747c2bdba3a0c7bdf3a02ebb4c5b8405d2f948d7e8aac4ec AS builder
 
 # Set working directory
 WORKDIR /app
