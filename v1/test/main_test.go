@@ -92,7 +92,7 @@ func run(t *testing.T, tt cliCase) *golden {
 
 	for _, args := range tt.setup {
 		if _, stderr, code := sb.runPlumber(t.Context(), args); code != 0 {
-			t.Fatalf("setup `%s` exited %d\nstderr:\n%s", call(args), code, stderr)
+			t.Fatalf("setup `%s` exited %d\nstderr:\n%s", plumberCall(args), code, stderr)
 		}
 	}
 
@@ -109,9 +109,9 @@ func run(t *testing.T, tt cliCase) *golden {
 	return got
 }
 
-// call returns how a plumber call with args reads in messages and golden
-// files.
-func call(args []string) string {
+// plumberCall returns how a plumber call with args reads in messages and
+// golden files.
+func plumberCall(args []string) string {
 	return "plumber " + strings.Join(args, " ")
 }
 

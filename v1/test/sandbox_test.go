@@ -125,7 +125,7 @@ func (sb *sandbox) normalize(s string) string {
 // newGolden returns the golden of a call of tt that printed stdout and
 // stderr and exited with code, with the files it wrote, normalized.
 func (sb *sandbox) newGolden(tt cliCase, stdout, stderr string, code int) (*golden, error) {
-	command := call(tt.args)
+	command := plumberCall(tt.args)
 	files, err := sb.readFiles(tt.outputFiles)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", command, err)
