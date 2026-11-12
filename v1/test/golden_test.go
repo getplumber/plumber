@@ -13,8 +13,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// golden is one call and what it produced, as testdata/golden/<name>.yaml
-// stores it.
+// golden is one call and what it produced, as
+// testdata/golden/<Test>/<row>.yaml stores it.
 type golden struct {
 	Command string            `yaml:"command"`
 	Exit    int               `yaml:"exit"`

@@ -35,7 +35,7 @@ import (
 
 // cliCase is one row of a table: one plumber call and what it must produce.
 type cliCase struct {
-	name        string     // golden file: testdata/golden/<name>.yaml
+	name        string     // row name, and the golden file testdata/golden/<Test>/<name>.yaml
 	args        []string   // arguments of the plumber call under test
 	inputs      []string   // paths under testdata/inputs copied into the work dir
 	setup       [][]string // plumber calls run first, in the same work dir and home (not compared)
@@ -69,10 +69,11 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// runCase compares a run of tt with testdata/golden/<name>.yaml.
+// runCase compares a run of tt with testdata/golden/<Test>/<row>.yaml, named
+// after the subtest.
 func runCase(t *testing.T, tt cliCase) {
 	t.Helper()
-	path := filepath.Join("testdata", "golden", tt.name+".yaml")
+	path := filepath.Join("testdata", "golden", t.Name()+".yaml")
 	want, err := readGolden(path)
 	if err != nil {
 		t.Fatal(err)
