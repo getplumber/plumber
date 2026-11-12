@@ -142,13 +142,20 @@ func runCase(t *testing.T, tt cliCase) {
 	if tt.sortLines {
 		stdout, stderr = sortLines(stdout), sortLines(stderr)
 	}
+	call := strings.Join(tt.args, " ")
 	if code != tt.exit {
-		t.Errorf("exit code = %d, want %d\nstdout:\n%s\nstderr:\n%s", code, tt.exit, stdout, stderr)
+		t.Errorf("plumber %s: exit code = %d, want %d\nstdout:\n%s\nstderr:\n%s", call, code, tt.exit, stdout, stderr)
 	}
 
 	got := sb.normalize(transcript(t, tt, sb.work, stdout, stderr, code))
 
-	compareGolden(t, filepath.Join("testdata", "golden", tt.name+".golden"), got)
+	diff, err := checkGolden(filepath.Join("testdata", "golden", tt.name+".golden"), got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff != "" {
+		t.Errorf("plumber %s: %s\nrefresh on purpose with UPDATE=1 and review the diff", call, diff)
+	}
 }
 
 // transcript formats a call and its results the way golden files store them.
@@ -159,7 +166,7 @@ func transcript(t *testing.T, tt cliCase, work, stdout, stderr string, code int)
 	for _, f := range tt.files {
 		data, err := os.ReadFile(filepath.Join(work, f))
 		if err != nil {
-			t.Errorf("expected file %s: %v", f, err)
+			t.Errorf("plumber %s did not write %s: %v", strings.Join(tt.args, " "), f, err)
 			continue
 		}
 		fmt.Fprintf(&b, "--- file %s\n%s\n", f, data)
@@ -210,31 +217,28 @@ func (sb sandbox) normalize(s string) string {
 	return urnUUID.ReplaceAllString(s, "urn:uuid:<UUID>")
 }
 
-// compareGolden fails t when got differs from the golden file at path, and
-// reports the first line that differs. With -update it rewrites the file.
-func compareGolden(t *testing.T, path, got string) {
-	t.Helper()
+// checkGolden compares got with the golden file at path. It returns "" when
+// they match, or describes the first line that differs. With -update it
+// rewrites the file instead.
+func checkGolden(path, got string) (diff string, err error) {
 	if *update {
-		if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		return
+		return "", os.WriteFile(path, []byte(got), 0o644)
 	}
 	want, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("no golden file %s: run `make -C v1 test-integration UPDATE=1` and review it", path)
+		return "", fmt.Errorf("create the golden file with `make -C v1 test-integration UPDATE=1` and review it: %w", err)
 	}
 	if string(want) == got {
-		return
+		return "", nil
 	}
 	wantLines, gotLines := strings.Split(string(want), "\n"), strings.Split(got, "\n")
 	for i := range max(len(wantLines), len(gotLines)) {
 		w, g := lineAt(wantLines, i), lineAt(gotLines, i)
 		if w != g {
-			t.Errorf("output differs from %s at line %d:\n  got:  %q\n  want: %q\nrefresh on purpose with UPDATE=1 and review the diff", path, i+1, g, w)
-			return
+			return fmt.Sprintf("output differs from %s at line %d:\n  got:  %q\n  want: %q", path, i+1, g, w), nil
 		}
 	}
+	return "", nil
 }
 
 // lineAt returns lines[i], or "" past the end.

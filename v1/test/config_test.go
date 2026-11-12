@@ -4,6 +4,8 @@ package test
 
 import "testing"
 
+// TestConfig covers the config subcommands: generate, init, view, validate,
+// resolve, diff, slim and migrate.
 func TestConfig(t *testing.T) {
 	t.Parallel()
 	// Input files under testdata/inputs.

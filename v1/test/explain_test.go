@@ -4,6 +4,8 @@ package test
 
 import "testing"
 
+// TestExplain covers explain on a saved analyze report, and the attack lookup
+// that fails without a cache.
 func TestExplain(t *testing.T) {
 	t.Parallel()
 	const report = "score-compare/plumber-example-critical.v4.json"

@@ -4,6 +4,8 @@ package test
 
 import "testing"
 
+// TestCompletion covers the completion script of every shell, with and
+// without descriptions.
 func TestCompletion(t *testing.T) {
 	t.Parallel()
 	tests := []cliCase{

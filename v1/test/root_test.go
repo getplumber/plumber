@@ -4,6 +4,8 @@ package test
 
 import "testing"
 
+// TestRoot covers the top-level commands (help, version, catalog and
+// capabilities) and the unknown command and flag errors.
 func TestRoot(t *testing.T) {
 	t.Parallel()
 	tests := []cliCase{
