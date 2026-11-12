@@ -60,6 +60,7 @@ linters:
     - unconvert
     - usestdlibvars
     # Tests.
+    - paralleltest
     - thelper
     - tparallel
     - usetesting
@@ -97,7 +98,6 @@ linters:
   #   err113, wrapcheck   fmt.Errorf with %w is fine.
   #   gochecknoglobals    cobra commands are package-level variables.
   #   testpackage         the suite is the internal package test.
-  #   paralleltest        TestMain builds one binary that the rows share.
   #   mnd                 too noisy on exit codes and test data.
   #   funlen              the row tables are long functions by design.
   #   depguard            needs a list of banned imports we don't have yet.
