@@ -13,21 +13,21 @@ workflows:
         - 'actions/download-artifact@v8.0.2'
         - 'actions/github-script@v9.0.0'
         - 'actions/upload-artifact@v7.0.2'
-        - 'anthropics/claude-code-action@v1.0.252'
+        - 'anthropics/claude-code-action@v1.0.270'
     '.github/workflows/codeql.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
-        - 'github/codeql-action@v4.39.0'
+        - 'github/codeql-action@v4.39.3'
     '.github/workflows/install-channels.yml':
         - 'actions/setup-go@v7.0.0'
     '.github/workflows/plumber-action.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
         - 'actions/upload-artifact@v7.0.2'
-        - 'github/codeql-action@v4.39.0'
+        - 'github/codeql-action@v4.39.3'
     '.github/workflows/plumber-score.yml':
         - 'actions/checkout@v7.0.1'
-        - 'getplumber/plumber@v0.7.18'
+        - 'getplumber/plumber@v0.7.23'
     '.github/workflows/propagate.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/create-github-app-token@v3.3.0'
@@ -40,14 +40,14 @@ workflows:
         - 'actions/setup-node@v7.1.0'
         - 'actions/upload-artifact@v7.0.2'
         - 'docker/build-push-action@v7.4.0'
-        - 'docker/login-action@v4.6.0'
+        - 'docker/login-action@v4.8.0'
         - 'docker/metadata-action@v6.2.0'
         - 'docker/setup-buildx-action@v4.4.1'
         - 'docker/setup-qemu-action@v4.4.0'
     '.github/workflows/scorecard.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/upload-artifact@v7.0.2'
-        - 'github/codeql-action@v4.39.0'
+        - 'github/codeql-action@v4.39.3'
         - 'ossf/scorecard-action@v2.5.0'
     '.github/workflows/scripts-test.yml':
         - 'actions/checkout@v7.0.1'
@@ -106,9 +106,9 @@ dependencies:
         commit: 'sha1-cf430e030ddbb5b0abf93d22962f4752f3646cd9'
         owner_id: 44036562
         repo_id: 192625955
-    'anthropics/claude-code-action@v1.0.252':
-        ref: 'v1.0.252'
-        commit: 'sha1-f27be6b65a4652f08a2ba3cff79114829b588967'
+    'anthropics/claude-code-action@v1.0.270':
+        ref: 'v1.0.270'
+        commit: 'sha1-9eb012b6d0900c2b9eede65ee1758cec4d2973e9'
         owner_id: 76263028
         repo_id: 986421638
         uses:
@@ -118,9 +118,9 @@ dependencies:
         commit: 'sha1-c3c9e263c25d99ce0380d002d59b67737d91b0dc'
         owner_id: 5429470
         repo_id: 241092383
-    'docker/login-action@v4.6.0':
-        ref: 'v4.6.0'
-        commit: 'sha1-dbcb813823bdd20940b903addbd779551569679f'
+    'docker/login-action@v4.8.0':
+        ref: 'v4.8.0'
+        commit: 'sha1-8aa5831fb8d48d8f76594c7ddde61ae58019f550'
         owner_id: 5429470
         repo_id: 287743349
     'docker/metadata-action@v6.2.0':
@@ -138,9 +138,9 @@ dependencies:
         commit: 'sha1-99012661954931238ded8c8b007157a8430204e1'
         owner_id: 5429470
         repo_id: 288487894
-    'getplumber/plumber@v0.7.18':
-        ref: 'v0.7.18'
-        commit: 'sha1-ebc213aa45dccd233ce5c2630f0aafa8e8d650c5'
+    'getplumber/plumber@v0.7.23':
+        ref: 'v0.7.23'
+        commit: 'sha1-ec8cb3a7edd6a324b33e85109b627b2df6023d94'
         owner_id: 255179076
         repo_id: 1137327132
         uses:
@@ -151,9 +151,9 @@ dependencies:
         commit: 'sha1-6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee'
         owner_id: 9919
         repo_id: 259445878
-    'github/codeql-action@v4.39.0':
-        ref: 'v4.39.0'
-        commit: 'sha1-6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee'
+    'github/codeql-action@v4.39.3':
+        ref: 'v4.39.3'
+        commit: 'sha1-33d7b85da1a04171e211befe2c739303b9a4c066'
         owner_id: 9919
         repo_id: 259445878
     'golangci/golangci-lint-action@v9.3.0':
