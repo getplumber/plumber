@@ -23,8 +23,13 @@ type golden struct {
 	Files   map[string]string `yaml:"files,omitempty"` // path in the work dir: content
 }
 
+// requiredKeys are the keys every golden file sets, even when the value is
+// empty, so a forgotten key can't pass for exit 0 or an empty output.
+var requiredKeys = []string{"command", "exit", "stdout", "stderr"}
+
 // readGolden reads the golden file at path. A key that is not a field of
-// golden is an error, so a typo can't pass for an empty field.
+// golden is an error, so a typo can't pass for an empty field, and so is a
+// missing key of requiredKeys.
 func readGolden(path string) (*golden, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -35,6 +40,15 @@ func readGolden(path string) (*golden, error) {
 	dec.KnownFields(true)
 	if err := dec.Decode(&g); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	var keys map[string]any
+	if err := yaml.Unmarshal(data, &keys); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	for _, k := range requiredKeys {
+		if _, ok := keys[k]; !ok {
+			return nil, fmt.Errorf("%s: missing key %q", path, k)
+		}
 	}
 	return &g, nil
 }
