@@ -19,7 +19,7 @@ func TestScoreCompare(t *testing.T) {
 			inputs:      []string{"score-compare"},
 			outputFiles: []string{"report.md"},
 		},
-		{name: "score-compare-missing-input", args: []string{"score-compare"}, exit: 2},
+		{name: "score-compare-missing-input", args: []string{"score-compare"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

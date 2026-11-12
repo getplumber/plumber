@@ -11,9 +11,9 @@ func TestRoot(t *testing.T) {
 	tests := []cliCase{
 		{name: "help", args: []string{"help"}},
 		{name: "help-analyze", args: []string{"help", "analyze"}},
-		{name: "unknown-command", args: []string{"bogus"}, exit: 2},
-		{name: "unknown-flag", args: []string{"analyze", "--nope"}, exit: 2},
-		{name: "version-flag-unsupported", args: []string{"--version"}, exit: 2},
+		{name: "unknown-command", args: []string{"bogus"}},
+		{name: "unknown-flag", args: []string{"analyze", "--nope"}},
+		{name: "version-flag-unsupported", args: []string{"--version"}},
 		{name: "version", args: []string{"version"}},
 		{name: "version-verbose", args: []string{"-v", "version"}},
 		{name: "catalog", args: []string{"catalog"}},

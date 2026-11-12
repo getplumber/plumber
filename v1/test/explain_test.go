@@ -12,7 +12,7 @@ func TestExplain(t *testing.T) {
 	tests := []cliCase{
 		{name: "explain-code", args: []string{"explain", "ISSUE-101"}},
 		{name: "explain-code-json", args: []string{"explain", "ISSUE-101", "--json"}},
-		{name: "explain-unknown-code", args: []string{"explain", "BOGUS"}, exit: 2},
+		{name: "explain-unknown-code", args: []string{"explain", "BOGUS"}},
 		{name: "explain-list", args: []string{"explain", "--list"}},
 		{name: "explain-list-json", args: []string{"explain", "--list", "--json"}},
 		{name: "explain-all", args: []string{"explain", "--all"}},
@@ -27,11 +27,10 @@ func TestExplain(t *testing.T) {
 			args:   []string{"explain", "--attack", "all", "--run", report},
 			inputs: []string{"score-compare"},
 		},
-		{name: "explain-attack-no-cache", args: []string{"explain", "-a", "1"}, exit: 2},
+		{name: "explain-attack-no-cache", args: []string{"explain", "-a", "1"}},
 		{
 			name: "explain-attack-project-no-cache",
 			args: []string{"explain", "-a", "1", "--project", "a/b", "--provider", "github"},
-			exit: 2,
 		},
 	}
 	for _, tt := range tests {

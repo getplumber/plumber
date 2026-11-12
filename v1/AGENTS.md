@@ -55,9 +55,7 @@ skills reads the file and applies it.
    `explain`, `capabilities`, `config …`, `score-compare`, `completion`, usage errors, and
    `analyze` inputs rejected before any request). They run with no token and every proxy pointed
    at a closed port, so a row that tries the network fails.
-7. The suite never writes a golden file, and a missing one fails its row. Write or change a golden
-   file by hand (or have an agent edit it) from the call's real output, and explain each change in
-   the PR.
+7. Every row has a golden file, `test/testdata/golden/<name>.yaml`. A row without one fails.
 8. Run `make -C v1 lint` before you open a PR. It must report 0 issues. Use the golangci-lint
    version `.github/workflows/v1.yml` pins (v2.15.0). Fix what it reports. A `//nolint` names one
    linter and says why.
@@ -108,11 +106,7 @@ v1/
   A new command group gets its own `<group>_test.go`.
 - A new command also gets a `--help` row in `help_test.go`, so a flag lost later shows in a golden
   diff.
-- Write `test/testdata/golden/<name>.yaml` by hand: `command`, `exit`, `stdout`, `stderr`, and
-  `files` with one entry per `outputFiles` path. Write sandbox paths and run-dependent values as
-  `<WORK>`, `<HOME>`, `<TMP>`, `<CACHE>`, `<TIME>`, `<EPOCH>` and `urn:uuid:<UUID>`. A field you
-  leave out is empty (`exit` is 0), and an unknown key fails the row. Then run
-  `make -C v1 test-integration`: a mismatch names the field and its first differing line.
+- Add its golden file, `test/testdata/golden/<name>.yaml`.
 - When you remove a row, delete its golden file: nothing else reports it.
 - Inputs that need a provider, a platform or CI OIDC are the e2e suite's job (monorepo#651).
 

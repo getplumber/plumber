@@ -31,7 +31,6 @@ func TestConfig(t *testing.T) {
 			name:  "config-generate-exists",
 			args:  []string{"config", "generate"},
 			setup: [][]string{{"config", "generate"}},
-			exit:  2,
 		},
 		{
 			name:  "config-generate-force",
@@ -45,9 +44,9 @@ func TestConfig(t *testing.T) {
 		},
 
 		// init needs a terminal, so every row stops before the prompt.
-		{name: "config-init-no-terminal", args: []string{"config", "init"}, exit: 2},
-		{name: "config-init-force-output", args: []string{"config", "init", "--force", "--output", "x.yaml"}, exit: 2},
-		{name: "config-init-short-flags", args: []string{"config", "init", "-f", "-o", "x.yaml"}, exit: 2},
+		{name: "config-init-no-terminal", args: []string{"config", "init"}},
+		{name: "config-init-force-output", args: []string{"config", "init", "--force", "--output", "x.yaml"}},
+		{name: "config-init-short-flags", args: []string{"config", "init", "-f", "-o", "x.yaml"}},
 
 		// view.
 		{name: "config-view-default-file", args: []string{"config", "view"}, setup: [][]string{{"config", "generate"}}},
@@ -77,16 +76,14 @@ func TestConfig(t *testing.T) {
 			name:   "config-validate-fail-warnings",
 			args:   []string{"config", "validate", "-c", warning, "--fail-warnings"},
 			inputs: []string{warning},
-			exit:   2,
 		},
 		{name: "config-validate-legacy", args: []string{"config", "validate", "-c", legacy}, inputs: []string{legacy}},
 		{
 			name:   "config-validate-invalid-yaml",
 			args:   []string{"config", "validate", "-c", invalid},
 			inputs: []string{invalid},
-			exit:   2,
 		},
-		{name: "config-validate-missing", args: []string{"config", "validate", "-c", "missing.yaml"}, exit: 2},
+		{name: "config-validate-missing", args: []string{"config", "validate", "-c", "missing.yaml"}},
 
 		// resolve.
 		{name: "config-resolve", args: []string{"config", "resolve", "-c", overlay}, inputs: []string{overlay}},

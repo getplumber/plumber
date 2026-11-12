@@ -37,7 +37,6 @@ import (
 type cliCase struct {
 	name        string     // golden file: testdata/golden/<name>.yaml
 	args        []string   // arguments of the plumber call under test
-	exit        int        // expected exit code
 	inputs      []string   // paths under testdata/inputs copied into the work dir
 	setup       [][]string // plumber calls run first, in the same work dir and home (not compared)
 	outputFiles []string   // files the call writes, compared with the golden
@@ -84,26 +83,22 @@ func runCase(t *testing.T, tt cliCase) {
 	}
 }
 
-// run runs the setup calls and the call under test in a fresh sandbox, checks
-// the exit code, and returns the normalized result (exit code, stdout, stderr
-// and the files the call wrote).
+// run runs the setup calls and the call under test in a fresh sandbox and
+// returns the normalized result: exit code, stdout, stderr and the files the
+// call wrote.
 func run(t *testing.T, tt cliCase) *golden {
 	t.Helper()
 	sb := newSandbox(t, tt)
 
 	for _, args := range tt.setup {
 		if _, stderr, code := sb.runPlumber(t.Context(), args); code != 0 {
-			t.Fatalf("setup `plumber %s` exited %d\nstderr:\n%s", strings.Join(args, " "), code, stderr)
+			t.Fatalf("setup `%s` exited %d\nstderr:\n%s", call(args), code, stderr)
 		}
 	}
+
 	stdout, stderr, code := sb.runPlumber(t.Context(), tt.args)
 
-	command := "plumber " + strings.Join(tt.args, " ")
-	if code != tt.exit {
-		t.Errorf("%s: exit code = %d, want %d", command, code, tt.exit)
-	}
-
-	got, err := sb.newGolden(tt, command, stdout, stderr, code)
+	got, err := sb.newGolden(tt, stdout, stderr, code)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,6 +107,12 @@ func run(t *testing.T, tt cliCase) *golden {
 		got.Stdout, got.Stderr = sortLines(got.Stdout), sortLines(got.Stderr)
 	}
 	return got
+}
+
+// call returns how a plumber call with args reads in messages and golden
+// files.
+func call(args []string) string {
+	return "plumber " + strings.Join(args, " ")
 }
 
 // sortLines returns s with its lines sorted.
