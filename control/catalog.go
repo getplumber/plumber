@@ -55,6 +55,11 @@ func GitLabControls(pc *configuration.PlumberConfig) []ControlEntry {
 		Skipped:     c.BranchMustBeProtected == nil || !c.BranchMustBeProtected.IsEnabled(),
 	})
 	entries = append(entries, ControlEntry{
+		DisplayName: "Tag must be protected",
+		ControlName: "tagMustBeProtected",
+		Skipped:     c.TagMustBeProtected == nil || !c.TagMustBeProtected.IsEnabled(),
+	})
+	entries = append(entries, ControlEntry{
 		DisplayName: "MR approval rules must require a minimum number of approvals",
 		ControlName: "mergeRequestApprovalRulesMustRequireMinimumApprovals",
 		Skipped:     c.MergeRequestApprovalRulesMustRequireMinimumApprovals == nil || !c.MergeRequestApprovalRulesMustRequireMinimumApprovals.IsEnabled(),
@@ -200,6 +205,11 @@ func GitHubControls(pc *configuration.PlumberConfig) []ControlEntry {
 		DisplayName: "Branch must be protected",
 		ControlName: "branchMustBeProtected",
 		Skipped:     c.BranchMustBeProtected == nil || !c.BranchMustBeProtected.IsEnabled(),
+	})
+	entries = append(entries, ControlEntry{
+		DisplayName: "Tag must be protected",
+		ControlName: "tagMustBeProtected",
+		Skipped:     c.TagMustBeProtected == nil || !c.TagMustBeProtected.IsEnabled(),
 	})
 	entries = append(entries, ControlEntry{
 		DisplayName: "Security jobs must not be weakened",
