@@ -1,0 +1,7 @@
+# ISSUE-401 row: the control is off by default.
+extends: plumber:default
+version: "2.0"
+gitlab:
+  controls:
+    pipelineMustNotIncludeHardcodedJobs:
+      enabled: true

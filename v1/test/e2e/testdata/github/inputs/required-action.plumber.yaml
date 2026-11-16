@@ -1,0 +1,9 @@
+# ISSUE-417 row: require an action the fixture doesn't reference.
+extends: plumber:default
+version: "2.0"
+github:
+  controls:
+    workflowMustIncludeRequiredActions:
+      enabled: true
+      requiredGroups:
+        - ["getplumber/plumber-action"]

@@ -1,0 +1,511 @@
+command: plumber analyze gitlab.com/getplumber/examples/plumber-cli-e2e --branch issue-203 --controls pipelineMustNotEnableDebugTrace -o report.json
+exit: 1
+report: |
+  {
+    "analyzeBranch": "issue-203",
+    "analyzedCiConfig": {
+      "content": "---\nvariables:\n  CI_DEBUG_TRACE: 'true'\nbuild:\n  image: alpine@sha256:4bcff63911fcb4448bd4fdacec207030997caf25e9bea4045fa6c8c44de311d1\n  script:\n  - echo build\n",
+      "merged": true,
+      "path": ".gitlab-ci.yml"
+    },
+    "branchProtectionResult": {
+      "category": "Access and Authorization",
+      "controlName": "branchMustBeProtected",
+      "data": [],
+      "enabled": false,
+      "metrics": {
+        "branches": 0,
+        "branchesToProtect": 0,
+        "nonCompliantBranches": 0,
+        "projectsCorrectlyProtected": 0,
+        "totalProtectedBranches": 0,
+        "unprotectedBranches": 0
+      },
+      "name": "Branch must be protected",
+      "status": "skipped",
+      "version": "0.2.0"
+    },
+    "ciConfigSource": "remote",
+    "ciMissing": false,
+    "ciValid": true,
+    "cicdVariablesMaskedResult": {
+      "category": "CI/CD Variables",
+      "ciMissing": false,
+      "ciValid": true,
+      "controlName": "cicdVariablesMustBeMasked",
+      "issues": [],
+      "metrics": {
+        "totalVariablesChecked": 0,
+        "unmaskedFound": 0
+      },
+      "name": "CI/CD variables must be masked",
+      "skipped": true,
+      "status": "skipped",
+      "version": "0.1.0"
+    },
+    "cicdVariablesProtectedResult": {
+      "category": "CI/CD Variables",
+      "ciMissing": false,
+      "ciValid": true,
+      "controlName": "cicdVariablesMustBeProtected",
+      "issues": [],
+      "metrics": {
+        "totalVariablesChecked": 0,
+        "unprotectedFound": 0
+      },
+      "name": "CI/CD variables must be protected",
+      "skipped": true,
+      "status": "skipped",
+      "version": "0.1.0"
+    },
+    "cliVersion": "dev",
+    "componentAuthorizedSourcesResult": {
+      "category": "Pipeline Composition",
+      "ciMissing": false,
+      "ciValid": true,
+      "controlName": "componentMustComeFromAuthorizedSources",
+      "issues": [],
+      "metrics": {
+        "authorized": 0,
+        "total": 0,
+        "unauthorized": 0
+      },
+      "name": "Components must come from authorized sources",
+      "skipped": true,
+      "status": "skipped",
+      "version": "0.1.0"
+    },
+    "configFileSha256": "",
+    "debugTraceResult": {
+      "category": "CI/CD Variables",
+      "ciMissing": false,
+      "ciValid": true,
+      "controlName": "pipelineMustNotEnableDebugTrace",
+      "issues": [
+        {
+          "baseSeverity": "critical",
+          "code": "ISSUE-203",
+          "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-203",
+          "fingerprint": "f95a8b2af97767ab",
+          "identity": {
+            "fields": [
+              {
+                "key": "code",
+                "value": "ISSUE-203"
+              },
+              {
+                "key": "file",
+                "value": ""
+              },
+              {
+                "key": "job",
+                "value": ""
+              },
+              {
+                "key": "variableName",
+                "value": "CI_DEBUG_TRACE"
+              }
+            ],
+            "subjectFromMessage": false,
+            "version": 8
+          },
+          "location": "root_variables",
+          "role": "Privilege: on no attack path",
+          "severity": "critical",
+          "title": "Pipeline enables CI debug trace",
+          "value": "true",
+          "valueProvenance": "ci_file",
+          "variableName": "CI_DEBUG_TRACE"
+        }
+      ],
+      "metrics": {
+        "forbiddenFound": 1,
+        "totalVariablesChecked": 1
+      },
+      "name": "Pipeline must not enable debug trace",
+      "skipped": false,
+      "status": "failed",
+      "version": "0.1.0"
+    },
+    "defaultBranch": "main",
+    "dockerInDockerResult": {
+      "category": "Pipeline Composition",
+      "ciMissing": false,
+      "ciValid": true,
+      "controlName": "pipelineMustNotUseDockerInDocker",
+      "issues": [],
+      "metrics": {
+        "dindServicesFound": 0,
+        "insecureDaemonFound": 0,
+        "totalJobsChecked": 1
+      },
+      "name": "Pipeline must not use Docker-in-Docker",
+      "skipped": true,
+      "status": "skipped",
+      "version": "0.1.0"
+    },
+    "forbiddenVersionsIncludesResult": {
+      "category": "Pipeline Composition",
+      "ciMissing": false,
+      "ciValid": true,
+      "controlName": "includesMustNotUseForbiddenVersions",
+      "issues": [],
+      "metrics": {
+        "total": 0,
+        "usingAuthorizedVersion": 0,
+        "usingForbiddenVersion": 0
+      },
+      "name": "Includes must not use forbidden versions",
+      "skipped": true,
+      "status": "skipped",
+      "version": "0.1.0"
+    },
+    "functionAuthorizedSourcesResult": {
+      "category": "Pipeline Composition",
+      "ciMissing": false,
+      "ciValid": true,
+      "controlName": "functionMustComeFromAuthorizedSources",
+      "issues": [],
+      "metrics": {
+        "authorized": 0,
+        "deprecated": 0,
+        "total": 0,
+        "unauthorized": 0
+      },
+      "name": "Functions must come from authorized sources",
+      "skipped": true,
+      "status": "skipped",
+      "version": "0.1.0"
+    },
+    "hardcodedJobsResult": {
+      "category": "Pipeline Composition",
+      "ciMissing": false,
+      "ciValid": true,
+      "controlName": "pipelineMustNotIncludeHardcodedJobs",
+      "issues": [],
+      "metrics": {
+        "ciInvalid": 0,
+        "ciMissing": 0,
+        "hardcodedJobs": 1,
+        "total": 1
+      },
+      "name": "Pipeline must not include hardcoded jobs",
+      "skipped": true,
+      "status": "skipped",
+      "version": "0.1.0"
+    },
+    "headCommitSha": "14c6ee8b5c1f8be9136e95c798d0cc2e5865c243",
+    "imageAuthorizedSourcesResult": {
+      "category": "CI/CD Container Images",
+      "ciMissing": false,
+      "ciValid": true,
+      "controlName": "containerImageMustComeFromAuthorizedSources",
+      "issues": [],
+      "metrics": {
+        "authorized": 1,
+        "ciInvalid": 0,
+        "ciMissing": 0,
+        "total": 1,
+        "unauthorized": 0,
+        "unresolvedRefs": 0
+      },
+      "name": "Container images must come from authorized sources",
+      "skipped": true,
+      "status": "skipped",
+      "version": "0.1.0"
+    },
+    "imageForbiddenTagsResult": {
+      "category": "CI/CD Container Images",
+      "ciMissing": false,
+      "ciValid": true,
+      "controlName": "containerImageMustNotUseForbiddenTags",
+      "issues": [],
+      "metrics": {
+        "ciInvalid": 0,
+        "ciMissing": 0,
+        "notPinnedByDigest": 0,
+        "pinnedByDigest": 1,
+        "total": 1,
+        "unresolvedRefs": 0,
+        "usingForbiddenTags": 0
+      },
+      "mustBePinnedByDigest": true,
+      "name": "Container images must not use forbidden reference",
+      "skipped": true,
+      "status": "skipped",
+      "version": "0.4.0"
+    },
+    "includeRefConfusionResult": {
+      "category": "Pipeline Composition",
+      "ciMissing": false,
+      "ciValid": true,
+      "controlName": "externalRefsMustNotCollide",
+      "issues": [],
+      "metrics": {
+        "ambiguousRefs": 0,
+        "ciInvalid": 0,
+        "ciMissing": 0,
+        "total": 0
+      },
+      "name": "Includes must not use ambiguous tag/branch refs",
+      "skipped": true,
+      "status": "skipped",
+      "version": "0.1.0"
+    },
+    "jobVariablesOverrideResult": {
+      "category": "CI/CD Variables",
+      "ciMissing": false,
+      "ciValid": true,
+      "controlName": "pipelineMustNotOverrideJobVariables",
+      "issues": [],
+      "metrics": {
+        "overriddenFound": 0,
+        "totalVariablesChecked": 0
+      },
+      "name": "Pipeline must not override job variables",
+      "skipped": true,
+      "status": "skipped",
+      "version": "0.1.0"
+    },
+    "minPoints": 100,
+    "mrApprovalRulesCoverAllBranchesResult": {
+      "category": "Access and Authorization",
+      "ciMissing": false,
+      "ciValid": true,
+      "controlName": "mergeRequestApprovalRulesMustCoverAllProtectedBranches",
+      "issues": [],
+      "metrics": {
+        "allProtectedBranchesRuleMissing": 0
+      },
+      "name": "MR approval rules must cover all protected branches",
+      "skipped": true,
+      "status": "skipped",
+      "version": "0.1.0"
+    },
+    "mrApprovalRulesMinApprovalsResult": {
+      "category": "Access and Authorization",
+      "ciMissing": false,
+      "ciValid": true,
+      "controlName": "mergeRequestApprovalRulesMustRequireMinimumApprovals",
+      "issues": [],
+      "metrics": {
+        "rulesBelowMinimum": 0
+      },
+      "name": "MR approval rules must require a minimum number of approvals",
+      "skipped": true,
+      "status": "skipped",
+      "version": "0.1.0"
+    },
+    "mrApprovalSettingsResult": {
+      "category": "Access and Authorization",
+      "ciMissing": false,
+      "ciValid": true,
+      "controlName": "mergeRequestApprovalSettingsMustBeCompliant",
+      "issues": [],
+      "metrics": {
+        "hasNonCompliantSettings": 0
+      },
+      "name": "MR approval settings must be compliant",
+      "skipped": true,
+      "status": "skipped",
+      "version": "0.1.0"
+    },
+    "mrSettingsResult": {
+      "category": "Access and Authorization",
+      "ciMissing": false,
+      "ciValid": true,
+      "controlName": "mergeRequestSettingsMustBeCompliant",
+      "issues": [],
+      "metrics": {
+        "hasNonCompliantSettings": 0
+      },
+      "name": "MR settings must be compliant",
+      "skipped": true,
+      "status": "skipped",
+      "version": "0.1.0"
+    },
+    "outdatedIncludesResult": {
+      "category": "Pipeline Composition",
+      "ciMissing": false,
+      "ciValid": true,
+      "controlName": "includesMustBeUpToDate",
+      "issues": [],
+      "metrics": {
+        "ciInvalid": 0,
+        "ciMissing": 0,
+        "originOutdated": 0,
+        "total": 0
+      },
+      "name": "Includes must be up to date",
+      "skipped": true,
+      "status": "skipped",
+      "version": "0.1.0"
+    },
+    "passed": false,
+    "pipelineImageMetrics": {
+      "total": 1
+    },
+    "pipelineOriginMetrics": {
+      "jobHardcoded": 1,
+      "jobTotal": 1,
+      "originComponent": 0,
+      "originGitLabCatalog": 0,
+      "originLocal": 0,
+      "originOutdated": 0,
+      "originProject": 0,
+      "originRemote": 0,
+      "originTemplate": 0,
+      "originTotal": 1
+    },
+    "plumberScore": {
+      "bestFix": {
+        "anchorHash": "23777729168243c28a9049b5985a5a13b9a55f8d3579a06f3bb3a8c28db23845",
+        "code": "ISSUE-203",
+        "newLetter": "A",
+        "newPoints": 100,
+        "pointsGained": 20,
+        "sentence": "Fixing Pipeline enables CI debug trace (`CI_DEBUG_TRACE`) recovers 20 points and moves the score to A.",
+        "subject": "CI_DEBUG_TRACE"
+      },
+      "codeLosses": [
+        {
+          "cappedLoss": 20,
+          "code": "ISSUE-203",
+          "count": 1,
+          "severity": "critical",
+          "uncappedLoss": 20,
+          "weight": 20
+        }
+      ],
+      "counts": {
+        "critical": 1,
+        "high": 0,
+        "low": 0,
+        "medium": 0
+      },
+      "criticalMalusApplied": false,
+      "finalPoints": 80,
+      "losses": [],
+      "otherFindings": {
+        "cap": 30,
+        "capApplied": false,
+        "cappedLoss": 20,
+        "count": 1,
+        "counts": {
+          "critical": 1,
+          "high": 0,
+          "low": 0,
+          "medium": 0
+        },
+        "uncappedLoss": 20
+      },
+      "profileId": "scoring-v4",
+      "rawPoints": 80,
+      "rawPointsUnclamped": 80,
+      "score": "B",
+      "situation": "Repository: public. Default branch: main, protection unknown. Pipeline: 1 job in 1 pipeline."
+    },
+    "projectId": 88292493,
+    "projectPath": "getplumber/examples/plumber-cli-e2e",
+    "requiredComponentsResult": {
+      "category": "Pipeline Composition",
+      "ciMissing": false,
+      "ciValid": true,
+      "controlName": "pipelineMustIncludeComponent",
+      "issues": [],
+      "metrics": {
+        "anySatisfiedGroup": false,
+        "ciInvalid": 0,
+        "ciMissing": 0,
+        "satisfiedGroups": 0,
+        "totalGroups": 0
+      },
+      "name": "Pipeline must include required components",
+      "overriddenIssues": [],
+      "requirementGroups": [],
+      "skipped": true,
+      "status": "skipped",
+      "version": "0.2.0"
+    },
+    "requiredTemplatesResult": {
+      "category": "Pipeline Composition",
+      "ciMissing": false,
+      "ciValid": true,
+      "controlName": "pipelineMustIncludeTemplate",
+      "issues": [],
+      "metrics": {
+        "anySatisfiedGroup": false,
+        "ciInvalid": 0,
+        "ciMissing": 0,
+        "satisfiedGroups": 0,
+        "totalGroups": 0
+      },
+      "name": "Pipeline must include required templates",
+      "overriddenIssues": [],
+      "requirementGroups": [],
+      "skipped": true,
+      "status": "skipped",
+      "version": "0.2.0"
+    },
+    "securityJobsWeakenedResult": {
+      "category": "Pipeline Composition",
+      "ciMissing": false,
+      "ciValid": true,
+      "controlName": "securityJobsMustNotBeWeakened",
+      "issues": [],
+      "metrics": {
+        "securityJobsFound": 0,
+        "weakenedJobs": 0
+      },
+      "name": "Security jobs must not be weakened",
+      "skipped": true,
+      "status": "skipped",
+      "version": "0.1.0"
+    },
+    "securityPolicyProjectResult": {
+      "category": "Security Source",
+      "ciMissing": false,
+      "ciValid": true,
+      "controlName": "projectMustHaveSecurityPolicySource",
+      "issues": [],
+      "metrics": {
+        "projectWithoutExpectedSecurityPolicy": 0
+      },
+      "name": "Project must have a security policy source",
+      "skipped": true,
+      "status": "skipped",
+      "version": "0.1.0"
+    },
+    "unverifiedScriptsResult": {
+      "category": "Pipeline Composition",
+      "ciMissing": false,
+      "ciValid": true,
+      "controlName": "pipelineMustNotExecuteUnverifiedScripts",
+      "issues": [],
+      "metrics": {
+        "jobsChecked": 1,
+        "totalScriptLinesChecked": 1,
+        "unverifiedScriptsFound": 0
+      },
+      "name": "Pipeline must not execute unverified scripts",
+      "skipped": true,
+      "status": "skipped",
+      "version": "0.1.0"
+    },
+    "variableInjectionResult": {
+      "category": "CI/CD Variables",
+      "ciMissing": false,
+      "ciValid": true,
+      "controlName": "pipelineMustNotUseUnsafeVariableExpansion",
+      "issues": [],
+      "metrics": {
+        "jobsChecked": 1,
+        "totalScriptLinesChecked": 1,
+        "unsafeExpansionsFound": 0
+      },
+      "name": "Pipeline must not use unsafe variable expansion",
+      "skipped": true,
+      "status": "skipped",
+      "version": "0.1.0"
+    }
+  }

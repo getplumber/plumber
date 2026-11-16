@@ -1,0 +1,9 @@
+# ISSUE-405 row: require a template the fixture doesn't include.
+extends: plumber:default
+version: "2.0"
+gitlab:
+  controls:
+    pipelineMustIncludeTemplate:
+      enabled: true
+      requiredGroups:
+        - ["templates/go/go"]

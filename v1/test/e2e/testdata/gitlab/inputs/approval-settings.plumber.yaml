@@ -1,0 +1,8 @@
+# ISSUE-503 row: the fixture project lets committers approve.
+extends: plumber:default
+version: "2.0"
+gitlab:
+  controls:
+    mergeRequestApprovalSettingsMustBeCompliant:
+      enabled: true
+      preventApprovalsByCommitters: true

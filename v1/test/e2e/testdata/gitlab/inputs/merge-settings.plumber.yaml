@@ -1,0 +1,8 @@
+# ISSUE-506 row: the fixture project uses merge commits.
+extends: plumber:default
+version: "2.0"
+gitlab:
+  controls:
+    mergeRequestSettingsMustBeCompliant:
+      enabled: true
+      mergeMethod: ff

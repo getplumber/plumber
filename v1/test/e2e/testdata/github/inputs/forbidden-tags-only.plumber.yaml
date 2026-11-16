@@ -1,0 +1,8 @@
+# ISSUE-102 row: flag forbidden tags only, so the digest check (ISSUE-103)
+# doesn't fire on the same image.
+extends: plumber:default
+version: "2.0"
+github:
+  controls:
+    containerImageMustNotUseForbiddenTags:
+      containerImagesMustBePinnedByDigest: false

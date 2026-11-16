@@ -1,0 +1,9 @@
+# ISSUE-408 row: require a component the fixture doesn't include.
+extends: plumber:default
+version: "2.0"
+gitlab:
+  controls:
+    pipelineMustIncludeComponent:
+      enabled: true
+      requiredGroups:
+        - ["components/sast/sast"]
