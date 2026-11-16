@@ -10,60 +10,6 @@ Every push to `main` asks semantic-release whether a release is due. If it is, t
 
 For v0.7.21, the tag existed about 4.5 minutes after the push, the GitHub Release after 6 minutes, and the whole run finished after 7 minutes.
 
-## The flow
-
-```mermaid
-flowchart TD
-    push(["Push to main"]) --> plan
-
-    subgraph release_yml["release.yml"]
-        plan["plan<br/>semantic-release --dry-run"]
-        docker["docker<br/>build and push by digest"]
-        release["release<br/>semantic-release"]
-        tags["docker-tags<br/>name the digest"]
-        binaries["binaries<br/>5 OS and arch builds"]
-        upload["upload-release<br/>checksums, provenance"]
-        homebrew["homebrew<br/>rewrite the formulas"]
-
-        plan -->|"release due"| docker
-        docker --> release
-        release --> tags
-        release --> binaries
-        binaries --> upload
-        upload --> homebrew
-    end
-
-    plan -->|"no release due"| stop(["Stop"])
-
-    subgraph propagate_yml["propagate.yml"]
-        component["propagate-component<br/>two commits, tag, push"]
-        website["propagate-website<br/>rewrite marked pins"]
-        component -->|"component SHA"| website
-    end
-
-    tags --> component
-    upload --> component
-
-    docker -.-> out_digest[/"Image on Docker Hub, no tag"/]
-    release -.-> out_tag[/"Release commit, tag, CHANGELOG.md, action.yml"/]
-    tags -.-> out_image[/"Image tags X.Y.Z, X.Y, X, latest"/]
-    upload -.-> out_gh[/"GitHub Release"/]
-    homebrew -.-> out_brew[/"Homebrew tap"/]
-    component -.-> gitlab["GitLab tag pipeline<br/>create-release"]
-    gitlab -.-> out_catalog[/"GitLab Release and CI/CD Catalog"/]
-    website -.-> out_pr[/"Pull request on getplumber.io"/]
-    out_pr -->|"manual review"| merged(["Website updated"])
-
-    subgraph channels["install-channels.yml"]
-        check["Tap formula, brew, mise, go install<br/>serve the latest release?"]
-    end
-
-    cron(["Monday 06:00 UTC, manual run,<br/>PR editing the workflow"]) --> check
-    out_gh -. "release: published<br/>declared, does not fire today" .-> check
-```
-
-Solid arrows are the order of the jobs. Dotted arrows lead to what a job publishes. `homebrew` does not gate `propagate`: a failed Homebrew update leaves the GitLab component and the website PR untouched.
-
 ## Version
 
 semantic-release 23.1.1 computes the version from the conventional commits since the last tag, using the rules in `.releaserc.json`:
@@ -100,6 +46,8 @@ semantic-release calls three scripts through `@semantic-release/exec`:
 | `propagate` | Calls `propagate.yml` | `release`, `docker`, `docker-tags`, `upload-release` | `GITLAB_COMPONENT_TOKEN`, release App token |
 
 `plan` runs on `main` only, whatever the trigger. It holds a token that can push to `main` and runs commands taken from the checked-out `.releaserc.json`, so it never runs on unreviewed code. Every other job depends on it.
+
+`homebrew` does not gate `propagate`: a failed Homebrew update leaves the GitLab component and the website PR untouched.
 
 `gh workflow run release.yml` never releases. On `main` it plans, builds and pushes an untagged image, then stops. On any other branch nothing runs.
 
