@@ -76,7 +76,11 @@ The academic taxonomy to map every control against:
   most 100 containers per run and 1000 entries per job, a reference past the
   budget or whose definition cannot be read is listed as unexpanded and the
   action controls degrade, never a silent pass. Docker actions and
-  `docker://` images are not expanded.
+  `docker://` images are not expanded. A composite step whose `if:` only
+  compares `inputs.<name>` with strings, and is false for the caller's literal
+  `with:` values or the declared defaults, never runs and is left out with what
+  it pulls in. A condition that reads anything else, or an input whose value is
+  not a literal, keeps the step in.
 - **Impostor commit** — pinned SHA that does not belong to the named repo (GitHub
   does not validate the SHA↔repo binding). *API ref resolution.*
 - **Typosquatting** of a known action name. *Edit distance + reputation.*

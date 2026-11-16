@@ -179,6 +179,20 @@ For a GitLab project, use `gitlab.com/GROUP/PROJECT` in place of `github.com/OWN
 
 Score push makes your score and repository name public, works in CI only, and is off by default when the input is omitted. See the [score docs](https://getplumber.io/docs/plumber-score).
 
+### Signing on GitHub Actions
+
+On GitHub Actions the push is signed: the CLI mints a Sigstore id-token, obtains a short-lived certificate for the job's identity, signs the report and records the signature in the public Rekor transparency log; the bundle travels with the push. The hosted service uses it to verify official organizations, documented on the official organizations page of the docs site. Signing needs the same `id-token: write` permission as the push (see the workflow snippet above). A signing failure prints one warning and the push still happens.
+
+The bundle rides on the `Plumber-Sigstore-Bundle` request header (protojson, base64-encoded). The signature is produced only for the hosted service at score.getplumber.io, or when `PLUMBER_SCORE_SIGN=true` names a self-hosted service that verifies it; a self-hosted service that does not know the header ignores it. On success the CLI prints:
+
+```
+✓ report signed (Rekor index 12345678)
+```
+
+To verify the exact bytes a run pushed against its Rekor entry, set `PLUMBER_SCORE_PAYLOAD_OUT=<path>` before running Plumber: the CLI writes the published payload there verbatim, which is not the same as the `--output` file (the publish payload drops `analyzedCiConfig`). This is a verification aid, env var only, with no corresponding flag.
+
+To sign the push to a self-hosted score service that implements the organization trust page, set `PLUMBER_SCORE_SIGN=true` (case-insensitive). Without it, a push to any endpoint other than score.getplumber.io is not signed: no Sigstore id-token is minted and nothing is written to Rekor. Env var only, with no corresponding flag.
+
 ## Configuration
 
 Plumber reads `.plumber.yaml`; without one, the built-in default applies.

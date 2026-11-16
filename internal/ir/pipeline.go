@@ -674,6 +674,11 @@ type ReusableCaller struct {
 type Action struct {
 	Uses string         `json:"uses"`
 	With map[string]any `json:"with,omitempty"`
+	// WithText holds the string and boolean with: values as written, which
+	// With can't give back: the workflow decoder reads `flag: no` as the
+	// boolean false, where the runner passes the text `no`. A key of With
+	// missing here has no known text. Only the nested resolution reads it.
+	WithText map[string]string `json:"-"`
 	// Name is the step's `name:` from the workflow YAML, when the author
 	// provided one. It is the only stable discriminator between two steps in
 	// the same job that reference the same action: the line number tells them

@@ -1644,7 +1644,7 @@ func maybePushPlatform(p providerPkg.Provider, conf *configuration.Configuration
 	// the gate deadline: the same 15s transport timeout (scorePushHTTPTimeout)
 	// bounds both the push and the gate verdict it carries, so no separate
 	// gate timeout knob exists.
-	respBody, statusCode, err := postScoreReportForBody(endpoint+"/api/v1/pushes", token, body)
+	respBody, statusCode, err := postScoreReportForBody(endpoint+"/api/v1/pushes", token, body, nil)
 	if err != nil {
 		line := platformGateFailOpenLine(statusCode)
 		scoreWarn(fmt.Sprintf("%s: %v", line, err))

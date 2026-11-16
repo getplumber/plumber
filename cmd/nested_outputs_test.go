@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -142,36 +143,114 @@ func TestGLSAST_NestedSolutionIsTheNestedRemediation(t *testing.T) {
 	}
 }
 
-// TestBuildSARIF_NestedResultRelatesTheContainer pins spec section 6
-// (maintainer review of PR 549): a nested result keeps its primary location
-// on the workflow step (one location-less result rejects the whole Code
-// Scanning upload) and gains one related location at the container line,
-// an absolute blob URL with its region. A direct result has none.
-func TestBuildSARIF_NestedResultRelatesTheContainer(t *testing.T) {
+// TestBuildSARIF_NestedResultNamesTheContainerInTheMessage pins spec
+// section 6 as amended on 2026-10-30 (invoke-ai/InvokeAI run 41127816328):
+// Code Scanning rejects the WHOLE upload when any location, related ones
+// included, carries a URI whose scheme is not the checkout's ("SARIF URI
+// scheme "https" did not match the checkout URI scheme "file""). So a nested
+// result keeps its one primary location on the workflow step, carries no
+// related location, and names the container line in its message as an
+// embedded link to the blob URL. A direct result's message is unchanged.
+func TestBuildSARIF_NestedResultNamesTheContainerInTheMessage(t *testing.T) {
 	log := buildSARIF([]opaengine.Finding{nestedDirectB(), nestedE()}, ".github/workflows", "github")
 	rs := log.Runs[0].Results
 	if len(rs) != 2 {
 		t.Fatalf("results = %d", len(rs))
 	}
-	if rs[0].RelatedLocations != nil {
-		t.Errorf("a direct result has no related location: %+v", rs[0].RelatedLocations)
+	if strings.Contains(rs[0].Message.Text, "defined in") {
+		t.Errorf("a direct result names no container:\n%s", rs[0].Message.Text)
 	}
 	e := rs[1]
 	if len(e.Locations) != 1 || e.Locations[0].PhysicalLocation.ArtifactLocation.URI != ".github/workflows/ci.yml" || e.Locations[0].PhysicalLocation.Region == nil || e.Locations[0].PhysicalLocation.Region.StartLine != 13 {
 		t.Fatalf("primary location = %+v, want the workflow step", e.Locations)
 	}
-	if len(e.RelatedLocations) != 1 {
-		t.Fatalf("related locations = %+v, want one", e.RelatedLocations)
+	want := " (defined in [thomasboni/nested-actions-d@main, action.yml line 8](https://github.com/thomasboni/nested-actions-d/blob/main/action.yml#L8))"
+	if !strings.HasSuffix(e.Message.Text, want) {
+		t.Errorf("nested message = %q, want the container link as its tail %q", e.Message.Text, want)
 	}
-	rel := e.RelatedLocations[0]
-	if rel.PhysicalLocation.ArtifactLocation.URI != "https://github.com/thomasboni/nested-actions-d/blob/main/action.yml" {
-		t.Errorf("related uri = %q", rel.PhysicalLocation.ArtifactLocation.URI)
+	raw, err := json.Marshal(log)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if rel.PhysicalLocation.Region == nil || rel.PhysicalLocation.Region.StartLine != 8 {
-		t.Errorf("related region = %+v, want line 8", rel.PhysicalLocation.Region)
+	if bytes.Contains(raw, []byte("relatedLocations")) {
+		t.Errorf("the SARIF carries a related location; Code Scanning rejects a URI outside the checkout:\n%s", raw)
 	}
-	if rel.Message == nil || rel.Message.Text != "defined in thomasboni/nested-actions-d@main, action.yml line 8" {
-		t.Errorf("related message = %+v", rel.Message)
+	for _, uri := range sarifLocationURIs(t, raw) {
+		if strings.Contains(uri, "://") {
+			t.Errorf("location uri %q is not repository-relative; Code Scanning rejects the whole upload", uri)
+		}
+	}
+}
+
+// sarifLocationURIs lists every artifactLocation.uri in a serialized SARIF
+// log, wherever it sits (primary, related, or any future location kind).
+func sarifLocationURIs(t *testing.T, raw []byte) []string {
+	t.Helper()
+	var doc any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var uris []string
+	var walk func(v any, key string)
+	walk = func(v any, key string) {
+		switch x := v.(type) {
+		case map[string]any:
+			for k, vv := range x {
+				if key == "artifactLocation" && k == "uri" {
+					if s, ok := vv.(string); ok {
+						uris = append(uris, s)
+					}
+				}
+				walk(vv, k)
+			}
+		case []any:
+			for _, vv := range x {
+				walk(vv, key)
+			}
+		}
+	}
+	walk(doc, "")
+	return uris
+}
+
+// TestBuildSARIF_NestedAnchorKeepsTheContainerBeforeTheExplanation pins
+// the order of the two message tails on a nested finding that also anchors
+// an attack path in a v4 run (control.AnnotateFindingsV4 writes the
+// explanation on any anchor, nested or not): the container link comes first,
+// the explanation block after its blank line, neither lost (bot review of PR
+// 583, test coverage).
+func TestBuildSARIF_NestedAnchorKeepsTheContainerBeforeTheExplanation(t *testing.T) {
+	f := nestedE()
+	f.Data["explanation"] = "A new version of `thomasboni/nested-actions-e@main` runs inside `ci/nested`."
+	f.Data["baseSeverity"] = "high"
+	f.Data["role"] = "Entry of path 1"
+	log := buildSARIF([]opaengine.Finding{f}, ".github/workflows", "github")
+	got := log.Runs[0].Results[0].Message.Text
+	note := " (defined in [thomasboni/nested-actions-d@main, action.yml line 8](https://github.com/thomasboni/nested-actions-d/blob/main/action.yml#L8))"
+	expl := "\n\nA new version of `thomasboni/nested-actions-e@main` runs inside `ci/nested`."
+	if !strings.HasSuffix(got, note+expl) {
+		t.Errorf("message = %q, want the container link then the explanation as its tail", got)
+	}
+	if strings.Count(got, "defined in [") != 1 {
+		t.Errorf("the container link must appear exactly once:\n%s", got)
+	}
+}
+
+// TestBuildSARIF_NestedContainerLinkStaysWellFormed pins the escaping of the
+// container link (bot review of PR 583): a container path may carry the
+// characters SARIF reserves in an embedded link (section 3.11.6), so the link
+// text escapes brackets like the message body does and the link target
+// percent-encodes the parentheses that would close it early, leaving the URL
+// valid.
+func TestBuildSARIF_NestedContainerLinkStaysWellFormed(t *testing.T) {
+	f := nestedE()
+	f.Data["definedIn"] = "thomasboni/nested-actions-d@main:dir(x)/action[y].yml:8"
+	f.URL = "https://github.com/thomasboni/nested-actions-d/blob/main/dir(x)/action[y].yml#L8"
+	log := buildSARIF([]opaengine.Finding{f}, ".github/workflows", "github")
+	got := log.Runs[0].Results[0].Message.Text
+	want := ` (defined in [thomasboni/nested-actions-d@main, dir(x)/action\[y\].yml line 8](https://github.com/thomasboni/nested-actions-d/blob/main/dir%28x%29/action[y].yml#L8))`
+	if !strings.HasSuffix(got, want) {
+		t.Errorf("message = %q, want the tail %q", got, want)
 	}
 }
 

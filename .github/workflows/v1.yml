@@ -1,0 +1,99 @@
+name: v1
+
+# CI of the CLI refactoring branch (getplumber/monorepo#640, v1/AGENTS.md).
+# Main's workflows don't run on PRs to release/v1, and this one doesn't run on main.
+
+on:
+  push:
+    branches: [release/v1]
+  pull_request:
+    branches: [release/v1]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.10'
+
+      - name: Build
+        run: go build ./...
+
+      - name: Unit tests
+        run: go test ./...
+
+  # Every CLI input that makes no backend request, run offline with no token.
+  cli-local:
+    name: CLI suite (local)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.10'
+
+      - name: Run the local rows
+        run: make -C v1 test-integration
+
+  lint:
+    name: Lint (v1)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.10'
+
+      # Same version and arguments as `make -C v1 lint`, so local and CI agree.
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.15.0
+          working-directory: v1
+          args: -c .golangci.yml ./...
+
+  # Rule 2 of v1/AGENTS.md. A sync from main changes files everywhere, so it
+  # skips this job, but only from this repository: a fork can pick any branch name.
+  scope:
+    name: Changes stay in v1/
+    if: >-
+      github.event_name == 'pull_request' &&
+      !(startsWith(github.head_ref, 'sync/') &&
+      github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      # HEAD is the PR merge commit and HEAD^1 its base. --no-renames lists both
+      # sides of a move, so moving a file into v1/ still reports where it came from.
+      - name: Check changed paths
+        run: |
+          outside="$(git diff --no-renames --name-only HEAD^1 HEAD \
+            | grep -Ev '^(v1/|\.agents/|\.claude/|\.github/|skills-lock\.json$)' || true)"
+          if [ -n "$outside" ]; then
+            echo "Changes outside v1/ (rule 2 of v1/AGENTS.md):"
+            echo "$outside"
+            exit 1
+          fi

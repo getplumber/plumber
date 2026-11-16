@@ -5,6 +5,8 @@ name: Scripts tests
 
 on:
   pull_request:
+    # Not on PRs to release/v1: that branch has .github/workflows/v1.yml.
+    branches: [main]
     paths:
       - .github/scripts/**
       - .github/workflows/scripts-test.yml
@@ -33,7 +35,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
       # Pass the test file explicitly — `node --test <dir>` tries to load the

@@ -1,0 +1,7 @@
+command: plumber version
+exit: 0
+stdout: |
+  plumber version dev
+    commit: none
+    built:  unknown
+stderr: ""

@@ -310,8 +310,10 @@ it pulls in is judged. The fix is on the outermost action: pin it to a
 commit whose chain pins, vendor the chain into `./.github/actions/`
 and pin it there, or ask the container's maintainer to pin it.
 The message closes on this fix in place of the direct one, the GitLab
-SAST solution gives it in full, and the SARIF result carries the
-container line as a related location.
+SAST solution gives it in full, and the SARIF result names the
+container line at the end of its message, linked to the file on GitHub
+(its one location stays the workflow step: Code Scanning rejects an
+upload that points outside the repository).
 
 ---
 
@@ -541,8 +543,10 @@ replace it with one whose chain only pulls authorized sources, vendor
 the chain into `./.github/actions/` and replace the reference there, or
 ask the container's maintainer to depend on authorized sources.
 The message closes on this fix in place of the direct one, the GitLab
-SAST solution gives it in full, and the SARIF result carries the
-container line as a related location.
+SAST solution gives it in full, and the SARIF result names the
+container line at the end of its message, linked to the file on GitHub
+(its one location stays the workflow step: Code Scanning rejects an
+upload that points outside the repository).
 
 ---
 
@@ -1474,6 +1478,13 @@ when a later step packs `.git` into an uploaded artifact (escalated to
 code runs in the job (covered by ISSUE-802 / ISSUE-804). This low-tier
 finding is a heads-up to add the one-liner.
 
+A checkout inside a composite action is judged too, unless a literal
+input turns it off: with `repo-checkout: false` passed to
+`golang/govulncheck-action`, its `if: inputs.repo-checkout != 'false'`
+checkout never runs and is not reported. This holds for every control
+that reads nested references, as long as the `if:` only compares
+`inputs.<name>` with strings.
+
 ```yaml
 # ❌ before — token persisted
 - uses: actions/checkout@v4
@@ -2336,6 +2347,13 @@ plumber analyze --print=false --output findings.json
 {
   "projectPath": "owner/repo",
   "ciValid": true,
+  "cliVersion": "0.7.18",
+  "configFileSha256": "9f2c4b1e7a6d3f80c5e2b7d4a19f6c3e8b0d5a7f2c4e6b8d1a3f5c7e9b2d4f6a",
+  "ci": {
+    "runId": "123456789",
+    "runAttempt": "1",
+    "runUrl": "https://github.com/owner/repo/actions/runs/123456789/attempts/1"
+  },
   "findings": [
     {
       "code": "ISSUE-802",
@@ -2348,3 +2366,9 @@ plumber analyze --print=false --output findings.json
   ]
 }
 ```
+
+`cliVersion`, `configFileSha256` and `ci` are the provenance keys the hosted score service's verifier reads to check a push against the certificate the provider's OIDC token attests (see [Signing on GitHub Actions](../README.md#signing-on-github-actions)):
+
+- `cliVersion`: the binary that produced the report.
+- `configFileSha256`: the sha256 of the raw, committed `.plumber.yaml` bytes the run loaded. Empty when the run used the embedded default config, never the hash of that default, so the service never mistakes a default run for a file.
+- `ci`: the GitHub Actions run that produced the report (`runId`, `runAttempt`, `runUrl`). Present only on GitHub Actions; omitted everywhere else, including GitLab CI and local runs.

@@ -1,0 +1,14 @@
+# Legacy control name, renamed by `plumber config migrate`.
+version: "2.0"
+github:
+  controls:
+    workflowsMustDeclarePermissions:
+      enabled: true
+    # Cache poisoning
+    releaseWorkflowsMustNotRestoreUntrustedCache:
+      enabled: false
+      publishActions: [pypa/gh-action-pypi-publish]
+      cacheActions:
+        - {action: actions/cache, mode: always}
+    pipelineMustNotEnableDebugTrace:
+      enabled: true

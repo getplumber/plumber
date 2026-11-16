@@ -1,0 +1,8 @@
+# Valid YAML with a key Plumber does not know: a configuration warning.
+extends: plumber:default
+version: "2.0"
+github:
+  controls:
+    workflowsMustDeclarePermissions:
+      enabled: true
+      notARealOption: true
