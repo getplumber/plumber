@@ -103,6 +103,8 @@ v1/
   AGENTS.md, CLAUDE.md, README.md
   Makefile                       targets test-integration, test-e2e(-github|-gitlab) and lint
   .golangci.yml                  golangci-lint v2 config for v1/ (`cli` and `e2e` build tags)
+  docs/
+    feature-inventory.md         every command, flag, output and config key, with keep/drop decisions
   test/
     local/                       package local: every input that makes no backend request
       main_test.go               package doc, TestMain (builds the binary)
