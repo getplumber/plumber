@@ -82,8 +82,8 @@ From the repository root (`v1/Makefile`):
 
 ```sh
 make -C v1 test-integration   # test/local. Offline, no token. Run before every push.
-make -C v1 test-e2e-github    # TestGitHub* of test/e2e. Needs GITHUB_TOKEN (or GH_TOKEN) exported.
-make -C v1 test-e2e-gitlab    # TestGitLab* of test/e2e. Needs GITLAB_TOKEN exported.
+make -C v1 test-e2e-github    # TestGitHub* of test/e2e. Needs GITHUB_TOKEN (or GH_TOKEN) exported, see "e2e rows".
+make -C v1 test-e2e-gitlab    # TestGitLab* of test/e2e. Needs GITLAB_TOKEN exported, see "e2e rows".
 make -C v1 test-e2e           # all of test/e2e, both tokens.
 make -C v1 lint               # golangci-lint with v1/.golangci.yml. Run before every PR.
 ```
@@ -173,12 +173,17 @@ Both providers have the same shape, in `test/e2e`:
 - Rows 501 and 505 (both providers) and 503, 506 and 601 (GitLab) also read the fixture projects'
   settings. Keep `main` protected without code owner approval on both. On GitLab, keep merge
   commits, let committers approve and link no security policy project.
+  Reading those settings takes more than a read-only token: on GitHub, Administration read on the
+  fixture repository (admin access for a classic token); on GitLab, the `read_api` scope and the
+  Maintainer role on the fixture project. With less, these rows run but report the settings as
+  unknown, and their goldens differ.
 - The e2e tests run one at a time, never in parallel: gitlab.com throttles (429) as soon as two
   analyses run at once. In CI, a concurrency group per provider keeps one run active at a time.
   The CLI retries a throttled GitLab request itself (`gitlab/retry.go`), and the runner reruns a
-  row up to 3 times, a minute apart, when the CLI runs out of retries. GitHub's hourly API limit
-  fails the row at once: waiting a minute wouldn't help. A whole GitHub run takes about 120 API
-  requests, and the make targets allow 30 minutes.
+  row up to 3 times, a minute apart, when the CLI runs out of retries or GitHub's secondary rate
+  limit stops it. A run that wrote its report and exited 0 or 1 is never rerun. GitHub's hourly
+  API limit fails the row at once: waiting a minute wouldn't help. A whole GitHub run takes about
+  120 API requests. The provider targets allow 30 minutes each, `test-e2e` 60 minutes for both.
 
 ### ISSUE codes the e2e suite doesn't test
 

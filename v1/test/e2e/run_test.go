@@ -63,6 +63,7 @@ type providerToken struct {
 	name    string        // the provider's name in messages
 	read    func() string // the exported token, or ""
 	export  string        // what to export, for the error message
+	access  string        // what the token must be allowed to read, for the error message
 	plumber string        // the variable plumber reads it from
 	missing atomic.Bool   // a test already failed for want of it
 }
@@ -73,12 +74,14 @@ var tokens = map[string]*providerToken{
 		name:    "GitHub",
 		read:    sync.OnceValue(func() string { return cmp.Or(os.Getenv("GITHUB_TOKEN"), os.Getenv("GH_TOKEN")) }),
 		export:  "GITHUB_TOKEN (or GH_TOKEN)",
+		access:  "Administration: read on getplumber-examples/plumber-cli-e2e (admin access for a classic token)",
 		plumber: "GITHUB_TOKEN",
 	},
 	providerGitLab: {
 		name:    "GitLab",
 		read:    sync.OnceValue(func() string { return os.Getenv("GITLAB_TOKEN") }),
 		export:  "GITLAB_TOKEN",
+		access:  "the read_api scope and the Maintainer role on getplumber/examples/plumber-cli-e2e",
 		plumber: "GITLAB_TOKEN",
 	},
 }
@@ -87,7 +90,9 @@ var tokens = map[string]*providerToken{
 // reads (GITHUB_TOKEN=… or GITLAB_TOKEN=…). An e2e row can't run without
 // it, even on a public fixture repository: the first test without it fails
 // and says what to export, and the provider's next tests are skipped, so a
-// missing token shows as one failure.
+// missing token shows as one failure. A token that can't read the fixture's
+// branch protection and project settings runs, but the settings rows differ
+// from their goldens.
 func token(t *testing.T, provider string) string {
 	t.Helper()
 	tok, ok := tokens[provider]
@@ -100,6 +105,6 @@ func token(t *testing.T, provider string) string {
 	if tok.missing.Swap(true) {
 		t.Skipf("no %s token: see the first failure", tok.name)
 	}
-	t.Fatalf("the %s e2e tests need a token: export %s", tok.name, tok.export)
+	t.Fatalf("the %s e2e tests need a token with %s: export %s", tok.name, tok.access, tok.export)
 	return ""
 }
