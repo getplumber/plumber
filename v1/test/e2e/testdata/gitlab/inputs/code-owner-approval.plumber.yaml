@@ -1,0 +1,8 @@
+# ISSUE-505 row: the fixture repository protects main without code owner
+# approval.
+extends: plumber:default
+version: "2.0"
+gitlab:
+  controls:
+    branchMustBeProtected:
+      codeOwnerApprovalRequired: true

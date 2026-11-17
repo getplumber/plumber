@@ -46,16 +46,20 @@ skills reads the file and applies it.
    format or control changed on `main`: add or refresh the rows before merging. On a conflict in a
    workflow's `pull_request` trigger, keep release/v1's `branches: [main]`.
 5. The suite is a firewall for the refactoring, not a coverage gate: a row exists because a
-   behavior is worth protecting. `test/main_test.go` has `TestMain` and `runCase`,
-   `sandbox_test.go` the sandbox a row runs in and `golden_test.go` the golden files. Each other
-   file is one command group with its own table-driven test (`TestConfig` in
+   behavior is worth protecting. It has two packages, `test/local` and `test/e2e`, and every file
+   is a `_test.go`. Each package has its own copy of the code they share (building the binary, the
+   sandbox, the text diff), because a test file can't be imported by another package. In
+   `test/local`, each file is one command group with its own table-driven test (`TestConfig` in
    `config_test.go`, and so on). When you add or change a command, a flag, an output format or an
    exit code, add or update its row in the same PR.
-6. Rows only cover inputs that make no backend request (`version`, `--help`, `catalog`,
+6. Local rows only cover inputs that make no backend request (`version`, `--help`, `catalog`,
    `explain`, `capabilities`, `config …`, `score-compare`, `completion`, usage errors, and
    `analyze` inputs rejected before any request). They run with no token and every proxy pointed
-   at a closed port, so a row that tries the network fails.
-7. Every row has a golden file, `test/testdata/golden/<Test>/<name>.yaml`. A row without one fails.
+   at a closed port, so a row that tries the network fails. The e2e tests (`test/e2e`) are one test
+   per ISSUE code, run against the provider's fixture repository with a token, behind the `e2e`
+   build tag (see "e2e rows").
+7. Every row has a golden file: `test/local/testdata/golden/<Test>/<name>.yaml`, or
+   `test/e2e/testdata/<provider>/golden/<Test>/<name>.yaml`. A row without one fails.
 8. Run `make -C v1 lint` before you open a PR. It must report 0 issues. Use the golangci-lint
    version `.github/workflows/v1.yml` pins (v2.15.0). Fix what it reports. A `//nolint` names one
    linter and says why.
@@ -66,14 +70,29 @@ skills reads the file and applies it.
     here because `release/v1` is not the default branch, so close the issue by hand when everything
     is done. Anything missing becomes a new issue.
 
+## External contributors
+
+An external contributor doesn't run the local or e2e tests themselves. When their change is about
+an ISSUE code, they provide a workflow example that raises it, and a maintainer turns it into a
+fixture branch and a test.
+
 ## Commands
 
 From the repository root (`v1/Makefile`):
 
 ```sh
-make -C v1 test-integration   # every row. Offline, no token. Run before every push.
+make -C v1 test-integration   # test/local. Offline, no token. Run before every push.
+make -C v1 test-e2e-github    # TestGitHub* of test/e2e. Needs GITHUB_TOKEN (or GH_TOKEN) exported, see "e2e rows".
+make -C v1 test-e2e-gitlab    # TestGitLab* of test/e2e. Needs GITLAB_TOKEN exported, see "e2e rows".
+make -C v1 test-e2e           # all of test/e2e, both tokens.
 make -C v1 lint               # golangci-lint with v1/.golangci.yml. Run before every PR.
 ```
+
+After a change that only touches one provider, run its target. Run one test with
+`go test -tags cli,e2e -run TestGitHubIssue102 ./test/e2e` (from `v1/`). The e2e tests fail when
+their token isn't exported, even though the fixture repositories are public: plumber needs a
+token to analyze a remote repository. They have the `e2e` build tag, so `test-integration` never
+runs them.
 
 `make test` (`go test ./...`) does not run this suite because its files have the `cli` build tag.
 
@@ -82,38 +101,117 @@ make -C v1 lint               # golangci-lint with v1/.golangci.yml. Run before 
 ```
 v1/
   AGENTS.md, CLAUDE.md, README.md
-  Makefile                       targets test-integration and lint
-  .golangci.yml                  golangci-lint v2 config for v1/ (`cli` build tag)
+  Makefile                       targets test-integration, test-e2e(-github|-gitlab) and lint
+  .golangci.yml                  golangci-lint v2 config for v1/ (`cli` and `e2e` build tags)
   test/
-    main_test.go                 TestMain (builds the binary), row type `cliCase`, runCase
-    sandbox_test.go              sandbox: work dir, home, env, runPlumber, normalize, newGolden
-    golden_test.go               golden struct, readGolden, cmp
-    root_test.go                 TestRoot: help, version, catalog, capabilities, unknown command or flag
-    analyze_test.go              TestAnalyze: analyze inputs rejected before any request
-    completion_test.go           TestCompletion
-    config_test.go               TestConfig
-    explain_test.go              TestExplain
-    score_compare_test.go        TestScoreCompare
-    help_test.go                 TestHelpFlag: one --help row per command
-    testdata/
-      inputs/                    files copied into a row's work dir (configs, analyze reports)
-      golden/                    one folder per test, one <row>.yaml per row (struct `golden`)
+    local/                       package local: every input that makes no backend request
+      main_test.go               package doc, TestMain (builds the binary)
+      run_test.go                row type `cliCase`, runCase
+      sandbox_test.go            sandbox: work dir, home, env (offline), runPlumber, normalize, newGolden
+      golden_test.go             golden struct (stdout, stderr, files), readGolden, cmp
+      root_test.go               TestRoot: help, version, catalog, capabilities, unknown command or flag
+      analyze_test.go            TestAnalyze: analyze inputs rejected before any request
+      completion_test.go         TestCompletion
+      config_test.go             TestConfig
+      explain_test.go            TestExplain
+      score_compare_test.go      TestScoreCompare
+      help_test.go               TestHelpFlag: one --help row per command
+      testdata/
+        inputs/                  files copied into a row's work dir (configs, analyze reports)
+        golden/                  one folder per test, one <row>.yaml per row (struct `golden`)
+    e2e/                         package e2e: one test per ISSUE code; every file has the `e2e` tag
+      main_test.go               package doc, TestMain, githubTarget and gitlabTarget
+      run_test.go                row type `e2eCase`, runE2E, token
+      sandbox_test.go            sandbox (a copy of local's, online: the token, no proxies)
+      golden_test.go             golden struct (command, exit, report), readGolden, readReport, cmp
+      retry_test.go              reruns a throttled call
+      github_test.go             TestGitHubIssue<number>: one test per code, one row per configuration
+      gitlab_test.go             TestGitLabIssue<number>: the same on GitLab
+      testdata/
+        github/inputs/           configs of the GitHub rows
+        github/golden/           one folder per test, one <row>.yaml per row
+        gitlab/inputs/  gitlab/golden/
 ```
 
 ## Adding a case
 
-- Add a row to the table of the command's file and put input files in `test/testdata/inputs/`.
-  A new command group gets its own `<group>_test.go`.
+- Add a row to the table of the command's file in `test/local` and put input files in
+  `test/local/testdata/inputs/`. A new command group gets its own `<group>_test.go`.
 - A new command also gets a `--help` row in `help_test.go`, so a flag lost later shows in a golden
   diff.
-- Add its golden file, `test/testdata/golden/<Test>/<name>.yaml`.
+- Add its golden file, `test/local/testdata/golden/<Test>/<name>.yaml`.
 - When you remove a row, delete its golden file: nothing else reports it.
-- Inputs that need a provider, a platform or CI OIDC are the e2e suite's job (monorepo#651).
+- An ISSUE code that a provider must raise is an e2e row (next section). Inputs that need a
+  platform or CI OIDC have no row yet.
+
+## e2e rows
+
+The e2e tests check the ISSUE codes on real providers. A row runs
+`plumber analyze <fixture repo> --branch issue-<number> --controls <control> -o report.json`
+against `getplumber-examples/plumber-cli-e2e` (GitHub) or `getplumber/examples/plumber-cli-e2e`
+(GitLab). It covers a code that its fixture raises from its own files and settings. It runs one
+control and fetches nothing from another repository: no remote action, reusable workflow, include
+or component. A GitHub row costs about 7 API requests.
+
+The fixtures are the `issue-<number>` branches of the fixture repositories, and the project
+doesn't keep a copy: edit a branch there, then refresh its golden files.
+
+Both providers have the same shape, in `test/e2e`:
+
+- Each code has its own test, `TestGitHubIssue<number>` in `github_test.go` or
+  `TestGitLabIssue<number>` in `gitlab_test.go`. Its table has one `e2eCase` row per
+  configuration, as in `test/local`: `default` with no config, otherwise named after the config in
+  `testdata/<provider>/inputs/`. Each row runs through `runE2E`.
+- A row is compared on its report, not on its terminal output, because the text shows some
+  findings (102, 103, 204, 207, 209, 411) only as attack paths, with no code. The golden file,
+  `testdata/<provider>/golden/<Test>/<row>.yaml`, has `command`, `exit` and `report`: the row's
+  `report.json` with its keys sorted, normalized, and without `plumberConfig` (the config dump,
+  the same in every row).
+- To add a code: create its `issue-<number>` branch on the fixture repository, with a comment that
+  names the code, add its test to the provider's file, and write the golden file from a run you
+  have read.
+- Rows 501 and 505 (both providers) and 503, 506 and 601 (GitLab) also read the fixture projects'
+  settings. Keep `main` protected without code owner approval on both. On GitLab, keep merge
+  commits, let committers approve and link no security policy project.
+  Reading those settings takes more than a read-only token: on GitHub, Administration read on the
+  fixture repository (admin access for a classic token); on GitLab, the `read_api` scope and the
+  Maintainer role on the fixture project. With less, these rows run but report the settings as
+  unknown, and their goldens differ.
+- The e2e tests run one at a time, never in parallel: gitlab.com throttles (429) as soon as two
+  analyses run at once. In CI, a concurrency group per provider keeps one run active at a time.
+  The CLI retries a throttled GitLab request itself (`gitlab/retry.go`), and the runner reruns a
+  row up to 3 times, a minute apart, when the CLI runs out of retries or GitHub's secondary rate
+  limit stops it. A run that wrote its report and exited 0 or 1 is never rerun. GitHub's hourly
+  API limit fails the row at once: waiting a minute wouldn't help. A whole GitHub run takes about
+  120 API requests. The provider targets allow 30 minutes each, `test-e2e` 60 minutes for both.
+
+### ISSUE codes the e2e suite doesn't test
+
+Some of these could get a row later:
+
+| Why | Codes |
+|---|---|
+| Benched in `configuration/registry.go`: the control never runs | GitHub 208, 210-215, 303, 305, 306, 308, 418-422, 704, 706, 708, 709, 711, 712, 901-905 |
+| Needs a remote action (its metadata, source or upstream refs), often `actions/checkout` | GitHub 307, 310, 402, 701, 702, 703, 705, 707, 713, 716, 802, 804 |
+| Needs a remote include, component or template | GitLab 402, 403, 404, 406, 409, 414 |
+| Needs a CI/CD variable on the fixture project | GitLab 201, 202 |
+| Needs GitLab Premium approval rules | GitLab 502, 504 |
+| Never raised on GitHub: the GitHub parser doesn't fill `job.Services` (a CLI bug, fix it on `main`) | GitHub 412, 413 |
+
+Also missing:
+
+- CI doesn't run the e2e suites yet: both jobs of `v1.yml` are off (`if: false && …`). After a
+  change that can affect a provider, run its target locally (`make -C v1 test-e2e-github` or
+  `test-e2e-gitlab`).
+- The daily run that monorepo#651 asks for. GitHub runs scheduled workflows on the default branch
+  only, so `v1.yml` can't schedule it on `release/v1`.
 
 ## Wiring outside `v1/`
 
 - `.github/workflows/v1.yml`: the only CI of `release/v1`, on pushes and PRs to `release/v1`. Jobs: build and
-  unit tests (`go build ./...`, `go test ./...`), the CLI suite, golangci-lint on `v1/`
+  unit tests (`go build ./...`, `go test ./...`), the CLI suite, one e2e job per provider (off for
+  now with `if: false && …`; on, each passes its `PLUMBER_E2E_<PROVIDER>_TOKEN` secret as
+  `GITHUB_TOKEN` or `GITLAB_TOKEN` and skips fork PRs), golangci-lint on `v1/`
   through `golangci/golangci-lint-action` (same version and arguments as `make -C v1 lint`), and
   `scope`, which checks the paths a PR changes (rule 2). `scope` skips `sync/` branches of this
   repository, because a sync from `main` changes files everywhere.
@@ -133,6 +231,8 @@ fix to `release/v1` and the golden diff shows it.
 - `config view --explain` prints its provenance lines in random order (map iteration in
   `cmd/config_explain.go`), so its row compares sorted lines.
 - `config view` with no `.plumber.yaml` exits 0 and shows the defaults.
+- GitHub ISSUE-410 says a job is weakened by `allow_failure: true`, the GitLab keyword, when the
+  workflow sets `continue-on-error: true` (`TestGitHubIssue410/default`).
 
 ## Issues
 

@@ -51,6 +51,63 @@ jobs:
       - name: Run the local rows
         run: make -C v1 test-integration
 
+  # One row per ISSUE code, on the plumber-cli-e2e fixture repository of each
+  # provider, one job per provider. Fork PRs get no secrets, so the jobs run on
+  # pushes and same-repository PRs only.
+  cli-e2e-github:
+    name: CLI suite (e2e, GitHub)
+    # One run at a time across every ref and PR: two runs would analyze at once.
+    concurrency:
+      group: v1-e2e-github
+      cancel-in-progress: false
+    # Off for now: run `make -C v1 test-e2e-github` locally. To turn it back on,
+    # drop `false &&` (needs the PLUMBER_E2E_GITHUB_TOKEN secret, passed as GITHUB_TOKEN).
+    if: >-
+      false && (
+      github.event_name == 'push' ||
+      github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.10'
+
+      - name: Run the GitHub e2e rows
+        env:
+          GITHUB_TOKEN: ${{ secrets.PLUMBER_E2E_GITHUB_TOKEN }}
+        run: make -C v1 test-e2e-github
+
+  cli-e2e-gitlab:
+    name: CLI suite (e2e, GitLab)
+    # One run at a time across every ref and PR: two runs would analyze at once.
+    concurrency:
+      group: v1-e2e-gitlab
+      cancel-in-progress: false
+    # Off for now: run `make -C v1 test-e2e-gitlab` locally. To turn it back on,
+    # drop `false &&` (needs the PLUMBER_E2E_GITLAB_TOKEN secret, passed as GITLAB_TOKEN).
+    if: >-
+      false && (
+      github.event_name == 'push' ||
+      github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.10'
+
+      - name: Run the GitLab e2e rows
+        env:
+          GITLAB_TOKEN: ${{ secrets.PLUMBER_E2E_GITLAB_TOKEN }}
+        run: make -C v1 test-e2e-gitlab
+
   lint:
     name: Lint (v1)
     runs-on: ubuntu-24.04

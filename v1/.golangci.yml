@@ -8,8 +8,10 @@ version: "2"
 
 run:
   # Every file in v1/ has the `cli` build tag. Without it nothing is linted.
+  # The e2e suite (test/e2e) also has the `e2e` tag.
   build-tags:
     - cli
+    - e2e
   tests: true
 
 # Report every issue. The default caps (3 identical issues, 50 per linter,
@@ -181,7 +183,7 @@ linters:
       # Tests run the binary they just built, on fixture paths they create,
       # and write their inputs into work dirs. These gosec rules are for
       # untrusted input, so they don't apply there:
-      #   G122, G703  path races and traversal on files under test/testdata/
+      #   G122, G703  path races and traversal on files under testdata/
       #   G204        exec of the built binary
       #   G301, G306  0755/0644 on work dirs and inputs
       #   G304        reading files by a variable path
@@ -189,6 +191,11 @@ linters:
         linters:
           - gosec
         text: G(122|204|301|304|306|703)
+      # The e2e tests run one at a time on purpose: gitlab.com throttles (429)
+      # as soon as two analyses run at once.
+      - path: test/e2e/
+        linters:
+          - paralleltest
       # Rows spell out their CLI arguments; constants would hide what they run.
       - path: _test\.go
         linters:
