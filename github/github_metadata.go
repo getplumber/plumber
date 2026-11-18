@@ -16,6 +16,8 @@ import (
 	"github.com/cli/go-gh/v2/pkg/api"
 	version "github.com/hashicorp/go-version"
 	"github.com/sirupsen/logrus"
+
+	"github.com/getplumber/plumber/internal/httpcount"
 )
 
 // EnvDisableGitHubAPI is the variable that, when set to a truthy value, forces every
@@ -195,17 +197,10 @@ func NewGitHubMetadataClientForHost(host string) *GitHubMetadataClient {
 	//   2. otherwise the go-gh default chain (gh auth, GH_TOKEN, GITHUB_TOKEN).
 	// Either way a 403 on a public action repo still falls back to an
 	// anonymous read (see fetchAllTags), so a no-token run keeps working.
-	var rest *api.RESTClient
-	var err error
-	opts, token := metadataClientOptions(host)
-	switch {
-	case token != "":
-		rest, err = api.NewRESTClient(opts)
-	case host == "":
-		rest, err = api.DefaultRESTClient()
-	default:
-		rest, err = api.NewRESTClient(opts)
-	}
+	// Empty Host and AuthToken resolve through the go-gh default chain,
+	// exactly as api.DefaultRESTClient does.
+	opts, _ := metadataClientOptions(host)
+	rest, err := api.NewRESTClient(opts)
 	if err != nil {
 		c.disabled = true
 		c.disableCause = err
@@ -220,7 +215,9 @@ func NewGitHubMetadataClientForHost(host string) *GitHubMetadataClient {
 // both the AuthToken on opts and the second return value, signalling the
 // caller to use it in preference to the go-gh default chain. token is empty
 // otherwise. A non-empty host targets a GitHub Enterprise Server instance.
+// Requests go through httpcount so the run can report what it sent.
 func metadataClientOptions(host string) (opts api.ClientOptions, token string) {
+	opts.Transport = httpcount.DefaultTransport
 	token = strings.TrimSpace(os.Getenv(EnvMetadataToken))
 	if token != "" {
 		opts.AuthToken = token
@@ -785,6 +782,10 @@ func (c *GitHubMetadataClient) fetchTagsPage(owner, repo string, page int, anony
 	return resp, false, nil
 }
 
+// anonHTTPClient sends the anonymous reads: no credentials, counted like
+// every other GitHub request.
+var anonHTTPClient = &http.Client{Transport: httpcount.DefaultTransport}
+
 // anonGetTagsPage reads one page of a repo's tags without authentication,
 // against apiBaseURL. It is the fallback when the authenticated read is
 // blocked by an org IP allow list: public repos are world-readable and the
@@ -801,7 +802,7 @@ func (c *GitHubMetadataClient) anonGetTagsPage(owner, repo string, page int) ([]
 		return nil, 0, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := anonHTTPClient.Do(req)
 	if err != nil {
 		return nil, 0, err
 	}

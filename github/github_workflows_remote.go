@@ -12,6 +12,7 @@ import (
 
 	"github.com/cli/go-gh/v2/pkg/api"
 
+	"github.com/getplumber/plumber/internal/httpcount"
 	"github.com/getplumber/plumber/internal/ir"
 )
 
@@ -173,11 +174,11 @@ var newGitHubRESTClient = func(host string) (*api.RESTClient, error) {
 	return nil, err
 }
 
+// newGoghRESTClient sends through httpcount so the run can report what it
+// sent. An empty host resolves through the go-gh default chain, exactly as
+// api.DefaultRESTClient does.
 func newGoghRESTClient(host string) (*api.RESTClient, error) {
-	if host == "" {
-		return api.DefaultRESTClient()
-	}
-	return api.NewRESTClient(api.ClientOptions{Host: host})
+	return api.NewRESTClient(api.ClientOptions{Host: host, Transport: httpcount.DefaultTransport})
 }
 
 // ErrAuthRequired is the actionable error surfaced when go-gh cannot

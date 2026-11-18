@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/getplumber/plumber/internal/httpcount"
 	"github.com/getplumber/plumber/internal/ir"
 	"github.com/getplumber/plumber/utils"
 )
@@ -1174,7 +1175,7 @@ func ScanRemoteSelfAction(owner, repo, ref string) *ir.MutableRemoteExec {
 // serves github.com-hosted public actions; GitHub Enterprise Server
 // hosts and private repos are out of scope for this first iteration and
 // simply return ok=false (the control abstains rather than guesses).
-var rawHTTPClient = &http.Client{Timeout: 20 * time.Second}
+var rawHTTPClient = &http.Client{Timeout: 20 * time.Second, Transport: httpcount.DefaultTransport}
 
 // rawFetchToken returns a GitHub token for raw content reads, using the
 // same precedence as the metadata client's env inputs. Empty when none
