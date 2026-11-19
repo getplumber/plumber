@@ -23,6 +23,10 @@ the [Google Go Style Guide](https://google.github.io/styleguide/go/guide) and it
 skill wins: use the newer API even where nearby code doesn't, and compare errors with `errors.Is`,
 which `errorlint` requires.
 
+Rego follows the [Rego style guide](https://github.com/open-policy-agent/rego-style-guide).
+`regal lint` must report no violation, and policies are tested in Rego with `opa test`, never from
+Go. The details are under "Policies" in [`docs/project-structure.md`](docs/project-structure.md#policies).
+
 Run the humanizer skill ([`.agents/skills/humanizer/SKILL.md`](../.agents/skills/humanizer/SKILL.md)) on the
 documentation you write: Markdown, commit messages and PR descriptions. An agent that cannot load
 skills reads the file and applies it.
@@ -30,14 +34,20 @@ skills reads the file and applies it.
 ## Rules
 
 1. Everything for the refactoring goes in `v1/`: code, tests, fixtures, golden files and docs.
-   The CLI code stays where it is until getplumber/monorepo#684 moves it.
+   The CLI is rewritten under `v1/`, as `docs/project-structure.md` describes, and imports
+   nothing from the packages at the repository root. The old code stays where it is until the
+   last step of that rewrite deletes it. `v1/pkg/` is the API the platform backend imports; its
+   rules are in the same doc.
 2. Don't create, modify or delete anything outside `v1/`, except in `.agents/`, `.claude/`,
    `.github/` and `skills-lock.json`, for the wiring listed under "Wiring outside `v1/`". In those
    places, leave the files that come from `main` as they are and add new ones instead, like
    `.github/workflows/v1.yml`. The only edit allowed in a file from `main` is the
    `branches: [main]` filter on the `pull_request` trigger of its workflows. If something outside
    `v1/` needs a fix, fix it on `main` and the next sync brings it. The `scope` job of
-   `.github/workflows/v1.yml` fails a PR that changes other paths.
+   `.github/workflows/v1.yml` fails a PR that changes other paths. From step 1 of the rewrite
+   (`docs/project-structure.md`), `go.mod` and `go.sum` are an exception for additions only: a new
+   requirement and its `go.sum` lines, never a version change of a dependency `main` has, so syncs
+   from `main` still merge cleanly.
 3. Branch from `release/v1` and open PRs against `release/v1`, never `main`:
    `git fetch origin && git switch -c <branch> origin/release/v1`.
 4. A maintainer merges `main` into `release/v1` by hand, through a PR:
@@ -104,7 +114,12 @@ v1/
   Makefile                       targets test-integration, test-e2e(-github|-gitlab) and lint
   .golangci.yml                  golangci-lint v2 config for v1/ (`cli` and `e2e` build tags)
   docs/
+    analyze-flow.md              sequence diagrams of the rewritten analyze
+    drafts/
+      repository-graph.md        not adopted: a repository graph as the Rego input, and when to move to it
     feature-inventory.md         every command, flag, output and config key, with keep/drop decisions
+    project-structure.md         comparison with kubectl, helm, golangci-lint and terraform, target layout, public API,
+                                 configuration, documentation, rewrite order
   test/
     local/                       package local: every input that makes no backend request
       main_test.go               package doc, TestMain (builds the binary)

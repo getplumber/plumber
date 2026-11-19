@@ -4,10 +4,10 @@ Every command, flag, output format and `.plumber.yaml` key of the CLI on `releas
 proposed decision for each: keep, merge, deprecate or remove. It answers
 [getplumber/monorepo#683](https://github.com/getplumber/monorepo/issues/683).
 
-The decisions are applied on `release/v1` after
-[getplumber/monorepo#684](https://github.com/getplumber/monorepo/issues/684) moves the CLI code
-under `v1/` (rule 2 of [AGENTS.md](../AGENTS.md) forbids editing `cmd/` before that). Bugs found on
-the way are listed at the end; they are fixed on `main`, like any fix outside `v1/`.
+The decisions are applied as each command is rewritten under `v1/`, in the order of
+[project-structure.md](project-structure.md) (rule 2 of [AGENTS.md](../AGENTS.md) forbids editing
+`cmd/`). Bugs found on the way are listed at the end; they are fixed on `main`, like any fix
+outside `v1/`.
 
 Column meanings:
 
@@ -90,6 +90,8 @@ The GitLab component relies on this and passes nothing on the command line. Keep
 | `--controls`, `--skip-controls` | help | `analyze-unknown-*`, e2e | Action, component | keep | |
 | `--no-controls` | README | `analyze-no-controls-with-controls` | | keep | PBOM-only runs. |
 | `--fail-warnings` | README | | Action, component, self-scan | keep | |
+| `--resolve-depth N` (new) | none yet | | | add, default 0 | Fetches imported actions, reusable workflows, includes and components down to N levels. Today every run resolves them; the rewrite makes a run static by default ([analyze-flow.md](analyze-flow.md)). |
+| `--sanity` (new) | none yet | | | add, default `false` | Reads branch protection, rulesets and project settings. Today every run reads them. The e2e rows 501 and 505 (both providers) and 503, 506 and 601 (GitLab) need it. |
 
 The long help of `analyze` has a hand-written "Optional flags" list next to cobra's own list. It has
 drifted: it lacks `--csv`, `--ocsf`, `--sarif`, `--glsast`, `--platform` and
@@ -149,13 +151,16 @@ already warning today skip the first step.
 | top-level `controls` and `engine` | already warn | 1.0.0, as the migration doc says | `TestConfig/config-validate-legacy` (becomes an error); `TestConfig/config-migrate*` unchanged |
 | v0.2.x blocks in the JSON | once an owner confirms no consumer | the release after | e2e goldens (their `report` loses the blocks) |
 
-## Follow-up after #684
+## Follow-up during the rewrite
 
 1. Apply the decisions above, one issue each, in the order of the deprecation table.
 2. Delete the hand-written flag list from the `analyze` long help.
 3. Add `--version`, the JSON schema version key and the GitHub warnings for `--glsast`,
    `--mr-comment`, `--badge` and `--ci-config-path`.
 4. Document `catalog` in the README, and `extends` and `capabilities` in the migration doc.
+5. Static by default: the Action and the component get inputs for `--resolve-depth` and
+   `--sanity` at the switch step, and the release notes say that a run no longer reads imports or
+   settings unless asked.
 
 ## Bugs found, to fix on `main`
 
