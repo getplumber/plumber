@@ -2367,7 +2367,7 @@ plumber analyze --print=false --output findings.json
 }
 ```
 
-`cliVersion`, `configFileSha256` and `ci` are the provenance keys the hosted score service's verifier reads to check a push against the certificate the provider's OIDC token attests (see [Signing on GitHub Actions](../README.md#signing-on-github-actions)):
+`cliVersion`, `configFileSha256` and `ci` are the provenance keys the hosted score service's verifier reads to check a push against the certificate the provider's OIDC token attests (see [Signed push](https://getplumber.io/docs/plumber-score/signed-push)):
 
 - `cliVersion`: the binary that produced the report.
 - `configFileSha256`: the sha256 of the raw, committed `.plumber.yaml` bytes the run loaded. Empty when the run used the embedded default config, never the hash of that default, so the service never mistakes a default run for a file.

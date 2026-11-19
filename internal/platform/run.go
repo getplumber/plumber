@@ -112,6 +112,19 @@ func (r *RunContext) ConfigInvalid() bool {
 	return r.Config != nil && r.Config.Available() && !r.Config.Valid
 }
 
+// ConfigErrors returns what the git host said about the INVALID merge of
+// the configuration this run evaluates, verbatim, and nothing when the
+// configuration is not INVALID (ConfigInvalid) or the host sent no message.
+// It is the resolve lane's counterpart of SnapshotMergeVerdict's errs: the
+// sentence a user needs to act (which include the platform's token cannot
+// read, which job is broken) rather than a generic "invalid".
+func (r *RunContext) ConfigErrors() []string {
+	if !r.ConfigInvalid() || len(r.Config.CiErrors) == 0 {
+		return nil
+	}
+	return append([]string(nil), r.Config.CiErrors...)
+}
+
 // Includes returns the per-include attribution for the configuration this
 // run actually evaluates, and whether any is available.
 //
@@ -477,6 +490,28 @@ func (r *RunContext) DegradedLanes() []string {
 	return out
 }
 
+// CarriedLanes returns the snapshot lanes the platform carried from an
+// earlier pass, sorted, and the oldest of their pass times. Empty names
+// (and a zero time) when nothing was carried. Platform ruling R1,
+// 2026-11-06 (carried snapshot lanes): reporting only, a carried lane still
+// evaluates.
+func (r *RunContext) CarriedLanes() ([]string, time.Time) {
+	snap := r.Snapshot()
+	if snap.Data == nil || len(snap.Data.CarriedFields) == 0 {
+		return nil, time.Time{}
+	}
+	names := make([]string, 0, len(snap.Data.CarriedFields))
+	var oldest time.Time
+	for name, at := range snap.Data.CarriedFields {
+		names = append(names, name)
+		if len(names) == 1 || at.Before(oldest) {
+			oldest = at
+		}
+	}
+	sort.Strings(names)
+	return names, oldest
+}
+
 // DegradationKnowable reports whether this run can distinguish an honestly
 // empty lane from a failed one. False on a pre-v2 snapshot, where absence
 // proves nothing.
@@ -522,6 +557,11 @@ func (r *RunContext) Describe() []string {
 		out = append(out, "snapshot collected_at: "+collected)
 	} else {
 		out = append(out, "snapshot: none cached for this project yet")
+	}
+	// A carried lane evaluates on a value older than collected_at (platform
+	// ruling R1, 2026-11-06, carried snapshot lanes); name it and its date.
+	if carried, oldest := r.CarriedLanes(); len(carried) > 0 {
+		out = append(out, "snapshot lanes carried from "+oldest.UTC().Format(time.RFC3339)+": "+strings.Join(carried, ", "))
 	}
 	if missing := r.MissingSnapshotFields(); len(missing) > 0 {
 		out = append(out, "snapshot missing lanes: "+strings.Join(missing, ", "))
@@ -608,6 +648,9 @@ func (r *RunContext) describeConfig() []string {
 		out = append(out, line)
 	case SourceUnavailable:
 		out = append(out, "ci config source: UNAVAILABLE ("+r.UnavailableReason()+") - controls reading the merged config report not_evaluable")
+		if r.UnavailableReason() == ReasonForkPipeline {
+			out = append(out, "  note: merge request from a fork: the configuration under review lives in the source project, which the platform cannot resolve against this one; the pipeline controls run again once the change is merged")
+		}
 	}
 	return out
 }

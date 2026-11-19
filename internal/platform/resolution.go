@@ -134,6 +134,12 @@ type ConfigResolution struct {
 	// INVALID. That is a user error in their own config, not a resolution
 	// failure, and MergedYAML may then be empty.
 	Valid bool
+	// CiErrors is what the git host said about an INVALID merge, verbatim,
+	// as the resolve endpoint served it (ResolvedConfig.CiErrors). Nil on a
+	// VALID merge, on a snapshot-sourced config (the snapshot's own verdict
+	// travels through RunContext.SnapshotMergeVerdict) and when the host
+	// sent no message.
+	CiErrors []string
 
 	// Reason names why Source is SourceUnavailable, using the platform's
 	// own vocabulary (ReasonResolutionUnavailable / ReasonResolverBusy) so
@@ -320,6 +326,9 @@ func completeFromResolve(out *ConfigResolution, c resolver, projectPath, sha str
 	out.ResolvedSha = resolved.ResolvedSha
 	out.FromCache = resolved.Source == "cache"
 	out.Valid = resolved.Valid
+	if len(resolved.CiErrors) > 0 {
+		out.CiErrors = append([]string(nil), resolved.CiErrors...)
+	}
 	// Attribution for the document just returned. It describes THIS
 	// merged_yaml, so it travels with it, and the assignment carries the
 	// wire decode's nil (key absent) vs non-nil (key served, zero entries
