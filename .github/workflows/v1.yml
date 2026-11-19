@@ -27,7 +27,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.26.10'
+          go-version-file: go.mod
 
       - name: Build
         run: go build ./...
@@ -46,7 +46,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.26.10'
+          go-version-file: go.mod
 
       - name: Run the local rows
         run: make -C v1 test-integration
@@ -74,7 +74,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.26.10'
+          go-version-file: go.mod
 
       - name: Run the GitHub e2e rows
         env:
@@ -101,7 +101,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.26.10'
+          go-version-file: go.mod
 
       - name: Run the GitLab e2e rows
         env:
@@ -118,7 +118,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.26.10'
+          go-version-file: go.mod
 
       # Same version and arguments as `make -C v1 lint`, so local and CI agree.
       - name: golangci-lint

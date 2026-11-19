@@ -435,8 +435,10 @@ The steps:
 12. Outputs: one PR per format (json, csv, sarif, ocsf, glsast, pbom), each with its offline rows.
 13. Switch: the release build and the integrations (`action.yml`, `templates/plumber.yml`,
     `Dockerfile`) use `v1/cmd/plumber`, releases attach the docs bundle, the suite drops the old
-    binary, and the old packages are deleted. This step changes paths outside `v1/`, so it needs
-    its own decision on rule 2 of [AGENTS.md](../AGENTS.md) before it starts.
+    binary, and the old packages are deleted. `go.mod` moves to the latest Go release in its `go`
+    directive and drops its `toolchain` line. This step changes paths outside `v1/`, so it needs
+    its own decision on rule 2 of [AGENTS.md](../AGENTS.md) before it starts. From here on,
+    `main` takes `release/v1` instead of the other way around (rules 3 and 4 of AGENTS.md).
 14. Site switch, in getplumber.io: the site loads the bundle of a pinned release, deletes the moved
     pages, the CLI part of `issues.ts` and `controlIds.ts`, and redirects the URLs that change.
 
