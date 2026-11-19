@@ -44,6 +44,49 @@ func envDebugFallback(cmd *cobra.Command) error {
 	return nil
 }
 
+// fetchRateLimit reads GET /rate_limit for the report; tests stub it.
+var fetchRateLimit = githubpkg.FetchRateLimit
+
+// debugCredential is one credential the run uses, named by where it came
+// from, never by its value. An empty token is the anonymous lane.
+type debugCredential struct{ name, token string }
+
+// debugCredentials lists the credentials a GitHub analyze on host uses: the
+// lanes' token (or anonymous), then PLUMBER_METADATA_TOKEN when set, with
+// the label the report shows for each.
+func debugCredentials(host string) ([]debugCredential, []string) {
+	var credentials []debugCredential
+	var labels []string
+	if token, source := ghauth.TokenForHost(host); token != "" {
+		credentials = append(credentials, debugCredential{source, token})
+		labels = append(labels, "GitHub lanes: "+source)
+	} else {
+		credentials = append(credentials, debugCredential{"anonymous", ""})
+		labels = append(labels, "GitHub lanes: none (anonymous)")
+	}
+	if token := strings.TrimSpace(os.Getenv(githubpkg.EnvMetadataToken)); token != "" {
+		credentials = append(credentials, debugCredential{githubpkg.EnvMetadataToken, token})
+		labels = append(labels, "action metadata: "+githubpkg.EnvMetadataToken)
+	}
+	return credentials, labels
+}
+
+// credentialNames maps the httpcount.CredentialKey of each token, under both
+// schemes it can be sent with (go-gh sends "token", app tokens "Bearer"), to
+// the credential's name.
+func credentialNames(credentials []debugCredential) map[string]string {
+	names := map[string]string{}
+	for _, c := range credentials {
+		if c.token == "" {
+			continue
+		}
+		for _, scheme := range []string{"token ", "Bearer "} {
+			names[httpcount.CredentialKey(scheme+c.token)] = c.name
+		}
+	}
+	return names
+}
+
 // startGitHubDebugReport starts the --debug report of a GitHub analyze and
 // returns the function that writes it, meant to be deferred. Without
 // --debug both do nothing, and no request is added to the run.
@@ -69,39 +112,22 @@ func startGitHubDebugReport(conf *configuration.Configuration, mode string) func
 		report.Host = "api.github.com"
 	}
 
-	// Name each credential by where it came from, never by its value.
 	host := conf.GithubAPIHost
 	if host == "" {
 		host = githubDotCom
 	}
-	type credential struct{ name, token string }
-	var credentials []credential
-	if token, source := ghauth.TokenForHost(host); token != "" {
-		credentials = append(credentials, credential{source, token})
-		report.Credentials = append(report.Credentials, "GitHub lanes: "+source)
-	} else {
-		credentials = append(credentials, credential{"anonymous", ""})
-		report.Credentials = append(report.Credentials, "GitHub lanes: none (anonymous)")
-	}
-	if token := strings.TrimSpace(os.Getenv(githubpkg.EnvMetadataToken)); token != "" {
-		credentials = append(credentials, credential{githubpkg.EnvMetadataToken, token})
-		report.Credentials = append(report.Credentials, "action metadata: "+githubpkg.EnvMetadataToken)
-	}
-	report.CredentialNames = map[string]string{}
+	credentials, labels := debugCredentials(host)
+	report.Credentials = labels
+	report.CredentialNames = credentialNames(credentials)
 	for _, c := range credentials {
-		if c.token != "" {
-			for _, scheme := range []string{"token ", "Bearer "} {
-				report.CredentialNames[httpcount.CredentialKey(scheme+c.token)] = c.name
-			}
-		}
 		rl := httpcount.RateLimit{Credential: c.name}
-		rl.Before, rl.BeforeErr = githubpkg.FetchRateLimit(conf.GithubAPIHost, c.token)
+		rl.Before, rl.BeforeErr = fetchRateLimit(conf.GithubAPIHost, c.token)
 		report.RateLimits = append(report.RateLimits, rl)
 	}
 
 	return func() {
 		for i, c := range credentials {
-			report.RateLimits[i].After, report.RateLimits[i].AfterErr = githubpkg.FetchRateLimit(conf.GithubAPIHost, c.token)
+			report.RateLimits[i].After, report.RateLimits[i].AfterErr = fetchRateLimit(conf.GithubAPIHost, c.token)
 		}
 		report.Finished = time.Now()
 		report.Snapshot = httpcount.Default.Snapshot()

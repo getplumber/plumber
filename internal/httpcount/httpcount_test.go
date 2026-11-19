@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 
@@ -300,6 +301,31 @@ func TestRegistry_logRecordsEveryRequest(t *testing.T) {
 	if e.Seq != 2 || e.Method != "GET" || e.Path != "/repos/o/r" || e.Query != "per_page=100" || e.Status != 200 ||
 		!e.Authenticated || !e.HasQuota || e.Resource != "core" || e.Remaining != 4990 || e.Used != 10 || e.Reset != 100 {
 		t.Fatalf("second hop = %+v", e)
+	}
+}
+
+// A query the GitHub API did not answer can be the credential of a signed
+// URL (the job-log store's SAS): the log keeps it redacted, so the shared
+// report never carries it. A request with no query stays without one.
+func TestRegistry_logRedactsUnmeteredQuery(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer srv.Close()
+
+	reg := &Registry{}
+	reg.EnableLog()
+	get(t, newClient(reg, nil), srv.URL+"/blob?sig=secret&se=2026-11-19")
+	get(t, newClient(reg, nil), srv.URL+"/plain")
+
+	snap := reg.Snapshot()
+	if len(snap.Entries) != 2 || snap.Entries[0].Query != RedactedQuery || snap.Entries[1].Query != "" {
+		t.Fatalf("entries = %+v", snap.Entries)
+	}
+	var b strings.Builder
+	if err := (Report{Snapshot: snap}).WriteMarkdown(&b); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(b.String(), "secret") {
+		t.Fatalf("report carries the signed query:\n%s", b.String())
 	}
 }
 

@@ -112,7 +112,7 @@ type Entry struct {
 	Method        string
 	Host          string
 	Path          string
-	Query         string
+	Query         string // RedactedQuery unless the GitHub API answered
 	Status        int
 	Err           string
 	Duration      time.Duration
@@ -140,6 +140,12 @@ type Registry struct {
 	// memoHits counts the requests Memo answered without sending them.
 	memoHits int
 }
+
+// RedactedQuery stands for the query of a request the GitHub API did not
+// answer. The report is meant to be shared, and only the API is known to
+// take no credential in the query: the job-log store and codeload redirect
+// to signed URLs whose query is the credential.
+const RedactedQuery = "<redacted>"
 
 // resetJitter is how far apart two resets of one window can be: GitHub
 // reports the same window ending a second apart.
@@ -176,13 +182,17 @@ func (r *Registry) record(req *http.Request, resp *http.Response, err error, sta
 
 	var entry *Entry
 	if r.logging {
+		query := ""
+		if req.URL.RawQuery != "" {
+			query = RedactedQuery
+		}
 		r.log = append(r.log, Entry{
 			Seq:           len(r.log) + 1,
 			Offset:        start.Sub(r.logStart),
 			Method:        req.Method,
 			Host:          host,
 			Path:          req.URL.Path,
-			Query:         req.URL.RawQuery,
+			Query:         query,
 			Duration:      took,
 			Authenticated: authorization != "",
 			Credential:    credential,
@@ -226,6 +236,7 @@ func (r *Registry) record(req *http.Request, resp *http.Response, err error, sta
 	resource := resp.Header.Get("X-Ratelimit-Resource")
 	if entry != nil {
 		used, _ := strconv.Atoi(resp.Header.Get("X-Ratelimit-Used"))
+		entry.Query = req.URL.RawQuery
 		entry.HasQuota, entry.Resource, entry.Limit, entry.Remaining, entry.Used, entry.Reset = true, resource, limit, remaining, used, reset
 	}
 	key := host + " " + resource + " " + credential
