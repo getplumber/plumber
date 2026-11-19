@@ -115,8 +115,10 @@ v1/
   .golangci.yml                  golangci-lint v2 config for v1/ (`cli` and `e2e` build tags)
   docs/
     analyze-flow.md              sequence diagrams of the rewritten analyze
+    drafts/
+      repository-graph.md        not adopted: a repository graph as the Rego input, and when to move to it
     feature-inventory.md         every command, flag, output and config key, with keep/drop decisions
-    project-structure.md         comparison with kubectl, helm and golangci-lint, target layout, public API,
+    project-structure.md         comparison with kubectl, helm, golangci-lint and terraform, target layout, public API,
                                  configuration, documentation, rewrite order
   test/
     local/                       package local: every input that makes no backend request

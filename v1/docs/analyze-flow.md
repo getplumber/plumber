@@ -19,6 +19,9 @@ A run has five stages before evaluation:
 There is no provider-neutral pipeline model. Each provider parses its own document, typed against
 its official schema, and its own policies (`policies/github`, `policies/gitlab`) evaluate it with
 shared Rego functions from `policies/lib`. Findings, the score and the attack paths are shared.
+[drafts/repository-graph.md](drafts/repository-graph.md) keeps an alternative that isn't adopted:
+a graph of the repository with a core both providers share. Move to it if policies turn out simpler
+on a graph.
 
 ## Overview
 
