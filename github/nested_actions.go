@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cli/go-gh/v2/pkg/api"
@@ -105,7 +106,13 @@ type definitionFetcher struct {
 	// rawDefinition reads a definition from the raw host with the
 	// definition bound, raw when nil (a test's stub).
 	rawDefinition rawFetcher
-	rest          *api.RESTClient
+	// rawToken is the token raw and rawDefinition send, "" when they read
+	// anonymously (or are a test's stub).
+	rawToken string
+	// tokenProven is set once the contents API accepted rawToken: from
+	// then on a raw miss sent with it is final (see readWith).
+	tokenProven atomic.Bool
+	rest        *api.RESTClient
 
 	mu      sync.Mutex
 	actions map[string]actionDefinition
@@ -136,8 +143,10 @@ func newDefinitionFetcher(raw rawFetcher, client *GitHubMetadataClient) *definit
 // built none.
 func definitionFetcherForHost(host string, client *GitHubMetadataClient) *definitionFetcher {
 	if !isEnterpriseHost(host) {
-		f := newDefinitionFetcher(httpRawFetcher, client)
-		f.rawDefinition = rawFetcherWithLimit(maxWorkflowFileBytes + 1)
+		tok := rawFetchToken()
+		f := newDefinitionFetcher(rawFetcherWithToken(tok, maxRawFileBytes), client)
+		f.rawDefinition = rawFetcherWithToken(tok, maxWorkflowFileBytes+1)
+		f.rawToken = tok
 		return f
 	}
 	if client == nil {
@@ -180,8 +189,9 @@ func APIDisabled() bool {
 	return v == "1" || v == "true"
 }
 
-// read is a rawFetcher: the raw host, then the contents API. A path that
-// climbs out of the repository is refused without a request. The
+// read is a rawFetcher: the raw host, then the contents API unless the
+// raw host, asked with a token the API already accepted, found nothing. A
+// path that climbs out of the repository is refused without a request. The
 // mutable-exec scan reads an entrypoint through it, with the raw host's
 // own bound.
 func (f *definitionFetcher) read(owner, repo, ref, p string) (string, fetchStatus) {
@@ -215,12 +225,25 @@ func (f *definitionFetcher) readWith(raw rawFetcher, owner, repo, ref, p string)
 	if raw != nil {
 		text, st = raw(owner, repo, ref, p)
 	}
-	if st == fetchOK || f.rest == nil {
+	// A raw read sent with a valid token answers a private file too, so
+	// its 404 is final and the contents API is not asked again
+	// (plumber#618). Valid is what the raw host cannot say: an expired or
+	// revoked token gets a 404 there too, so the token counts only once
+	// the contents API accepted it, where a bad one answers 401 and the
+	// read stays could-not-verify. An anonymous raw read (the client
+	// holds a `gh auth` token the raw host never sees) cannot tell absent
+	// from private at all.
+	if st == fetchOK || f.rest == nil || (raw != nil && st == fetchMissing && f.rawToken != "" && f.tokenProven.Load()) {
 		return text, st
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), contentsFetchTimeout)
 	defer cancel()
 	body, err := fetchFileContentContext(ctx, f.rest, owner, repo, p, ref)
+	// With a raw token set, the API client sends that same token: both
+	// read PLUMBER_METADATA_TOKEN, then GH_TOKEN, then GITHUB_TOKEN.
+	if f.rawToken != "" && (err == nil || isNotFound(err)) {
+		f.tokenProven.Store(true)
+	}
 	switch {
 	case err == nil:
 		return string(body), fetchOK
@@ -369,7 +392,7 @@ func validRef(ref string) bool {
 // authenticated reports whether a read could tell a private file from an
 // absent one: a token on the raw host or the contents API client.
 func (f *definitionFetcher) authenticated() bool {
-	return f.rest != nil || (f.raw != nil && rawFetchToken() != "")
+	return f.rest != nil || (f.raw != nil && f.rawToken != "")
 }
 
 // nestedScope is what the stage knows of the scanned repository.

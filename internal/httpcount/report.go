@@ -69,6 +69,7 @@ func (r Report) WriteMarkdown(w io.Writer) error {
 	}
 	b.WriteString("## Summary\n\n")
 	fmt.Fprintf(&b, "- **%d requests** sent.\n", s.Total())
+	fmt.Fprintf(&b, "- %d repeated requests answered from memory, not sent.\n", s.MemoHits)
 	fmt.Fprintf(&b, "- **%d** counted by a token's API quota (see *Quotas seen in response headers*).\n", tokenQuota)
 	fmt.Fprintf(&b, "- %d anonymous, counted by the 60/hour per-IP quota.\n", anonymous)
 	fmt.Fprintf(&b, "- %d outside the API quotas (no `x-ratelimit` headers).\n", unmetered)

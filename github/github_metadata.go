@@ -217,7 +217,7 @@ func NewGitHubMetadataClientForHost(host string) *GitHubMetadataClient {
 // otherwise. A non-empty host targets a GitHub Enterprise Server instance.
 // Requests go through httpcount so the run can report what it sent.
 func metadataClientOptions(host string) (opts api.ClientOptions, token string) {
-	opts.Transport = httpcount.DefaultTransport
+	opts.Transport = httpcount.MemoTransport
 	token = strings.TrimSpace(os.Getenv(EnvMetadataToken))
 	if token != "" {
 		opts.AuthToken = token
@@ -784,7 +784,7 @@ func (c *GitHubMetadataClient) fetchTagsPage(owner, repo string, page int, anony
 
 // anonHTTPClient sends the anonymous reads: no credentials, counted like
 // every other GitHub request.
-var anonHTTPClient = &http.Client{Transport: httpcount.DefaultTransport}
+var anonHTTPClient = &http.Client{Transport: httpcount.MemoTransport}
 
 // anonGetTagsPage reads one page of a repo's tags without authentication,
 // against apiBaseURL. It is the fallback when the authenticated read is

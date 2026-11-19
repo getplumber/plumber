@@ -178,7 +178,7 @@ var newGitHubRESTClient = func(host string) (*api.RESTClient, error) {
 // sent. An empty host resolves through the go-gh default chain, exactly as
 // api.DefaultRESTClient does.
 func newGoghRESTClient(host string) (*api.RESTClient, error) {
-	return api.NewRESTClient(api.ClientOptions{Host: host, Transport: httpcount.DefaultTransport})
+	return api.NewRESTClient(api.ClientOptions{Host: host, Transport: httpcount.MemoTransport})
 }
 
 // ErrAuthRequired is the actionable error surfaced when go-gh cannot

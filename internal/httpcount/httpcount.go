@@ -32,6 +32,12 @@ var Default = &Registry{}
 // http.DefaultTransport.
 var DefaultTransport http.RoundTripper = &Transport{Registry: Default}
 
+// MemoTransport answers a repeated GET from memory (Memo), then sends the
+// rest through DefaultTransport. It is for the GitHub API and raw-content
+// reads only: a minted token, a signed one-shot URL or a version check
+// goes through DefaultTransport.
+var MemoTransport http.RoundTripper = &Memo{Next: DefaultTransport, Registry: Default}
+
 // Transport is an http.RoundTripper that records each request it sends.
 // A redirect is one request per hop, as the http.Client sends each one
 // through the transport.
@@ -131,6 +137,8 @@ type Registry struct {
 	logging  bool
 	logStart time.Time
 	log      []Entry
+	// memoHits counts the requests Memo answered without sending them.
+	memoHits int
 }
 
 // resetJitter is how far apart two resets of one window can be: GitHub
@@ -146,6 +154,12 @@ func (r *Registry) EnableLog() {
 		r.logging = true
 		r.logStart = time.Now()
 	}
+}
+
+func (r *Registry) recordMemoHit() {
+	r.mu.Lock()
+	r.memoHits++
+	r.mu.Unlock()
 }
 
 func (r *Registry) record(req *http.Request, resp *http.Response, err error, start time.Time, took time.Duration) {
@@ -234,11 +248,13 @@ func (r *Registry) record(req *http.Request, resp *http.Response, err error, sta
 }
 
 // Snapshot is a copy of the counts at one point in time. Entries is empty
-// unless EnableLog was called.
+// unless EnableLog was called. MemoHits are the requests answered from
+// memory, never sent: they are in no other count.
 type Snapshot struct {
-	Hosts   map[string]HostStats
-	Quotas  []Quota
-	Entries []Entry
+	Hosts    map[string]HostStats
+	Quotas   []Quota
+	Entries  []Entry
+	MemoHits int
 }
 
 // Snapshot copies the counts. Quotas are sorted by host, resource,
@@ -246,7 +262,7 @@ type Snapshot struct {
 func (r *Registry) Snapshot() Snapshot {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	snap := Snapshot{Hosts: maps.Clone(r.hosts), Entries: slices.Clone(r.log)}
+	snap := Snapshot{Hosts: maps.Clone(r.hosts), Entries: slices.Clone(r.log), MemoHits: r.memoHits}
 	for _, windows := range r.quotas {
 		snap.Quotas = append(snap.Quotas, windows...)
 	}

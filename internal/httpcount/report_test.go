@@ -35,6 +35,7 @@ func reportFixture() Report {
 			{Credential: "PLUMBER_METADATA_TOKEN", BeforeErr: errors.New("HTTP 404"), AfterErr: errors.New("HTTP 404")},
 		},
 		Snapshot: Snapshot{
+			MemoHits: 4,
 			Hosts: map[string]HostStats{
 				"api.github.com":            {Requests: 6, Status2xx: 4, Status4xx: 1, Errors: 1},
 				"raw.githubusercontent.com": {Requests: 1, Status4xx: 1, Unmetered: 1},
@@ -74,6 +75,7 @@ func TestReport_sections(t *testing.T) {
 		"| Duration | 1m30s |",
 		"| Credentials | GitHub lanes: GITHUB_TOKEN |",
 		"- **7 requests** sent.",
+		"- 4 repeated requests answered from memory, not sent.",
 		"- **5** counted by a token's API quota",
 		"- 1 outside the API quotas",
 		"- 1 without a response (errors).",

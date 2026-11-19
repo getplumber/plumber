@@ -1175,7 +1175,7 @@ func ScanRemoteSelfAction(owner, repo, ref string) *ir.MutableRemoteExec {
 // serves github.com-hosted public actions; GitHub Enterprise Server
 // hosts and private repos are out of scope for this first iteration and
 // simply return ok=false (the control abstains rather than guesses).
-var rawHTTPClient = &http.Client{Timeout: 20 * time.Second, Transport: httpcount.DefaultTransport}
+var rawHTTPClient = &http.Client{Timeout: 20 * time.Second, Transport: httpcount.MemoTransport}
 
 // rawFetchToken returns a GitHub token for raw content reads, using the
 // same precedence as the metadata client's env inputs. Empty when none
@@ -1190,19 +1190,20 @@ func rawFetchToken() string {
 }
 
 func httpRawFetcher(owner, repo, ref, path string) (string, fetchStatus) {
-	return httpRawFetch(owner, repo, ref, path, maxRawFileBytes)
+	return httpRawFetch(owner, repo, ref, path, maxRawFileBytes, rawFetchToken())
 }
 
 // maxRawFileBytes caps a raw read: bundled dist/ files can be a few MB,
 // anything absurd is refused to bound memory.
 const maxRawFileBytes = 16 << 20
 
-// rawFetcherWithLimit is httpRawFetcher reading at most limit bytes: the
-// definition fetch reads one byte past its bound to tell an oversized
-// file from one at the bound.
-func rawFetcherWithLimit(limit int64) rawFetcher {
+// rawFetcherWithToken is httpRawFetcher sending token ("" for an
+// anonymous read) and reading at most limit bytes: the definition fetch
+// reads one byte past its bound to tell an oversized file from one at the
+// bound, and knows the token its reads were sent with.
+func rawFetcherWithToken(token string, limit int64) rawFetcher {
 	return func(owner, repo, ref, p string) (string, fetchStatus) {
-		return httpRawFetch(owner, repo, ref, p, limit)
+		return httpRawFetch(owner, repo, ref, p, limit, token)
 	}
 }
 
@@ -1223,7 +1224,7 @@ func escapePathSegments(p string) string {
 	return strings.Join(segs, "/")
 }
 
-func httpRawFetch(owner, repo, ref, path string, limit int64) (string, fetchStatus) {
+func httpRawFetch(owner, repo, ref, path string, limit int64, token string) (string, fetchStatus) {
 	// Respect the offline switch the test suite (and air-gapped runs)
 	// use to keep the collector network-free.
 	if v := os.Getenv(EnvDisableGitHubAPI); v == "1" || v == "true" {
@@ -1240,8 +1241,8 @@ func httpRawFetch(owner, repo, ref, path string, limit int64) (string, fetchStat
 	// repo with many third-party actions can otherwise hit (turning real
 	// findings into could-not-verify). Public content, so any read token
 	// works; private repos need it. Falls back to anonymous.
-	if tok := rawFetchToken(); tok != "" {
-		req.Header.Set("Authorization", "token "+tok)
+	if token != "" {
+		req.Header.Set("Authorization", "token "+token)
 	}
 	resp, err := rawHTTPClient.Do(req)
 	if err != nil {
