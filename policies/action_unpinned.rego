@@ -198,7 +198,26 @@ _is_local(uses) if {
 	startswith(uses, "docker://")
 }
 
+# _is_trusted_owner: the reference sits below a trustedOwners entry
+# (`owner`, `owner/repo` or a deeper path). GitHub resolves the owner
+# and repository without regard to case, so those two segments compare
+# case-insensitively; a path below them and the ref stay exact (#623).
 _is_trusted_owner(uses) if {
 	some trusted in input.config.actionsMustBePinnedByCommitSha.trustedOwners
-	startswith(uses, sprintf("%s/", [trusted]))
+	prefix := split(trusted, "/")
+	head := split(split(uses, "@")[0], "/")
+	count(head) > count(prefix)
+	every i, want in prefix {
+		_segment_matches(i, want, head[i])
+	}
+}
+
+_segment_matches(i, want, got) if {
+	i < 2
+	lower(want) == lower(got)
+}
+
+_segment_matches(i, want, got) if {
+	i >= 2
+	want == got
 }

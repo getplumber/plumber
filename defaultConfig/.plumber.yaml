@@ -823,8 +823,7 @@ github:
       trustGithubOfficialActions: true # actions/* and github/*
       trustSameOrgActions: true # action owner == scanned repo owner
       minimumStars: 20000 # popular-by-adoption floor (requires API access)
-      # Owner matching is literal and CASE-SENSITIVE, so mixed-case orgs are
-      # listed in both their canonical and lowercase forms.
+      # Owner and repository match without regard to case, as on GitHub.
       trustedGithubActions:
         # ── Cloud providers ──────────────────────────────────────────
         - aws-actions/* # Amazon Web Services
@@ -977,24 +976,6 @@ github:
         - qltysh/* # Qlty Software
         - flatpak/* # Flatpak project
         - peter-evans/* # Peter Evans (widely-adopted PR/comment actions; pin by SHA)
-        # ── Lowercase case-aliases (literal matcher is case-sensitive) ──
-        - azure/* # = Azure/*
-        - sonarsource/* # = SonarSource/*
-        - datadog/* # = DataDog/*
-        - jetbrains/* # = JetBrains/*
-        - shopify/* # = Shopify/*
-        - gitguardian/* # = GitGuardian/*
-        - checkmarx/* # = Checkmarx/*
-        - qualys/* # = Qualys/*
-        - circleci-public/* # = CircleCI-Public/*
-        - virtuslab/* # = VirtusLab/*
-        - nuget/* # = NuGet/*
-        - determinatesystems/* # = DeterminateSystems/*
-        - 1password/* # = 1Password/*
-        - apple-Actions/* # mixed-case form of apple-actions/*
-        - embarkstudios/* # = EmbarkStudios/*
-        - pyo3/* # = PyO3/*
-        - homebrew/* # = Homebrew/*
 
     # ===========================================
     # Container images must not use forbidden reference

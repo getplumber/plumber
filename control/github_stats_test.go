@@ -107,6 +107,30 @@ func TestAggregate_UppercaseShaCountsAsPinned(t *testing.T) {
 	}
 }
 
+// TestAggregate_TrustedOwnersIgnoreCase locks the action-pinning counter
+// to _is_trusted_owner in action_unpinned.rego, which compares the owner
+// without regard to case (#623): `Actions/checkout@v4` is a trusted
+// owner's reference and stays out of the counted refs.
+func TestAggregate_TrustedOwnersIgnoreCase(t *testing.T) {
+	pipeline := &ir.NormalizedPipeline{
+		Jobs: []ir.Job{
+			{
+				Name: "build",
+				Uses: []ir.Action{
+					{Uses: "Actions/checkout@v4"},
+					{Uses: "someowner/somerepo@v4"}, // the only third-party ref
+				},
+			},
+		},
+	}
+	pc := &configuration.PlumberConfig{GitHub: &configuration.ProviderConfig{}}
+	stats := AggregateGitHubStats(pipeline, pc)
+
+	if stats.ActionRefsTotal != 1 || stats.ActionRefsUnpinned != 1 {
+		t.Fatalf("ActionRefsTotal = %d, ActionRefsUnpinned = %d, want 1 and 1 (Actions/ is the trusted owner actions)", stats.ActionRefsTotal, stats.ActionRefsUnpinned)
+	}
+}
+
 // TestAggregate_ActionRefsAbsentUpstreamCounter locks the ISSUE-707
 // "Impostor Refs Found" metric to what the rego actually flags. The
 // counter is deliberately guarded by isShaPinned — unlike its sibling

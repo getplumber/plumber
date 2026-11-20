@@ -366,10 +366,12 @@ func ownerOf(ref string) string {
 	return ""
 }
 
+// isTrustedOwner mirrors _is_trusted_owner in action_unpinned.rego:
+// GitHub resolves owners without regard to case, so the match ignores it.
 func isTrustedOwner(ref string, trustedOwners []string) bool {
 	owner := ownerOf(ref)
 	for _, t := range trustedOwners {
-		if owner == t {
+		if strings.EqualFold(owner, t) {
 			return true
 		}
 	}

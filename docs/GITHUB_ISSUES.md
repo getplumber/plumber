@@ -294,7 +294,9 @@ so they are reported as they would be without any lockfile.
 **Config.** Enabled by default in the generated `.plumber.yaml`.
 `trustedOwners: [actions, github]` exempts first-party GitHub-owned
 actions so the initial signal stays focused on the third-party
-surface. Pair with Dependabot
+surface. Owner and repository match without regard to case, as GitHub
+resolves them: `actions` covers `Actions/checkout`. A path below the
+repository and the ref still match exactly. Pair with Dependabot
 (`version-update-strategy: sha-and-version`) to keep pins fresh, or
 set `enabled: false` on projects that are not yet ready to migrate.
 
@@ -477,13 +479,15 @@ surface.
 An action is **trusted** when any of these hold:
 
 - `trustGithubOfficialActions` (default `true`) covers `actions/*` and
-  `github/*`, the first-party owners every workflow already trusts.
+  `github/*`, the first-party owners every workflow already trusts,
+  whatever the case of the owner.
 - `trustSameOrgActions` (default `true`) covers actions whose owner is
   the same org/user as the scanned repository — an org's own actions are
   inside its trust boundary. Owner match is case-insensitive; it abstains
   when the scanned repo's owner is unknown.
 - its `owner/repo` matches an entry in `trustedGithubActions` — either
-  an exact `owner/repo` or an `owner/*` whole-org wildcard.
+  an exact `owner/repo` or an `owner/*` whole-org wildcard, matched
+  case-insensitively.
 - `minimumStars` is set and the action's upstream repository has at
   least that many stars. This catches the rename/re-creation squat
   where a once-trusted name is re-registered with no history. It needs
