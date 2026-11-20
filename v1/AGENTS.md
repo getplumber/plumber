@@ -16,6 +16,11 @@ sh .agents/skills/use-modern-go/scripts/run-tool.sh list --file-path <file.go>
 Read the whole output and follow the guidelines it returns, even where nearby code uses an older
 pattern. An agent that cannot load skills reads the file and runs the script.
 
+v1 always builds with the latest Go release. The `go` directive of `go.mod` names it, and `go.mod`
+has no `toolchain` line. `.github/workflows/v1.yml` reads the version with
+`go-version-file: go.mod`, so `go.mod` is the only place to bump it. Until the switch (step 13 of
+`docs/project-structure.md`), `go.mod` stays as `main` has it (rule 2).
+
 For what the skill doesn't cover (naming, error messages, doc comments, API shape and tests), follow
 the [Google Go Style Guide](https://google.github.io/styleguide/go/guide) and its
 [Style Decisions](https://google.github.io/styleguide/go/decisions) and
@@ -49,12 +54,15 @@ skills reads the file and applies it.
    requirement and its `go.sum` lines, never a version change of a dependency `main` has, so syncs
    from `main` still merge cleanly.
 3. Branch from `release/v1` and open PRs against `release/v1`, never `main`:
-   `git fetch origin && git switch -c <branch> origin/release/v1`.
-4. A maintainer merges `main` into `release/v1` by hand, through a PR:
+   `git fetch origin && git switch -c <branch> origin/release/v1`. `release/v1` stays after v1
+   ships: every new feature still branches from it and targets it.
+4. Until v1 ships, a maintainer merges `main` into `release/v1` by hand, through a PR:
    `git switch -c sync/main-into-release-v1 origin/release/v1 && git merge origin/main`, then `gh pr create --base release/v1`.
    `.github/workflows/v1.yml` runs the suite on that PR. A red result means a command, flag, output
    format or control changed on `main`: add or refresh the rows before merging. On a conflict in a
-   workflow's `pull_request` trigger, keep release/v1's `branches: [main]`.
+   workflow's `pull_request` trigger, keep release/v1's `branches: [main]`. Once v1 ships, the
+   sync stops and goes the other way: `main` holds the released code, and a maintainer releases by
+   merging `release/v1` into `main`.
 5. The suite is a firewall for the refactoring, not a coverage gate: a row exists because a
    behavior is worth protecting. It has two packages, `test/local` and `test/e2e`, and every file
    is a `_test.go`. Each package has its own copy of the code they share (building the binary, the
