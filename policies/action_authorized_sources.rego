@@ -17,7 +17,8 @@
 #     org/user as the scanned repository (input.pipeline.projectPath).
 #     An org's own actions are already inside its trust boundary.
 #   input.config.githubActionMustComeFromAuthorizedSources.trustedGithubActions
-#     Allowlist of `owner/repo` (exact) or `owner/*` (whole-org wildcard).
+#     Allowlist of `owner/repo` (exact) or `owner/*` (whole-org wildcard),
+#     matched case-insensitively like the official owners.
 #   input.config.githubActionMustComeFromAuthorizedSources.minimumStars
 #     When > 0, trust any action whose upstream repo has >= this many
 #     stars. Driven by collect-time API metadata; when the star count is
@@ -101,11 +102,12 @@ _authorized(action) if _in_allowlist(action.uses)
 
 _authorized(action) if _has_enough_stars(action)
 
-# First-party GitHub-owned actions, when the user trusts them.
+# First-party GitHub-owned actions, when the user trusts them. Owner
+# comparison is case-insensitive, as GitHub resolves it.
 _is_official(uses) if {
 	input.config.githubActionMustComeFromAuthorizedSources.trustGithubOfficialActions == true
 	owner := _owner_of(uses)
-	owner in {"actions", "github"}
+	lower(owner) in {"actions", "github"}
 }
 
 # Same-org actions: trust an action whose owner is the org/user that
@@ -124,10 +126,12 @@ _is_same_org(uses) if {
 # Allowlist match. Patterns are matched against `owner/repo` with `/` as
 # a glob delimiter, so `owner/*` trusts a whole org and `owner/repo`
 # matches exactly. Path-scoped composite refs (`owner/repo/path@ref`)
-# collapse to `owner/repo` before matching.
+# collapse to `owner/repo` before matching. Both sides are lowered:
+# GitHub resolves the owner and repository without regard to case, and
+# the subject never carries a path or a ref (#623).
 _in_allowlist(uses) if {
 	some pattern in input.config.githubActionMustComeFromAuthorizedSources.trustedGithubActions
-	glob.match(pattern, ["/"], _owner_repo_of(uses))
+	glob.match(lower(pattern), ["/"], lower(_owner_repo_of(uses)))
 }
 
 # Minimum-stars floor. Abstains when the threshold is 0 (disabled) or
