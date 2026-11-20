@@ -4,8 +4,9 @@
 # getplumber-examples/github-actions-miscellaneous-knowledge, branch
 # test/2026-11-20-boolean-expressions, run 44718136654. A call other than
 # contains(), startsWith() or endsWith() can expand to its argument, a
-# group expands to its content, and an index reads the field it names.
-# Expected hits: 8, one per job.
+# group expands to its content, and an index reads the field it names. An
+# expression nested deeper than the reduction reads is kept whole.
+# Expected hits: 11, one per job.
 name: operand
 on: push
 jobs:
@@ -41,3 +42,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: ': ${{ fromJSON(github.event.head_commit.message) }}'
+  paren_field:
+    runs-on: ubuntu-latest
+    steps:
+      - run: ': ${{ (github.event.head_commit.message) }}'
+  deep_nesting:
+    runs-on: ubuntu-latest
+    steps:
+      - run: ': ${{ toJSON(fromJSON(toJSON(fromJSON(github.event.head_commit.message)))) }}'
+  index_last_field:
+    runs-on: ubuntu-latest
+    steps:
+      - run: ": ${{ github.event.head_commit['message'] }}"

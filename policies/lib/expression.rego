@@ -19,11 +19,13 @@ untrusted(s, patterns) if {
 
 # reduced is e, a `${{ …` match, with every boolean-valued part removed:
 # an injection pattern that still matches it names a field whose text can
-# reach the script. An expression it cannot read (nesting deeper than
+# reach the script. An index holding a name is that property first, so
+# x['body'] reads as x.body. An expression it cannot read (nesting deeper than
 # three groups, an unterminated literal) comes back whole, so it fires as
 # before.
 reduced(e) := r if {
-	s := regex.replace(trim_prefix(e, "${{"), `'(?:[^']|'')*'`, " __s__ ")
+	p := regex.replace(trim_prefix(e, "${{"), `\[\s*'([A-Za-z0-9_-]+)'\s*\]`, ".${1}")
+	s := regex.replace(p, `'(?:[^']|'')*'`, " __s__ ")
 	t := _pass(_pass(_pass(s)))
 	not regex.match(`[()'\[\]]`, t)
 	kept := [o | some o in regex.split(`&&|\|\|`, t); not _boolean_operand(trim_space(o))]
@@ -31,8 +33,9 @@ reduced(e) := r if {
 } else := e
 
 # _pass reduces the innermost groups and indexes of s, in this order:
-#   - an index becomes a property, so x['body'] still reads as x.__i__.body
-#     and a comparison holding one stays a comparison;
+#   - any other index (a number, an expression) becomes x.__i__, so
+#     x[0].message still reads as a message and a comparison holding one
+#     stays a comparison;
 #   - a boolean call or a negated group becomes __b__;
 #   - any other call keeps its arguments in place: its value can be one of
 #     them;

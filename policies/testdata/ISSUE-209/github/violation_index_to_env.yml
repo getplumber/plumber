@@ -1,0 +1,10 @@
+# github.event.comment['body'] is the comment body: an index holding a
+# literal reads the field it names. Expect 1 on bad.
+name: Index to env
+on: [issue_comment]
+
+jobs:
+  bad:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "DATA=${{ github.event.comment['body'] }}" >> "$GITHUB_ENV"

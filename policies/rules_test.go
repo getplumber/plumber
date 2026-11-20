@@ -419,11 +419,19 @@ func TestIssue206_TemplateInjection(t *testing.T) {
 				"violation_boolean_operand/call_argument",
 				"violation_boolean_operand/comparison_or_operand",
 				"violation_boolean_operand/contains_and_operand",
+				"violation_boolean_operand/deep_nesting",
 				"violation_boolean_operand/group_operand",
 				"violation_boolean_operand/index_field",
+				"violation_boolean_operand/index_last_field",
+				"violation_boolean_operand/paren_field",
 				"violation_boolean_operand/operand_or_false",
 				"violation_boolean_operand/or_operand",
 			},
+		},
+		{
+			// An index holding a literal reads the field it names.
+			fixture:      "violation_index_field.yml",
+			expectedHits: []string{"violation_index_field/bad"},
 		},
 	}
 
@@ -5057,6 +5065,9 @@ func TestIssue209_GitHubEnvInjection(t *testing.T) {
 		{"violation_base64_before.yml", []string{"violation_base64_before/bad"}},
 		// || expands to an operand: the body itself lands in $GITHUB_ENV (#624).
 		{"violation_boolean_operand_to_env.yml", []string{"violation_boolean_operand_to_env/bad"}},
+		{"violation_boolean_operand_env_bound.yml", []string{"violation_boolean_operand_env_bound/heredoc", "violation_boolean_operand_env_bound/redirect"}},
+		// An index holding a literal reads the field it names.
+		{"violation_index_to_env.yml", []string{"violation_index_to_env/bad"}},
 		// Clean — each MUST stay silent (true-negative / false-positive guards).
 		{"clean_env_binding.yml", nil},          // env-bound title (single-line) to $GITHUB_ENV
 		{"clean_env_bound_ref_to_env.yml", nil}, // env-bound ref (single-line) to $GITHUB_ENV
