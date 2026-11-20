@@ -201,7 +201,8 @@ _is_local(uses) if {
 # _is_trusted_owner: the reference sits below a trustedOwners entry
 # (`owner`, `owner/repo` or a deeper path). GitHub resolves the owner
 # and repository without regard to case, so those two segments compare
-# case-insensitively; a path below them and the ref stay exact (#623).
+# case-insensitively; a path below them compares exactly. The ref is cut
+# off first: an entry never names one (#623).
 _is_trusted_owner(uses) if {
 	some trusted in input.config.actionsMustBePinnedByCommitSha.trustedOwners
 	prefix := split(trusted, "/")

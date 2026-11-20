@@ -295,8 +295,8 @@ so they are reported as they would be without any lockfile.
 `trustedOwners: [actions, github]` exempts first-party GitHub-owned
 actions so the initial signal stays focused on the third-party
 surface. Owner and repository match without regard to case, as GitHub
-resolves them: `actions` covers `Actions/checkout`. A path below the
-repository and the ref still match exactly. Pair with Dependabot
+resolves them: `actions` covers `Actions/checkout`. An entry with a
+path below the repository matches that path exactly. Pair with Dependabot
 (`version-update-strategy: sha-and-version`) to keep pins fresh, or
 set `enabled: false` on projects that are not yet ready to migrate.
 
