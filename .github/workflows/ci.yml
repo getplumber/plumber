@@ -23,8 +23,8 @@ jobs:
         # to a different toolchain over time without any workflow change.
         # Floor is 1.26.0, the module's minimum (go.mod `go` directive, raised
         # to 1.26 by golang.org/x/crypto v0.56.0 which clears the x/crypto/ssh
-        # advisories); 1.26.10 matches the pinned toolchain.
-        go-version: ['1.26.10', '1.26.0']
+        # advisories); 1.26.11 matches the pinned toolchain.
+        go-version: ['1.26.11', '1.26.0']
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -47,7 +47,7 @@ jobs:
 
       - uses: actions/setup-go@v7.0.0
         with:
-          go-version: '1.26.10'
+          go-version: '1.26.11'
 
       # Build from what git actually tracks. Every other job builds the
       # working tree, which can contain generated or git-ignored files that
@@ -72,10 +72,20 @@ jobs:
 
       - uses: actions/setup-go@v7.0.0
         with:
-          go-version: '1.26.10'
+          go-version: '1.26.11'
 
+      # TestCorpus is left out here and run by the Corpus job below, in
+      # parallel with this one. The corpus replays 210 captured repositories
+      # through the policy engine: 90 of the 91 seconds of test time in the
+      # control package, and the race detector multiplies OPA evaluation by
+      # about six, so it alone made this job the longest of the workflow
+      # (4.5 min of a 5 min PR). Both jobs keep -race: TestCorpus is the only
+      # test of the package that evaluates policies concurrently (t.Parallel),
+      # so it is what race-checks the engine's shared caches. The pattern is
+      # anchored: -skip and -run are regular expressions, and the five
+      # TestCorpus* siblings (the corpus's own checks) stay in this run.
       - name: Run tests
-        run: go test ./... -race -timeout 30m -coverprofile=coverage.out -covermode=atomic
+        run: go test ./... -race -skip '^TestCorpus$' -timeout 30m -coverprofile=coverage.out -covermode=atomic
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v7.0.2
@@ -83,6 +93,25 @@ jobs:
           name: coverage
           path: coverage.out
           retention-days: 14
+
+  corpus:
+    name: Corpus
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version: '1.26.11'
+
+      # The precision gate of the control package (see corpus_test.go):
+      # every known path of an incident found at its tier, no clean case
+      # above its bound. Under -race, see the Test job for why. Only
+      # TestCorpus itself: its TestCorpus* siblings run in the Test job.
+      - name: Run the corpus
+        run: go test ./control -race -run '^TestCorpus$' -count=1 -timeout 15m
 
   lint:
     name: Lint
@@ -94,24 +123,22 @@ jobs:
 
       - uses: actions/setup-go@v7.0.0
         with:
-          go-version: '1.26.10'
+          go-version: '1.26.11'
 
-      # Run golangci-lint via `go install` instead of the third-party
-      # golangci-lint-action wrapper — no external action is trusted, and
-      # the linter is built from an immutable commit pin (v2.10.1). Go's
-      # module checksum database (sum.golang.org) verifies the download
-      # cryptographically, so no separate checksum step is needed.
+      # golangci-lint-action downloads the pinned release binary, verifies
+      # its checksum, and caches the linter's analysis results between runs
+      # so only the packages whose inputs changed are re-analyzed. The
+      # action itself is pinned to a commit in actions.lock.
       - name: golangci-lint
-        run: |
-          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@5d1e709b7be35cb2025444e19de266b056b7b7ee # v2.10.1
-          golangci-lint run
+        uses: golangci/golangci-lint-action@v9.3.0
+        with:
+          version: v2.10.1
 
       # Whole-program dead code check. The `unused` linter can't flag
       # unreachable exported functions or code kept alive only by its own
       # tests; deadcode does reachability analysis from main. The tool
       # always exits 0, so fail on any output. Built from an immutable
-      # commit pin like golangci-lint; sum.golang.org verifies the
-      # download cryptographically.
+      # commit pin; sum.golang.org verifies the download cryptographically.
       #
       # finding/identity is exempt: it publishes the finding-identity recipe
       # for consumers outside this module (#403), so reachability from our own
@@ -149,7 +176,7 @@ jobs:
 
       - uses: actions/setup-go@v7.0.0
         with:
-          go-version: '1.26.10'
+          go-version: '1.26.11'
 
       - name: Install and run govulncheck
         # setup-go pins GOTOOLCHAIN=local, which makes `go` ignore the
@@ -168,7 +195,39 @@ jobs:
         with:
           persist-credentials: false
 
+      # The image is the Dockerfile, its build context (.dockerignore) and
+      # the Go module graph. On a pull request the build and the scan run
+      # only when one of those changed against the base branch; every push
+      # to main scans. If the base commit cannot be fetched, scan anyway.
+      # Plain git, no changed-files action.
+      - name: Decide whether the image can have changed
+        id: changes
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != "pull_request" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "push: scanning"
+            exit 0
+          fi
+          if ! git fetch --quiet --depth=1 origin "$BASE_SHA"; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "base $BASE_SHA could not be fetched: scanning"
+            exit 0
+          fi
+          changed="$(git diff --name-only "$BASE_SHA" HEAD -- Dockerfile .dockerignore go.mod go.sum .github/workflows/ci.yml)"
+          if [ -n "$changed" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "image inputs changed:"; echo "$changed"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "no change to Dockerfile, .dockerignore, go.mod, go.sum or this workflow: image scan skipped"
+          fi
+
       - name: Build Docker image
+        if: steps.changes.outputs.run == 'true'
         run: docker build -t plumber:ci .
 
       # Grype is installed directly from a pinned release and verified
@@ -178,6 +237,7 @@ jobs:
       # moving ref that voids the immutability the SHA pin implies. The
       # hash below is the only trust anchor; bump both together.
       - name: Install grype (pinned + checksum-verified)
+        if: steps.changes.outputs.run == 'true'
         env:
           GRYPE_VERSION: "0.116.0"
           GRYPE_SHA256: "40aff724297312f91ea390d003bed8d8651c74cc7f5b26732db80b3a408d2fc5"
@@ -192,6 +252,7 @@ jobs:
           grype version
 
       - name: Grype image scan
+        if: steps.changes.outputs.run == 'true'
         env:
           GRYPE_CHECK_FOR_APP_UPDATE: "false"
         run: grype "plumber:ci" --fail-on high --only-fixed
