@@ -113,6 +113,10 @@ type definitionFetcher struct {
 	// SHA is final (see readWith).
 	provenRepos sync.Map
 	rest        *api.RESTClient
+	gql         *api.GraphQLClient
+	// absent holds the files GitHub said do not exist (prefetchAbsent),
+	// keyed by containerKey with the file path as subpath.
+	absent map[string]struct{}
 
 	mu      sync.Mutex
 	actions map[string]actionDefinition
@@ -130,6 +134,7 @@ func newDefinitionFetcher(raw rawFetcher, client *GitHubMetadataClient) *definit
 	f := &definitionFetcher{raw: raw, actions: map[string]actionDefinition{}, files: map[string]fileDefinition{}}
 	if client != nil && client.Available() {
 		f.rest = client.rest
+		f.gql = client.gql
 	}
 	return f
 }
@@ -191,11 +196,18 @@ func APIDisabled() bool {
 
 // read is a rawFetcher: the raw host, then the contents API unless the
 // raw host, asked at a commit SHA with a token the API already accepted
-// for that repository, found nothing. A
+// for that repository, found nothing. A file the entrypoint prefetch
+// found absent costs no request (prefetchAbsent). A
 // path that climbs out of the repository is refused without a request. The
 // mutable-exec scan reads an entrypoint through it, with the raw host's
 // own bound.
 func (f *definitionFetcher) read(owner, repo, ref, p string) (string, fetchStatus) {
+	f.mu.Lock()
+	_, absent := f.absent[containerKey(owner, repo, p, ref)]
+	f.mu.Unlock()
+	if absent {
+		return "", fetchMissing
+	}
 	return f.readWith(f.raw, owner, repo, ref, p)
 }
 

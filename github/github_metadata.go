@@ -111,6 +111,9 @@ type GitHubMetadata struct {
 // run rather than a crash.
 type GitHubMetadataClient struct {
 	rest *api.RESTClient
+	// gql reads through the same transport and token as rest; nil when
+	// it could not be built.
+	gql *api.GraphQLClient
 	// apiBaseURL is the REST base used for unauthenticated fallback reads
 	// (e.g. https://api.github.com). When an authenticated read of a public
 	// action repo is blocked by the owner org's IP allow list (403), the
@@ -207,6 +210,9 @@ func NewGitHubMetadataClientForHost(host string) *GitHubMetadataClient {
 		return c
 	}
 	c.rest = rest
+	if gql, err := api.NewGraphQLClient(opts); err == nil {
+		c.gql = gql
+	}
 	return c
 }
 

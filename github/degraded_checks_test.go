@@ -31,6 +31,7 @@ func stubbedMetadataClient(t *testing.T, respond func(*http.Request) (string, in
 		t.Fatalf("new rest client: %v", err)
 	}
 	client.rest = rest
+	client.gql = nil // no live GraphQL query from a test
 	return client
 }
 
