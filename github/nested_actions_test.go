@@ -772,12 +772,76 @@ func TestReadWith_AuthenticatedRawMissIsFinal(t *testing.T) {
 	defs := newDefinitionFetcher(stub.fetch, client)
 	defs.rawToken = "test-token"
 	for _, p := range []string{"action.yml", "action.yaml", "dist/index.js"} {
-		if _, st := defs.read("acme", "b", "v1", p); st != fetchMissing {
+		if _, st := defs.read("acme", "b", testSHA, p); st != fetchMissing {
 			t.Fatalf("%s: status = %v, want fetchMissing", p, st)
 		}
 	}
 	if len(apiPaths) != 1 || !strings.HasSuffix(apiPaths[0], "/contents/action.yml") {
 		t.Fatalf("only the first authenticated raw 404 may ask the contents API, got %q", apiPaths)
+	}
+}
+
+const testSHA = "0123456789abcdef0123456789abcdef01234567"
+
+// TestReadWith_RawMissOnAMovableRefAsksTheAPI: the raw host's CDN keeps a
+// 404 for about a minute, so a file pushed to a branch (or under a moved
+// tag) right after a miss is still a 404 there. Only a full commit SHA,
+// whose content never changes, makes a raw miss final; on any other ref
+// every miss asks the contents API, which answers from the repository.
+func TestReadWith_RawMissOnAMovableRefAsksTheAPI(t *testing.T) {
+	t.Setenv(EnvDisableGitHubAPI, "0")
+	stub := newStub(map[string]string{})
+	var apiPaths []string
+	client := stubbedMetadataClient(t, func(r *http.Request) (string, int) {
+		apiPaths = append(apiPaths, r.URL.Path)
+		if strings.HasSuffix(r.URL.Path, "/contents/new/action.yml") {
+			return `{"content":"bmFtZTogbmV3Cg==","encoding":"base64"}`, http.StatusOK
+		}
+		return `{"message":"Not Found"}`, http.StatusNotFound
+	})
+	defs := tokenFetcher(stub.fetch, client)
+	if _, st := defs.read("acme", "b", "main", "action.yml"); st != fetchMissing {
+		t.Fatalf("first miss: status = %v, want fetchMissing", st)
+	}
+	text, st := defs.read("acme", "b", "main", "new/action.yml")
+	if st != fetchOK || text != "name: new\n" {
+		t.Fatalf("file the raw host still 404s: got %q, %v, want the API's answer", text, st)
+	}
+	if len(apiPaths) != 2 {
+		t.Fatalf("every raw miss on a branch must ask the contents API, got %q", apiPaths)
+	}
+}
+
+// TestReadWith_TokenIsProvenPerRepository: a token the contents API
+// accepted for one repository can still be refused for another, by SAML
+// SSO or an IP allow list of its organization (403), while the raw host
+// answers 404 there. A raw miss is final only in a repository where the
+// API accepted the token, so the refused one stays could-not-verify.
+func TestReadWith_TokenIsProvenPerRepository(t *testing.T) {
+	t.Setenv(EnvDisableGitHubAPI, "0")
+	stub := newStub(map[string]string{})
+	var apiPaths []string
+	client := stubbedMetadataClient(t, func(r *http.Request) (string, int) {
+		apiPaths = append(apiPaths, r.URL.Path)
+		if strings.HasPrefix(r.URL.Path, "/repos/sso-org/") {
+			return `{"message":"Resource protected by organization SAML enforcement."}`, http.StatusForbidden
+		}
+		return `{"message":"Not Found"}`, http.StatusNotFound
+	})
+	defs := tokenFetcher(stub.fetch, client)
+	if _, st := defs.read("acme", "b", testSHA, "action.yml"); st != fetchMissing {
+		t.Fatalf("acme/b: status = %v, want fetchMissing", st)
+	}
+	for _, p := range []string{"action.yml", "action.yaml"} {
+		if _, st := defs.read("sso-org", "private", testSHA, p); st != fetchError {
+			t.Fatalf("sso-org/private %s: status = %v, want fetchError", p, st)
+		}
+	}
+	if _, st := defs.read("ACME", "B", testSHA, "action.yaml"); st != fetchMissing {
+		t.Fatalf("acme/b again: status = %v, want fetchMissing", st)
+	}
+	if len(apiPaths) != 3 {
+		t.Fatalf("want one API request for acme/b and one per sso-org/private miss, got %q", apiPaths)
 	}
 }
 

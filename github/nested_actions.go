@@ -20,7 +20,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/cli/go-gh/v2/pkg/api"
@@ -109,9 +108,10 @@ type definitionFetcher struct {
 	// rawToken is the token raw and rawDefinition send, "" when they read
 	// anonymously (or are a test's stub).
 	rawToken string
-	// tokenProven is set once the contents API accepted rawToken: from
-	// then on a raw miss sent with it is final (see readWith).
-	tokenProven atomic.Bool
+	// provenRepos holds the repositories (lower-cased owner/repo) where
+	// the contents API accepted rawToken: there a raw miss at a commit
+	// SHA is final (see readWith).
+	provenRepos sync.Map
 	rest        *api.RESTClient
 
 	mu      sync.Mutex
@@ -190,7 +190,8 @@ func APIDisabled() bool {
 }
 
 // read is a rawFetcher: the raw host, then the contents API unless the
-// raw host, asked with a token the API already accepted, found nothing. A
+// raw host, asked at a commit SHA with a token the API already accepted
+// for that repository, found nothing. A
 // path that climbs out of the repository is refused without a request. The
 // mutable-exec scan reads an entrypoint through it, with the raw host's
 // own bound.
@@ -228,13 +229,23 @@ func (f *definitionFetcher) readWith(raw rawFetcher, owner, repo, ref, p string)
 	// A raw read sent with a valid token answers a private file too, so
 	// its 404 is final and the contents API is not asked again
 	// (plumber#618). Valid is what the raw host cannot say: an expired or
-	// revoked token gets a 404 there too, so the token counts only once
-	// the contents API accepted it, where a bad one answers 401 and the
-	// read stays could-not-verify. An anonymous raw read (the client
-	// holds a `gh auth` token the raw host never sees) cannot tell absent
-	// from private at all.
-	if st == fetchOK || f.rest == nil || (raw != nil && st == fetchMissing && f.rawToken != "" && f.tokenProven.Load()) {
+	// revoked token gets a 404 there too, and so does a token SAML SSO or
+	// an IP allow list refuses for one organization. The token counts
+	// only in a repository where the contents API accepted it, where a
+	// refused one answers 401 or 403 and the read stays could-not-verify.
+	// The ref must be a commit SHA: the raw host's CDN keeps a 404 for
+	// about a minute, so a file pushed to a branch or under a moved tag
+	// right after a miss is still a 404 there. An anonymous raw read (the
+	// client holds a `gh auth` token the raw host never sees) cannot tell
+	// absent from private at all.
+	repoKey := strings.ToLower(owner) + "/" + strings.ToLower(repo)
+	if st == fetchOK || f.rest == nil {
 		return text, st
+	}
+	if raw != nil && st == fetchMissing && f.rawToken != "" && _isCommitSha(ref) {
+		if _, proven := f.provenRepos.Load(repoKey); proven {
+			return text, st
+		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), contentsFetchTimeout)
 	defer cancel()
@@ -242,7 +253,7 @@ func (f *definitionFetcher) readWith(raw rawFetcher, owner, repo, ref, p string)
 	// With a raw token set, the API client sends that same token: both
 	// read PLUMBER_METADATA_TOKEN, then GH_TOKEN, then GITHUB_TOKEN.
 	if f.rawToken != "" && (err == nil || isNotFound(err)) {
-		f.tokenProven.Store(true)
+		f.provenRepos.Store(repoKey, struct{}{})
 	}
 	switch {
 	case err == nil:
