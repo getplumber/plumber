@@ -1,0 +1,17 @@
+# The workflow from #624: a comparison and a contains() over the comment
+# body expand to true or false, which carries no payload into the script.
+# Expected hits: 0.
+name: Comment command
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - id: checker
+        run: |
+          echo "is_approve=${{ github.event.comment.body == '/approve' }}" >> "$GITHUB_OUTPUT"
+          echo "has_cmd=${{ contains(github.event.comment.body, '/approve') }}" >> "$GITHUB_OUTPUT"

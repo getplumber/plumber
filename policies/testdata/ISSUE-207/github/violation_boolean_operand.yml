@@ -1,0 +1,34 @@
+# && and || expand to one of their operands, so the commit message itself
+# reaches the script when it is an operand, even next to a comparison
+# (#624). Each of these ran the payload on GitHub:
+# getplumber-examples/github-actions-miscellaneous-knowledge, branch
+# test/2026-11-20-boolean-expressions, run 44718136654. A call other than
+# contains(), startsWith() or endsWith() can expand to its argument.
+# Expected hits: 6, one per job.
+name: operand
+on: push
+jobs:
+  and_operand:
+    runs-on: ubuntu-latest
+    steps:
+      - run: ': ${{ true && github.event.head_commit.message }}'
+  or_operand:
+    runs-on: ubuntu-latest
+    steps:
+      - run: ': ${{ false || github.event.head_commit.message }}'
+  comparison_or_operand:
+    runs-on: ubuntu-latest
+    steps:
+      - run: ": ${{ github.event.head_commit.message == 'x' || github.event.head_commit.message }}"
+  contains_and_operand:
+    runs-on: ubuntu-latest
+    steps:
+      - run: ": ${{ contains(github.event.head_commit.message, 'touch') && github.event.head_commit.message }}"
+  operand_or_false:
+    runs-on: ubuntu-latest
+    steps:
+      - run: ': ${{ github.event.head_commit.message || false }}'
+  call_argument:
+    runs-on: ubuntu-latest
+    steps:
+      - run: ': ${{ fromJSON(github.event.head_commit.message) }}'

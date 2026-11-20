@@ -398,6 +398,31 @@ func TestIssue206_TemplateInjection(t *testing.T) {
 			fixture:      "violation_head_ref_on_pull_request_and_push.yml",
 			expectedHits: []string{"violation_head_ref_on_pull_request_and_push/generate"},
 		},
+		{
+			// A comparison or contains() over a free-text field expands
+			// to true or false, which carries no payload (#624).
+			fixture:      "clean_boolean_expression.yml",
+			expectedHits: nil,
+		},
+		{
+			// The boolean forms GitHub was seen to expand to true or
+			// false over every payload (#624).
+			fixture:      "clean_boolean_forms.yml",
+			expectedHits: nil,
+		},
+		{
+			// && and || expand to an operand: the field itself reaches
+			// the script (#624). Must fire on every job.
+			fixture: "violation_boolean_operand.yml",
+			expectedHits: []string{
+				"violation_boolean_operand/and_operand",
+				"violation_boolean_operand/call_argument",
+				"violation_boolean_operand/comparison_or_operand",
+				"violation_boolean_operand/contains_and_operand",
+				"violation_boolean_operand/operand_or_false",
+				"violation_boolean_operand/or_operand",
+			},
+		},
 	}
 
 	engine := opaengine.New()
@@ -5028,6 +5053,8 @@ func TestIssue209_GitHubEnvInjection(t *testing.T) {
 		// orders: base64 after the var, and base64 before it.
 		{"violation_base64_elsewhere.yml", []string{"violation_base64_elsewhere/bad"}},
 		{"violation_base64_before.yml", []string{"violation_base64_before/bad"}},
+		// || expands to an operand: the body itself lands in $GITHUB_ENV (#624).
+		{"violation_boolean_operand_to_env.yml", []string{"violation_boolean_operand_to_env/bad"}},
 		// Clean — each MUST stay silent (true-negative / false-positive guards).
 		{"clean_env_binding.yml", nil},          // env-bound title (single-line) to $GITHUB_ENV
 		{"clean_env_bound_ref_to_env.yml", nil}, // env-bound ref (single-line) to $GITHUB_ENV
@@ -5039,6 +5066,7 @@ func TestIssue209_GitHubEnvInjection(t *testing.T) {
 		{"clean_base_default_branch.yml", nil},  // base repo metadata (#230), not the fork's
 		{"clean_tojson.yml", nil},               // toJSON escapes the newline
 		{"clean_cross_line.yml", nil},           // sink and expression on different lines
+		{"clean_boolean_to_env.yml", nil},       // comparison / contains() is true or false (#624)
 	}
 
 	engine := opaengine.New()
