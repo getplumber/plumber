@@ -16,6 +16,7 @@ import (
 
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
+	"github.com/getplumber/plumber/internal/httpcount"
 	providerPkg "github.com/getplumber/plumber/provider"
 	protobundle "github.com/sigstore/protobuf-specs/gen/pb-go/bundle/v1"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -357,7 +358,7 @@ func fetchGitHubActionsIDToken(reqURL, reqToken, audience string) (string, error
 	req.Header.Set("Authorization", "Bearer "+reqToken)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := (&http.Client{Timeout: scorePushHTTPTimeout}).Do(req)
+	resp, err := (&http.Client{Timeout: scorePushHTTPTimeout, Transport: httpcount.DefaultTransport}).Do(req)
 	if err != nil {
 		return "", err
 	}

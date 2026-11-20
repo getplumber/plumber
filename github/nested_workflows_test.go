@@ -264,7 +264,7 @@ func TestResolveWorkflows_TwoNestedCallersCountOneContainer(t *testing.T) {
 		{Name: "ci/a", ReusableWorkflowUses: "acme/a/.github/workflows/a.yml@v1"},
 		{Name: "ci/b", ReusableWorkflowUses: "acme/b/.github/workflows/b.yml@v1"},
 	}}
-	w := &nestedWalk{defs: newDefinitionFetcher(stub.fetch, nil), scope: nestedScope{projectPath: "acme/app"}, byKey: map[string]*nestedContainer{}}
+	w := &nestedWalk{defs: tokenFetcher(stub.fetch, nil), scope: nestedScope{projectPath: "acme/app"}, byKey: map[string]*nestedContainer{}}
 	w.resolveWorkflows(p)
 	if w.fetched != 1 {
 		t.Fatalf("fetched = %d, want 1 (the direct calls never count, y.yml once)", w.fetched)
@@ -324,7 +324,7 @@ func TestResolveNested_WorkflowsUnderR6(t *testing.T) {
 		{Name: "ci/x", ReusableWorkflowUses: x},
 		{Name: "ci/z", ReusableWorkflowUses: z},
 	}}
-	resolveNestedActions(p, newDefinitionFetcher(fetch, nil), nestedScope{projectPath: "acme/app"})
+	resolveNestedActions(p, tokenFetcher(fetch, nil), nestedScope{projectPath: "acme/app"})
 	if p.NestedUnresolvedCause == "" {
 		t.Fatal("the offline answer must set the R6 cause")
 	}
