@@ -1,3 +1,47 @@
+## [0.7.23](https://github.com/getplumber/plumber/compare/v0.7.22...v0.7.23) (2026-11-07)
+
+
+### ✨ Features
+
+* **platform:** the banner names the snapshot lanes carried from an earlier pass ([fa02563](https://github.com/getplumber/plumber/commit/fa02563f58ff31ea559f99ad49f8930378a96cf3))
+
+
+### ✅ Tests
+
+* **platform:** the carried-lanes order test feeds the lanes out of order ([a521840](https://github.com/getplumber/plumber/commit/a52184025e04bca12aea7fb1c1d3987c2617b68d))
+* **platform:** the carried-lanes test puts the oldest pass on the last lane ([ae251b7](https://github.com/getplumber/plumber/commit/ae251b7060d63418fce4a54efb7726e4ef8455c1))
+
+## [0.7.22](https://github.com/getplumber/plumber/compare/v0.7.21...v0.7.22) (2026-11-06)
+
+
+### 🐛 Bug Fixes
+
+* **platform:** a merge request from a fork reports its configuration unavailable instead of invalid ([8a10aea](https://github.com/getplumber/plumber/commit/8a10aea0e850a2ec94a34e328b7965bb976ca360))
+
+
+### 📚 Documentation
+
+* **readme:** drop the signing subsection and the scoring sentence ([01466e1](https://github.com/getplumber/plumber/commit/01466e1fa3abdd5017e36d0bb24ad3958b6b13ca))
+
+
+### ✅ Tests
+
+* **cmd:** the fork reason joins the resolution through one tested function ([17aa1b4](https://github.com/getplumber/plumber/commit/17aa1b443095b14378d8847d50772ad4faec01fa))
+
+## [0.7.21](https://github.com/getplumber/plumber/compare/v0.7.20...v0.7.21) (2026-11-05)
+
+
+### 🐛 Bug Fixes
+
+* **platform:** a merged results pipeline resolves its configuration at the source branch head ([1a8ee58](https://github.com/getplumber/plumber/commit/1a8ee584c05af0010a97ab18c597673dcdd15b1c))
+
+## [0.7.20](https://github.com/getplumber/plumber/compare/v0.7.19...v0.7.20) (2026-11-05)
+
+
+### 🐛 Bug Fixes
+
+* **platform:** an INVALID merge from the resolve endpoint reports the git host's own errors ([3beb903](https://github.com/getplumber/plumber/commit/3beb9034e9138416ea7869c5af62456c29208c01))
+
 ## [0.7.19](https://github.com/getplumber/plumber/compare/v0.7.18...v0.7.19) (2026-11-05)
 
 

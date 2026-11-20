@@ -491,3 +491,119 @@ func TestRunContextAccessorsJoinPendingResolution(t *testing.T) {
 		t.Fatal("MergedYAML never answered after the resolution settled")
 	}
 }
+
+// TestDescribeConfig_ForkPipelineNamesTheReason: a run on a merge request
+// from a fork has no commit the platform can resolve against the target
+// project (customer report 2026-11-05, innersource instances live on fork
+// merge requests). The source line says so in words, beside the reason
+// code, so a reader does not go looking for a platform outage.
+func TestDescribeConfig_ForkPipelineNamesTheReason(t *testing.T) {
+	rc := &RunContext{Config: &ConfigResolution{Source: SourceUnavailable, Reason: ReasonForkPipeline, Digest: DigestDiverged, LocalDigest: "abc", DigestVersion: "1"}}
+	out := strings.Join(rc.describeConfig(), "\n")
+	if !strings.Contains(out, "UNAVAILABLE ("+ReasonForkPipeline+")") {
+		t.Fatalf("the reason code is missing:\n%s", out)
+	}
+	if !strings.Contains(out, "merge request from a fork") {
+		t.Fatalf("the fork note is missing:\n%s", out)
+	}
+}
+
+// TestDescribe_NamesCarriedSnapshotLanes encodes platform ruling R1,
+// 2026-11-06 (carried snapshot lanes): when GitLab refuses one lane of a
+// nightly snapshot, the platform keeps that lane's previous value for up to
+// two days and dates it in carried_fields. Controls keep evaluating on the
+// carried data; the banner must say which lanes are older than
+// collected_at, and from when. A snapshot without the member must render
+// exactly as before.
+func TestDescribe_NamesCarriedSnapshotLanes(t *testing.T) {
+	describe := func(t *testing.T, body string) []string {
+		t.Helper()
+		var d SnapshotData
+		if err := json.Unmarshal([]byte(body), &d); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		r := &RunContext{
+			Endpoint: "https://platform.example.com",
+			Context: &ProjectContext{
+				Policies: []Policy{{ID: "3333", Name: "Baseline", Enforcement: EnforcementReport}},
+				Snapshot: Snapshot{CollectedAt: mustTime(t, "2026-11-06T03:00:00Z"), Data: &d},
+			},
+			Config: &ConfigResolution{Source: SourceSnapshot, Digest: DigestMatch, Valid: true},
+		}
+		return r.Describe()
+	}
+	const lanes = `"merged_yaml":"a: 1\n","branch_protection":{},"mr_approvals":{},"variables":{}`
+	baseline := describe(t, `{"schema_version":"2",`+lanes+`,"degraded_fields":["includes_jobs"]}`)
+
+	t.Run("one carried lane names its own pass", func(t *testing.T) {
+		out := strings.Join(describe(t, `{"schema_version":"2",`+lanes+`,"carried_fields":{"mr_approvals":"2026-11-05T03:00:00Z"}}`), "\n")
+		want := "snapshot lanes carried from 2026-11-05T03:00:00Z: mr_approvals"
+		if !strings.Contains(out, want) {
+			t.Fatalf("Describe() missing %q:\n%s", want, out)
+		}
+	})
+
+	// Same pass time on every lane isolates the sort from the oldest-time
+	// logic; the keys arrive in reverse order and map iteration is random,
+	// so a dropped sort fails here almost every run.
+	t.Run("carried lanes are named in sorted order whatever their input order", func(t *testing.T) {
+		out := strings.Join(describe(t, `{"schema_version":"2",`+lanes+`,"carried_fields":{`+
+			`"variables":"2026-11-05T05:00:00+02:00","mr_approvals":"2026-11-05T05:00:00+02:00","branch_protection":"2026-11-05T05:00:00+02:00"}}`), "\n")
+		want := "snapshot lanes carried from 2026-11-05T03:00:00Z: branch_protection, mr_approvals, variables"
+		if !strings.Contains(out, want) {
+			t.Fatalf("Describe() missing %q:\n%s", want, out)
+		}
+	})
+
+	// The oldest pass belongs to the alphabetically LAST lane, so taking the
+	// first sorted lane's time instead of the minimum would fail here.
+	t.Run("two carried lanes name the oldest pass and the sorted lanes", func(t *testing.T) {
+		out := describe(t, `{"schema_version":"2",`+lanes+`,"degraded_fields":["includes_jobs"],`+
+			`"carried_fields":{"branch_protection":"2026-11-05T03:00:00Z","variables":"2026-11-04T03:00:00+02:00"}}`)
+		want := "snapshot lanes carried from 2026-11-04T01:00:00Z: branch_protection, variables"
+		idx := -1
+		for i, l := range out {
+			if l == want {
+				idx = i
+			}
+		}
+		if idx < 1 || idx+1 >= len(out) {
+			t.Fatalf("Describe() missing %q:\n%s", want, strings.Join(out, "\n"))
+		}
+		if !strings.HasPrefix(out[idx-1], "snapshot collected_at: ") {
+			t.Fatalf("the carried line must follow collected_at, got %q before it", out[idx-1])
+		}
+		if !strings.HasPrefix(out[idx+1], "snapshot degraded lanes: ") {
+			t.Fatalf("the carried line must precede the degraded lanes, got %q after it", out[idx+1])
+		}
+		// Reporting only: removing the line gives back today's output.
+		rest := append(append([]string(nil), out[:idx]...), out[idx+1:]...)
+		if strings.Join(rest, "\n") != strings.Join(baseline, "\n") {
+			t.Fatalf("carried_fields must only add one line:\n%s\nvs\n%s", strings.Join(rest, "\n"), strings.Join(baseline, "\n"))
+		}
+	})
+
+	t.Run("member absent prints no carried line", func(t *testing.T) {
+		out := strings.Join(baseline, "\n")
+		if strings.Contains(out, "carried") {
+			t.Fatalf("no carried_fields must mean no carried line:\n%s", out)
+		}
+		want := strings.Join([]string{
+			"platform: https://platform.example.com",
+			"policies: 1 resolved",
+			"  - Baseline [report] 3333",
+			"snapshot collected_at: 2026-11-06T03:00:00Z",
+			"snapshot degraded lanes: includes_jobs (collection failed; these report not_evaluable)",
+		}, "\n")
+		if !strings.HasPrefix(out, want) {
+			t.Fatalf("output without carried_fields changed:\n%s", out)
+		}
+	})
+
+	t.Run("member present but empty prints no carried line", func(t *testing.T) {
+		out := describe(t, `{"schema_version":"2",`+lanes+`,"degraded_fields":["includes_jobs"],"carried_fields":{}}`)
+		if strings.Join(out, "\n") != strings.Join(baseline, "\n") {
+			t.Fatalf("an empty carried_fields must render as its absence:\n%s", strings.Join(out, "\n"))
+		}
+	})
+}

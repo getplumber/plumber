@@ -400,14 +400,68 @@ func TestPlatformAnalyzedSha(t *testing.T) {
 
 	t.Run("the CI environment wins when present", func(t *testing.T) {
 		t.Setenv(env, "cisha")
-		if got, fromAnchor := platformAnalyzedSha(p, &configuration.Configuration{}, anchor); got != "cisha" || fromAnchor {
+		if got, fromAnchor, _ := platformAnalyzedSha(p, &configuration.Configuration{}, anchor); got != "cisha" || fromAnchor {
 			t.Fatalf("got %q", got)
+		}
+	})
+	// A merged results pipeline (or a merge train) runs on an ephemeral merge
+	// commit that no branch or tag points to, and GitLab refuses to merge a
+	// configuration at such a commit ("a commit not associated with a Git
+	// reference (a detached commit)", customer report 2026-11-05). The source
+	// branch head is on a real ref and carries the configuration under
+	// review, so that is the commit the platform is asked to resolve at.
+	t.Run("a merged results pipeline resolves at the source branch head", func(t *testing.T) {
+		t.Setenv(env, "mergecommit")
+		t.Setenv(p.CIEnvVars().MergeRequestSourceSHA, "sourcehead")
+		if got, fromAnchor, _ := platformAnalyzedSha(p, &configuration.Configuration{}, anchor); got != "sourcehead" || fromAnchor {
+			t.Fatalf("got %q, want the source branch head", got)
+		}
+	})
+	t.Run("a source sha equal to the commit sha changes nothing", func(t *testing.T) {
+		t.Setenv(env, "cisha")
+		t.Setenv(p.CIEnvVars().MergeRequestSourceSHA, "cisha")
+		if got, fromAnchor, _ := platformAnalyzedSha(p, &configuration.Configuration{}, anchor); got != "cisha" || fromAnchor {
+			t.Fatalf("got %q", got)
+		}
+	})
+	t.Run("a source sha without a commit sha is not a CI job", func(t *testing.T) {
+		t.Setenv(env, "")
+		t.Setenv(p.CIEnvVars().MergeRequestSourceSHA, "sourcehead")
+		if got, fromAnchor, _ := platformAnalyzedSha(p, &configuration.Configuration{}, anchor); got != "anchorsha" || !fromAnchor {
+			t.Fatalf("got %q, want the anchor's sha: the source sha alone says nothing", got)
+		}
+	})
+	// A merge request from a FORK: the configuration under review lives in
+	// the source project, and the platform resolves against the project the
+	// job belongs to, so neither the merge commit nor the fork's head is a
+	// commit it can merge there (GitLab answers "a commit not associated
+	// with a Git reference"). No sha is returned, with the reason, so the
+	// run reports the config unavailable (controls not_evaluable) instead of
+	// an INVALID verdict nothing established.
+	t.Run("a merge request from a fork yields no sha and names the reason", func(t *testing.T) {
+		t.Setenv(env, "mergecommit")
+		t.Setenv(p.CIEnvVars().RepoPath, "group/target")
+		t.Setenv(p.CIEnvVars().MergeRequestSourceProjectPath, "someone/fork-of-target")
+		t.Setenv(p.CIEnvVars().MergeRequestSourceSHA, "forkhead")
+		got, fromAnchor, reason := platformAnalyzedSha(p, &configuration.Configuration{}, anchor)
+		if got != "" || fromAnchor || reason != platform.ReasonForkPipeline {
+			t.Fatalf("got %q fromAnchor=%v reason=%q, want no sha and the fork reason", got, fromAnchor, reason)
+		}
+	})
+	t.Run("a merge request from the same project is not a fork", func(t *testing.T) {
+		t.Setenv(env, "mergecommit")
+		t.Setenv(p.CIEnvVars().RepoPath, "group/target")
+		t.Setenv(p.CIEnvVars().MergeRequestSourceProjectPath, "group/target")
+		t.Setenv(p.CIEnvVars().MergeRequestSourceSHA, "sourcehead")
+		got, _, reason := platformAnalyzedSha(p, &configuration.Configuration{}, anchor)
+		if got != "sourcehead" || reason != "" {
+			t.Fatalf("got %q reason=%q, want the source head and no reason", got, reason)
 		}
 	})
 
 	t.Run("falls back to the anchor for the default branch", func(t *testing.T) {
 		t.Setenv(env, "")
-		if got, fromAnchor := platformAnalyzedSha(p, &configuration.Configuration{}, anchor); got != "anchorsha" || !fromAnchor {
+		if got, fromAnchor, _ := platformAnalyzedSha(p, &configuration.Configuration{}, anchor); got != "anchorsha" || !fromAnchor {
 			t.Fatalf("got %q, want the anchor's sha", got)
 		}
 	})
@@ -415,7 +469,7 @@ func TestPlatformAnalyzedSha(t *testing.T) {
 	t.Run("falls back when --branch names the anchor's own ref", func(t *testing.T) {
 		t.Setenv(env, "")
 		conf := &configuration.Configuration{Branch: "main"}
-		if got, fromAnchor := platformAnalyzedSha(p, conf, anchor); got != "anchorsha" || !fromAnchor {
+		if got, fromAnchor, _ := platformAnalyzedSha(p, conf, anchor); got != "anchorsha" || !fromAnchor {
 			t.Fatalf("got %q", got)
 		}
 	})
@@ -426,18 +480,18 @@ func TestPlatformAnalyzedSha(t *testing.T) {
 	t.Run("refuses to reuse the anchor for a DIFFERENT branch", func(t *testing.T) {
 		t.Setenv(env, "")
 		conf := &configuration.Configuration{Branch: "feature-x"}
-		if got, _ := platformAnalyzedSha(p, conf, anchor); got != "" {
+		if got, _, _ := platformAnalyzedSha(p, conf, anchor); got != "" {
 			t.Fatalf("got %q, want no sha: the anchor describes %q, not %q", got, anchor.Ref, conf.Branch)
 		}
 	})
 
 	t.Run("no anchor and no CI env yields no sha", func(t *testing.T) {
 		t.Setenv(env, "")
-		if got, _ := platformAnalyzedSha(p, &configuration.Configuration{}, nil); got != "" {
+		if got, _, _ := platformAnalyzedSha(p, &configuration.Configuration{}, nil); got != "" {
 			t.Fatalf("got %q", got)
 		}
 		empty := &platform.ResolutionAnchor{Ref: "main"}
-		if got, _ := platformAnalyzedSha(p, &configuration.Configuration{}, empty); got != "" {
+		if got, _, _ := platformAnalyzedSha(p, &configuration.Configuration{}, empty); got != "" {
 			t.Fatalf("got %q", got)
 		}
 	})
@@ -564,4 +618,39 @@ func TestCheckoutGateSeparatesTwoQuestions(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestApplyNoShaReason pins the join between platformAnalyzedSha's withheld
+// sha and the describe output (bot review of PR 602): the reason lands only
+// on a resolution that is unavailable BECAUSE no sha was handed over, that
+// is a divergent digest with nothing to resolve at. A matching digest whose
+// snapshot carries no merged config is unavailable for its own reason and
+// keeps it: that run never needed a sha, so the fork says nothing about it.
+func TestApplyNoShaReason(t *testing.T) {
+	t.Run("a divergent, unavailable resolution takes the fork reason", func(t *testing.T) {
+		cfg := &platform.ConfigResolution{Source: platform.SourceUnavailable, Reason: platform.ReasonResolutionUnavailable, Digest: platform.DigestDiverged}
+		applyNoShaReason(cfg, platform.ReasonForkPipeline)
+		if cfg.Reason != platform.ReasonForkPipeline {
+			t.Fatalf("reason = %q, want the fork reason", cfg.Reason)
+		}
+	})
+	t.Run("a matching digest with an empty merged config keeps its own reason", func(t *testing.T) {
+		cfg := &platform.ConfigResolution{Source: platform.SourceUnavailable, Reason: platform.ReasonResolutionUnavailable, Digest: platform.DigestMatch}
+		applyNoShaReason(cfg, platform.ReasonForkPipeline)
+		if cfg.Reason != platform.ReasonResolutionUnavailable {
+			t.Fatalf("reason = %q, want the resolution's own reason: no sha was needed", cfg.Reason)
+		}
+	})
+	t.Run("a resolved configuration and an empty reason change nothing", func(t *testing.T) {
+		cfg := &platform.ConfigResolution{Source: platform.SourceSnapshot, Digest: platform.DigestMatch}
+		applyNoShaReason(cfg, platform.ReasonForkPipeline)
+		if cfg.Reason != "" {
+			t.Fatalf("reason = %q, want none on a resolved configuration", cfg.Reason)
+		}
+		cfg = &platform.ConfigResolution{Source: platform.SourceUnavailable, Reason: platform.ReasonResolutionUnavailable, Digest: platform.DigestDiverged}
+		applyNoShaReason(cfg, "")
+		if cfg.Reason != platform.ReasonResolutionUnavailable {
+			t.Fatalf("reason = %q, want it untouched by an empty reason", cfg.Reason)
+		}
+	})
 }
