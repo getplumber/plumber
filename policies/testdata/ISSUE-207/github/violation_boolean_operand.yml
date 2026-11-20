@@ -3,8 +3,9 @@
 # (#624). Each of these ran the payload on GitHub:
 # getplumber-examples/github-actions-miscellaneous-knowledge, branch
 # test/2026-11-20-boolean-expressions, run 44718136654. A call other than
-# contains(), startsWith() or endsWith() can expand to its argument.
-# Expected hits: 6, one per job.
+# contains(), startsWith() or endsWith() can expand to its argument, a
+# group expands to its content, and an index reads the field it names.
+# Expected hits: 8, one per job.
 name: operand
 on: push
 jobs:
@@ -28,6 +29,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: ': ${{ github.event.head_commit.message || false }}'
+  group_operand:
+    runs-on: ubuntu-latest
+    steps:
+      - run: ": ${{ (github.event.head_commit.message || 'a') }}"
+  index_field:
+    runs-on: ubuntu-latest
+    steps:
+      - run: ": ${{ github.event['head_commit'].message }}"
   call_argument:
     runs-on: ubuntu-latest
     steps:

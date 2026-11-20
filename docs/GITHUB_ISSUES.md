@@ -970,20 +970,6 @@ Numeric, boolean, enum and SHA fields (`pull_request.number`,
 cannot carry an injection payload, and flagging them drowns the real
 signal in false positives.
 
-The same goes for an expression that expands to `true` or `false`
-whatever the field holds: a comparison (`==`, `!=`, `<`, `>`, `<=`,
-`>=`), a `!` negation, a `contains()` / `startsWith()` / `endsWith()`
-call, or an `&&` / `||` combination of only those. `&&` and `||` expand
-to one of their operands, so the check still fires when the field itself
-is an operand:
-
-```yaml
-# ✅ not flagged — the script only ever sees true or false
-- run: echo "approve=${{ github.event.comment.body == '/approve' }}" >> "$GITHUB_OUTPUT"
-# ❌ flagged — || expands to the comment body when the comparison is false
-- run: echo "${{ github.event.comment.body == '/approve' || github.event.comment.body }}"
-```
-
 ```yaml
 # ❌ before — PR title is pasted straight into the shell
 - run: echo "Title is ${{ github.event.pull_request.title }}"
@@ -994,6 +980,20 @@ is an operand:
 - env:
     TITLE: ${{ github.event.pull_request.title }}
   run: echo "Title is $TITLE"
+```
+
+An expression that can only expand to `true` or `false` is not flagged
+either: a comparison (`==`, `!=`, `<`, `>`, `<=`, `>=`), a `!`
+negation, a `contains()` / `startsWith()` / `endsWith()` call, or an
+`&&` / `||` combination of only those. `&&` and `||` expand to one of
+their operands, so the check still fires when the field itself is an
+operand:
+
+```yaml
+# not flagged: the script only ever sees true or false
+- run: echo "approve=${{ github.event.comment.body == '/approve' }}" >> "$GITHUB_OUTPUT"
+# flagged: || expands to the comment body when the comparison is false
+- run: echo "${{ github.event.comment.body == '/approve' || github.event.comment.body }}"
 ```
 
 ---

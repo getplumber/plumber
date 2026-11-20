@@ -9,7 +9,9 @@ jobs:
   direct:
     runs-on: ubuntu-latest
     steps:
-      - run: echo "IS_APPROVE=${{ github.event.comment.body == '/approve' }}" >> "$GITHUB_ENV"
+      - run: |
+          echo "IS_APPROVE=${{ github.event.comment.body == '/approve' }}" >> "$GITHUB_ENV"
+          echo "IS_CMD=${{ contains(fromJSON('["/a","/b"]'), github.event.comment.body) }}" >> "$GITHUB_ENV"
   bound:
     runs-on: ubuntu-latest
     steps:

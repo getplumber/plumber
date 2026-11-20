@@ -419,6 +419,8 @@ func TestIssue206_TemplateInjection(t *testing.T) {
 				"violation_boolean_operand/call_argument",
 				"violation_boolean_operand/comparison_or_operand",
 				"violation_boolean_operand/contains_and_operand",
+				"violation_boolean_operand/group_operand",
+				"violation_boolean_operand/index_field",
 				"violation_boolean_operand/operand_or_false",
 				"violation_boolean_operand/or_operand",
 			},
