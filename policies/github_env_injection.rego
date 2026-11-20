@@ -35,6 +35,7 @@ package github_env_injection
 
 import rego.v1
 
+import data.lib.expression
 import data.lib.location
 
 # KEEP IN SYNC with policies/template_injection.rego::unsafe_patterns
@@ -83,7 +84,7 @@ deny contains finding if {
 	job := input.pipeline.jobs[i]
 	line := split(job.scripts[j], "\n")[_]
 	_matches(line, sink_patterns)
-	_matches(line, unsafe_patterns)
+	expression.untrusted(line, unsafe_patterns)
 	not _tojson_wrapped(line)
 	finding := _finding(job.name, "", _direct_subject(job), _direct_line(job), "writes a user-controlled template expression into $GITHUB_ENV or $GITHUB_PATH; an attacker can hijack later steps")
 }
@@ -95,7 +96,7 @@ deny contains finding if {
 	some i
 	job := input.pipeline.jobs[i]
 	some varname
-	_matches(job.variables[varname], newline_unsafe_patterns)
+	expression.untrusted(job.variables[varname], newline_unsafe_patterns)
 	not _tojson_wrapped(job.variables[varname])
 	some j
 	line := split(job.scripts[j], "\n")[_]
@@ -111,7 +112,7 @@ deny contains finding if {
 	some i
 	job := input.pipeline.jobs[i]
 	some varname
-	_matches(job.variables[varname], unsafe_patterns)
+	expression.untrusted(job.variables[varname], unsafe_patterns)
 	not _tojson_wrapped(job.variables[varname])
 	some j
 	line := split(job.scripts[j], "\n")[_]
@@ -130,7 +131,7 @@ deny contains finding if {
 	some i
 	job := input.pipeline.jobs[i]
 	some varname
-	_matches(job.variables[varname], newline_unsafe_patterns)
+	expression.untrusted(job.variables[varname], newline_unsafe_patterns)
 	not _tojson_wrapped(job.variables[varname])
 	some j
 	_heredoc_to_sink(job.scripts[j], varname, env_sink_patterns)
@@ -143,7 +144,7 @@ deny contains finding if {
 	some i
 	job := input.pipeline.jobs[i]
 	some varname
-	_matches(job.variables[varname], unsafe_patterns)
+	expression.untrusted(job.variables[varname], unsafe_patterns)
 	not _tojson_wrapped(job.variables[varname])
 	some j
 	_heredoc_to_sink(job.scripts[j], varname, path_sink_patterns)
@@ -198,7 +199,7 @@ _direct_line(job) := location.first({location.script_line(job, j, li) |
 	some j, script in job.scripts
 	some li, line in split(script, "\n")
 	_matches(line, sink_patterns)
-	_matches(line, unsafe_patterns)
+	expression.untrusted(line, unsafe_patterns)
 	not _tojson_wrapped(line)
 })
 
@@ -209,11 +210,11 @@ _direct_line(job) := location.first({location.script_line(job, j, li) |
 _var_line(job, varname) := location.first(env | path) if {
 	value := job.variables[varname]
 	env := {n |
-		_matches(value, newline_unsafe_patterns)
+		expression.untrusted(value, newline_unsafe_patterns)
 		some n in {_sink_line(job, varname, env_sink_patterns), _heredoc_line(job, varname, env_sink_patterns)}
 	}
 	path := {n |
-		_matches(value, unsafe_patterns)
+		expression.untrusted(value, unsafe_patterns)
 		some n in {_sink_line(job, varname, path_sink_patterns), _heredoc_line(job, varname, path_sink_patterns)}
 	}
 } else := 0
@@ -246,7 +247,7 @@ _direct_subject(job) := s if {
 		_matches(line, sink_patterns)
 		not _tojson_wrapped(line)
 		some e in regex.find_n(`\$\{\{[^}]*`, line, -1)
-		_matches(e, unsafe_patterns)
+		_matches(expression.reduced(e), unsafe_patterns)
 	})
 } else := ""
 
@@ -254,6 +255,6 @@ _direct_subject(job) := s if {
 _value_subject(value) := s if {
 	s := min({trim_space(trim_prefix(e, "${{")) |
 		some e in regex.find_n(`\$\{\{[^}]*`, value, -1)
-		_matches(e, unsafe_patterns)
+		_matches(expression.reduced(e), unsafe_patterns)
 	})
 } else := ""

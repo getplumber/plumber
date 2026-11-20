@@ -1,0 +1,10 @@
+# || expands to one of its operands, so the comment body itself lands in
+# $GITHUB_ENV next to the comparison (#624). Expect 1 on bad.
+name: Boolean operand to env
+on: [issue_comment]
+
+jobs:
+  bad:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "DATA=${{ github.event.comment.body == '/x' || github.event.comment.body }}" >> "$GITHUB_ENV"

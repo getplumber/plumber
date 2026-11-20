@@ -1,0 +1,10 @@
+# github['head_ref'] is github.head_ref, the pull request author's branch
+# name: an index holding a literal reads the field it names.
+# Expected hits: 1.
+name: index
+on: pull_request_target
+jobs:
+  bad:
+    runs-on: ubuntu-latest
+    steps:
+      - run: "git checkout ${{ github['head_ref'] }}"

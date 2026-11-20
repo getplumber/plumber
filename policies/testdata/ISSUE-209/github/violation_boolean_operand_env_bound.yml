@@ -1,0 +1,23 @@
+# || expands to one of its operands, so the env: value can be the comment
+# body itself, newlines included (#624). Written to $GITHUB_ENV with a
+# redirect or through a heredoc, it still opens a second variable.
+# Expect 1 on redirect and 1 on heredoc.
+name: Boolean operand env-bound
+on: [issue_comment]
+
+jobs:
+  redirect:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          BODY: ${{ github.event.comment.body == '/x' || github.event.comment.body }}
+        run: echo "DATA=$BODY" >> "$GITHUB_ENV"
+  heredoc:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          BODY: ${{ github.event.comment.body == '/x' || github.event.comment.body }}
+        run: |
+          cat <<EOF >> "$GITHUB_ENV"
+          DATA=$BODY
+          EOF

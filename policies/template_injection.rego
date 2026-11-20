@@ -18,6 +18,7 @@ package template_injection
 
 import rego.v1
 
+import data.lib.expression
 import data.lib.location
 
 # Regex patterns matching template expressions whose value is
@@ -110,15 +111,18 @@ _line_controlled(job, line) if {
 	_expression_controlled(job, e)
 }
 
-# _expression_controlled: the expression reads a free-text field, and not
+# _expression_controlled: a free-text field can reach the script, and not
 # only fields of a pull request payload in a job no pull request runs.
+# A field inside a comparison, a `!` or a contains() call expands to true
+# or false and does not count (#624, expression.reduced).
 # On any other event github.event.pull_request is empty and
 # github.head_ref is "", so `${{ github.event.pull_request.head.ref ||
 # github.ref_name }}` on a push-only workflow expands to the pushed
 # branch: a constant nobody outside the repository writes.
 _expression_controlled(job, e) if {
-	_matches_unsafe(e)
-	not _pull_request_fields_only_without_pull_request(job, e)
+	r := expression.reduced(e)
+	_matches_unsafe(r)
+	not _pull_request_fields_only_without_pull_request(job, r)
 }
 
 _pull_request_fields_only_without_pull_request(job, e) if {

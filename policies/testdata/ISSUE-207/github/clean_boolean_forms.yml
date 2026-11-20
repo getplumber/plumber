@@ -1,0 +1,41 @@
+# Every form below expands to true or false, whatever the commit message
+# holds (#624). Checked on GitHub over 9 payloads, $(touch /tmp/injected)
+# among them: getplumber-examples/github-actions-miscellaneous-knowledge,
+# branch test/2026-11-20-boolean-expressions, run 44718136654. The ternary
+# expands to one of its literals, and a literal holding && ( == is text.
+# A boolean call stays boolean around another call, a group compared to
+# a value is still a comparison, and so is a comparison with an index.
+# Expected hits: 0.
+name: boolean
+on: push
+jobs:
+  forms:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          : ${{ github.event.head_commit.message == '/approve' }}
+          : ${{ github.event.head_commit.message != '/approve' }}
+          : ${{ github.event.head_commit.message < 'm' }}
+          : ${{ github.event.head_commit.message > 'm' }}
+          : ${{ github.event.head_commit.message <= 'm' }}
+          : ${{ github.event.head_commit.message >= 'm' }}
+          : ${{ github.event.head_commit.message == 0 }}
+          : ${{ github.event.head_commit.message > 1 }}
+          : ${{ !github.event.head_commit.message }}
+          : ${{ !!github.event.head_commit.message }}
+          : ${{ !(github.event.head_commit.message == 'x') }}
+          : ${{ contains(github.event.head_commit.message, 'touch') }}
+          : ${{ startsWith(github.event.head_commit.message, 'Test') }}
+          : ${{ endsWith(github.event.head_commit.message, ')') }}
+          : ${{ github.event.head_commit.message == 'a' && contains(github.event.head_commit.message, 'b') }}
+          : ${{ startsWith(github.event.head_commit.message, 'x') || endsWith(github.event.head_commit.message, 'y') }}
+          : ${{ !(github.event.head_commit.message == 'x') || contains(github.event.head_commit.message, 'touch') }}
+          : ${{ (github.event.head_commit.message == 'a' || github.event.head_commit.message == 'b') && !contains(github.event.head_commit.message, 'c') }}
+          : ${{ (contains(github.event.head_commit.message, 'touch') && github.event.head_commit.message) == 'x' }}
+          : ${{ contains(github.event.head_commit.message, 'x') && 'yes' || 'no' }}
+          : ${{ github.event.head_commit.message == 'a && (b == c) || it''s' }}
+          : ${{ contains(toJSON(github.event.head_commit.message), '/approve') }}
+          : ${{ contains(fromJSON('["/a","/b"]'), github.event.head_commit.message) }}
+          : ${{ (github.event.head_commit.message || 'a') == 'b' }}
+          : ${{ 'b' != (github.event.head_commit.message || 'a') }}
+          : ${{ github.event.head_commit.message == github.event.commits[0].message }}

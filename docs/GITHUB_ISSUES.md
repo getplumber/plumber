@@ -982,6 +982,20 @@ signal in false positives.
   run: echo "Title is $TITLE"
 ```
 
+An expression that can only expand to `true` or `false` is not flagged
+either: a comparison (`==`, `!=`, `<`, `>`, `<=`, `>=`), a `!`
+negation, a `contains()` / `startsWith()` / `endsWith()` call, or an
+`&&` / `||` combination of only those. `&&` and `||` expand to one of
+their operands, so the check still fires when the field itself is an
+operand:
+
+```yaml
+# not flagged: the script only ever sees true or false
+- run: echo "approve=${{ github.event.comment.body == '/approve' }}" >> "$GITHUB_OUTPUT"
+# flagged: || expands to the comment body when the comparison is false
+- run: echo "${{ github.event.comment.body == '/approve' || github.event.comment.body }}"
+```
+
 ---
 
 ## ISSUE-208 — `insecure-commands`
@@ -1021,7 +1035,9 @@ Attacker-controlled content reaches `$GITHUB_ENV` or `$GITHUB_PATH`.
 Those files are sticky: every following step inherits the variables and
 PATH entries they define. Injecting `NODE_OPTIONS=--require=./exfil.js`
 hijacks every later Node invocation; front-loading a directory onto
-`$GITHUB_PATH` shadows a real binary. Two shapes are flagged.
+`$GITHUB_PATH` shadows a real binary. Two shapes are flagged. As for
+ISSUE-207, an expression that expands to `true` or `false` (a comparison,
+`!`, `contains()` and the like) is not untrusted content.
 
 **Direct.** The untrusted expression and the redirect are on the same
 `run:` line.
