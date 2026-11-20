@@ -96,7 +96,7 @@
             "name": "trustedOwners",
             "type": "array",
             "optional": true,
-            "description": "List of action-owner prefixes exempt from the pin-by-SHA requirement; only owners already inside the workflow's trust boundary should be listed.",
+            "description": "List of action-owner prefixes exempt from the pin-by-SHA requirement, the owner and repository matched case-insensitively; only owners already inside the workflow's trust boundary should be listed.",
             "elem": {
               "type": "string",
               "optional": false
@@ -826,7 +826,7 @@
             "name": "trustedGithubActions",
             "type": "array",
             "optional": true,
-            "description": "Lists action sources that are always allowed; each entry is an exact owner/repo or an owner/* wildcard.",
+            "description": "Lists action sources that are always allowed; each entry is an exact owner/repo or an owner/* wildcard, matched case-insensitively.",
             "elem": {
               "type": "string",
               "optional": false

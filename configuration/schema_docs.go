@@ -241,7 +241,7 @@ var controlFieldDocs = map[string]FieldDoc{
 		Description: "Turns the control on; when false or absent the control is skipped.",
 	},
 	"actionsMustBePinnedByCommitSha.trustedOwners": {
-		Description: "List of action-owner prefixes exempt from the pin-by-SHA requirement; only owners already inside the workflow's trust boundary should be listed.",
+		Description: "List of action-owner prefixes exempt from the pin-by-SHA requirement, the owner and repository matched case-insensitively; only owners already inside the workflow's trust boundary should be listed.",
 	},
 	"componentMustComeFromAuthorizedSources.enabled": {
 		Description: "Turns the control on; when false or absent the control is skipped.",
@@ -293,7 +293,7 @@ var controlFieldDocs = map[string]FieldDoc{
 		Default:     "0",
 	},
 	"githubActionMustComeFromAuthorizedSources.trustedGithubActions": {
-		Description: "Lists action sources that are always allowed; each entry is an exact owner/repo or an owner/* wildcard.",
+		Description: "Lists action sources that are always allowed; each entry is an exact owner/repo or an owner/* wildcard, matched case-insensitively.",
 	},
 	"githubActionMustComeFromAuthorizedSources.includePlumberDefaults": {
 		Description: "In overlay mode, unions Plumber's curated default trusted list with trustedGithubActions; set false to trust only the listed entries; ignored in legacy mode.",
