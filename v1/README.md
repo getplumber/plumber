@@ -1,6 +1,6 @@
 # v1: CLI refactoring
 
-The Plumber CLI is being refactored ([getplumber/monorepo#640](https://github.com/getplumber/monorepo/issues/640)).
+The Plumber CLI is being refactored ([CLI Refactoring board](https://github.com/orgs/getplumber/projects/1/views/18)).
 This directory holds its test suite, which runs the built `plumber` binary on every CLI input and
 compares the output with golden files.
 

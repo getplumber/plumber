@@ -1,6 +1,7 @@
 version: "2"
 
-# Lint config for the v1 refactoring (getplumber/monorepo#640). Run it with
+# Lint config for the v1 refactoring
+# (https://github.com/orgs/getplumber/projects/1/views/18). Run it with
 # `make -C v1 lint` before opening a PR. The rules check for bugs and for
 # current, idiomatic Go (v1/AGENTS.md has agents use the use-modern-go skill).
 # Linters that only enforce a personal taste stay off (see the list at the
