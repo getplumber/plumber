@@ -18,7 +18,7 @@ pattern. An agent that cannot load skills reads the file and runs the script.
 
 v1 always builds with the latest Go release. The `go` directive of `go.mod` names it, and `go.mod`
 has no `toolchain` line. `.github/workflows/v1.yml` reads the version with
-`go-version-file: go.mod`, so `go.mod` is the only place to bump it. Until the switch (step 13 of
+`go-version-file: go.mod`, so `go.mod` is the only place to bump it. Until the switch (step 15 of
 `docs/project-structure.md`), `go.mod` stays as `main` has it (rule 2).
 
 For what the skill doesn't cover (naming, error messages, doc comments, API shape and tests), follow

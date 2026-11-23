@@ -84,8 +84,9 @@ Why the code is rewritten and not moved:
   read `input.pipeline`. Yet the user docs list only 8 controls on both providers, and 17 policies
   test the provider before doing anything. Each provider has to translate its configuration into a model
   that fits neither one.
-- `analyze` resolves remote material and reads project settings on every run, so a token without
-  enough rights shows up late, as settings reported unknown.
+- `analyze` resolves remote material on every run, and reads project settings whenever a control
+  that needs them is on, so a token without enough rights shows up late, as settings reported
+  unknown.
 - Policy logic is tested from Go (19 Go test files in `policies/`). There is no `_test.rego` file,
   and nothing lints the Rego.
 - The platform backend imports these packages, which were never designed as an API: it calls
@@ -159,6 +160,8 @@ Rules for the new code:
 - Only `pkg/config` reads `.plumber.yaml`.
 - Only `internal/gitrepo` imports go-git, and no package runs the `git` binary.
 - A policy reads its own provider's document; logic two providers share goes in `policies/lib`.
+- A CI file that doesn't match its provider's official schema gives a warning, never an error: the
+  node that fails is kept as untyped, and parsing goes on.
 - Rego follows the Rego style guide, passes Regal, and is tested in Rego (see [Policies](#policies)).
 - No package-level state: no flag variables, no `init` that registers anything. The root command
   is built by a function, so a test can build it many times.
@@ -199,6 +202,11 @@ Rules for `pkg/`:
 The platform moves to the new paths one package at a time, in a monorepo PR listed in the rewrite
 step that creates the package.
 
+`release/v1` has no release until the switch, so it gets pre-release tags, `v1.0.0-alpha.N`, and
+the platform pins one of them, never a pseudo-version. The workflow that pushes the tags comes with
+the first `pkg/` package. The `v1/` directory stays in the import paths after the switch:
+`github.com/getplumber/plumber/v1/pkg/config` names a directory, not a major-version suffix.
+
 ## Configuration
 
 The static model of `.plumber.yaml` is `v1/pkg/config/plumber.schema.json`, a JSON Schema (draft
@@ -219,6 +227,26 @@ Loading happens in four stages:
 3. `UnmarshalExact` into the Go types.
 4. Checks the schema can't express, such as required expressions.
 
+The `analyze:` section of the file holds the options that decide what a run checks:
+
+```yaml
+analyze:
+  resolveDepth: max
+  sanity: true
+  minScore:
+    static: A
+    depth: C
+    sanity: A
+  failWarnings: true
+```
+
+An `analyze` flag gets a key when it says what to check or how strict to be: `resolveDepth`,
+`sanity`, `minScore`, `minPoints`, `failWarnings`, `controls`, `skipControls` and `scoreProfile`.
+A flag that describes one run stays a flag only: the target, `--project`, `--branch`, `--provider`,
+the URLs, the outputs, `--print`, the publish flags and the tokens. A flag wins over its
+`PLUMBER_ANALYZE_*` variable, which wins over the file. Platform mode forces none of these: a
+platform admin sets them in the file.
+
 Tests, besides the parity test:
 
 - The embedded default config validates against the schema.
@@ -227,30 +255,44 @@ Tests, besides the parity test:
 ## Repository access
 
 The content of a repository comes through [go-git](https://github.com/go-git/go-git), the same way
-on GitHub and GitLab: the CI files, the local includes, the workflow files, the files a control
-reads, and the remote actions, reusable workflows, includes and components of other projects.
+on GitHub and GitLab: the CI files, the local includes, the workflow files and the files a control
+reads. On GitHub, the actions and reusable workflows of other repositories come the same way.
+GitLab's includes don't (see below).
 
 - A remote repository is cloned at the ref to analyze (a branch, a tag or a commit), with depth 1
   and a single ref, into memory storage (`memory.NewStorage()`). There is no worktree: files are
   read from the commit's tree, and nothing is written to disk.
 - A run caches each clone, so a project referenced many times at the same ref is cloned once.
-- Other projects are cloned only with `--resolve-depth`, and the settings APIs are called only with
-  `--sanity`. By default a run reads the target's own files and nothing else.
+- Imported material is read only with `--resolve-depth`, and the settings APIs are called only
+  with `--sanity`. By default a run reads the target's own files and nothing else.
+- `--resolve-depth` takes a number of levels or `max`. `max` goes until nothing is left to fetch or
+  the run reaches its budget of 100 fetched actions and reusable workflows, as today
+  (`github/nested_actions.go`). Past the budget, the run is degraded.
+- GitLab merges the includes itself. With `--resolve-depth`, the GitLab provider sends the CI file
+  to the `ciConfig` GraphQL query, as today's CLI does (`gitlab/request.go`), and gets it back with
+  every remote, project, template and component include merged. One more `ciConfig` call per
+  top-level include tells which jobs each include brought (`gitlab/include_jobs.go`). The server
+  can't stop partway, so on GitLab the depth is 0 or `max`, and any other number runs as `max` with
+  a warning.
 - A local run opens the clone on disk with go-git (`PlainOpen`) to read its remote, branch and
   `HEAD`. The `git` binary is not needed.
 - HTTPS clones authenticate with the provider token.
 - The provider APIs stay for what git doesn't carry: branch protection, project settings, CI/CD
-  variables, merge request approvals, security policies, and GitLab's merged CI configuration when
-  a control needs the server's view of it.
+  variables, merge request approvals, security policies, GitHub's environments, workflow states and
+  default token permissions, and GitLab's merged CI configuration (above).
 
 The rewrite starts on go-git v5 (v5.19.3 is the latest stable on 2026-11-19) and moves to v6 when
 it is final; v6.0.0-beta.1 is out. Filtered fetch (`blob:none`), which go-git lists as partly
 supported, would cut the memory a large repository needs.
 
-The risk is the size of a depth-1 clone held in memory for the largest projects, such as
-gitlab-org/gitlab and nodejs/node. The reference harness measures it for each project and records
-it in this section. If a clone is too large, `gitrepo` reads the CI files through a sparse or
-filtered fetch, or uses the API for that repository.
+The risk is the memory a clone takes. A depth-1 clone of one branch still fetches every file of
+that commit, not only the CI files, and the largest projects (gitlab-org/gitlab, nodejs/node) have
+big trees. Step 2 measures it on the ten [reference repositories](#reference-repositories) before
+anything else is built on go-git, against a budget set beforehand: under 1 GiB of peak memory and
+under 60 seconds per clone, on a standard GitHub-hosted runner. The numbers are recorded in this
+section. If one repository misses the budget, all of `gitrepo` moves to one fallback, a filtered
+fetch (`blob:none`) that fetches blobs on demand, or the provider API. It never keeps one path for
+some repositories and another for the rest.
 
 ## Policies
 
@@ -314,7 +356,7 @@ Sources in this repository:
 - Guides in `v1/docs/user/`, in plain Markdown with front matter (title, description, sidebar
   order), so they also read well on GitHub. GitHub alerts (`> [!NOTE]`) stand for `Aside`, and the
   site maps them with a remark plugin. Per-provider content follows a heading convention, settled
-  in the docs import step, that the site turns into its provider tabs.
+  in the guides import step, that the site turns into its provider tabs.
 - Contributor docs, like this file, stay in `v1/docs/`.
 
 Generated references, in JSON:
@@ -361,7 +403,9 @@ The harness is `v1/test/corpus`, a third package with the `corpus` build tag. Li
 it has only `_test.go` files and its own copy of the code they share (rule 5 of
 [AGENTS.md](../AGENTS.md)). `TestGitHubCorpus` and `TestGitLabCorpus` have one row per project.
 Each row analyzes the project at its pinned ref with both binaries (`-o report.json`), normalizes
-both reports as the e2e rows do, and diffs them. The old CLI is the oracle while it exists. A
+both reports as the e2e rows do, and diffs them. The new binary runs with
+`--resolve-depth=max --sanity`, the defaults of the Action and the component, so it reads what the
+old one reads. The old CLI is the oracle while it exists. A
 difference fails the row unless `testdata/expected/<provider>/<row>.yaml` lists it with its reason,
 such as an inventory decision or a bug of the old CLI. After the switch, the last agreed reports
 become `testdata/golden/<provider>/<row>.yaml` and the rows compare against them.
@@ -374,8 +418,7 @@ step merges. A daily run waits for monorepo#651, like the e2e suite.
 The new CLI clones the pinned commit itself through `internal/gitrepo`, so its side of a row
 analyzes exactly that commit. The harness step settles how the old binary is pinned: it checks
 whether `--branch <tag>` works on both providers, and whether a run inside a shallow clone with a
-token reads the checked-out files or the default branch through the API. The harness also records
-the in-memory clone size of each project (see [Repository access](#repository-access)).
+token reads the checked-out files or the default branch through the API.
 
 ## Rewrite order
 
@@ -385,7 +428,8 @@ Each step is one issue and one PR against `release/v1`, added to
 - keeps `make -C v1 test-integration` green, and the e2e target of each provider it touches;
 - applies the decisions of [feature-inventory.md](feature-inventory.md) for the commands it
   rewrites, and explains each golden change in its PR;
-- adds the commands it rewrites to `commands.json`, and updates the guides they appear in;
+- adds the commands it rewrites to `commands.json`, and notes in its PR the guide pages that
+  change, for the guides import (step 14);
 - reads the old code on `release/v1` as it is after the last sync from `main`. A sync that changes
   a behavior turns its rows red for both binaries until the new code follows.
 
@@ -397,54 +441,72 @@ The steps:
    today every file in `v1/` has it, and the new production code should not need it. The `scope`
    job of `v1.yml` starts accepting additions to go.mod and go.sum (rule 2 of
    [AGENTS.md](../AGENTS.md)), which the new dependencies need.
-2. Config model: `pkg/config/plumber.schema.json` for the current keys of `.plumber.yaml`, with the
-   inventory's decisions, the Go types, the parity test and the validation. No command reads it
-   yet.
-3. Docs import: the 8 site pages copied to `v1/docs/user/` as Markdown, and `gendocs` with
-   `config.schema.json`. The site keeps its copy until the site switch.
-4. `completion`, `catalog`, `capabilities`: commands with no input but the embedded catalog.
+2. Tracer: one control, `containerImageMustNotUseForbiddenTags`, end to end on both providers. It
+   is static and exists on both, so it tries each choice of this layout before the smaller commands
+   build on it: `internal/gitrepo` clones the target, each provider builds its typed
+   model, `policies/gitlab` and `policies/github` call one function of `policies/lib`, and the
+   findings come out as JSON. `analyze` takes only what the e2e rows of that control pass (the
+   target, `--branch`, `--controls`, `-o`), and those rows switch to the new binary. This PR brings
+   the Regal config, the schemas, the pinned opa and regal binaries, their make targets and the CI
+   job (see [Policies](#policies)). It also measures go-git on the ten
+   [reference repositories](#reference-repositories) against the budget of
+   [Repository access](#repository-access). What it teaches goes back into this document before
+   step 3.
+3. Config model: `pkg/config/plumber.schema.json` for the current keys of `.plumber.yaml`, with the
+   inventory's decisions and the `analyze:` section (see [Configuration](#configuration)), the Go
+   types, the parity test and the validation. No command reads it yet.
+4. Docs generator: `internal/tools/gendocs`, `make -C v1 docs`, `config.schema.json` and
+   `commands.json` for the commands rewritten so far, with its golden. The guides wait for step 14.
+5. `completion`, `catalog`, `capabilities`: commands with no input but the embedded catalog.
    `pkg/catalog` gets the registry and the metadata of each control, without their checks, and
    `gendocs` adds `issues.json` and `controls.json`. The platform moves from `control` and
    `capability` to `pkg/catalog`.
-5. `explain`: reads the catalog and the attack paths.
-6. `config`: viper loading in `pkg/config` (the four stages, `extends`, migrate) and the
+6. `explain`: reads the catalog and the attack paths.
+7. `config`: viper loading in `pkg/config` (the four stages, `extends`, migrate) and the
    subcommands, with the merges and removals the inventory decides (`resolve` into `view`). The
    platform moves from `configuration` and `defaultConfig` to `pkg/config`.
-7. `score-compare`, or its removal if the inventory's decision holds.
-8. `analyze` input handling: flags, target resolution, the ref to analyze (branch, tag or
-   commit), `--resolve-depth`, `--sanity`, preflight, and the usage errors that `TestAnalyze`
-   checks before any request. [analyze-flow.md](analyze-flow.md) is the design.
-9. Reference harness: `v1/test/corpus` with the 10 rows of
-   [Reference repositories](#reference-repositories), run with the old binary on both sides. That
-   run proves the normalized reports are deterministic; the OCSF report differed between two runs
-   in #688. It also measures the in-memory clone size of each project.
-10. GitLab provider, one stage at a time:
-    - static: `internal/gitrepo` (if the GitHub provider hasn't brought it yet), `pkg/gitlab`,
-      the typed model and its expansion, then `policies/gitlab` one control family per PR;
-    - resolve: remote, project and component includes;
+8. `score-compare`: not rewritten, since the inventory removes it. Its rows go at the switch.
+9. `analyze` input handling: flags and their `analyze:` keys, target resolution, the ref to
+   analyze (branch, tag or commit), `--resolve-depth`, `--sanity`, the score gates
+   (`--min-score static=A,depth=C,sanity=A`), preflight, and the usage errors that `TestAnalyze`
+   checks before any request, among them a gate on a stage that is off.
+   [analyze-flow.md](analyze-flow.md) is the design.
+10. Reference harness: `v1/test/corpus` with the 10 rows of
+    [Reference repositories](#reference-repositories), run with the old binary on both sides. That
+    run proves the normalized reports are deterministic; the OCSF report differed between two runs
+    in #688.
+11. GitLab provider, one stage at a time, on top of step 2:
+    - static: `pkg/gitlab`, the typed model and its expansion (`include:local`, `extends`,
+      `default`, `!reference`, anchors), then `policies/gitlab` one control family per PR;
+    - resolve: the `ciConfig` merge and the per-include attribution, which tell a finding in an
+      include from one in the project's own files;
     - sanity: the settings, with their policies.
-
-    The first policy PR of steps 10 and 11 brings the Regal config, the schemas, the pinned opa
-    and regal binaries, their make targets and the CI job (see [Policies](#policies)).
 
     Each PR switches the `TestGitLabIssue*` rows of its controls to the new binary, passing
     `--resolve-depth` or `--sanity` where the row needs them. `pkg/identity` comes with the first
-    findings. The platform moves from `gitlab` and `finding/identity`.
-11. GitHub provider: the same stages for GitHub (actions and reusable workflows in resolve;
-    protection, rulesets and settings in sanity) and `TestGitHubIssue*`.
-12. Outputs: one PR per format (json, csv, sarif, ocsf, glsast, pbom), each with its offline rows.
-13. Switch: the release build and the integrations (`action.yml`, `templates/plumber.yml`,
+    findings the platform reads. The platform moves from `gitlab` and `finding/identity`.
+12. GitHub provider: the same stages for GitHub (actions and reusable workflows, cloned with
+    go-git, in resolve; protection, rulesets, environments, workflow states, default token
+    permissions and settings in sanity) and `TestGitHubIssue*`.
+13. Outputs: one PR per format (json, csv, sarif, ocsf, glsast, pbom), each with its offline rows.
+    The JSON report gets a schema version key and the three scores, and loses the v0.2.x blocks.
+14. Guides import: the 8 site pages copied to `v1/docs/user/` as Markdown, brought up to date with
+    the new CLI from the notes the earlier PRs left, and added to the bundle by `gendocs`. The site
+    keeps its copy until the site switch.
+15. Switch: the release build and the integrations (`action.yml`, `templates/plumber.yml`,
     `Dockerfile`) use `v1/cmd/plumber`, releases attach the docs bundle, the suite drops the old
-    binary, and the old packages are deleted. `go.mod` moves to the latest Go release in its `go`
-    directive and drops its `toolchain` line. This step changes paths outside `v1/`, so it needs
-    its own decision on rule 2 of [AGENTS.md](../AGENTS.md) before it starts. From here on,
-    `main` takes `release/v1` instead of the other way around (rules 3 and 4 of AGENTS.md).
-14. Site switch, in getplumber.io: the site loads the bundle of a pinned release, deletes the moved
+    binary, and the old packages are deleted. The Action and the component default to
+    `--resolve-depth=max` and `--sanity`, so their users keep what today's CLI checks. `go.mod`
+    moves to the latest Go release in its `go` directive and drops its `toolchain` line. This step
+    changes paths outside `v1/`, so it needs its own decision on rule 2 of
+    [AGENTS.md](../AGENTS.md) before it starts. From here on, `main` takes `release/v1` instead of
+    the other way around (rules 3 and 4 of AGENTS.md).
+16. Site switch, in getplumber.io: the site loads the bundle of a pinned release, deletes the moved
     pages, the CLI part of `issues.ts` and `controlIds.ts`, and redirects the URLs that change.
 
-Every PR of steps 10 to 12 runs the corpus target of its provider and lists each new expected
+Every PR of steps 11 to 13 runs the corpus target of its provider and lists each new expected
 difference in its description.
 
-Steps 10 and 11 can run in either order, and 12 can start as soon as one provider is done. The new
-layout is done when step 13 merges with no regression caught by the suite or the corpus, and the
-docs move is done with step 14.
+Steps 11 and 12 can run in either order, and 13 can start as soon as one provider is done. The new
+layout is done when step 15 merges with no regression caught by the suite or the corpus, and the
+docs move is done with step 16.
