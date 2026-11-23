@@ -6,7 +6,8 @@ proposed decision for each: keep, merge, deprecate or remove. It answers
 
 The decisions are applied as each command is rewritten under `v1/`, in the order of
 [project-structure.md](project-structure.md) (rule 2 of [AGENTS.md](../AGENTS.md) forbids editing
-`cmd/`). Bugs found on the way are listed at the end; they are fixed on `main`, like any fix
+`cmd/`). v1 is a major release: the new binary drops what this file removes or deprecates, with no
+warning release first (see [Removals in v1](#removals-in-v1)). Bugs found on the way are listed at the end; they are fixed on `main`, like any fix
 outside `v1/`.
 
 Column meanings:
@@ -62,6 +63,11 @@ Column meanings:
 Every `analyze` flag also reads `PLUMBER_ANALYZE_<FLAG>` (the map at `cmd/analyze_gitlab.go:631`).
 The GitLab component relies on this and passes nothing on the command line. Keep it.
 
+The flags that decide what a run checks also get a key in the `analyze:` section of
+`.plumber.yaml`, named in the Decision column: a flag wins over its variable, which wins over the
+file. The flags that describe one run (target, project, branch, URLs, outputs, publish, tokens)
+stay flags only ([Configuration](project-structure.md#configuration)).
+
 | Flag | Docs | Rows | Users | Decision | Why |
 |---|---|---|---|---|---|
 | `--gitlab-url` | help | | component | keep | |
@@ -70,7 +76,7 @@ The GitLab component relies on this and passes nothing on the command line. Keep
 | `--provider` | help | `analyze-bad-provider` | | keep | Needed when the host doesn't tell. |
 | `--branch` | help | e2e | component | keep | |
 | `--config` | help | `analyze-missing-config` | Action, component | keep | |
-| `--min-points`, `--min-score` | README, `docs/scoring.md` | `analyze-bad-min-*` | Action, component | keep | The score gate. |
+| `--min-points`, `--min-score` | README, `docs/scoring.md` | `analyze-bad-min-*` | Action, component | keep, add per-stage gates, key `minPoints`, `minScore` | The score gate. `--min-score A` gates the overall score; `--min-score static=A,depth=C,sanity=A` gates each stage ([analyze-flow.md](analyze-flow.md#evaluation-score-outputs-and-exit-code)). A gate on a stage that is off is a usage error. |
 | `--threshold` | `docs/scoring.md` (deprecated) | `analyze-bad-threshold` | Action and component pass it when not 100 | remove | Deprecated since the gate moved to the score (2026-07-09). It already prints a warning (`cmd/analyze_gitlab.go:710`). Drop it from the Action and the component first. |
 | `--print` | help | | component | keep | |
 | `-o`, `--output` | README | e2e | Action, component, self-scan | keep | |
@@ -84,14 +90,14 @@ The GitLab component relies on this and passes nothing on the command line. Keep
 | `--ci-config-path` | help | | component | keep, warn on GitHub | Only the GitLab path reads it. |
 | `--score` | `docs/scoring.md`, `docs/PBOM.md` (deprecated) | | component (input documented as a no-op) | remove | Does nothing: the banner is on by default (`cmd/analyze_shared.go:471`). Its help still describes behavior. |
 | `--score-point` | help | | Action (`score: true`), component, self-scan | keep | The only live score-display flag once `--score` goes. A rename to `--score-details` could come with the removal of `--score`. |
-| `--score-profile` | `docs/scoring.md`, `docs/scoring-v4-migration.md` | `analyze-bad-score-profile` | | keep | `v4` is the default. Drop `v3` once Radar no longer compares the two; until then nothing to do. |
+| `--score-profile` | `docs/scoring.md`, `docs/scoring-v4-migration.md` | `analyze-bad-score-profile` | | keep, key `scoreProfile` | `v4` is the default. Drop `v3` once Radar no longer compares the two; until then nothing to do. |
 | `--score-push`, `--score-endpoint` | README (through inputs) | | Action, component | keep | |
 | `--platform`, `--platform-allow-http` | `docs/platform-push-testing.md` | `analyze-platform-plain-http` | Action, component | keep | |
-| `--controls`, `--skip-controls` | help | `analyze-unknown-*`, e2e | Action, component | keep | |
+| `--controls`, `--skip-controls` | help | `analyze-unknown-*`, e2e | Action, component | keep, key `controls`, `skipControls` | |
 | `--no-controls` | README | `analyze-no-controls-with-controls` | | keep | PBOM-only runs. |
-| `--fail-warnings` | README | | Action, component, self-scan | keep | |
-| `--resolve-depth N` (new) | none yet | | | add, default 0 | Fetches imported actions, reusable workflows, includes and components down to N levels. Today every run resolves them; the rewrite makes a run static by default ([analyze-flow.md](analyze-flow.md)). |
-| `--sanity` (new) | none yet | | | add, default `false` | Reads branch protection, rulesets and project settings. Today every run reads them. The e2e rows 501 and 505 (both providers) and 503, 506 and 601 (GitLab) need it. |
+| `--fail-warnings` | README | | Action, component, self-scan | keep, key `failWarnings` | |
+| `--resolve-depth N\|max` (new) | none yet | | Action, component (default `max`) | add, default 0, key `resolveDepth` | Fetches imported actions, reusable workflows, includes and components down to N levels, or with `max` until nothing is left or the run reaches its budget of 100. Today every run resolves them with no depth limit; the rewrite makes a CLI run static by default ([analyze-flow.md](analyze-flow.md)). On GitLab the server merges the includes, so the depth is 0 or `max`. |
+| `--sanity` (new) | none yet | | Action, component (default on) | add, default `false`, key `sanity` | Reads branch protection, rulesets, project settings and, on GitHub, environments, workflow states and default token permissions. Today a run reads them whenever a control needs them, and the GitHub ones on every run. The e2e rows 501 and 505 (both providers) and 503, 506 and 601 (GitLab) need it. |
 
 The long help of `analyze` has a hand-written "Optional flags" list next to cobra's own list. It has
 drifted: it lacks `--csv`, `--ocsf`, `--sarif`, `--glsast`, `--platform` and
@@ -103,8 +109,8 @@ usage. Proposed: delete the hand-written list and keep the examples and exit cod
 | Output | Format | Docs | Users | Decision | Why |
 |---|---|---|---|---|---|
 | Text report on stdout | | README | everyone | keep | |
-| `--output` JSON | no schema version key; `cliVersion` and `plumberScore.profileId` | README, several docs | Action, component, `explain --run` | keep, add a schema version | Consumers can't tell report shapes apart today. |
-| v0.2.x per-control blocks in the JSON (`*Result`, `cmd/legacy_json*.go`) | same file as `--output` | none | unknown | deprecate (to confirm) | Spliced into the JSON outside platform mode; the flat `findings` array is deleted to make room (`cmd/analyze_gitlab.go:1197`). Needs an owner to say who still reads them before a date is set. |
+| `--output` JSON | no schema version key; `cliVersion` and `plumberScore.profileId` | README, several docs | Action, component, `explain --run` | keep, add a schema version and the three scores | Consumers can't tell report shapes apart today. The Static, Depth and Sanity scores sit next to the overall score, which stays in `plumberScore`. |
+| v0.2.x per-control blocks in the JSON (`*Result`, `cmd/legacy_json*.go`) | same file as `--output` | none | unknown | remove | Spliced into the JSON outside platform mode; the flat `findings` array is deleted to make room (`cmd/analyze_gitlab.go:1197`). The new report keeps `findings` as its only shape. Before the json output step, search the Action, the component, the platform and Radar for a reader. |
 | CSV | `cmd/csv.go` | README | | keep | |
 | OCSF | OCSF 1.8.0 | `docs/OCSF.md` | | keep | |
 | SARIF | 2.1.0 | README | Action | keep | |
@@ -121,6 +127,7 @@ usage. Proposed: delete the hand-written list and keep the examples and exit cod
 | Key | Docs | Decision | Why |
 |---|---|---|---|
 | `version` | README, migration doc | keep | |
+| `analyze` (new) | none yet | add | `resolveDepth`, `sanity`, `minScore`, `minPoints`, `failWarnings`, `controls`, `skipControls`, `scoreProfile`: the `analyze` flags that decide what a run checks. A platform admin sets them here; platform mode forces none. |
 | `extends: plumber:default` | README, default config comments | keep, document in the migration doc | |
 | `gitlab.controls`, `github.controls` | README, `docs/GITLAB_ISSUES.md`, `docs/GITHUB_ISSUES.md` | keep | |
 | `<provider>.auth.requireAuth` | none | remove | Parsed (`configuration/plumberconfig.go:303`) and never read. |
@@ -134,33 +141,36 @@ usage. Proposed: delete the hand-written list and keep the examples and exit cod
 Controls themselves are out of scope here: 24 GitLab and 25 GitHub controls ship, and 27 GitHub
 controls are benched in `configuration/registry.go`. Their future belongs to the control work.
 
-## Deprecation path
+## Removals in v1
 
-Each removal follows the same path: one release where the item still works and prints a warning
-on stderr naming its replacement, then removal, with a `CHANGELOG.md` entry in both releases. Items
-already warning today skip the first step.
+The new binary drops each item below outright. Nothing warns first: the new binary first ships at
+the switch step, so a warning release from it can't come before the removal. `CHANGELOG.md` and a
+v1 migration guide list every item with its replacement. The suite runs both binaries until the
+switch, so the rows of the old behavior stay until then.
 
-| Item | Warning release | Removal | Golden rows that change |
-|---|---|---|---|
-| `analyze --threshold` | already warns | next release, after the Action and component stop passing it | `TestAnalyze/analyze-bad-threshold` (removed or turned into an unknown-flag row), `TestHelpFlag/help-flag-analyze` |
-| `analyze --score` | add the warning | the release after | `TestHelpFlag/help-flag-analyze` |
-| `score-compare` | none needed: hidden, no user outside Radar | next release, once Radar has its own tool | `TestScoreCompare/*` and `TestHelpFlag/help-flag-score-compare` removed; `TestExplain` keeps its inputs under a new folder name |
-| `config resolve` | prints "use `config view -o`" | the release after | `TestConfig/config-resolve*`, `TestHelpFlag/help-flag-config-resolve`, `help-flag-config`, `help-flag-config-view` |
-| `config migrate --input` | add the warning, accept `-c/--config` | the release after | `TestHelpFlag/help-flag-config-migrate` |
-| `auth.requireAuth` | none needed: it never did anything | next release | none |
-| top-level `controls` and `engine` | already warn | 1.0.0, as the migration doc says | `TestConfig/config-validate-legacy` (becomes an error); `TestConfig/config-migrate*` unchanged |
-| v0.2.x blocks in the JSON | once an owner confirms no consumer | the release after | e2e goldens (their `report` loses the blocks) |
+| Item | Replacement | Golden rows that change at the switch |
+|---|---|---|
+| `analyze --threshold` | `--min-score` or `--min-points`; the Action and the component stop passing it | `TestAnalyze/analyze-bad-threshold` (removed or turned into an unknown-flag row), `TestHelpFlag/help-flag-analyze` |
+| `analyze --score` | none: the banner is on by default | `TestHelpFlag/help-flag-analyze` |
+| `score-compare` | an internal tool for Radar | `TestScoreCompare/*` and `TestHelpFlag/help-flag-score-compare` removed; `TestExplain` keeps its inputs under a new folder name |
+| `config resolve` | `config view -o` | `TestConfig/config-resolve*`, `TestHelpFlag/help-flag-config-resolve`, `help-flag-config`, `help-flag-config-view` |
+| `config migrate --input` | `-c/--config` | `TestHelpFlag/help-flag-config-migrate` |
+| `auth.requireAuth` | none: it never did anything | none |
+| top-level `controls` and `engine` | `config migrate` | `TestConfig/config-validate-legacy` (becomes an error); `TestConfig/config-migrate*` unchanged |
+| v0.2.x blocks in the JSON | the `findings` array | e2e goldens (their `report` loses the blocks) |
 
 ## Follow-up during the rewrite
 
-1. Apply the decisions above, one issue each, in the order of the deprecation table.
+1. Apply the decisions above as each command is rewritten, and list the removals in the v1
+   migration guide.
 2. Delete the hand-written flag list from the `analyze` long help.
 3. Add `--version`, the JSON schema version key and the GitHub warnings for `--glsast`,
    `--mr-comment`, `--badge` and `--ci-config-path`.
 4. Document `catalog` in the README, and `extends` and `capabilities` in the migration doc.
 5. Static by default: the Action and the component get inputs for `--resolve-depth` and
-   `--sanity` at the switch step, and the release notes say that a run no longer reads imports or
-   settings unless asked.
+   `--sanity` at the switch step, with the defaults `max` and on, so their users keep today's
+   coverage. The release notes say that a CLI run no longer reads imports or settings unless
+   asked.
 
 ## Bugs found, to fix on `main`
 
