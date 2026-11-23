@@ -422,8 +422,9 @@ token reads the checked-out files or the default branch through the API.
 
 ## Rewrite order
 
-Each step is one issue and one PR against `release/v1`, added to
-[#640](https://github.com/getplumber/monorepo/issues/640) as its own step. Every step:
+Each step is one issue and one PR against `release/v1`. The issues live on the
+[board](https://github.com/orgs/getplumber/projects/1/views/18) with the Topic
+"CLI Refactoring". Every step:
 
 - keeps `make -C v1 test-integration` green, and the e2e target of each provider it touches;
 - applies the decisions of [feature-inventory.md](feature-inventory.md) for the commands it

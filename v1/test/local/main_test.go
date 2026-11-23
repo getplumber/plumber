@@ -1,7 +1,7 @@
 //go:build cli
 
 // Package local holds the local CLI suite of the refactoring
-// (getplumber/monorepo#640).
+// (https://github.com/orgs/getplumber/projects/1/views/18).
 //
 // The suite is a firewall: it runs the built plumber binary on the inputs we
 // want to protect and compares each run with a golden file, so a refactoring
