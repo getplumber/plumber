@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/getplumber/plumber/internal/httpcount"
 )
 
 // defaultTokenRunsPerPage is the page size requested from
@@ -56,7 +58,8 @@ var defaultTokenEligibleEvents = map[string]bool{
 // process's GitHub credentials must never reach bundled in the same
 // request.
 var jobLogsAPIClient = &http.Client{
-	Timeout: 15 * time.Second,
+	Timeout:   15 * time.Second,
+	Transport: httpcount.DefaultTransport,
 	CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 		return http.ErrUseLastResponse
 	},
@@ -66,7 +69,7 @@ var jobLogsAPIClient = &http.Client{
 // plain client, bounded to 15 seconds so a slow or unresponsive log
 // store never hangs this lane, and never given an Authorization
 // header (built fresh for every call, see fetchJobLogHead).
-var jobLogsStoreClient = &http.Client{Timeout: 15 * time.Second}
+var jobLogsStoreClient = &http.Client{Timeout: 15 * time.Second, Transport: httpcount.DefaultTransport}
 
 // remoteRunsResponse is the slim subset of the workflow-runs listing
 // endpoint response this reads.

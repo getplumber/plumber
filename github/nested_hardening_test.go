@@ -34,7 +34,7 @@ func TestResolveNested_BudgetCutEntriesAreNeverEnriched(t *testing.T) {
 		apiPaths = append(apiPaths, r.URL.Path)
 		return `{"message":"Not Found"}`, http.StatusNotFound
 	})
-	defs := newDefinitionFetcher(stub.fetch, client)
+	defs := tokenFetcher(stub.fetch, client)
 	p := &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, ProjectPath: "acme/app", Jobs: []ir.Job{oneJob("acme/b@v1")}}
 	resolveNestedActions(p, defs, nestedScope{projectPath: "acme/app"})
 	if !p.NestedBudgetExceeded {
@@ -83,7 +83,7 @@ func TestResolveNested_OversizedDefinitionIsFetch(t *testing.T) {
 	if len(p.UnexpandedActions) != 1 || p.UnexpandedActions[0].Uses != want[0].Uses || p.UnexpandedActions[0].Reason != want[0].Reason {
 		t.Fatalf("a 2 MiB definition is reason fetch, got %+v", p.UnexpandedActions)
 	}
-	defs := newDefinitionFetcher(stub.fetch, nil)
+	defs := tokenFetcher(stub.fetch, nil)
 	if _, st := defs.read("acme", "c", "v1", "dist/x.js"); st != fetchOK {
 		t.Fatalf("an entrypoint keeps its own bound, got status %v", st)
 	}
@@ -99,7 +99,7 @@ func TestResolveMutableExec_DropsTheDefinitionText(t *testing.T) {
 		"acme/b@v1:action.yml": "runs:\n  using: node20\n  main: index.js\n",
 		"acme/b@v1:index.js":   "console.log(1)\n",
 	})
-	defs := newDefinitionFetcher(stub.fetch, nil)
+	defs := tokenFetcher(stub.fetch, nil)
 	if d := defs.action("acme", "b", "", "v1"); d.Text == "" {
 		t.Fatal("the walk reads the text")
 	}
@@ -216,7 +216,7 @@ func TestResolveMutableExec_CaseVariantsReadTheDefinitionOnce(t *testing.T) {
 		"acme/b@v1:action.yml": "runs:\n  using: node20\n  main: index.js\n",
 		"acme/b@v1:index.js":   "console.log(1)\n",
 	})
-	defs := newDefinitionFetcher(stub.fetch, nil)
+	defs := tokenFetcher(stub.fetch, nil)
 	cache := map[string]*ir.MutableRemoteExec{}
 	for _, u := range []string{"acme/b@v1", "Acme/b@v1", "ACME/b@v1", "acme/B@v1", "Acme/B@v1", "aCme/b@v1", "acMe/b@v1", "ACME/B@v1"} {
 		resolveMutableExec(u, defs, cache)

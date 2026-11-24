@@ -49,3 +49,6 @@ main
 
 # Superpowers process scratch (ledgers, briefs, reports) - never committed.
 .superpowers/
+
+# analyze --debug default report
+plumber-debug.md

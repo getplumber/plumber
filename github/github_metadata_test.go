@@ -10,6 +10,8 @@ import (
 
 	"github.com/cli/go-gh/v2/pkg/api"
 	version "github.com/hashicorp/go-version"
+
+	"github.com/getplumber/plumber/internal/httpcount"
 )
 
 // Test_latestReleaseTag_picksTheHighestCleanSemver pins the ISSUE-709
@@ -371,6 +373,24 @@ func Test_metadataClientOptions(t *testing.T) {
 	}
 	if opts, token := metadataClientOptions("ghes.example.com"); token != "ghp_metadata" || opts.AuthToken != "ghp_metadata" || opts.Host != "ghes.example.com" {
 		t.Fatalf("token, GHES: got token=%q auth=%q host=%q, want token+host", token, opts.AuthToken, opts.Host)
+	}
+}
+
+// Test_graphQLClientOptions pins that the GraphQL client never goes through
+// Memo: it keeps the host and token of the REST options but sends through
+// the counting-only transport, so an "absent" answer is never replayed.
+func Test_graphQLClientOptions(t *testing.T) {
+	t.Setenv(EnvMetadataToken, "ghp_metadata")
+	rest, _ := metadataClientOptions("ghes.example.com")
+	gql := graphQLClientOptions(rest)
+	if gql.Transport != httpcount.DefaultTransport {
+		t.Fatalf("GraphQL transport = %T, want httpcount.DefaultTransport", gql.Transport)
+	}
+	if gql.AuthToken != "ghp_metadata" || gql.Host != "ghes.example.com" {
+		t.Fatalf("GraphQL options: auth=%q host=%q, want the REST ones", gql.AuthToken, gql.Host)
+	}
+	if rest.Transport != httpcount.MemoTransport {
+		t.Fatalf("REST transport = %T, want httpcount.MemoTransport", rest.Transport)
 	}
 }
 
