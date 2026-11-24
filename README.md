@@ -144,6 +144,15 @@ jobs:
           score-push: true
 ```
 
+The action also verifies your [workflow lockfile](https://docs.github.com/en/actions/concepts/security/workflow-dependency-lockfiles) (`.github/workflows/actions.lock`) with `gh actions-lock --verify`, and fails the job if it doesn't verify (`soft-fail` doesn't change that). A repository without a lockfile gets a warning and the job continues. Create it from the repository root and commit it:
+
+```sh
+gh extension install github/gh-actions-lock
+gh actions-lock
+```
+
+Set `verify-lockfile: false` to opt out.
+
 **Full guide:** [getplumber.io/docs/cli/github#run-with-github-actions](https://getplumber.io/docs/cli/github#run-with-github-actions)
 
 ## GitLab CI component
