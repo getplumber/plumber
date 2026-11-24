@@ -40,16 +40,16 @@ import data.lib.location
 # KEEP IN SYNC with policies/template_injection.rego::unsafe_patterns
 # (byte-for-byte; enforced by TestIssue209UnsafePatternsMatchTemplateInjection).
 unsafe_patterns := [
-	`\${{[^}]*github\.event\.[^}]*\.(title|body)\b`,
-	`\${{[^}]*github\.head_ref\b`,
-	`\${{[^}]*github\.event\.[^}]*\.head\.(ref|label)\b`,
-	`\${{[^}]*github\.event\.[^}]*head_branch\b`,
-	`\${{[^}]*github\.event\.[^}]*head\.repo\.default_branch\b`,
-	`\${{[^}]*github\.event\.[^}]*head_repository\.default_branch\b`,
-	`\${{[^}]*github\.event\.[^}]*\.message\b`,
-	`\${{[^}]*github\.event\.[^}]*\.(description|homepage)\b`,
-	`\${{[^}]*github\.event\.[^}]*(author|committer)\.(name|email)\b`,
-	`\${{[^}]*github\.event\.[^}]*page_name\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*\.(title|body)\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.head_ref\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*\.head\.(ref|label)\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*head_branch\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*head\.repo\.default_branch\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*head_repository\.default_branch\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*\.message\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*\.(description|homepage)\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*(author|committer)\.(name|email)\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*page_name\b`,
 ]
 
 # NEWLINE-capable subset: fields that can contain a literal newline and thus
@@ -58,8 +58,8 @@ unsafe_patterns := [
 # cannot poison $GITHUB_ENV through an env-bound write. Used only by the
 # env-bound $GITHUB_ENV rule. (A subset of unsafe_patterns by construction.)
 newline_unsafe_patterns := [
-	`\${{[^}]*github\.event\.[^}]*\.body\b`,
-	`\${{[^}]*github\.event\.[^}]*\.message\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*\.body\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*\.message\b`,
 ]
 
 # A redirect (`>>` / `>`) or `tee` writing into the named file, in `$VAR` or
@@ -180,7 +180,7 @@ _heredoc_to_sink(script, varname, sinkpatterns) if {
 	regex.match(sprintf(`(?s)<<-?\s*["']?\w+["']?[^\n]*(%s).*\$\{?%s\b`, [sinkpat, varname]), script)
 }
 
-_tojson_wrapped(s) if regex.match(`(?i)\$\{\{[^}]*\btojson\s*\(`, s)
+_tojson_wrapped(s) if regex.match(`(?i)\$\{\{(?:'(?:''|[^'])*'|[^'}])*\btojson\s*\(`, s)
 
 _finding(jobname, varname, subject, line, msg) := {
 	"code":         "ISSUE-209",
@@ -245,7 +245,7 @@ _direct_subject(job) := s if {
 		some line in split(script, "\n")
 		_matches(line, sink_patterns)
 		not _tojson_wrapped(line)
-		some e in regex.find_n(`\$\{\{[^}]*`, line, -1)
+		some e in regex.find_n(`\$\{\{(?:'(?:''|[^'])*'|[^'}])*`, line, -1)
 		_matches(e, unsafe_patterns)
 	})
 } else := ""
@@ -253,7 +253,7 @@ _direct_subject(job) := s if {
 # _value_subject: the untrusted expression an env: binding holds.
 _value_subject(value) := s if {
 	s := min({trim_space(trim_prefix(e, "${{")) |
-		some e in regex.find_n(`\$\{\{[^}]*`, value, -1)
+		some e in regex.find_n(`\$\{\{(?:'(?:''|[^'])*'|[^'}])*`, value, -1)
 		_matches(e, unsafe_patterns)
 	})
 } else := ""

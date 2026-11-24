@@ -36,11 +36,11 @@ import data.lib.location
 unsafe_patterns := [
 	# Titles and bodies — issue, pull_request, comment, review,
 	# discussion.
-	`\${{[^}]*github\.event\.[^}]*\.(title|body)\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*\.(title|body)\b`,
 	# Branch / ref names controlled on the attacker's fork.
-	`\${{[^}]*github\.head_ref\b`,
-	`\${{[^}]*github\.event\.[^}]*\.head\.(ref|label)\b`,
-	`\${{[^}]*github\.event\.[^}]*head_branch\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.head_ref\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*\.head\.(ref|label)\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*head_branch\b`,
 	# default_branch is attacker-controlled ONLY on the fork ("head")
 	# repository: pull_request.head.repo.default_branch (an attacker can
 	# rename their fork's default branch) and the workflow_run
@@ -48,16 +48,16 @@ unsafe_patterns := [
 	# default_branch is admin metadata and must NOT be flagged (#230).
 	# RE2 has no negative lookahead, so we require the fork qualifier
 	# instead of excluding the base path.
-	`\${{[^}]*github\.event\.[^}]*head\.repo\.default_branch\b`,
-	`\${{[^}]*github\.event\.[^}]*head_repository\.default_branch\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*head\.repo\.default_branch\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*head_repository\.default_branch\b`,
 	# Commit messages.
-	`\${{[^}]*github\.event\.[^}]*\.message\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*\.message\b`,
 	# Repository metadata an attacker sets on their fork.
-	`\${{[^}]*github\.event\.[^}]*\.(description|homepage)\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*\.(description|homepage)\b`,
 	# Author / committer identity free text.
-	`\${{[^}]*github\.event\.[^}]*(author|committer)\.(name|email)\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*(author|committer)\.(name|email)\b`,
 	# GitHub Pages page name.
-	`\${{[^}]*github\.event\.[^}]*page_name\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*page_name\b`,
 ]
 
 deny contains finding if {
@@ -98,7 +98,7 @@ _job_subject(job) := s if {
 		lines := split(script, "\n")
 		some li, line in lines
 		not _safe_sink(lines, li, line)
-		some e in regex.find_n(`\$\{\{[^}]*`, line, -1)
+		some e in regex.find_n(`\$\{\{(?:'(?:''|[^'])*'|[^'}])*`, line, -1)
 		_expression_controlled(job, e)
 	})
 } else := ""
@@ -106,7 +106,7 @@ _job_subject(job) := s if {
 # _line_controlled: the line holds an expression whose value someone
 # controls when the job runs (_expression_controlled).
 _line_controlled(job, line) if {
-	some e in regex.find_n(`\$\{\{[^}]*`, line, -1)
+	some e in regex.find_n(`\$\{\{(?:'(?:''|[^'])*'|[^'}])*`, line, -1)
 	_expression_controlled(job, e)
 }
 
@@ -160,7 +160,7 @@ _safe_sink(lines, li, line) if {
 }
 
 _tojson_wrapped(line) if {
-	regex.match(`(?i)\$\{\{[^}]*\btojson\s*\(`, line)
+	regex.match(`(?i)\$\{\{(?:'(?:''|[^'])*'|[^'}])*\btojson\s*\(`, line)
 }
 
 # Line li is inside a quoted heredoc when an earlier line opens one
