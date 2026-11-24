@@ -258,6 +258,7 @@ Contributing guide: [`CONTRIBUTING.md`](./CONTRIBUTING.md)
 - GitHub Action listing: [Plumber Score](https://github.com/marketplace/actions/plumber-score)
 - GitLab component listing: [CI/CD Catalog](https://gitlab.com/explore/catalog/getplumber/plumber)
 - Security policy: [`SECURITY.md`](./SECURITY.md)
+- Release process: [`docs/RELEASING.md`](./docs/RELEASING.md)
 
 ## License
 
