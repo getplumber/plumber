@@ -51,6 +51,7 @@ func TestSchemaExportsToggleOnBehaviorSwitches(t *testing.T) {
 		{"securityJobsMustNotBeWeakened", []string{"allowFailureMustBeFalse", "enabled"}},
 		{"securityJobsMustNotBeWeakened", []string{"rulesMustNotBeRedefined", "enabled"}},
 		{"securityJobsMustNotBeWeakened", []string{"whenMustNotBeManual", "enabled"}},
+		{"tagMustBeProtected", []string{"requireCreationRestricted"}},
 	}
 	for _, tc := range toggles {
 		f := fieldAt(t, tc.control, tc.path...)

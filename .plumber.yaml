@@ -192,6 +192,34 @@ gitlab:
       # Minimum access level required to push (0=No one, 30=Developer, 40=Maintainer)
       minPushAccessLevel: 40
     # ===========================================
+    # Tag must be protected
+    # ===========================================
+    # Checks that tags are protected, so nobody with push access can move,
+    # delete or create a release tag (Settings > Repository > Protected
+    # tags). A protected tag already blocks updates and deletions; creation
+    # must be limited to Maintainers or a narrower set.
+    #
+    # By default (no namePatterns) every tag must be covered by one
+    # protected tag `*`, the recommended setup. List patterns to check
+    # those instead, each on its own.
+    #
+    # Only checked once the project has a tag or a job runs on tags, so
+    # projects that never tag stay quiet. A job that runs on tag pipelines
+    # (only: tags, or a rule on $CI_COMMIT_TAG) raises the finding to
+    # critical.
+    #
+    # Needs a token with read_api to list protected tags and tags; without
+    # one the control reports "not evaluated", never a false positive. Not
+    # evaluated in platform mode yet (the snapshot has no tag lane).
+    tagMustBeProtected:
+      # Set to false to disable this control
+      enabled: true
+      # Tag name patterns that must be protected (supports wildcards).
+      # Empty: a protected tag `*` must cover all tags.
+      namePatterns: []
+      # Also require tag creation to be restricted
+      requireCreationRestricted: true
+    # ===========================================
     # MR approval rules must require a minimum number of approvals
     # ===========================================
     # Flags approval rules covering all protected branches that require fewer
@@ -976,6 +1004,31 @@ github:
         - dev
       allowForcePush: false
       codeOwnerApprovalRequired: false
+
+    # ===========================================
+    # Tag must be protected (project governance)
+    # ===========================================
+    # Reads the repository's tag rulesets (its own and the organization's)
+    # and its tags. Tags must be covered by active rulesets that restrict
+    # updates, deletions and creations.
+    #
+    # By default (no namePatterns) the rulesets must target All tags
+    # (~ALL) with no exclusion, the recommended setup. List patterns to
+    # check those instead, each on its own. Workflow tag triggers never add
+    # a pattern: they make the finding critical.
+    #
+    # Only checked once the repository has a tag or a workflow runs on
+    # tags, so repositories that never tag stay quiet.
+    #
+    # Needs only "Metadata: read" (every GITHUB_TOKEN has it): listing
+    # rulesets and tags needs no admin rights. Without access the control
+    # reports "not evaluated", never a false positive.
+    tagMustBeProtected:
+      enabled: true
+      # Tag name patterns that must be protected (supports wildcards).
+      # Empty: rulesets on All tags (~ALL) must cover every tag.
+      namePatterns: []
+      requireCreationRestricted: true
 
     # ============================================================================
     # Workflows must include required actions

@@ -34,7 +34,7 @@ func TestRunRegoEngine_FailingPolicyDegradesTheRun(t *testing.T) {
 		}}}}
 	project := &gitlab.Project{DefaultBranch: "main"}
 	result := &AnalysisResult{CiValid: true}
-	runRegoEngine(logrus.NewEntry(logrus.New()), conf, project, nil, nil, nil, nil, nil, result)
+	runRegoEngine(logrus.NewEntry(logrus.New()), conf, project, nil, nil, nil, nil, nil, nil, result)
 
 	if !result.DataCollectionDegraded || !strings.Contains(strings.Join(result.DegradedReasons, "|"), "brokengl") {
 		t.Fatalf("a failing policy must degrade the GitLab run naming the module, got degraded=%v reasons=%v", result.DataCollectionDegraded, result.DegradedReasons)
