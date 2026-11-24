@@ -283,8 +283,16 @@ func TestEnrichActions_PrefetchSkipsAbsentEntrypoints(t *testing.T) {
 	resolveNestedActions(p, defs, nestedScope{projectPath: "acme/app"})
 	enrichActions(p, client, defs, true, nil)
 
-	if len(*queries) != 1 {
-		t.Fatalf("want one prefetch query, got %d", len(*queries))
+	// The metadata queries share the GraphQL client; count the entrypoint
+	// prefetch only.
+	prefetches := 0
+	for _, q := range *queries {
+		if strings.Contains(q.Query, "object(expression: $e0_0)") {
+			prefetches++
+		}
+	}
+	if prefetches != 1 {
+		t.Fatalf("want one prefetch query, got %d", prefetches)
 	}
 	for _, key := range []string{
 		"acme/mono@v2:tools/lint/action.js", "acme/mono@v2:tools/lint/index.js", "acme/mono@v2:tools/lint/src/index.js",

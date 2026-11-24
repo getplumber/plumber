@@ -139,6 +139,24 @@ type Registry struct {
 	log      []Entry
 	// memoHits counts the requests Memo answered without sending them.
 	memoHits int
+	// graphql holds each GraphQL query's cost, in the order sent.
+	graphql []GraphQLQuery
+}
+
+// GraphQLQuery is one GraphQL query and the cost GitHub reported for it in
+// the query's own rateLimit field: points, not requests, so the headers
+// alone do not tell it.
+type GraphQLQuery struct {
+	Label     string
+	Cost      int
+	Remaining int
+}
+
+// RecordGraphQL keeps the cost of one GraphQL query for the report.
+func (r *Registry) RecordGraphQL(label string, cost, remaining int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.graphql = append(r.graphql, GraphQLQuery{Label: label, Cost: cost, Remaining: remaining})
 }
 
 // RedactedQuery stands for the query of a request the GitHub API did not
@@ -266,6 +284,7 @@ type Snapshot struct {
 	Quotas   []Quota
 	Entries  []Entry
 	MemoHits int
+	GraphQL  []GraphQLQuery
 }
 
 // Snapshot copies the counts. Quotas are sorted by host, resource,
@@ -273,7 +292,7 @@ type Snapshot struct {
 func (r *Registry) Snapshot() Snapshot {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	snap := Snapshot{Hosts: maps.Clone(r.hosts), Entries: slices.Clone(r.log), MemoHits: r.memoHits}
+	snap := Snapshot{Hosts: maps.Clone(r.hosts), Entries: slices.Clone(r.log), MemoHits: r.memoHits, GraphQL: slices.Clone(r.graphql)}
 	for _, windows := range r.quotas {
 		snap.Quotas = append(snap.Quotas, windows...)
 	}

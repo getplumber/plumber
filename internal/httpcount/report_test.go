@@ -144,6 +144,31 @@ func TestQuotaEndpoints_capped(t *testing.T) {
 	}
 }
 
+// The GraphQL section lists each query, the points it cost and the budget
+// left, with the total.
+func TestReport_graphQLSection(t *testing.T) {
+	r := reportFixture()
+	r.Snapshot.GraphQL = []GraphQLQuery{{Label: "action metadata: 20 repositories", Cost: 2, Remaining: 4990}, {Label: "tag listing: 3 repositories", Cost: 1, Remaining: 4989}}
+	var b strings.Builder
+	if err := r.WriteMarkdown(&b); err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+	for _, want := range []string{
+		"## GraphQL queries",
+		"- **2 queries**, 3 points.",
+		"| 1 | action metadata: 20 repositories | 2 | 4990 |",
+		"| 2 | tag listing: 3 repositories | 1 | 4989 |",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("report misses %q\n\n%s", want, out)
+		}
+	}
+	if !strings.Contains(renderFixture(t), "## GraphQL queries\n\n_None._") {
+		t.Error("a run without GraphQL queries does not say so")
+	}
+}
+
 func TestCell(t *testing.T) {
 	if got := cell("a|b\nc"); got != `a\|b c` {
 		t.Fatalf("cell = %q", got)

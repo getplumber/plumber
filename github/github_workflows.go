@@ -2,9 +2,11 @@ package github
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -325,6 +327,7 @@ func enrichActions(pipeline *ir.NormalizedPipeline, client *GitHubMetadataClient
 		}
 	}
 	total := len(uniqueRefs)
+	client.Prefetch(prefetchRefs(pipeline, uniqueRefs))
 	if scanMutableExec {
 		defs.prefetchAbsent(candidateRefs(pipeline, defs))
 	}
@@ -386,6 +389,27 @@ func enrichActions(pipeline *ir.NormalizedPipeline, client *GitHubMetadataClient
 	// output writers can show a "could not verify" warning instead of a
 	// silent pass (ISSUE-228).
 	pipeline.AdvisoryWarnings = append(pipeline.AdvisoryWarnings, client.DegradedChecks()...)
+}
+
+// prefetchRefs is every reference the enrichment loop below resolves:
+// uniqueRefs, and the `owner/repo@tag` of each `# vX` comment version it
+// checks the pin against (ResolveTagSha). Sorted, so the queries a run
+// sends do not depend on map order.
+func prefetchRefs(pipeline *ir.NormalizedPipeline, uniqueRefs map[string]struct{}) []string {
+	refs := slices.Sorted(maps.Keys(uniqueRefs))
+	for i := range pipeline.Jobs {
+		for _, action := range pipeline.Jobs[i].Uses {
+			if _, resolved := uniqueRefs[action.Uses]; !resolved || action.Comment == "" {
+				continue
+			}
+			if v := extractVersionFromComment(action.Comment); v != "" {
+				if ownerRepo := ownerRepoFromUses(action.Uses); ownerRepo != "" {
+					refs = append(refs, ownerRepo+"@"+v)
+				}
+			}
+		}
+	}
+	return refs
 }
 
 // toActionMetadata copies the API answer into the IR shape the policies

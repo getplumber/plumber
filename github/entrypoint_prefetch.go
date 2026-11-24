@@ -11,14 +11,11 @@ package github
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"path"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
-
-	"github.com/cli/go-gh/v2/pkg/api"
 
 	"github.com/getplumber/plumber/internal/ir"
 )
@@ -149,27 +146,15 @@ func (f *definitionFetcher) prefetchChunk(refs []candidateRef) {
 }
 
 // failedAliases reads a query's error: the top-level aliases GitHub tied
-// an error to, and whether the rest of the answer can be used. A nil error
-// leaves every alias usable. A GraphQL error whose every item names an
-// alias spoils those aliases only; one without a path (rate limit, query
-// error), or any other error, spoils the whole answer.
+// an error to, and whether the rest of the answer can be used (see
+// aliasErrors).
 func failedAliases(err error) (map[string]bool, bool) {
-	if err == nil {
-		return nil, true
+	errs, ok := aliasErrors(err)
+	if !ok || errs == nil {
+		return nil, ok
 	}
-	var gqlErr *api.GraphQLError
-	if !errors.As(err, &gqlErr) {
-		return nil, false
-	}
-	failed := map[string]bool{}
-	for _, item := range gqlErr.Errors {
-		if len(item.Path) == 0 {
-			return nil, false
-		}
-		alias, isString := item.Path[0].(string)
-		if !isString {
-			return nil, false
-		}
+	failed := make(map[string]bool, len(errs))
+	for alias := range errs {
 		failed[alias] = true
 	}
 	return failed, true

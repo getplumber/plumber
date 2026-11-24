@@ -77,6 +77,7 @@ func (r Report) WriteMarkdown(w io.Writer) error {
 
 	writeRateLimits(&b, r.RateLimits)
 	writeQuotas(&b, s.Quotas, s.Entries, r.CredentialNames)
+	writeGraphQL(&b, s.GraphQL)
 	writeUnmetered(&b, s.Hosts)
 	writeEndpoints(&b, s.Entries)
 	writeRepeats(&b, s.Entries)
@@ -142,6 +143,26 @@ func writeRateLimits(b *strings.Builder, limits []RateLimit) {
 		b.WriteString(strings.Join(rows, "\n"))
 		b.WriteString("\n\n")
 	}
+}
+
+// writeGraphQL lists the GraphQL queries the run sent and what each cost:
+// GitHub counts GraphQL in points, which the request counts do not show.
+func writeGraphQL(b *strings.Builder, queries []GraphQLQuery) {
+	b.WriteString("## GraphQL queries\n\n")
+	if len(queries) == 0 {
+		b.WriteString("_None._\n\n")
+		return
+	}
+	total := 0
+	for _, q := range queries {
+		total += q.Cost
+	}
+	fmt.Fprintf(b, "- **%d queries**, %d points.\n\n", len(queries), total)
+	b.WriteString("| # | Query | Cost | Remaining |\n|--:|---|--:|--:|\n")
+	for i, q := range queries {
+		fmt.Fprintf(b, "| %d | %s | %d | %d |\n", i+1, cell(q.Label), q.Cost, q.Remaining)
+	}
+	b.WriteString("\n")
 }
 
 // maxQuotaEndpoints is how many endpoints a quota row lists before "+N more".

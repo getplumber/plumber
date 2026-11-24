@@ -329,6 +329,19 @@ func TestRegistry_logRedactsUnmeteredQuery(t *testing.T) {
 	}
 }
 
+// Each GraphQL query's own cost, as GitHub's rateLimit field reports it,
+// is kept in order, whether or not the log is on: the report lists them.
+func TestRegistry_recordsGraphQLCosts(t *testing.T) {
+	reg := &Registry{}
+	reg.RecordGraphQL("action metadata: 20 repositories", 2, 4990)
+	reg.RecordGraphQL("tag listing: 3 repositories", 1, 4989)
+	got := reg.Snapshot().GraphQL
+	want := []GraphQLQuery{{Label: "action metadata: 20 repositories", Cost: 2, Remaining: 4990}, {Label: "tag listing: 3 repositories", Cost: 1, Remaining: 4989}}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("graphql = %+v, want %+v", got, want)
+	}
+}
+
 func TestTemplate(t *testing.T) {
 	cases := []struct{ host, path, want string }{
 		{"api.github.com", "/repos/actions/checkout", "/repos/{owner}/{repo}"},
