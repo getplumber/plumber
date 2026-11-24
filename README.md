@@ -17,14 +17,18 @@
 <p align="center">Securing the workflows of:</p>
 <table align="center">
   <tr>
-    <td align="center"><a href="https://github.com/lightpanda-io/browser"><img src="https://avatars.githubusercontent.com/u/145980012?s=96" width="48" height="48" alt="Lightpanda"></a><br><sub><b>Lightpanda</b><br>&#9733; 36k</sub></td>
+    <td align="center"><a href="https://github.com/lightpanda-io/browser"><img src="https://avatars.githubusercontent.com/u/145980012?s=96" width="48" height="48" alt="Lightpanda"></a><br><sub><b>Lightpanda</b><br>&#9733; 41.9k</sub></td>
+    <td align="center"><a href="https://github.com/invoke-ai/InvokeAI"><img src="https://avatars.githubusercontent.com/u/113954515?s=96" width="48" height="48" alt="InvokeAI"></a><br><sub><b>InvokeAI</b><br>&#9733; 29k</sub></td>
     <td align="center"><a href="https://github.com/go-delve/delve"><img src="https://avatars.githubusercontent.com/u/19232073?s=96" width="48" height="48" alt="Delve"></a><br><sub><b>Delve</b><br>&#9733; 24.9k</sub></td>
-    <td align="center"><a href="https://github.com/duplicati/duplicati"><img src="https://avatars.githubusercontent.com/u/8270231?s=96" width="48" height="48" alt="Duplicati"></a><br><sub><b>Duplicati</b><br>&#9733; 15k</sub></td>
+    <td align="center"><a href="https://github.com/duplicati/duplicati"><img src="https://avatars.githubusercontent.com/u/8270231?s=96" width="48" height="48" alt="Duplicati"></a><br><sub><b>Duplicati</b><br>&#9733; 15.1k</sub></td>
+    <td align="center"><a href="https://github.com/libnyanpasu/clash-nyanpasu"><img src="https://avatars.githubusercontent.com/u/159686715?s=96" width="48" height="48" alt="Clash Nyanpasu"></a><br><sub><b>Clash Nyanpasu</b><br>&#9733; 13.3k</sub></td>
     <td align="center"><a href="https://github.com/go-resty/resty"><img src="assets/adopters/resty.png" width="48" height="48" alt="Resty"></a><br><sub><b>Resty</b><br>&#9733; 11.8k</sub></td>
-    <td align="center"><a href="https://github.com/0xJacky/nginx-ui"><img src="assets/adopters/nginx-ui.png" width="48" height="48" alt="nginx-ui"></a><br><sub><b>nginx-ui</b><br>&#9733; 11.5k</sub></td>
-    <td align="center"><a href="https://github.com/bunkerity/bunkerweb"><img src="https://avatars.githubusercontent.com/u/86405535?s=96" width="48" height="48" alt="Bunkerity"></a><br><sub><b>Bunkerity</b><br>&#9733; 11k</sub></td>
-    <td align="center"><a href="https://github.com/Stellarium/stellarium"><img src="https://avatars.githubusercontent.com/u/7320160?s=96" width="48" height="48" alt="Stellarium"></a><br><sub><b>Stellarium</b><br>&#9733; 10k</sub></td>
-    <td align="center"><a href="https://github.com/intuitem/ciso-assistant-community"><img src="https://avatars.githubusercontent.com/u/71849524?s=96" width="48" height="48" alt="intuitem"></a><br><sub><b>intuitem</b><br>&#9733; 4.4k</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="https://github.com/0xJacky/nginx-ui"><img src="assets/adopters/nginx-ui.png" width="48" height="48" alt="nginx-ui"></a><br><sub><b>nginx-ui</b><br>&#9733; 11.7k</sub></td>
+    <td align="center"><a href="https://github.com/bunkerity/bunkerweb"><img src="https://avatars.githubusercontent.com/u/86405535?s=96" width="48" height="48" alt="Bunkerity"></a><br><sub><b>Bunkerity</b><br>&#9733; 11.2k</sub></td>
+    <td align="center"><a href="https://github.com/Stellarium/stellarium"><img src="https://avatars.githubusercontent.com/u/7320160?s=96" width="48" height="48" alt="Stellarium"></a><br><sub><b>Stellarium</b><br>&#9733; 10.1k</sub></td>
+    <td align="center"><a href="https://github.com/intuitem/ciso-assistant-community"><img src="https://avatars.githubusercontent.com/u/71849524?s=96" width="48" height="48" alt="intuitem"></a><br><sub><b>intuitem</b><br>&#9733; 4.6k</sub></td>
     <td align="center"><a href="https://github.com/outscale"><img src="https://avatars.githubusercontent.com/u/8233735?s=96" width="48" height="48" alt="Outscale"></a><br><sub><b>Outscale</b><br>&#9733; &nbsp;</sub></td>
     <td align="center"><a href="https://github.com/telstra"><img src="https://avatars.githubusercontent.com/u/3914896?s=96" width="48" height="48" alt="Telstra"></a><br><sub><b>Telstra</b><br>&#9733; &nbsp;</sub></td>
   </tr>
