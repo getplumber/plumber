@@ -325,6 +325,9 @@ func enrichActions(pipeline *ir.NormalizedPipeline, client *GitHubMetadataClient
 		}
 	}
 	total := len(uniqueRefs)
+	if scanMutableExec {
+		defs.prefetchAbsent(candidateRefs(pipeline, defs))
+	}
 	seen := map[string]struct{}{}
 	mreCache := map[string]*ir.MutableRemoteExec{}
 	done := 0

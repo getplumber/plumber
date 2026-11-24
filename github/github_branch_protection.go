@@ -159,13 +159,9 @@ func FetchGitHubBranchProtection(host, owner, repo string, opts BranchFetchOptio
 			}
 			return nil, fmt.Errorf("branch %q: %w", name, ferr)
 		}
+		// nil: GitHub redirected name to another branch (see
+		// fetchBranchByName). The user did not ask about that branch.
 		if entry == nil {
-			continue
-		}
-		// Drop entries where GitHub silently redirected us to a
-		// different branch (default-branch fallback for stale or
-		// renamed names). The user did not ask about that branch.
-		if entry.Name != name {
 			continue
 		}
 		if seen[entry.Name] {
@@ -257,11 +253,20 @@ func FetchGitHubBranchProtection(host, owner, repo string, opts BranchFetchOptio
 // branches managed purely by Rulesets used to land at PDK=false
 // because classic /protection 404s, and that hid real ISSUE-505
 // findings (or false-positived them when classic had stale data).
+//
+// It returns nil, nil when GitHub redirected name to another branch.
 func fetchBranchByName(rest *api.RESTClient, owner, repo, name string) (*ir.Branch, error) {
 	endpoint := fmt.Sprintf("repos/%s/%s/branches/%s", owner, repo, name)
 	var entry remoteBranchEntry
 	if err := rest.Get(endpoint, &entry); err != nil {
 		return nil, err
+	}
+	// GitHub silently redirects a stale or renamed name to another branch
+	// (the default branch, the new name). The caller did not ask about
+	// that branch, and reading the old name's protection would only buy
+	// a 404 (plumber#618).
+	if entry.Name != name {
+		return nil, nil
 	}
 	out := &ir.Branch{Name: entry.Name, Protected: entry.Protected}
 	if !entry.Protected {

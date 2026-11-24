@@ -162,6 +162,17 @@ func TestFetchGitHubBranchProtection_TargetedRedirectsToDefault(t *testing.T) {
 	mux.HandleFunc("/repos/owner/repo/branches/master", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"name": "main", "protected": true})
 	})
+	// The redirect is discarded, so its protection is never read: on
+	// GitHub that read only 404s (plumber#618).
+	var redirectedDetail []string
+	mux.HandleFunc("/repos/owner/repo/branches/master/protection", func(w http.ResponseWriter, r *http.Request) {
+		redirectedDetail = append(redirectedDetail, r.URL.Path)
+		http.Error(w, "Not Found", http.StatusNotFound)
+	})
+	mux.HandleFunc("/repos/owner/repo/rules/branches/master", func(w http.ResponseWriter, r *http.Request) {
+		redirectedDetail = append(redirectedDetail, r.URL.Path)
+		_, _ = w.Write([]byte("[]"))
+	})
 	server := httptest.NewServer(mux)
 	defer server.Close()
 	swapRESTClient(t, server)
@@ -171,6 +182,9 @@ func TestFetchGitHubBranchProtection_TargetedRedirectsToDefault(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(redirectedDetail) != 0 {
+		t.Errorf("the redirected master must not have its protection read, got %q", redirectedDetail)
 	}
 	if len(branches) != 1 {
 		t.Fatalf("expected 1 branch (main only; master is a default-branch redirect), got %d: %+v", len(branches), branches)
