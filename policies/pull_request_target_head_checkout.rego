@@ -19,6 +19,7 @@
 package pull_request_target_head_checkout
 
 import rego.v1
+import data.lib.actions
 import data.lib.provenance
 
 # Refs known to resolve to attacker-controlled content under a
@@ -35,7 +36,7 @@ deny contains finding if {
 	job := input.pipeline.jobs[i]
 	_under_pull_request_target(job)
 	action := job.uses[j]
-	startswith(action.uses, "actions/checkout@")
+	actions.matches(action.uses, "actions/checkout")
 	ref := action.with.ref
 	is_string(ref)
 	_ref_points_at_pr_head(ref)

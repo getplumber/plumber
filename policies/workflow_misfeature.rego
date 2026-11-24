@@ -14,13 +14,14 @@
 package workflow_misfeature
 
 import rego.v1
+import data.lib.actions
 import data.lib.provenance
 
 deny contains finding if {
 	some i, j
 	job := input.pipeline.jobs[i]
 	action := job.uses[j]
-	startswith(action.uses, "actions/upload-artifact@")
+	actions.matches(action.uses, "actions/upload-artifact")
 	path := action.with.path
 	is_string(path)
 	_uploads_checkout_dir(path)

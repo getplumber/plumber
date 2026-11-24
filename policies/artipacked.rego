@@ -24,6 +24,7 @@
 package artipacked
 
 import rego.v1
+import data.lib.actions
 import data.lib.provenance
 
 # ISSUE-310 (high): credential persists AND `.git` is packed into an
@@ -32,7 +33,7 @@ deny contains finding if {
 	some i, j
 	job := input.pipeline.jobs[i]
 	action := job.uses[j]
-	startswith(action.uses, "actions/checkout@")
+	actions.matches(action.uses, "actions/checkout")
 	not _credentials_disabled(action)
 	some upload in _git_packing_uploads(job, j)
 	finding := object.union({
@@ -55,7 +56,7 @@ deny contains finding if {
 	some i, j
 	job := input.pipeline.jobs[i]
 	action := job.uses[j]
-	startswith(action.uses, "actions/checkout@")
+	actions.matches(action.uses, "actions/checkout")
 	not _credentials_disabled(action)
 	count(_git_packing_uploads(job, j)) == 0
 	finding := object.union({
@@ -102,7 +103,7 @@ _git_packing_uploads(job, j) := {upload |
 	some k
 	k > j
 	upload := job.uses[k]
-	startswith(upload.uses, "actions/upload-artifact@")
+	actions.matches(upload.uses, "actions/upload-artifact")
 	_uploads_hidden_files(upload)
 	_path_includes_git(_upload_path(upload), _checkout_dir(checkout))
 }

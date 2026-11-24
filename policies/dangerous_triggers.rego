@@ -30,6 +30,7 @@
 package dangerous_triggers
 
 import rego.v1
+import data.lib.actions
 
 import data.lib.location
 
@@ -104,7 +105,7 @@ deny contains finding if {
 # finding's subject (#572), the first one when several check it out.
 _untrusted_checkout_line(job) := location.first({object.get(action, "line", 0) |
 	some action in job.uses
-	startswith(action.uses, "actions/checkout@")
+	actions.matches(action.uses, "actions/checkout")
 	ref := action.with.ref
 	is_string(ref)
 	trim_space(trim_suffix(trim_prefix(ref, "${{"), "}}")) == _untrusted_ref_subject(job)
@@ -160,7 +161,7 @@ _path_names(origin, u) if endswith(origin, concat("", ["/", u]))
 _untrusted_ref_subject(job) := s if {
 	s := min({trim_space(trim_suffix(trim_prefix(ref, "${{"), "}}")) |
 		some action in job.uses
-		startswith(action.uses, "actions/checkout@")
+		actions.matches(action.uses, "actions/checkout")
 		ref := action.with.ref
 		is_string(ref)
 		some p in untrusted_ref_patterns
@@ -172,7 +173,7 @@ _untrusted_ref_subject(job) := s if {
 # its `ref:` to a fork / PR-controlled value.
 _checks_out_untrusted_code(job) if {
 	some action in job.uses
-	startswith(action.uses, "actions/checkout@")
+	actions.matches(action.uses, "actions/checkout")
 	ref := action.with.ref
 	is_string(ref)
 	some p in untrusted_ref_patterns
