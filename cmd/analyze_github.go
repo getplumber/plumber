@@ -122,6 +122,7 @@ func runGitHubAnalyze(info *utils.GitRemoteInfo, controlsFilterList, skipControl
 	}
 
 	conf := buildGitHubLocalConf(info, plumberConfig, configPath, controlsFilterList, skipControlsList)
+	defer startGitHubDebugReport(conf, "local")()
 	platformModeNotices(conf)
 
 	p, ok := plumberprovider.Get("github")
@@ -173,6 +174,7 @@ func runGitHubAnalyzeRemote(host, project, ref string, controlsFilterList, skipC
 	apiHost := strings.TrimPrefix(strings.TrimPrefix(host, "https://"), "http://")
 
 	conf := buildGitHubRemoteConf(owner, repo, ref, apiHost, plumberConfig, configPath, controlsFilterList, skipControlsList)
+	defer startGitHubDebugReport(conf, "remote")()
 	platformModeNotices(conf)
 
 	p, ok := plumberprovider.Get("github")

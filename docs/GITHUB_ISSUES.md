@@ -2315,8 +2315,11 @@ and in `.plumber.yaml`) is declared in
 ### API-backed rules
 
 ISSUE-702 / 703 / 707 / 708 / 709 / 711 / 713 and the ISSUE-714/715/716
-family call the GitHub REST API **in process** via
-`github.com/cli/go-gh`, which reuses the locally stored `gh` token.
+family call the GitHub API **in process** via `github.com/cli/go-gh`,
+which reuses the locally stored `gh` token. The action metadata (archived
+flag, stars, releases, tags, refs, advisories) is read through the GraphQL
+API, many actions per query; on GitHub Enterprise Server the advisories
+and the immutable-release flag are read over REST.
 Plumber never shells out to the `gh` binary (or any other external
 binary) during analysis — see getplumber/plumber#310. Without
 `gh auth login`, those rules degrade silently (no false positives)
@@ -2328,8 +2331,8 @@ Token resolution order: `GH_TOKEN` → `GITHUB_TOKEN` →
 If the action lives in an org behind an IP allow list (which blocks the
 runner's `GITHUB_TOKEN`), set `PLUMBER_METADATA_TOKEN` to a token with
 public-repository read so version resolution still works. Without it
-Plumber falls back to an anonymous read, and if that is rate-limited too
-it skips the check rather than guessing.
+Plumber skips the check and says so, rather than guessing. GraphQL has no
+anonymous access, so there is no anonymous fallback.
 
 Disable them explicitly in sealed CI environments with:
 

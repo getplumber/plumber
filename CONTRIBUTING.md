@@ -174,6 +174,10 @@ export GITLAB_TOKEN=glpat-xxxx
 # With debug output
 ./plumber analyze --verbose
 
+# Markdown report of every GitHub request and the rate limit (plumber-debug.md,
+# or --debug=path.md)
+./plumber analyze --debug
+
 # Lower the score gate for testing (--threshold is deprecated and
 # cannot be combined with --min-points / --min-score)
 ./plumber analyze --min-points 50

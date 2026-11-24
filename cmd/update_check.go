@@ -10,6 +10,7 @@ import (
 	"time"
 
 	glabCI "github.com/getplumber/plumber/gitlab"
+	"github.com/getplumber/plumber/internal/httpcount"
 	goversion "github.com/hashicorp/go-version"
 	"github.com/sirupsen/logrus"
 )
@@ -47,7 +48,7 @@ func checkForNewerVersion(ch chan<- string) {
 		return
 	}
 
-	client := &http.Client{Timeout: versionCheckTimeout}
+	client := &http.Client{Timeout: versionCheckTimeout, Transport: httpcount.DefaultTransport}
 	resp, err := client.Get(githubLatestReleaseURL)
 	if err != nil {
 		logrus.Debugf("version check: request failed: %v", err)
