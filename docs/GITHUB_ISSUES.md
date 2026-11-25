@@ -95,7 +95,9 @@ reading the upstream docs.
   in a VS Code terminal opens the exact job.
 - Severity counts drive the **Plumber score** (A–E). Rules tagged
   _(API)_ call the GitHub REST API in process via `go-gh` (never the
-  `gh` binary) and stay silent when no token is available.
+  `gh` binary). A GitHub analyze needs a token; with
+  `PLUMBER_DISABLE_GITHUB_API=1` it runs without the API, and these rules
+  stay silent.
 - To turn a rule off, either disable its `ControlName` in
   `.plumber.yaml` or pass `--skip-controls <control-name>`. The
   mapping lives in [`control/codes.go`](../control/codes.go).
@@ -2325,11 +2327,15 @@ visibility and full name, the branches `branchMustBeProtected` names with
 their protected flag, and the authors of its latest releases. The branch
 listing, protection details, rulesets, environments and Actions runs stay
 on REST, and so does every read of the scanned repository on GitHub
-Enterprise Server.
+Enterprise Server. In remote mode (`--project` without a checkout), one
+GraphQL query reads the workflow listing and every workflow file, on
+github.com and GitHub Enterprise Server alike, and one more reads the local
+composite actions the workflows call. A file GitHub does not return in full
+is read over REST.
 Plumber never shells out to the `gh` binary (or any other external
-binary) during analysis — see getplumber/plumber#310. Without
-`gh auth login`, those rules degrade silently (no false positives)
-rather than failing the run.
+binary) during analysis — see getplumber/plumber#310. A GitHub analyze
+needs a token: without one, it stops at startup and says how to set one
+up, since GraphQL has no anonymous access.
 
 Token resolution order: `GH_TOKEN` → `GITHUB_TOKEN` →
 `GH_ENTERPRISE_TOKEN` → the `gh` CLI's per-host token.
@@ -2340,7 +2346,10 @@ public-repository read so version resolution still works. Without it
 Plumber skips the check and says so, rather than guessing. GraphQL has no
 anonymous access, so there is no anonymous fallback.
 
-Disable them explicitly in sealed CI environments with:
+To analyze a local clone without the GitHub API (sealed CI environments,
+offline runs), switch it off explicitly. The API-backed rules then stay
+silent (no false positives). Remote mode (`--project` without a checkout)
+reads the workflows through the API, so it always needs a token.
 
 ```bash
 export PLUMBER_DISABLE_GITHUB_API=1

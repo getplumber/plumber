@@ -1,9 +1,6 @@
 package github
 
 import (
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -106,45 +103,35 @@ func TestScanGitHubWorkflows_WorkflowLockfile(t *testing.T) {
 
 func TestScanGitHubWorkflowsRemote_WorkflowLockfile(t *testing.T) {
 	cases := []struct {
-		name    string
-		listing []map[string]any
-		want    string
+		name  string
+		files map[string]fakeFile
+		want  string
 	}{
 		{name: "absent", want: ""},
 		{
-			name:    "file",
-			listing: []map[string]any{{"name": "actions.lock", "path": ".github/workflows/actions.lock", "type": "file"}},
-			want:    ".github/workflows/actions.lock",
+			name:  "file",
+			files: map[string]fakeFile{".github/workflows/actions.lock": {text: "lock"}},
+			want:  ".github/workflows/actions.lock",
 		},
 		{
-			name:    "directory",
-			listing: []map[string]any{{"name": "actions.lock", "path": ".github/workflows/actions.lock", "type": "dir"}},
-			want:    "",
+			name:  "directory",
+			files: map[string]fakeFile{".github/workflows/actions.lock/x": {text: "lock"}},
+			want:  "",
 		},
 		{
-			name:    "symlink",
-			listing: []map[string]any{{"name": "actions.lock", "path": ".github/workflows/actions.lock", "type": "symlink"}},
-			want:    "",
+			name:  "symlink",
+			files: map[string]fakeFile{".github/workflows/actions.lock": {text: "../lock", mode: 0o120000}},
+			want:  "",
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var gotRef string
-			mux := http.NewServeMux()
-			mux.HandleFunc("/repos/owner/repo/contents/.github/workflows", func(w http.ResponseWriter, r *http.Request) {
-				gotRef = r.URL.Query().Get("ref")
-				entries := append([]map[string]any{{"name": "ci.yml", "path": ".github/workflows/ci.yml", "type": "file"}}, tc.listing...)
-				_ = json.NewEncoder(w).Encode(entries)
-			})
-			mux.HandleFunc("/repos/owner/repo/contents/.github/workflows/ci.yml", func(w http.ResponseWriter, _ *http.Request) {
-				_ = json.NewEncoder(w).Encode(map[string]any{"content": b64(lockfileTestWorkflow), "encoding": "base64"})
-			})
-			mux.HandleFunc("/repos/owner/repo/contents/.github/workflows/actions.lock", func(_ http.ResponseWriter, _ *http.Request) {
-				t.Errorf("the lockfile must not be fetched as a workflow")
-			})
-			server := httptest.NewServer(mux)
-			defer server.Close()
-			swapRESTClient(t, server)
+			files := map[string]fakeFile{".github/workflows/ci.yml": {text: lockfileTestWorkflow}}
+			for p, f := range tc.files {
+				files[p] = f
+			}
+			queries := swapGitRepo(t, gitRepo{refs: []string{"refs/heads/feature/x"}, files: files})
+			restRecorder(t, nil)
 
 			pipeline, partial, err := ScanGitHubWorkflowsRemote("", "owner", "repo", "feature/x", false, false, nil)
 			if err != nil {
@@ -153,8 +140,8 @@ func TestScanGitHubWorkflowsRemote_WorkflowLockfile(t *testing.T) {
 			if len(partial) != 0 {
 				t.Errorf("partial errors: %v", partial)
 			}
-			if gotRef != "feature/x" {
-				t.Errorf("listing ref = %q, want the analyzed branch", gotRef)
+			if got := (*queries)[0].Variables["t0"]; got != "refs/heads/feature/x:.github/workflows" {
+				t.Errorf("tree expression = %v, want the analyzed branch", got)
 			}
 			if pipeline.WorkflowLockfilePath != tc.want {
 				t.Errorf("WorkflowLockfilePath = %q, want %q", pipeline.WorkflowLockfilePath, tc.want)

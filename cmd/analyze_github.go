@@ -77,20 +77,25 @@ func buildGitHubLocalConf(
 	conf.Branch = defaultBranch
 	conf.PlumberConfig = plumberConfig
 	applyControlScope(conf, controlsFilterList, skipControlsList)
-	// API host for the settings/metadata controls. Precedence:
-	//   1. --github-url, if the user passed it explicitly;
-	//   2. otherwise the git remote host, when it is not github.com - this
-	//      is a GitHub Enterprise Server clone, so target its API directly
-	//      (mirrors how the GitLab path auto-uses the remote URL). go-gh
-	//      resolves the matching token (GH_ENTERPRISE_TOKEN / gh auth login
-	//      for that host);
-	//   3. empty -> api.github.com.
+	conf.GithubAPIHost = localGitHubAPIHost(info)
+	return conf
+}
+
+// localGitHubAPIHost is the API host of a local-clone run, for the
+// settings/metadata controls. Precedence:
+//  1. --github-url, if the user passed it explicitly;
+//  2. otherwise the git remote host, when it is not github.com - this
+//     is a GitHub Enterprise Server clone, so target its API directly
+//     (mirrors how the GitLab path auto-uses the remote URL). go-gh
+//     resolves the matching token (GH_ENTERPRISE_TOKEN / gh auth login
+//     for that host);
+//  3. empty -> api.github.com.
+func localGitHubAPIHost(info *utils.GitRemoteInfo) string {
 	apiHost := strings.TrimPrefix(strings.TrimPrefix(githubURL, "https://"), "http://")
 	if apiHost == "" && info.Host != "" && !strings.EqualFold(info.Host, githubDotCom) {
 		apiHost = info.Host
 	}
-	conf.GithubAPIHost = apiHost
-	return conf
+	return apiHost
 }
 
 // buildGitHubRemoteConf is the upstream-fetch counterpart of
@@ -112,6 +117,9 @@ func buildGitHubRemoteConf(
 }
 
 func runGitHubAnalyze(info *utils.GitRemoteInfo, controlsFilterList, skipControlsList []string) error {
+	if err := requireGitHubToken(localGitHubAPIHost(info), false); err != nil {
+		return err
+	}
 	plumberConfig, configPath, err := loadGitHubConfig()
 	if err != nil {
 		return err
@@ -161,6 +169,10 @@ func runGitHubAnalyzeRemote(host, project, ref string, controlsFilterList, skipC
 		return fmt.Errorf("--project must be of the form owner/repo (got %q)", project)
 	}
 	owner, repo := parts[0], parts[1]
+	apiHost := strings.TrimPrefix(strings.TrimPrefix(host, "https://"), "http://")
+	if err := requireGitHubToken(apiHost, true); err != nil {
+		return err
+	}
 
 	plumberConfig, configPath, err := loadGitHubConfig()
 	if err != nil {
@@ -170,8 +182,6 @@ func runGitHubAnalyzeRemote(host, project, ref string, controlsFilterList, skipC
 	if printOutput {
 		printBanner()
 	}
-
-	apiHost := strings.TrimPrefix(strings.TrimPrefix(host, "https://"), "http://")
 
 	conf := buildGitHubRemoteConf(owner, repo, ref, apiHost, plumberConfig, configPath, controlsFilterList, skipControlsList)
 	defer startGitHubDebugReport(conf, "remote")()
@@ -203,6 +213,33 @@ func runGitHubAnalyzeRemote(host, project, ref string, controlsFilterList, skipC
 	return presentResultWithProvider(p, nil, result, conf)
 }
 
+// githubTokenSource is a test seam over detectGitHubAuthSource, whose gh CLI
+// fallback can read the real credential of the machine the tests run on.
+var githubTokenSource = detectGitHubAuthSource
+
+// requireGitHubToken stops a GitHub analyze at startup when no token is
+// available (plumber#637): the run reads GitHub through GraphQL, which has
+// no anonymous access. A local clone can still run without the API when
+// PLUMBER_DISABLE_GITHUB_API is set; remote mode reads the workflows
+// themselves through the API, so it always needs a token.
+// PLUMBER_METADATA_TOKEN alone does not count: it only resolves action
+// versions, and the scanned repository is read with the go-gh chain.
+func requireGitHubToken(apiHost string, remote bool) error {
+	if githubTokenSource(apiHost) != "" {
+		return nil
+	}
+	if !remote && githubAPIDisabled() {
+		return nil
+	}
+	return githubpkg.ErrAuthRequired
+}
+
+// githubAPIDisabled reports whether PLUMBER_DISABLE_GITHUB_API is set.
+func githubAPIDisabled() bool {
+	v := os.Getenv(githubpkg.EnvDisableGitHubAPI)
+	return v == "1" || v == "true"
+}
+
 // githubAuthValue names which auth source go-gh will use for this run,
 // the value of the run header's Auth row. Cheap (no network) - pure
 // env-var inspection - and complementary to the postflight skipped-
@@ -210,13 +247,12 @@ func runGitHubAnalyzeRemote(host, project, ref string, controlsFilterList, skipC
 // with", so a later "ISSUE-505 was skipped because the token lacks
 // Administration:Read" message lands with context.
 //
-// For local-clone runs, "no auth" is a degraded mode rather than a hard
-// error, and the value says so; an upstream-fetch run without auth fails
-// with ErrAuthRequired before any header prints.
+// A run without a token stops at startup (requireGitHubToken), so "none"
+// only shows for a local clone run with the GitHub API switched off.
 func githubAuthValue(apiHost string) string {
-	switch source := detectGitHubAuthSource(apiHost); source {
+	switch source := githubTokenSource(apiHost); source {
 	case "":
-		return "none, running in degraded mode (workflow-content controls only)"
+		return "none, GitHub API disabled (" + githubpkg.EnvDisableGitHubAPI + ")"
 	case "gh":
 		return "gh CLI (~/.config/gh)"
 	default:

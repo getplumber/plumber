@@ -45,29 +45,15 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0349d3a4ad11e92923b09a26
 `
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/owner/repo/contents/.github/workflows", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode([]map[string]any{
-			{"name": "ci.yml", "path": ".github/workflows/ci.yml", "type": "file"},
-			{"name": "release.yml", "path": ".github/workflows/release.yml", "type": "file"},
-			{"name": "README.md", "path": ".github/workflows/README.md", "type": "file"}, // ignored: not yml/yaml
-		})
+	swapGitRepo(t, gitRepo{
+		refs: []string{"refs/heads/main"},
+		files: map[string]fakeFile{
+			".github/workflows/ci.yml":      {text: ciYAML},
+			".github/workflows/release.yml": {text: releaseYAML},
+			".github/workflows/README.md":   {text: "doc"}, // ignored: not yml/yaml
+		},
 	})
-	mux.HandleFunc("/repos/owner/repo/contents/.github/workflows/ci.yml", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"content":  b64(ciYAML),
-			"encoding": "base64",
-		})
-	})
-	mux.HandleFunc("/repos/owner/repo/contents/.github/workflows/release.yml", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"content":  b64(releaseYAML),
-			"encoding": "base64",
-		})
-	})
-	server := httptest.NewServer(mux)
-	defer server.Close()
-	swapRESTClient(t, server)
+	restRecorder(t, nil)
 
 	pipeline, partial, err := ScanGitHubWorkflowsRemote("", "owner", "repo", "main", false, false, nil)
 	if err != nil {
@@ -111,22 +97,11 @@ jobs:
 
 func TestScanGitHubWorkflowsRemote_NoWorkflowsDir(t *testing.T) {
 	// An existing repo+ref that has no .github/workflows directory
-	// degrades gracefully to an empty pipeline (no findings fire).
-	// The listing 404s, but the repo and ref probes succeed, so this is
-	// distinguished from a missing repo/branch (which hard-errors, #222).
-	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/owner/repo/contents/.github/workflows", func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, "Not Found", http.StatusNotFound)
-	})
-	mux.HandleFunc("/repos/owner/repo", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"full_name": "owner/repo"})
-	})
-	mux.HandleFunc("/repos/owner/repo/commits/main", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"sha": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"})
-	})
-	server := httptest.NewServer(mux)
-	defer server.Close()
-	swapRESTClient(t, server)
+	// degrades gracefully to an empty pipeline (no findings fire). The
+	// tree answers null while the repository and the ref exist, which
+	// tells it apart from a missing repo/branch (which hard-errors, #222).
+	swapGitRepo(t, gitRepo{refs: []string{"refs/heads/main"}, files: map[string]fakeFile{"README.md": {text: "x"}}})
+	restRecorder(t, nil)
 
 	pipeline, partial, err := ScanGitHubWorkflowsRemote("", "owner", "repo", "main", false, false, nil)
 	if err != nil {
@@ -142,18 +117,10 @@ func TestScanGitHubWorkflowsRemote_NoWorkflowsDir(t *testing.T) {
 
 func TestScanGitHubWorkflowsRemote_NonexistentRepoErrors(t *testing.T) {
 	// #222: a repo that does not exist must be a hard error, not an empty
-	// pipeline that the scorer renders as 100% compliant. The workflows
-	// listing 404s (the repo is gone) and so does the repo-existence probe.
-	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/owner/repo/contents/.github/workflows", func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, "Not Found", http.StatusNotFound)
-	})
-	mux.HandleFunc("/repos/owner/repo", func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, "Not Found", http.StatusNotFound)
-	})
-	server := httptest.NewServer(mux)
-	defer server.Close()
-	swapRESTClient(t, server)
+	// pipeline that the scorer renders as 100% compliant. GitHub answers
+	// the repository null.
+	swapGitRepo(t, gitRepo{missing: true})
+	restRecorder(t, nil)
 
 	_, _, err := ScanGitHubWorkflowsRemote("", "owner", "repo", "main", false, false, nil)
 	if err == nil {
@@ -166,23 +133,9 @@ func TestScanGitHubWorkflowsRemote_NonexistentRepoErrors(t *testing.T) {
 
 func TestScanGitHubWorkflowsRemote_NonexistentBranchErrors(t *testing.T) {
 	// #222: a branch that does not exist must be a hard error. The repo
-	// exists (200) but the requested ref 404s, as does the workflows listing.
-	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/owner/repo/contents/.github/workflows", func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, "Not Found", http.StatusNotFound)
-	})
-	mux.HandleFunc("/repos/owner/repo", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"full_name": "owner/repo"})
-	})
-	mux.HandleFunc("/repos/owner/repo/commits/lolxkdaksjdad", func(w http.ResponseWriter, _ *http.Request) {
-		// Real GitHub answers a missing ref on the commits endpoint with
-		// 422 "No commit found for SHA", not 404.
-		w.WriteHeader(http.StatusUnprocessableEntity)
-		_ = json.NewEncoder(w).Encode(map[string]any{"message": "No commit found for SHA: lolxkdaksjdad"})
-	})
-	server := httptest.NewServer(mux)
-	defer server.Close()
-	swapRESTClient(t, server)
+	// exists but no candidate of the ref (branch, tag, as written) does.
+	swapGitRepo(t, gitRepo{refs: []string{"refs/heads/main"}, files: map[string]fakeFile{".github/workflows/ci.yml": {text: "on: push"}}})
+	restRecorder(t, nil)
 
 	_, _, err := ScanGitHubWorkflowsRemote("", "owner", "repo", "lolxkdaksjdad", false, false, nil)
 	if err == nil {
@@ -205,16 +158,15 @@ jobs:
     runs-on: ubuntu-latest
     steps: [{ run: echo ok }]
 `
+	// broken.yml comes back truncated, so it reads over REST, which fails.
+	swapGitRepo(t, gitRepo{
+		refs: []string{"refs/heads/main"},
+		files: map[string]fakeFile{
+			".github/workflows/good.yml":   {text: goodYAML},
+			".github/workflows/broken.yml": {text: "on: pu", truncated: true},
+		},
+	})
 	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/owner/repo/contents/.github/workflows", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode([]map[string]any{
-			{"name": "good.yml", "path": ".github/workflows/good.yml", "type": "file"},
-			{"name": "broken.yml", "path": ".github/workflows/broken.yml", "type": "file"},
-		})
-	})
-	mux.HandleFunc("/repos/owner/repo/contents/.github/workflows/good.yml", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"content": b64(goodYAML), "encoding": "base64"})
-	})
 	mux.HandleFunc("/repos/owner/repo/contents/.github/workflows/broken.yml", func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 	})
@@ -241,18 +193,8 @@ func TestScanGitHubWorkflowsRemote_RetainsUnparseableFile(t *testing.T) {
 	// an invalid workflow, not a partial error (#517). Mirror of the local
 	// collectWorkflowJobs guarantee.
 	const brokenYAML = "jobs: [unterminated\n"
-	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/owner/repo/contents/.github/workflows", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode([]map[string]any{
-			{"name": "broken.yml", "path": ".github/workflows/broken.yml", "type": "file"},
-		})
-	})
-	mux.HandleFunc("/repos/owner/repo/contents/.github/workflows/broken.yml", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"content": b64(brokenYAML), "encoding": "base64"})
-	})
-	server := httptest.NewServer(mux)
-	defer server.Close()
-	swapRESTClient(t, server)
+	swapGitRepo(t, gitRepo{refs: []string{"refs/heads/main"}, files: map[string]fakeFile{".github/workflows/broken.yml": {text: brokenYAML}}})
+	restRecorder(t, nil)
 
 	pipeline, partial, err := ScanGitHubWorkflowsRemote("", "owner", "repo", "main", false, false, nil)
 	if err != nil {
@@ -295,22 +237,14 @@ jobs:
       - uses: actions/checkout@v4
         with: *checkout_with
 `
-	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/owner/repo/contents/.github/workflows", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode([]map[string]any{
-			{"name": "good.yml", "path": ".github/workflows/good.yml", "type": "file"},
-			{"name": "anchor-aliases.yml", "path": ".github/workflows/anchor-aliases.yml", "type": "file"},
-		})
+	swapGitRepo(t, gitRepo{
+		refs: []string{"refs/heads/main"},
+		files: map[string]fakeFile{
+			".github/workflows/good.yml":           {text: goodYAML},
+			".github/workflows/anchor-aliases.yml": {text: anchorYAML},
+		},
 	})
-	mux.HandleFunc("/repos/owner/repo/contents/.github/workflows/good.yml", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"content": b64(goodYAML), "encoding": "base64"})
-	})
-	mux.HandleFunc("/repos/owner/repo/contents/.github/workflows/anchor-aliases.yml", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"content": b64(anchorYAML), "encoding": "base64"})
-	})
-	server := httptest.NewServer(mux)
-	defer server.Close()
-	swapRESTClient(t, server)
+	restRecorder(t, nil)
 
 	pipeline, partial, err := ScanGitHubWorkflowsRemote("", "owner", "repo", "main", false, false, nil)
 	if err != nil {
@@ -348,23 +282,14 @@ jobs:
         with: *checkout_with
 `
 	const unterminatedYAML = "jobs: [unterminated\n"
-	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/owner/repo/contents/.github/workflows", func(w http.ResponseWriter, _ *http.Request) {
-		// Listed out of path order on purpose: zebra.yml before alpha.yml.
-		_ = json.NewEncoder(w).Encode([]map[string]any{
-			{"name": "zebra.yml", "path": ".github/workflows/zebra.yml", "type": "file"},
-			{"name": "alpha.yml", "path": ".github/workflows/alpha.yml", "type": "file"},
-		})
+	swapGitRepo(t, gitRepo{
+		refs: []string{"refs/heads/main"},
+		files: map[string]fakeFile{
+			".github/workflows/zebra.yml": {text: anchorYAML},
+			".github/workflows/alpha.yml": {text: unterminatedYAML},
+		},
 	})
-	mux.HandleFunc("/repos/owner/repo/contents/.github/workflows/zebra.yml", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"content": b64(anchorYAML), "encoding": "base64"})
-	})
-	mux.HandleFunc("/repos/owner/repo/contents/.github/workflows/alpha.yml", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"content": b64(unterminatedYAML), "encoding": "base64"})
-	})
-	server := httptest.NewServer(mux)
-	defer server.Close()
-	swapRESTClient(t, server)
+	restRecorder(t, nil)
 
 	pipeline, _, err := ScanGitHubWorkflowsRemote("", "owner", "repo", "main", false, false, nil)
 	if err != nil {
@@ -381,13 +306,10 @@ jobs:
 func TestScanGitHubWorkflowsRemote_BadEncoding(t *testing.T) {
 	// Defensive: if the API returns content under a non-base64
 	// encoding (today none does, but the field exists), surface the
-	// failure as a partial error rather than corrupting the parse.
+	// failure as a partial error rather than corrupting the parse. The
+	// file reads over REST because the tree answer truncated it.
+	swapGitRepo(t, gitRepo{refs: []string{"HEAD"}, files: map[string]fakeFile{".github/workflows/ci.yml": {text: "on:", truncated: true}}})
 	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/owner/repo/contents/.github/workflows", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode([]map[string]any{
-			{"name": "ci.yml", "path": ".github/workflows/ci.yml", "type": "file"},
-		})
-	})
 	mux.HandleFunc("/repos/owner/repo/contents/.github/workflows/ci.yml", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"content": "raw-bytes-without-encoding", "encoding": "utf-8"})
 	})

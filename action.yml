@@ -25,7 +25,7 @@ inputs:
     description: "Token for the GitHub API (branch protection, advisory DB, workflow states, runs, releases) and SARIF upload. Needs Administration:read for full branchMustBeProtected, actions:read to resolve a job's claims (whether it can run, and the repository default token's real write) from workflow states, the latest runs and one run's job log, and the job needs security-events:write to upload SARIF. A refused read on any of these is never an error: the claim it would have settled stays unknown."
     default: ${{ github.token }}
   metadata-token:
-    description: "Optional token (public-repo read is enough) used only to resolve third-party action versions for the known-CVE check. Set it when an action is hosted in an org with an IP allow list that blocks the runner's GITHUB_TOKEN; it also raises the API rate limit. Default: none, Plumber falls back to an anonymous read and, if that fails too, skips the version check rather than guessing."
+    description: "Optional token (public-repo read is enough) used only to resolve third-party action versions for the known-CVE check. Set it when an action is hosted in an org with an IP allow list that blocks the runner's GITHUB_TOKEN; it also raises the API rate limit. Default: none, Plumber resolves versions with github-token and, if that is refused, skips the version check rather than guessing."
     default: ""
   project:
     description: "owner/repo to scan remotely (upstream-fetch, no checkout needed). Default: scan the checked-out repository."

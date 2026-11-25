@@ -17,8 +17,9 @@ import (
 )
 
 // ScanGitHubWorkflowsRemote fetches `.github/workflows/*.{yml,yaml}`
-// from a GitHub project via the Contents API and runs them through
-// the same parser as the local scanner. Used by `plumber analyze
+// from a GitHub project in one GraphQL tree query (remote_tree.go), the
+// Contents API reading only a file the query did not give in full, and
+// runs them through the same parser as the local scanner. Used by `plumber analyze
 // --project owner/repo` (with optional --github-url for GHES) when
 // the user is not inside a local checkout.
 //
@@ -61,11 +62,19 @@ func ScanGitHubWorkflowsRemote(host, owner, repo, ref string, enrichActionMetada
 		return nil, nil, fmt.Errorf("github api client: %w", err)
 	}
 
-	listing, hasLockfile, err := listWorkflowFiles(rest, owner, repo, ref)
+	gql, err := newScannedRepoGraphQL(host)
+	if err != nil {
+		if errors.Is(err, ErrAuthRequired) {
+			return nil, nil, err
+		}
+		return nil, nil, fmt.Errorf("github graphql client: %w", err)
+	}
+	tree, err := loadWorkflowTree(gql, owner, repo, ref)
 	if err != nil {
 		return nil, nil, fmt.Errorf("list workflows: %w", err)
 	}
-	if hasLockfile {
+	listing := tree.files
+	if tree.hasLockfile {
 		pipeline.WorkflowLockfilePath = githubWorkflowLockfile
 	}
 
@@ -98,10 +107,18 @@ func ScanGitHubWorkflowsRemote(host, owner, repo, ref string, enrichActionMetada
 		if progressFn != nil {
 			progressFn(2+i, listingTotal, "Fetching "+item.Path)
 		}
-		raw, fetchErr := fetchFileContent(rest, owner, repo, item.Path, ref)
-		if fetchErr != nil {
-			partialErrors = append(partialErrors, fmt.Errorf("%s: %w", item.Name, fetchErr))
-			continue
+		// The tree query gave the file; one it did not give in full
+		// (truncated, binary) reads over the contents API.
+		var raw []byte
+		if text, ok := item.Object.usable(); ok {
+			raw = []byte(text)
+		} else {
+			var fetchErr error
+			raw, fetchErr = fetchFileContent(rest, owner, repo, item.Path, ref)
+			if fetchErr != nil {
+				partialErrors = append(partialErrors, fmt.Errorf("%s: %w", item.Name, fetchErr))
+				continue
+			}
 		}
 		// Retain the file for the JSON report's analyzed-CI-config block (#443).
 		pipeline.AnalyzedWorkflows = append(pipeline.AnalyzedWorkflows, ir.AnalyzedWorkflow{Path: item.Path, Content: string(raw)})
@@ -120,7 +137,7 @@ func ScanGitHubWorkflowsRemote(host, owner, repo, ref string, enrichActionMetada
 		return pipeline.Jobs[i].Name < pipeline.Jobs[j].Name
 	})
 	// Sorted explicitly, like the local scanner (github_workflows.go),
-	// rather than relying on listWorkflowFiles' own sort as an implicit
+	// rather than relying on loadWorkflowTree's own sort as an implicit
 	// invariant.
 	sort.Slice(pipeline.InvalidWorkflows, func(i, j int) bool {
 		return pipeline.InvalidWorkflows[i].Path < pipeline.InvalidWorkflows[j].Path
@@ -133,7 +150,18 @@ func ScanGitHubWorkflowsRemote(host, owner, repo, ref string, enrichActionMetada
 	// The resolved pipeline (spec 2026-10-16 section 4.1): the scanned
 	// repository's composites are read through the contents API at the
 	// scanned ref, the remote ones through the shared definition fetch.
-	resolveNestedActions(pipeline, defs, nestedScope{projectPath: pipeline.ProjectPath, readLocal: contentsReader(rest, owner, repo, ref)})
+	// The local composites the workflows call come from one more query at
+	// the same ref; a composite only another composite calls reads over the
+	// contents API.
+	var steps []string
+	for _, j := range pipeline.Jobs {
+		for _, a := range j.Uses {
+			steps = append(steps, a.Uses)
+		}
+	}
+	composites := prefetchLocalComposites(gql, owner, repo, tree.rev, localCompositeDirs(steps))
+	readLocal := prefetchedReader(composites, contentsReader(rest, owner, repo, ref))
+	resolveNestedActions(pipeline, defs, nestedScope{projectPath: pipeline.ProjectPath, readLocal: readLocal})
 	linkReusableCallers(pipeline.Jobs, pipeline.ProjectPath)
 
 	if enrichActionMetadata {
@@ -189,12 +217,18 @@ func newGoghRESTClient(host string) (*api.RESTClient, error) {
 // behaviour — a redundant logrus error log on top of cobra's "Error:"
 // prefix on top of "analysis failed:" on top of "github api client:"
 // produces a frame stack instead of the actionable message we want.
+//
+// A GitHub analyze stops with it at startup when no token is available
+// (plumber#637): GraphQL has no anonymous access.
 var ErrAuthRequired = fmt.Errorf(
-	"GitHub authentication required for upstream-fetch mode (--github-url). " +
+	"GitHub analyze needs a token. " +
 		"Set up one of:\n" +
-		"  export GH_TOKEN=<token>          # personal token (see README §Step 3 for scope guidance)\n" +
-		"  export GITHUB_TOKEN=<token>      # auto-set in GitHub Actions runners\n" +
-		"  gh auth login                    # recommended for local dev")
+		"  export GH_TOKEN=<token>             # personal token (see README §Authenticate for scope guidance)\n" +
+		"  export GITHUB_TOKEN=<token>         # auto-set in GitHub Actions runners\n" +
+		"  export GH_ENTERPRISE_TOKEN=<token>  # GitHub Enterprise Server\n" +
+		"  gh auth login                       # recommended for local dev\n" +
+		"To analyze a local clone without the GitHub API (workflow-content controls only), set " +
+		EnvDisableGitHubAPI + "=1")
 
 // isAuthTokenMissing matches the error go-gh returns when none of
 // GH_TOKEN, GITHUB_TOKEN, or `gh auth login` provides a credential.
@@ -206,15 +240,6 @@ func isAuthTokenMissing(err error) bool {
 	return strings.Contains(err.Error(), "authentication token not found")
 }
 
-// remoteContentEntry is a slim subset of the GitHub Contents API
-// directory-listing schema. Only the fields the listing-then-fetch
-// flow consumes are unmarshalled.
-type remoteContentEntry struct {
-	Name string `json:"name"`
-	Path string `json:"path"`
-	Type string `json:"type"`
-}
-
 // remoteContentFile is the single-file fetch shape: content is
 // Base64 (RFC 4648, line-wrapped) per the API spec; Encoding is
 // always "base64" today but the field is kept so a future API
@@ -222,90 +247,6 @@ type remoteContentEntry struct {
 type remoteContentFile struct {
 	Content  string `json:"content"`
 	Encoding string `json:"encoding"`
-}
-
-// listWorkflowFiles returns the .yml/.yaml files under .github/workflows at
-// ref, sorted by name. hasLockfile reports whether the same listing holds
-// the workflow dependency lockfile as a regular file (a "dir" or "symlink"
-// entry does not count, like the local scanner), so detecting it costs no
-// extra request.
-func listWorkflowFiles(rest *api.RESTClient, owner, repo, ref string) (files []remoteContentEntry, hasLockfile bool, err error) {
-	endpoint := fmt.Sprintf("repos/%s/%s/contents/%s", owner, repo, githubWorkflowsSubdir)
-	if ref != "" {
-		endpoint += "?ref=" + ref
-	}
-	var entries []remoteContentEntry
-	if err := rest.Get(endpoint, &entries); err != nil {
-		// A 404 here is ambiguous: it fires for a missing repository, a
-		// missing ref, AND for a repo+ref that simply has no
-		// .github/workflows directory. Treating all three as "no
-		// workflows" let a non-existent project or branch score a
-		// vacuous 100% compliant (ISSUE #222). Disambiguate: a missing
-		// repo or ref is a hard error; only a genuinely absent workflows
-		// directory degrades to an empty set. Anything else (auth,
-		// rate-limit) propagates.
-		if isNotFound(err) {
-			if verr := verifyRepoAndRefExist(rest, owner, repo, ref); verr != nil {
-				return nil, false, verr
-			}
-			return nil, false, nil
-		}
-		return nil, false, err
-	}
-	out := entries[:0]
-	for _, e := range entries {
-		if e.Type != "file" {
-			continue
-		}
-		if e.Name == githubWorkflowLockfileName {
-			hasLockfile = true
-			continue
-		}
-		if !strings.HasSuffix(e.Name, ".yml") && !strings.HasSuffix(e.Name, ".yaml") {
-			continue
-		}
-		out = append(out, e)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return out, hasLockfile, nil
-}
-
-// verifyRepoAndRefExist probes the repository and, when ref is non-empty, the
-// requested ref, so a 404 on the workflows listing can be told apart from a
-// missing repo or branch. It returns a descriptive error when the repository
-// or ref does not exist; nil means both exist and the listing 404 genuinely
-// means the repo has no .github/workflows directory. See ISSUE #222: without
-// this, a non-existent --project or --branch scored a vacuous 100% compliant.
-func verifyRepoAndRefExist(rest *api.RESTClient, owner, repo, ref string) error {
-	var repoMeta struct {
-		FullName string `json:"full_name"`
-	}
-	if err := rest.Get(fmt.Sprintf("repos/%s/%s", owner, repo), &repoMeta); err != nil {
-		if isNotFound(err) {
-			return fmt.Errorf("repository %s/%s not found", owner, repo)
-		}
-		return err
-	}
-	if ref == "" {
-		return nil
-	}
-	var commit struct {
-		SHA string `json:"sha"`
-	}
-	if err := rest.Get(fmt.Sprintf("repos/%s/%s/commits/%s", owner, repo, ref), &commit); err != nil {
-		if isRefMissing(err) {
-			return fmt.Errorf("branch or ref %q not found in %s/%s", ref, owner, repo)
-		}
-		return err
-	}
-	return nil
-}
-
-// isRefMissing reports whether err indicates the requested ref does not
-// exist. GitHub answers a missing ref on the commits endpoint with 422
-// ("No commit found for SHA"); a 404 is also possible, so accept both.
-func isRefMissing(err error) bool {
-	return isNotFound(err) || (err != nil && strings.Contains(err.Error(), "HTTP 422"))
 }
 
 func fetchFileContent(rest *api.RESTClient, owner, repo, filePath, ref string) ([]byte, error) {
