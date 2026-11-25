@@ -65,8 +65,8 @@ func (b *blobAnswer) usable() (string, bool) {
 // "blob <size>\x00" followed by the content.
 func gitBlobOID(text string) string {
 	h := sha1.New() //nolint:gosec // git's object id, not a security hash
-	fmt.Fprintf(h, "blob %d\x00", len(text))
-	h.Write([]byte(text))
+	_, _ = fmt.Fprintf(h, "blob %d\x00", len(text))
+	_, _ = h.Write([]byte(text))
 	return hex.EncodeToString(h.Sum(nil))
 }
 

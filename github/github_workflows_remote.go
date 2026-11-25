@@ -217,12 +217,18 @@ func newGoghRESTClient(host string) (*api.RESTClient, error) {
 // behaviour — a redundant logrus error log on top of cobra's "Error:"
 // prefix on top of "analysis failed:" on top of "github api client:"
 // produces a frame stack instead of the actionable message we want.
+//
+// A GitHub analyze stops with it at startup when no token is available
+// (plumber#637): GraphQL has no anonymous access.
 var ErrAuthRequired = fmt.Errorf(
-	"GitHub authentication required for upstream-fetch mode (--github-url). " +
+	"GitHub analyze needs a token. " +
 		"Set up one of:\n" +
-		"  export GH_TOKEN=<token>          # personal token (see README §Step 3 for scope guidance)\n" +
-		"  export GITHUB_TOKEN=<token>      # auto-set in GitHub Actions runners\n" +
-		"  gh auth login                    # recommended for local dev")
+		"  export GH_TOKEN=<token>             # personal token (see README §Authenticate for scope guidance)\n" +
+		"  export GITHUB_TOKEN=<token>         # auto-set in GitHub Actions runners\n" +
+		"  export GH_ENTERPRISE_TOKEN=<token>  # GitHub Enterprise Server\n" +
+		"  gh auth login                       # recommended for local dev\n" +
+		"To analyze a local clone without the GitHub API (workflow-content controls only), set " +
+		EnvDisableGitHubAPI + "=1")
 
 // isAuthTokenMissing matches the error go-gh returns when none of
 // GH_TOKEN, GITHUB_TOKEN, or `gh auth login` provides a credential.
