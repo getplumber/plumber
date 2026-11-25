@@ -18,6 +18,7 @@
 package secrets_outside_env
 
 import rego.v1
+import data.lib.actions
 
 publish_action_prefixes := {
 	"pypa/gh-action-pypi-publish",
@@ -62,12 +63,7 @@ _is_deploy_context(job) if {
 
 _is_publish_action(uses) if {
 	some prefix in publish_action_prefixes
-	startswith(uses, sprintf("%s@", [prefix]))
-}
-
-_is_publish_action(uses) if {
-	some prefix in publish_action_prefixes
-	uses == prefix
+	actions.matches_any_ref(uses, prefix)
 }
 
 _job_uses_secrets(job) if {

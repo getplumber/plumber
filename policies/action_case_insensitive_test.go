@@ -8,7 +8,7 @@ import (
 
 func TestCaseInsensitiveActionMatching(t *testing.T) {
 	const workflow = `name: case-detect
-on: pull_request_target
+on: [pull_request_target, workflow_run]
 permissions:
   contents: read
 jobs:
@@ -26,6 +26,36 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
       - run: make test
+  artifact:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Actions/Upload-Artifact@v4
+        with:
+          path: .
+          include-hidden-files: true
+  upstream:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: Actions/Checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: js-devtools/npm-publish@v3
+        with:
+          token: ${{ secrets.NPM_TOKEN }}
+      - uses: Actions/attest-build-provenance@v1
+      - uses: Nick-Fields/Retry@v3
+  unsigned-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: js-devtools/npm-publish@v3
+  sast:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: github/codeql-action/Init@v3
   app-token:
     runs-on: ubuntu-latest
     steps:
@@ -33,7 +63,8 @@ jobs:
         with:
           skip-token-revoke: true
 `
-	findings, err := evaluateStrict(loadPolicies(t), context.Background(), scanWorkflow(t, workflow), nil)
+	engine := loadPolicies(t)
+	findings, err := evaluateStrict(engine, context.Background(), scanWorkflow(t, workflow), nil)
 	if err != nil {
 		t.Fatalf("evaluate policies: %v", err)
 	}
@@ -58,5 +89,37 @@ jobs:
 
 	if !hasFinding("app-token", "ISSUE-306") {
 		t.Errorf("app-token job (Actions/Create-GitHub-App-Token@v1) evaded ISSUE-306")
+	}
+
+	for _, tc := range []struct {
+		job  string
+		code string
+		want bool
+	}{
+		{"artifact", "ISSUE-310", true},
+		{"artifact", "ISSUE-419", true},
+		{"upstream", "ISSUE-802", true},
+		{"publish", "ISSUE-305", true},
+		{"publish", "ISSUE-421", true},
+		{"publish", "ISSUE-711", true},
+		{"publish", "ISSUE-712", false},
+		{"unsigned-publish", "ISSUE-712", true},
+	} {
+		if got := hasFinding(tc.job, tc.code); got != tc.want {
+			t.Errorf("job %s: %s present = %t, want %t", tc.job, tc.code, got, tc.want)
+		}
+	}
+
+	if got := countCode(findings, "ISSUE-904"); got != 1 {
+		t.Errorf("CodeQL subpath Init: got %d ISSUE-904 findings, want 1", got)
+	}
+
+	recognizedSAST := strings.Replace(workflow, "github/codeql-action/Init@v3", "GitHub/CodeQL-Action/init@v3", 1)
+	findings, err = evaluateStrict(engine, context.Background(), scanWorkflow(t, recognizedSAST), nil)
+	if err != nil {
+		t.Fatalf("evaluate policies with recognized SAST: %v", err)
+	}
+	if got := countCode(findings, "ISSUE-904"); got != 0 {
+		t.Errorf("CodeQL subpath init: got %d ISSUE-904 findings, want 0", got)
 	}
 }

@@ -12,6 +12,7 @@
 package sast_workflow_missing
 
 import rego.v1
+import data.lib.actions
 
 sast_action_prefixes := {
 	"github/codeql-action/init",
@@ -52,12 +53,5 @@ _any_workflow_runs_sast if {
 	some i, j
 	action := input.pipeline.jobs[i].uses[j]
 	some prefix in sast_action_prefixes
-	startswith(action.uses, sprintf("%s@", [prefix]))
-}
-
-_any_workflow_runs_sast if {
-	some i, j
-	action := input.pipeline.jobs[i].uses[j]
-	some prefix in sast_action_prefixes
-	action.uses == prefix
+	actions.matches_any_ref(action.uses, prefix)
 }

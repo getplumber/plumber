@@ -18,6 +18,7 @@
 package superfluous_action
 
 import rego.v1
+import data.lib.actions
 import data.lib.provenance
 
 superfluous_prefixes := {
@@ -49,12 +50,6 @@ deny contains finding if {
 
 _superfluous_reason(uses) := reason if {
 	some prefix, r in superfluous_prefixes
-	startswith(uses, sprintf("%s@", [prefix]))
-	reason := r
-}
-
-_superfluous_reason(uses) := reason if {
-	some prefix, r in superfluous_prefixes
-	uses == prefix
+	actions.matches_any_ref(uses, prefix)
 	reason := r
 }
