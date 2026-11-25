@@ -383,12 +383,16 @@ func TestResolveNested_LocalCompositeRemoteMode(t *testing.T) {
 			_, _ = w.Write([]byte(`{"encoding":"base64","content":"` + b64(body) + `"}`))
 		}
 	}
-	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/acme/app/contents/.github/workflows", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`[{"name":"ci.yml","path":".github/workflows/ci.yml","type":"file"}]`))
+	// The workflow and the composite it calls come from GraphQL; the
+	// composite only that composite calls reads over the contents API.
+	swapGitRepo(t, gitRepo{
+		refs: []string{"refs/heads/main"},
+		files: map[string]fakeFile{
+			".github/workflows/ci.yml":     {text: ciYAML},
+			".github/actions/x/action.yml": {text: composite("./.github/actions/y")},
+		},
 	})
-	mux.HandleFunc("/repos/acme/app/contents/.github/workflows/ci.yml", serve(ciYAML))
-	mux.HandleFunc("/repos/acme/app/contents/.github/actions/x/action.yml", serve(composite("./.github/actions/y")))
+	mux := http.NewServeMux()
 	mux.HandleFunc("/repos/acme/app/contents/.github/actions/y/action.yml", serve(composite()))
 	swapRESTClient(t, httptestServer(t, mux))
 

@@ -2325,7 +2325,11 @@ visibility and full name, the branches `branchMustBeProtected` names with
 their protected flag, and the authors of its latest releases. The branch
 listing, protection details, rulesets, environments and Actions runs stay
 on REST, and so does every read of the scanned repository on GitHub
-Enterprise Server.
+Enterprise Server. In remote mode (`--project` without a checkout), one
+GraphQL query reads the workflow listing and every workflow file, on
+github.com and GitHub Enterprise Server alike, and one more reads the local
+composite actions the workflows call. A file GitHub does not return in full
+is read over REST.
 Plumber never shells out to the `gh` binary (or any other external
 binary) during analysis — see getplumber/plumber#310. Without
 `gh auth login`, those rules degrade silently (no false positives)
