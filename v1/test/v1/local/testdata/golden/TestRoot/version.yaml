@@ -1,0 +1,5 @@
+command: plumber version
+exit: 0
+stdout: |
+  plumber has version dev built with <GO> from none on unknown
+stderr: ""

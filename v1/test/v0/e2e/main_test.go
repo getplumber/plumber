@@ -10,7 +10,7 @@
 // testdata/<provider>/golden/<Test>/<row>.yaml (golden_test.go). run_test.go
 // runs a row, sandbox_test.go holds the sandbox it runs in and
 // retry_test.go reruns a throttled call. The sandbox is a copy of the one in
-// v1/test/local: test files can't be imported by another package.
+// v1/test/v0/local: test files can't be imported by another package.
 //
 // The tests run one at a time, never in parallel: gitlab.com throttles (429)
 // as soon as two analyses run at once.

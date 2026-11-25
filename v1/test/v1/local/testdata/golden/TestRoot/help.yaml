@@ -1,0 +1,21 @@
+command: plumber help
+exit: 0
+stdout: |
+  Plumber scans the CI/CD configuration of a GitHub or GitLab repository for risky
+  patterns and security gaps: GitHub Actions workflows, GitLab CI pipelines with their
+  includes, and the repository settings. It reports the findings and a score.
+
+  Usage:
+    plumber [flags]
+    plumber [command]
+
+  Available Commands:
+    completion  Generate the autocompletion script for the specified shell
+    help        Help about any command
+    version     Display the plumber version
+
+  Flags:
+    -h, --help   help for plumber
+
+  Use "plumber [command] --help" for more information about a command.
+stderr: ""

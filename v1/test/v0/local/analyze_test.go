@@ -5,7 +5,7 @@ package local
 import "testing"
 
 // TestAnalyze covers the analyze inputs rejected before any request. An
-// analysis that reaches a provider is an e2e row (v1/test/e2e).
+// analysis that reaches a provider is an e2e row (v1/test/v0/e2e).
 func TestAnalyze(t *testing.T) {
 	t.Parallel()
 	tests := []cliCase{

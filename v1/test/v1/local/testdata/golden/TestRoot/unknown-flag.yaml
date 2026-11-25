@@ -1,0 +1,4 @@
+command: plumber version --nope
+exit: 1
+stdout: ""
+stderr: "\e[31mERR\e[0m \e[1munknown flag: --nope\e[0m\n"

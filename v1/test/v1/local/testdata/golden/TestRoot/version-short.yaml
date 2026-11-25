@@ -1,0 +1,5 @@
+command: plumber version --short
+exit: 0
+stdout: |
+  dev
+stderr: ""

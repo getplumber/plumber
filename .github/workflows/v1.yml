@@ -35,9 +35,10 @@ jobs:
       - name: Unit tests
         run: go test ./...
 
-  # Every CLI input that makes no backend request, run offline with no token.
-  cli-local:
-    name: CLI suite (local)
+  # Every CLI input that makes no backend request, run offline with no token,
+  # on the old CLI (test/v0/local).
+  cli-v0-local:
+    name: CLI suite (v0, local)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -49,7 +50,24 @@ jobs:
           go-version-file: go.mod
 
       - name: Run the local rows
-        run: make -C v1 test-integration
+        run: make -C v1 test-integration-v0
+
+  # The same rows on the rewrite (v1/cmd/plumber, test/v1/local), for the
+  # commands rewritten so far.
+  cli-v1-local:
+    name: CLI suite (v1, local)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Run the local rows
+        run: make -C v1 test-integration-v1
 
   # One row per ISSUE code, on the plumber-cli-e2e fixture repository of each
   # provider, one job per provider. Fork PRs get no secrets, so the jobs run on
@@ -145,12 +163,21 @@ jobs:
 
       # HEAD is the PR merge commit and HEAD^1 its base. --no-renames lists both
       # sides of a move, so moving a file into v1/ still reports where it came from.
+      # go.mod and go.sum take additions only: a new requirement and its go.sum
+      # lines, never a removed or changed line, so syncs from main still merge.
       - name: Check changed paths
         run: |
           outside="$(git diff --no-renames --name-only HEAD^1 HEAD \
-            | grep -Ev '^(v1/|\.agents/|\.claude/|\.github/|skills-lock\.json$)' || true)"
+            | grep -Ev '^(v1/|\.agents/|\.claude/|\.github/|skills-lock\.json$|go\.mod$|go\.sum$)' || true)"
           if [ -n "$outside" ]; then
             echo "Changes outside v1/ (rule 2 of v1/AGENTS.md):"
             echo "$outside"
+            exit 1
+          fi
+          removed="$(git diff --no-renames --unified=0 HEAD^1 HEAD -- go.mod go.sum \
+            | grep -E '^-' | grep -Ev '^--- ' || true)"
+          if [ -n "$removed" ]; then
+            echo "go.mod and go.sum take additions only (rule 2 of v1/AGENTS.md). Removed or changed lines:"
+            echo "$removed"
             exit 1
           fi

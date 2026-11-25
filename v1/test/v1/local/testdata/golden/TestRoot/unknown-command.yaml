@@ -1,0 +1,4 @@
+command: plumber bogus
+exit: 1
+stdout: ""
+stderr: "\e[31mERR\e[0m \e[1munknown command \"bogus\" for \"plumber\"\e[0m\n"
