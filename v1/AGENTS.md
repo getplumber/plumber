@@ -110,6 +110,7 @@ From the repository root (`v1/Makefile`):
 make -C v1 test-integration     # test/v0/local and test/v1/local. Offline, no token. Run before every push.
 make -C v1 test-integration-v0  # test/v0/local only (the old CLI).
 make -C v1 test-integration-v1  # test/v1/local only (the rewrite).
+make -C v1 golden-diff          # regenerates docs/golden-diff.md after a golden change.
 make -C v1 test-e2e-github      # TestGitHub* of test/v0/e2e. Needs GITHUB_TOKEN (or GH_TOKEN) exported, see "e2e rows".
 make -C v1 test-e2e-gitlab      # TestGitLab* of test/v0/e2e. Needs GITLAB_TOKEN exported, see "e2e rows".
 make -C v1 test-e2e             # all of test/v0/e2e, both tokens.
@@ -135,11 +136,14 @@ v1/
   cmd/plumber/                   main: fills the build info, runs `cli.Execute`, exits 1 on an error
   internal/cli/                  root command (rootCommand and its zerolog logger, as in golangci-lint); one package per command group (version/)
   internal/log/                  zerolog logger: level from PLUMBER_LOG_LEVEL, colored, no timestamp
+  internal/tools/goldendiff/     writes docs/golden-diff.md; notes.go says why each v1 golden differs.
+                                 Deleted at the switch (step 15 of docs/project-structure.md), with test/v0
   docs/
     analyze-flow.md              sequence diagrams of the rewritten analyze
     drafts/
       repository-graph.md        not adopted: a repository graph as the Rego input, and when to move to it
     feature-inventory.md         every command, flag, output and config key, with keep/drop decisions
+    golden-diff.md               generated: how each golden of test/v1/local differs from test/v0/local
     project-structure.md         comparison with kubectl, helm, golangci-lint and terraform, target layout, public API,
                                  configuration, documentation, rewrite order
   test/
@@ -187,6 +191,10 @@ v1/
   golden names it has in `test/v0/local`, so the two compare file by file. `test/v0` keeps its
   rows until the switch, and a sync from `main` refreshes its goldens.
 - Add its golden file, `testdata/golden/<Test>/<name>.yaml` in the same package.
+- After changing a golden of either local suite, run `make -C v1 golden-diff` and commit
+  `docs/golden-diff.md`. A v1 golden that differs from v0, or has no v0 namesake, needs a note in
+  `internal/tools/goldendiff/notes.go` saying why. The unit tests fail when the document is out of
+  date or a note is missing.
 - When you remove a row, delete its golden file: nothing else reports it.
 - An ISSUE code that a provider must raise is an e2e row (next section). Inputs that need a
   platform or CI OIDC have no row yet.

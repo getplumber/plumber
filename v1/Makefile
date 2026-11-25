@@ -1,4 +1,4 @@
-.PHONY: test-integration test-integration-v0 test-integration-v1 test-e2e test-e2e-github test-e2e-gitlab lint
+.PHONY: test-integration test-integration-v0 test-integration-v1 golden-diff test-e2e test-e2e-github test-e2e-gitlab lint
 
 # Run from the repository root with `make -C v1 <target>`.
 
@@ -15,6 +15,14 @@ test-integration-v0:
 
 test-integration-v1:
 	go test -tags cli -count=1 ./test/v1/local
+
+# docs/golden-diff.md: how each golden of test/v1/local differs from its
+# namesake in test/v0/local. Run it after changing a golden of either suite;
+# CI fails when the committed file is out of date. A changed or new v1 golden
+# needs a note in internal/tools/goldendiff/notes.go. Deleted at the switch
+# (step 15 of docs/project-structure.md), with test/v0 and the tool.
+golden-diff:
+	go run ./internal/tools/goldendiff
 
 # e2e suite (test/v0/e2e), run against the plumber-cli-e2e fixture repository of
 # each provider. It needs an exported token: GITHUB_TOKEN (or GH_TOKEN) for the

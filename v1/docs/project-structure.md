@@ -507,7 +507,9 @@ The steps:
     keeps its copy until the site switch.
 15. Switch: the release build and the integrations (`action.yml`, `templates/plumber.yml`,
     `Dockerfile`) use `v1/cmd/plumber`, releases attach the docs bundle, the suite drops the old
-    binary, and the old packages are deleted. The Action and the component default to
+    binary, and the old packages are deleted. The comparison with the old CLI goes with them:
+    `test/v0`, `internal/tools/goldendiff`, `docs/golden-diff.md` and the `golden-diff` target of
+    the Makefile. The Action and the component default to
     `--resolve-depth=max` and `--sanity`, so their users keep what today's CLI checks. `go.mod`
     moves to the latest Go release in its `go` directive and drops its `toolchain` line. This step
     changes paths outside `v1/`, so it needs its own decision on rule 2 of
