@@ -28,6 +28,11 @@ the [Google Go Style Guide](https://google.github.io/styleguide/go/guide) and it
 skill wins: use the newer API even where nearby code doesn't, and compare errors with `errors.Is`,
 which `errorlint` requires.
 
+Each Go file has its unit tests in a `_test.go` next to it. Each package of v1's code (`cmd/`,
+`internal/`, later `pkg/`) needs at least 80% unit-test coverage. Check it with
+`go test -cover ./...` from `v1/`, which skips the black-box suites because they have the `cli`
+build tag. Tests that run the binary go in `test/`.
+
 Rego follows the [Rego style guide](https://github.com/open-policy-agent/rego-style-guide).
 `regal lint` must report no violation, and policies are tested in Rego with `opa test`, never from
 Go. The details are under "Policies" in [`docs/project-structure.md`](docs/project-structure.md#policies).
@@ -64,20 +69,23 @@ skills reads the file and applies it.
    sync stops and goes the other way: `main` holds the released code, and a maintainer releases by
    merging `release/v1` into `main`.
 5. The suite is a firewall for the refactoring, not a coverage gate: a row exists because a
-   behavior is worth protecting. It has two packages, `test/local` and `test/e2e`, and every file
-   is a `_test.go`. Each package has its own copy of the code they share (building the binary, the
-   sandbox, the text diff), because a test file can't be imported by another package. In
-   `test/local`, each file is one command group with its own table-driven test (`TestConfig` in
+   behavior is worth protecting. `test/v0` runs the old CLI, in two packages, `test/v0/local` and
+   `test/v0/e2e`. `test/v1/local` runs the rewrite (`v1/cmd/plumber`) and mirrors
+   `test/v0/local`: same file names, test names, row names and golden paths, so
+   `diff -r test/v0/local test/v1/local` shows what the rewrite changes. Every file is a
+   `_test.go`. Each package has its own copy of the code they share (building the binary, the
+   sandbox, the text diff), because a test file can't be imported by another package. In a local
+   package, each file is one command group with its own table-driven test (`TestConfig` in
    `config_test.go`, and so on). When you add or change a command, a flag, an output format or an
    exit code, add or update its row in the same PR.
 6. Local rows only cover inputs that make no backend request (`version`, `--help`, `catalog`,
    `explain`, `capabilities`, `config …`, `score-compare`, `completion`, usage errors, and
    `analyze` inputs rejected before any request). They run with no token and every proxy pointed
-   at a closed port, so a row that tries the network fails. The e2e tests (`test/e2e`) are one test
+   at a closed port, so a row that tries the network fails. The e2e tests (`test/v0/e2e`) are one test
    per ISSUE code, run against the provider's fixture repository with a token, behind the `e2e`
    build tag (see "e2e rows").
-7. Every row has a golden file: `test/local/testdata/golden/<Test>/<name>.yaml`, or
-   `test/e2e/testdata/<provider>/golden/<Test>/<name>.yaml`. A row without one fails.
+7. Every row has a golden file: `test/<v0|v1>/local/testdata/golden/<Test>/<name>.yaml`, or
+   `test/v0/e2e/testdata/<provider>/golden/<Test>/<name>.yaml`. A row without one fails.
 8. Run `make -C v1 lint` before you open a PR. It must report 0 issues. Use the golangci-lint
    version `.github/workflows/v1.yml` pins (v2.15.0). Fix what it reports. A `//nolint` names one
    linter and says why.
@@ -99,20 +107,22 @@ fixture branch and a test.
 From the repository root (`v1/Makefile`):
 
 ```sh
-make -C v1 test-integration   # test/local. Offline, no token. Run before every push.
-make -C v1 test-e2e-github    # TestGitHub* of test/e2e. Needs GITHUB_TOKEN (or GH_TOKEN) exported, see "e2e rows".
-make -C v1 test-e2e-gitlab    # TestGitLab* of test/e2e. Needs GITLAB_TOKEN exported, see "e2e rows".
-make -C v1 test-e2e           # all of test/e2e, both tokens.
-make -C v1 lint               # golangci-lint with v1/.golangci.yml. Run before every PR.
+make -C v1 test-integration     # test/v0/local and test/v1/local. Offline, no token. Run before every push.
+make -C v1 test-integration-v0  # test/v0/local only (the old CLI).
+make -C v1 test-integration-v1  # test/v1/local only (the rewrite).
+make -C v1 test-e2e-github      # TestGitHub* of test/v0/e2e. Needs GITHUB_TOKEN (or GH_TOKEN) exported, see "e2e rows".
+make -C v1 test-e2e-gitlab      # TestGitLab* of test/v0/e2e. Needs GITLAB_TOKEN exported, see "e2e rows".
+make -C v1 test-e2e             # all of test/v0/e2e, both tokens.
+make -C v1 lint                 # golangci-lint with v1/.golangci.yml. Run before every PR.
 ```
 
 After a change that only touches one provider, run its target. Run one test with
-`go test -tags cli,e2e -run TestGitHubIssue102 ./test/e2e` (from `v1/`). The e2e tests fail when
+`go test -tags cli,e2e -run TestGitHubIssue102 ./test/v0/e2e` (from `v1/`). The e2e tests fail when
 their token isn't exported, even though the fixture repositories are public: plumber needs a
 token to analyze a remote repository. They have the `e2e` build tag, so `test-integration` never
 runs them.
 
-`make test` (`go test ./...`) does not run this suite because its files have the `cli` build tag.
+`make test` (`go test ./...`) does not run these suites because their files have the `cli` build tag.
 
 ## Layout
 
@@ -120,7 +130,11 @@ runs them.
 v1/
   AGENTS.md, CLAUDE.md, README.md
   Makefile                       targets test-integration, test-e2e(-github|-gitlab) and lint
-  .golangci.yml                  golangci-lint v2 config for v1/ (`cli` and `e2e` build tags)
+  .gitignore                     re-includes cmd/plumber/, which the root .gitignore's `plumber` matches
+  .golangci.yml                  golangci-lint v2 config for v1/ (`cli` and `e2e` build tags, depguard)
+  cmd/plumber/                   main: fills the build info, runs `cli.Execute`, exits 1 on an error
+  internal/cli/                  root command (rootCommand and its zerolog logger, as in golangci-lint); one package per command group (version/)
+  internal/log/                  zerolog logger: level from PLUMBER_LOG_LEVEL, colored, no timestamp
   docs/
     analyze-flow.md              sequence diagrams of the rewritten analyze
     drafts/
@@ -129,42 +143,50 @@ v1/
     project-structure.md         comparison with kubectl, helm, golangci-lint and terraform, target layout, public API,
                                  configuration, documentation, rewrite order
   test/
-    local/                       package local: every input that makes no backend request
-      main_test.go               package doc, TestMain (builds the binary)
-      run_test.go                row type `cliCase`, runCase
-      sandbox_test.go            sandbox: work dir, home, env (offline), runPlumber, normalize, newGolden
-      golden_test.go             golden struct (stdout, stderr, files), readGolden, cmp
-      root_test.go               TestRoot: help, version, catalog, capabilities, unknown command or flag
-      analyze_test.go            TestAnalyze: analyze inputs rejected before any request
-      completion_test.go         TestCompletion
-      config_test.go             TestConfig
-      explain_test.go            TestExplain
-      score_compare_test.go      TestScoreCompare
-      help_test.go               TestHelpFlag: one --help row per command
-      testdata/
-        inputs/                  files copied into a row's work dir (configs, analyze reports)
-        golden/                  one folder per test, one <row>.yaml per row (struct `golden`)
-    e2e/                         package e2e: one test per ISSUE code; every file has the `e2e` tag
-      main_test.go               package doc, TestMain, githubTarget and gitlabTarget
-      run_test.go                row type `e2eCase`, runE2E, token
-      sandbox_test.go            sandbox (a copy of local's, online: the token, no proxies)
-      golden_test.go             golden struct (command, exit, report), readGolden, readReport, cmp
-      retry_test.go              reruns a throttled call
-      github_test.go             TestGitHubIssue<number>: one test per code, one row per configuration
-      gitlab_test.go             TestGitLabIssue<number>: the same on GitLab
-      testdata/
-        github/inputs/           configs of the GitHub rows
-        github/golden/           one folder per test, one <row>.yaml per row
-        gitlab/inputs/  gitlab/golden/
+    v0/                          the suites of the old CLI (repository root)
+      local/                     package local: every input that makes no backend request
+        main_test.go             package doc, TestMain (builds the old CLI)
+        run_test.go              row type `cliCase`, runCase
+        sandbox_test.go          sandbox: work dir, home, env (offline), runPlumber, normalize, newGolden
+        golden_test.go           golden struct (stdout, stderr, files), readGolden, cmp
+        root_test.go             TestRoot: help, version, catalog, capabilities, unknown command or flag
+        analyze_test.go          TestAnalyze: analyze inputs rejected before any request
+        completion_test.go       TestCompletion
+        config_test.go           TestConfig
+        explain_test.go          TestExplain
+        score_compare_test.go    TestScoreCompare
+        help_test.go             TestHelpFlag: one --help row per command
+        testdata/
+          inputs/                files copied into a row's work dir (configs, analyze reports)
+          golden/                one folder per test, one <row>.yaml per row (struct `golden`)
+      e2e/                       package e2e: one test per ISSUE code; every file has the `e2e` tag
+        main_test.go             package doc, TestMain, githubTarget and gitlabTarget
+        run_test.go              row type `e2eCase`, runE2E, token
+        sandbox_test.go          sandbox (a copy of local's, online: the token, no proxies)
+        golden_test.go           golden struct (command, exit, report), readGolden, readReport, cmp
+        retry_test.go            reruns a throttled call
+        github_test.go           TestGitHubIssue<number>: one test per code, one row per configuration
+        gitlab_test.go           TestGitLabIssue<number>: the same on GitLab
+        testdata/
+          github/inputs/         configs of the GitHub rows
+          github/golden/         one folder per test, one <row>.yaml per row
+          gitlab/inputs/  gitlab/golden/
+    v1/
+      local/                     package local of the rewrite (v1/cmd/plumber): the files, tests, rows and
+                                 golden paths of v0/local for the commands rewritten so far
 ```
 
 ## Adding a case
 
-- Add a row to the table of the command's file in `test/local` and put input files in
-  `test/local/testdata/inputs/`. A new command group gets its own `<group>_test.go`.
+- Add a row to the table of the command's file in `test/v1/local` (the rewrite) or
+  `test/v0/local` (the old CLI), and put input files in its `testdata/inputs/`. A new command
+  group gets its own `<group>_test.go`.
 - A new command also gets a `--help` row in `help_test.go`, so a flag lost later shows in a golden
   diff.
-- Add its golden file, `test/local/testdata/golden/<Test>/<name>.yaml`.
+- A command rewritten under `v1/` gets its rows in `test/v1/local`, with the file, test, row and
+  golden names it has in `test/v0/local`, so the two compare file by file. `test/v0` keeps its
+  rows until the switch, and a sync from `main` refreshes its goldens.
+- Add its golden file, `testdata/golden/<Test>/<name>.yaml` in the same package.
 - When you remove a row, delete its golden file: nothing else reports it.
 - An ISSUE code that a provider must raise is an e2e row (next section). Inputs that need a
   platform or CI OIDC have no row yet.
@@ -181,11 +203,11 @@ or component. A GitHub row costs about 7 API requests.
 The fixtures are the `issue-<number>` branches of the fixture repositories, and the project
 doesn't keep a copy: edit a branch there, then refresh its golden files.
 
-Both providers have the same shape, in `test/e2e`:
+Both providers have the same shape, in `test/v0/e2e`:
 
 - Each code has its own test, `TestGitHubIssue<number>` in `github_test.go` or
   `TestGitLabIssue<number>` in `gitlab_test.go`. Its table has one `e2eCase` row per
-  configuration, as in `test/local`: `default` with no config, otherwise named after the config in
+  configuration, as in `test/v0/local`: `default` with no config, otherwise named after the config in
   `testdata/<provider>/inputs/`. Each row runs through `runE2E`.
 - A row is compared on its report, not on its terminal output, because the text shows some
   findings (102, 103, 204, 207, 209, 411) only as attack paths, with no code. The golden file,
@@ -234,11 +256,12 @@ Also missing:
 ## Wiring outside `v1/`
 
 - `.github/workflows/v1.yml`: the only CI of `release/v1`, on pushes and PRs to `release/v1`. Jobs: build and
-  unit tests (`go build ./...`, `go test ./...`), the CLI suite, one e2e job per provider (off for
+  unit tests (`go build ./...`, `go test ./...`), one job per local suite (`cli-v0-local` and
+  `cli-v1-local`), one e2e job per provider (off for
   now with `if: false && …`; on, each passes its `PLUMBER_E2E_<PROVIDER>_TOKEN` secret as
   `GITHUB_TOKEN` or `GITLAB_TOKEN` and skips fork PRs), golangci-lint on `v1/`
   through `golangci/golangci-lint-action` (same version and arguments as `make -C v1 lint`), and
-  `scope`, which checks the paths a PR changes (rule 2). `scope` skips `sync/` branches of this
+  `scope`, which checks the paths a PR changes and that go.mod and go.sum only gain lines (rule 2). `scope` skips `sync/` branches of this
   repository, because a sync from `main` changes files everywhere.
 - `branches: [main]` on the `pull_request` trigger of `plumber-action.yml`,
   `claude-pr-checks.yml`, `install-channels.yml` and `scripts-test.yml`, so they don't run on PRs
@@ -252,7 +275,6 @@ Also missing:
 
 Goldens record current behavior, quirks included. Fix a quirk on `main`; the next sync brings the
 fix to `release/v1` and the golden diff shows it.
-- `plumber --version` is an unknown flag (exit 2); only `plumber version` works.
 - `config view --explain` prints its provenance lines in random order (map iteration in
   `cmd/config_explain.go`), so its row compares sorted lines.
 - `config view` with no `.plumber.yaml` exits 0 and shows the defaults.

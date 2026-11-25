@@ -118,6 +118,7 @@ v1/
       config/
       explain/
       version/
+    log/                     the zerolog logger, its level from PLUMBER_LOG_LEVEL
     preflight/               checks the token and rights the chosen options need
     gitrepo/                 go-git: open a local clone, clone a remote in memory at a ref, read files
     provider/
@@ -164,7 +165,17 @@ Rules for the new code:
   node that fails is kept as untyped, and parsing goes on.
 - Rego follows the Rego style guide, passes Regal, and is tested in Rego (see [Policies](#policies)).
 - No package-level state: no flag variables, no `init` that registers anything. The root command
-  is built by a function, so a test can build it many times.
+  is built by a function, so a test can build it many times. The one exception is viper's global
+  instance, which only `Execute` in `internal/cli/root.go` configures.
+- The production code has no build tag. The black-box suites keep `cli` (and `e2e`), so
+  `go test ./...` from the repository root doesn't run them.
+- A command writes its output to cobra's writers (`cmd.OutOrStdout()`, `cmd.ErrOrStderr()`). Logs
+  go through the zerolog logger of `internal/log`, which the root command builds on stderr, at the
+  level `PLUMBER_LOG_LEVEL` sets (`debug`, `info` by default, `warn` or `error`), colored. A
+  command that logs takes the logger in its constructor, as golangci-lint's commands do, and the
+  root logs the error that ends a command. `internal/cli/root.go` sets up the global viper, once in
+  `Execute` (prefix `PLUMBER`, environment variables). Other files and packages read it with
+  `viper.Get…`, and nothing else writes to it, since viper isn't safe for concurrent writes.
 - An error that ends a command carries its exit code (one type in `internal/cli`), and `main` is
   the only place that calls `os.Exit`.
 - Each package has its unit tests and its `testdata/` next to it. Golden files of unit tests use
@@ -250,7 +261,7 @@ platform admin sets them in the file.
 Tests, besides the parity test:
 
 - The embedded default config validates against the schema.
-- Every config in `v1/test/local/testdata/inputs` validates, or fails the way its golden expects.
+- Every config in `v1/test/v0/local/testdata/inputs` validates, or fails the way its golden expects.
 
 ## Repository access
 

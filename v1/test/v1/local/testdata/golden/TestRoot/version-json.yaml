@@ -1,0 +1,5 @@
+command: plumber version --json
+exit: 0
+stdout: |
+  {"goVersion":"<GO>","version":"dev","commit":"none","date":"unknown"}
+stderr: ""

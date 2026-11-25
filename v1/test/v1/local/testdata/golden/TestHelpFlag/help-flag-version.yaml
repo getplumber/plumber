@@ -1,0 +1,13 @@
+command: plumber version --help
+exit: 0
+stdout: |
+  Display the plumber version
+
+  Usage:
+    plumber version [flags]
+
+  Flags:
+        --json    Display as JSON
+        --short   Display only the version number
+    -h, --help    help for version
+stderr: ""

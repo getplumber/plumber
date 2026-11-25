@@ -1,0 +1,3 @@
+# The root .gitignore ignores "plumber" (the built binary), which also
+# matches this directory. A binary built inside it stays ignored.
+!/cmd/plumber/

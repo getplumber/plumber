@@ -8,8 +8,10 @@ version: "2"
 # end of `linters`).
 
 run:
-  # Every file in v1/ has the `cli` build tag. Without it nothing is linted.
-  # The e2e suite (test/e2e) also has the `e2e` tag.
+  # The production code (cmd/, internal/) has no build tag. The black-box
+  # suites have the `cli` tag, so `go test ./...` from the repository root
+  # skips them, and test/v0/e2e also has the `e2e` tag. Without both tags the
+  # suites aren't linted.
   build-tags:
     - cli
     - e2e
@@ -93,6 +95,8 @@ linters:
     # Hygiene.
     - forbidigo
     - nolintlint
+    # Layout rule of docs/project-structure.md: nothing in v1/ imports the old packages.
+    - depguard
   # Off on purpose:
   #   lll                 gofmt sets no line length, and neither do we.
   #   varnamelen          short names are fine in a small scope.
@@ -103,11 +107,45 @@ linters:
   #   testpackage         the suite is the internal package test.
   #   mnd                 too noisy on exit codes and test data.
   #   funlen              the row tables are long functions by design.
-  #   depguard            needs a list of banned imports we don't have yet.
 
   settings:
     cyclop:
       max-complexity: 15
+    depguard:
+      rules:
+        # v1 is a rewrite: it imports nothing from the packages at the
+        # repository root (rule 1 of AGENTS.md). Each entry is a prefix, so
+        # github.com/getplumber/plumber/v1/... stays allowed.
+        old-cli:
+          files:
+            - $all
+          deny:
+            - pkg: github.com/getplumber/plumber/capability
+              desc: &old v1 imports nothing from the old CLI (rule 1 of v1/AGENTS.md)
+            - pkg: github.com/getplumber/plumber/cmd
+              desc: *old
+            - pkg: github.com/getplumber/plumber/configuration
+              desc: *old
+            - pkg: github.com/getplumber/plumber/control
+              desc: *old
+            - pkg: github.com/getplumber/plumber/defaultConfig
+              desc: *old
+            - pkg: github.com/getplumber/plumber/finding
+              desc: *old
+            - pkg: github.com/getplumber/plumber/github
+              desc: *old
+            - pkg: github.com/getplumber/plumber/gitlab
+              desc: *old
+            - pkg: github.com/getplumber/plumber/internal
+              desc: *old
+            - pkg: github.com/getplumber/plumber/pbom
+              desc: *old
+            - pkg: github.com/getplumber/plumber/policies
+              desc: *old
+            - pkg: github.com/getplumber/plumber/provider
+              desc: *old
+            - pkg: github.com/getplumber/plumber/utils
+              desc: *old
     errcheck:
       check-type-assertions: true
       check-blank: true
@@ -194,7 +232,7 @@ linters:
         text: G(122|204|301|304|306|703)
       # The e2e tests run one at a time on purpose: gitlab.com throttles (429)
       # as soon as two analyses run at once.
-      - path: test/e2e/
+      - path: test/v0/e2e/
         linters:
           - paralleltest
       # Rows spell out their CLI arguments; constants would hide what they run.

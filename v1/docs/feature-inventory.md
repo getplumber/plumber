@@ -13,8 +13,8 @@ outside `v1/`.
 Column meanings:
 
 - Docs: where a user can read about it. "help" means only the `--help` text.
-- Rows: the rows of the v1 suite that run it (`test/local` test and row names, or `e2e` for the
-  rows of `test/e2e`). `TestHelpFlag` rows are left out, since every command has one.
+- Rows: the rows of the v1 suite that run it (`test/v0/local` test and row names, or `e2e` for the
+  rows of `test/v0/e2e`). `TestHelpFlag` rows are left out, since every command has one.
 - Users: the integrations that pass it: the GitHub Action (`action.yml`), the GitLab component
   (`templates/plumber.yml`, through `PLUMBER_ANALYZE_*` variables) and the self-scan workflow
   (`.github/workflows/plumber-action.yml`).
@@ -39,14 +39,14 @@ Column meanings:
 | `config validate` | `cmd/config.go` | README | `TestConfig/config-validate-*` | keep | |
 | `explain [CODE \| -a N]` | `cmd/explain.go`, `cmd/explain_attack.go` | README | `TestExplain/*` | keep | |
 | `score-compare` | `cmd/score_compare.go` | `docs/scoring-v4-migration.md` | `TestScoreCompare/*` | remove | Hidden. Its own comment calls it "a Radar operational tool, not a user-facing analyze workflow" (`cmd/score_compare.go:378`). It belongs in an internal tool. |
-| `version` | `cmd/version.go` | README | `TestRoot/version*` | keep, add `--version` | `plumber --version` is an unknown flag today (`TestRoot/version-flag-unsupported`); cobra's `Version` field gives it for free. |
+| `version` | `cmd/version.go` | README | `TestRoot/version*` | keep, add `--json` and `--short` | Only the command prints the version: `plumber --version` stays an unknown flag (`TestRoot/version-flag-unsupported`). It follows golangci-lint's `version`, without `--debug`: one line with the version, Go version, commit and date, `--json` for the same as JSON, `--short` for the version alone. |
 | `help` | cobra | help | `TestRoot/help*` | keep | |
 
 ### Flags of commands other than `analyze`
 
 | Flag | Commands | Decision | Why |
 |---|---|---|---|
-| `-v`, `--verbose` (global) | all | keep | |
+| `-v`, `--verbose` (global) | all | replace with `PLUMBER_LOG_LEVEL` | The variable sets the level of the zerolog logger: `debug`, `info` (the default), `warn` or `error`; any other value means `info`, as golangci-lint's `LOG_LEVEL`. See "Removals in v1". |
 | `--no-descriptions` | `completion <shell>` | keep | cobra built-in. |
 | `-c`, `--config` | `config view/diff/resolve/slim/validate` | keep | |
 | `--no-color` | `config view/diff` | keep | |
@@ -158,13 +158,14 @@ switch, so the rows of the old behavior stay until then.
 | `auth.requireAuth` | none: it never did anything | none |
 | top-level `controls` and `engine` | `config migrate` | `TestConfig/config-validate-legacy` (becomes an error); `TestConfig/config-migrate*` unchanged |
 | v0.2.x blocks in the JSON | the `findings` array | e2e goldens (their `report` loses the blocks) |
+| `-v`, `--verbose` | `PLUMBER_LOG_LEVEL=debug`; `-v` stays unused | `TestRoot/version-verbose` stays in `test/v0/local`; `test/v1/local` has no such row, and its `--help` rows have no `-v` |
 
 ## Follow-up during the rewrite
 
 1. Apply the decisions above as each command is rewritten, and list the removals in the v1
    migration guide.
 2. Delete the hand-written flag list from the `analyze` long help.
-3. Add `--version`, the JSON schema version key and the GitHub warnings for `--glsast`,
+3. Add `version --json` and `--short`, the JSON schema version key and the GitHub warnings for `--glsast`,
    `--mr-comment`, `--badge` and `--ci-config-path`.
 4. Document `catalog` in the README, and `extends` and `capabilities` in the migration doc.
 5. Static by default: the Action and the component get inputs for `--resolve-depth` and
