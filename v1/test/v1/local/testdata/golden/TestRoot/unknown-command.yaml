@@ -1,4 +1,4 @@
 command: plumber bogus
 exit: 1
 stdout: ""
-stderr: "Usage:\n  plumber [flags]\n  plumber [command]\n\nAvailable Commands:\n  completion  Generate the autocompletion script for the specified shell\n  help        Help about any command\n  version     Display the plumber version\n\nFlags:\n  -h, --help   help for plumber\n\nUse \"plumber [command] --help\" for more information about a command.\n\n\e[31mERR\e[0m \e[1munknown command \"bogus\" for \"plumber\"\e[0m\n"
+stderr: "\e[31mERR\e[0m \e[1munknown command \"bogus\" for \"plumber\"\e[0m\n"

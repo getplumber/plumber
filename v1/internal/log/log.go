@@ -4,6 +4,7 @@ package log
 
 import (
 	"io"
+	"strings"
 
 	"github.com/rs/zerolog"
 	"github.com/spf13/viper"
@@ -22,10 +23,11 @@ func New(w io.Writer) zerolog.Logger {
 }
 
 // level returns the level PLUMBER_LOG_LEVEL names: debug, info, warn or
-// error. It is info when the variable is unset or holds any other value. It
+// error, in any case. It is info when the variable is unset or holds any
+// other value. It
 // reads the global viper, which internal/cli sets up.
 func level() zerolog.Level {
-	switch viper.GetString("log_level") {
+	switch strings.ToLower(viper.GetString("log_level")) {
 	case "debug":
 		return zerolog.DebugLevel
 	case "warn":

@@ -5,8 +5,10 @@
 # Local suites, every input that makes no backend request: test/v0/local runs
 # the old CLI, test/v1/local the rewrite. No token, no network. A missing
 # golden file fails its row. test/v0/e2e has the e2e build tag, so it doesn't
-# run here. test-integration runs both; CI runs each in its own job.
-test-integration: test-integration-v0 test-integration-v1
+# run here. test-integration runs both in one go test call, so they build
+# and run in parallel; CI runs each in its own job.
+test-integration:
+	go test -tags cli -count=1 ./test/v0/local ./test/v1/local
 
 test-integration-v0:
 	go test -tags cli -count=1 ./test/v0/local

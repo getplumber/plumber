@@ -49,8 +49,10 @@ func newRootCommand(info version.BuildInfo) *rootCommand {
 patterns and security gaps: GitHub Actions workflows, GitLab CI pipelines with their
 includes, and the repository settings. It reports the findings and a score.`,
 		Args: cobra.NoArgs,
-		// Execute logs the error that ends a command.
+		// Execute logs the error that ends a command, and an error prints no
+		// usage, as in golangci-lint.
 		SilenceErrors: true,
+		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()
 		},

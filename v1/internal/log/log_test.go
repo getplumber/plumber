@@ -60,6 +60,8 @@ func TestLevel(t *testing.T) { //nolint:paralleltest // writes the global viper
 		{value: "info", want: zerolog.InfoLevel},
 		{value: "warn", want: zerolog.WarnLevel},
 		{value: "error", want: zerolog.ErrorLevel},
+		{value: "DEBUG", want: zerolog.DebugLevel},
+		{value: "Warn", want: zerolog.WarnLevel},
 		{value: "", want: zerolog.InfoLevel},
 		{value: "trace", want: zerolog.InfoLevel},
 		{value: "nope", want: zerolog.InfoLevel},

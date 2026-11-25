@@ -5,12 +5,13 @@ package local
 import "testing"
 
 // TestRoot covers the top-level commands (help and version) and the unknown
-// command error.
+// command and flag errors.
 func TestRoot(t *testing.T) {
 	t.Parallel()
 	tests := []cliCase{
 		{name: "help", args: []string{"help"}},
 		{name: "unknown-command", args: []string{"bogus"}},
+		{name: "unknown-flag", args: []string{"version", "--nope"}},
 		{name: "version", args: []string{"version"}},
 		{name: "version-flag-unsupported", args: []string{"--version"}},
 		{name: "version-json", args: []string{"version", "--json"}},

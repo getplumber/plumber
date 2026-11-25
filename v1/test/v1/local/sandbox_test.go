@@ -105,9 +105,9 @@ func (sb *sandbox) runPlumber(ctx context.Context, args []string) (stdout, stder
 
 var (
 	timestamp = regexp.MustCompile(`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?`)
-	urnUUID   = regexp.MustCompile(`urn:uuid:[0-9a-f-]{36}`) // CycloneDX serialNumber, random per run
-	epochMs   = regexp.MustCompile(`\b1[78]\d{11}\b`)        // epoch milliseconds, 2023-2033 (OCSF time, correlation_uid)
-	goVersion = regexp.MustCompile(`\bgo1\.\d+(\.\d+)?\b`)   // Go version of the build (plumber version)
+	urnUUID   = regexp.MustCompile(`urn:uuid:[0-9a-f-]{36}`)              // CycloneDX serialNumber, random per run
+	epochMs   = regexp.MustCompile(`\b1[78]\d{11}\b`)                     // epoch milliseconds, 2023-2033 (OCSF time, correlation_uid)
+	goVersion = regexp.MustCompile(`\bgo1\.\d+(\.\d+)?((rc|beta)\d+)?\b`) // Go version of the build, prereleases too (plumber version)
 )
 
 // normalize replaces what changes from one run to the next: the sandbox

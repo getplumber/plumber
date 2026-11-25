@@ -71,22 +71,20 @@ func TestRootCommandExecute(t *testing.T) {
 		name       string
 		args       []string
 		wantErr    bool
-		wantStdout string // a prefix of stdout
-		wantStderr string // a suffix of stderr; empty means stderr is empty
+		wantStdout string // a prefix of stdout; empty means stdout is empty
+		wantStderr string // stderr without its color codes
 	}{
 		{name: "version", args: []string{"version"}, wantStdout: wantVersion},
 		{
 			name:       "no --version flag",
 			args:       []string{"--version"},
 			wantErr:    true,
-			wantStdout: "Usage:",
 			wantStderr: "ERR unknown flag: --version\n",
 		},
 		{
 			name:       "no -v shorthand",
 			args:       []string{"-v"},
 			wantErr:    true,
-			wantStdout: "Usage:",
 			wantStderr: "ERR unknown shorthand flag: 'v' in -v\n",
 		},
 		{name: "no argument prints the help", args: nil, wantStdout: "Plumber scans"},
@@ -94,7 +92,6 @@ func TestRootCommandExecute(t *testing.T) {
 			name:       "unknown command",
 			args:       []string{"bogus"},
 			wantErr:    true,
-			wantStdout: "Usage:",
 			wantStderr: "ERR unknown command \"bogus\" for \"plumber\"\n",
 		},
 	}
@@ -105,15 +102,15 @@ func TestRootCommandExecute(t *testing.T) {
 			if err := c.Execute(); (err != nil) != tt.wantErr {
 				t.Errorf("Execute() error = %v, want an error: %t", err, tt.wantErr)
 			}
-			if got := stdout.String(); !strings.HasPrefix(got, tt.wantStdout) {
+			got := stdout.String()
+			if tt.wantStdout == "" && got != "" {
+				t.Errorf("stdout = %q, want empty", got)
+			}
+			if !strings.HasPrefix(got, tt.wantStdout) {
 				t.Errorf("stdout = %q, want a prefix %q", got, tt.wantStdout)
 			}
-			got := stripANSI(stderr.String())
-			if tt.wantStderr == "" && got != "" {
-				t.Errorf("stderr = %q, want empty", got)
-			}
-			if !strings.HasSuffix(got, tt.wantStderr) {
-				t.Errorf("stderr = %q, want a suffix %q", got, tt.wantStderr)
+			if got := stripANSI(stderr.String()); got != tt.wantStderr {
+				t.Errorf("stderr = %q, want %q", got, tt.wantStderr)
 			}
 		})
 	}
