@@ -2,6 +2,7 @@ package policies_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -21,35 +22,42 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: echo "BODY=${{ format('{0}', github.event.comment.body) }}" >> "$GITHUB_ENV"
-  safe-quoted-shell:
+  safe-quoted-expression:
     runs-on: ubuntu-latest
     steps:
-      - run: echo '${{ github.ref }}' && echo 'harmless'
+      - run: echo "${{ format('github.event.issue.title') }}"
 `
 	findings, err := evaluateStrict(loadPolicies(t), context.Background(), scanWorkflow(t, workflow), nil)
 	if err != nil {
 		t.Fatalf("evaluate policies: %v", err)
 	}
 
-	hasFinding := func(jobSuffix, code string) bool {
+	for _, tc := range []struct {
+		job     string
+		code    string
+		subject string
+	}{
+		{"direct", "ISSUE-207", "format('{0}', github.event.comment.body)"},
+		{"escaped-quote", "ISSUE-207", "format('it''s {0}', github.event.issue.title)"},
+		{"env-redirect", "ISSUE-209", "format('{0}', github.event.comment.body)"},
+		{"safe-quoted-expression", "ISSUE-207", ""},
+	} {
+		matches := 0
 		for _, f := range findings {
-			if f.Code == code && (f.Job == jobSuffix || len(f.Job) > len(jobSuffix) && f.Job[len(f.Job)-len(jobSuffix)-1:] == "/"+jobSuffix) {
-				return true
+			if f.Code != tc.code || (f.Job != tc.job && !strings.HasSuffix(f.Job, "/"+tc.job)) {
+				continue
+			}
+			matches++
+			if tc.subject != "" && f.Subject != tc.subject {
+				t.Errorf("%s %s: Subject = %q, want %q", tc.job, tc.code, f.Subject, tc.subject)
 			}
 		}
-		return false
-	}
-
-	if !hasFinding("direct", "ISSUE-207") {
-		t.Errorf("direct job with format('{0}', github.event.comment.body) evaded ISSUE-207")
-	}
-	if !hasFinding("escaped-quote", "ISSUE-207") {
-		t.Errorf("escaped-quote job with format('it''s {0}', github.event.issue.title) evaded ISSUE-207")
-	}
-	if !hasFinding("env-redirect", "ISSUE-209") {
-		t.Errorf("env-redirect job with format('{0}', github.event.comment.body) evaded ISSUE-209")
-	}
-	if hasFinding("safe-quoted-shell", "ISSUE-207") {
-		t.Errorf("safe-quoted-shell job should not trigger ISSUE-207")
+		want := 1
+		if tc.subject == "" {
+			want = 0
+		}
+		if matches != want {
+			t.Errorf("%s: got %d %s findings, want %d", tc.job, matches, tc.code, want)
+		}
 	}
 }
