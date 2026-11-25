@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/getplumber/plumber/internal/ir"
 )
 
 func TestCaseInsensitiveActionMatching(t *testing.T) {
@@ -121,5 +123,32 @@ jobs:
 	}
 	if got := countCode(findings, "ISSUE-904"); got != 0 {
 		t.Errorf("CodeQL subpath init: got %d ISSUE-904 findings, want 0", got)
+	}
+}
+
+// TestRequiredActionIgnoresOwnerCase pins that a required action is found
+// whatever the case of its owner and repository in the workflow or in the
+// config (ISSUE-417), while the path after them keeps its case.
+func TestRequiredActionIgnoresOwnerCase(t *testing.T) {
+	engine := loadPolicies(t)
+	cfg := map[string]any{"workflowMustIncludeRequiredActions": map[string]any{
+		"requiredGroups": []any{[]any{"MyOrg/Security-Scan"}},
+	}}
+	for _, tc := range []struct {
+		uses string
+		want int
+	}{
+		{"myorg/security-scan@v1", 0},
+		{"MYORG/security-scan/sub@v1", 0},
+		{"myorg/security-scan-fork@v1", 1},
+	} {
+		p := &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{{Name: "ci/scan", Uses: []ir.Action{{Uses: tc.uses}}}}}
+		findings, err := evaluateStrict(engine, context.Background(), p, cfg)
+		if err != nil {
+			t.Fatalf("evaluate: %v", err)
+		}
+		if got := countCode(findings, "ISSUE-417"); got != tc.want {
+			t.Errorf("%s: %d ISSUE-417 findings, want %d", tc.uses, got, tc.want)
+		}
 	}
 }

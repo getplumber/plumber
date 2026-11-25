@@ -434,7 +434,7 @@ func appendUnique(base, add []string) []string {
 func checkoutPinnedSha(job Job) bool {
 	pinned := false
 	for _, a := range job.Uses {
-		if !strings.HasPrefix(a.Uses, "actions/checkout") {
+		if ActionName(a.Uses) != "actions/checkout" {
 			continue
 		}
 		ref, ok := a.With["ref"].(string)

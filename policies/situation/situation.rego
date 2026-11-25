@@ -1448,7 +1448,7 @@ token_write_state(job) := "proven" if {
 persisted_credentials(job) := "proven" if {
 	input.pipeline.provider == "github"
 	some action in object.get(job, "uses", [])
-	startswith(action.uses, "actions/checkout@")
+	startswith(lower(action.uses), "actions/checkout@")
 	not object.get(object.get(action, "with", {}), "persist-credentials", true) in {false, "false"}
 	count(object.get(job, "scripts", [])) > 0
 } else := "absent"
@@ -1857,7 +1857,7 @@ signs_or_releases(job) := {{"kind": "signs_or_releases", "state": signing_state(
 } | {{"kind": "signs_or_releases", "state": "proven", "evidence": action.uses} |
 	some action in object.get(job, "uses", [])
 	some name in code_signing_actions
-	startswith(action.uses, concat("", [name, "@"]))
+	startswith(lower(action.uses), concat("", [lower(name), "@"]))
 } | {{"kind": "signs_or_releases", "state": "proven", "evidence": short_evidence(l)} |
 	some line in object.get(job, "scripts", [])
 	some l in split(line, "\n")

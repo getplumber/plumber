@@ -630,10 +630,7 @@ func parseGitHubRunsOn(v any) (labels []string, expression bool) {
 func cacheAndArtifactRefs(uses []ir.Action, jobID string, runsOn []string, runsOnExpression bool) (caches []ir.CacheRef, artifacts []ir.ArtifactRef) {
 	osName, arch := runnerOSArch(runsOn, runsOnExpression)
 	for _, a := range uses {
-		name := a.Uses
-		if i := strings.Index(name, "@"); i >= 0 {
-			name = name[:i]
-		}
+		name := ir.ActionName(a.Uses)
 		withStr := func(key string) string {
 			if s, ok := a.With[key].(string); ok {
 				return s

@@ -32,9 +32,12 @@
 #   jobs.x.uses: org/sast-scan/.github/workflows/scan.yml@v1
 # but NOT by `uses: org/sast-scan-fork@v2` (the slash guard
 # prevents accidental prefix collisions on owner/repo names that
-# share a prefix).
+# share a prefix). Owner and repo compare without regard to case,
+# as GitHub resolves them (`Org/SAST-Scan@v2` satisfies
+# `org/sast-scan`); the path after them keeps its case.
 package required_actions
 
+import data.lib.actions
 import rego.v1
 
 deny contains finding if {
@@ -108,14 +111,19 @@ _required_present(required) if {
 # The slash guard prevents `org/repo-other` from accidentally
 # matching `org/repo`.
 _ref_matches(reference, required) if {
-	normalized := _strip_ref(reference)
-	normalized == required
+	_norm(_strip_ref(reference)) == _norm(required)
 }
 
 _ref_matches(reference, required) if {
-	normalized := _strip_ref(reference)
-	startswith(normalized, sprintf("%s/", [required]))
+	startswith(_norm(_strip_ref(reference)), sprintf("%s/", [_norm(required)]))
 }
+
+# _norm lowers the owner and repo of an `owner/repo[/path]` name
+# (lib.actions.canonical_name); a name with fewer than two segments
+# stays as written.
+_norm(name) := actions.canonical_name(name)
+
+_norm(name) := name if not actions.canonical_name(name)
 
 _strip_ref(reference) := stripped if {
 	parts := split(reference, "@")
