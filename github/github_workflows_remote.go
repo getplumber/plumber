@@ -353,5 +353,5 @@ func isNotFound(err error) bool {
 	// Best-effort match on the message — go-gh's HTTPError.Error()
 	// includes "HTTP 404" verbatim.
 	_ = httpError(nil)
-	return strings.Contains(err.Error(), "HTTP 404")
+	return strings.Contains(err.Error(), "HTTP 404") || errors.Is(err, errRepoNotFound)
 }

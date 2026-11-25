@@ -86,7 +86,7 @@ func TestFetchGitHubBranchProtection_TargetedOnly_BypassesListing(t *testing.T) 
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+	branches, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{
 		ExactNames: []string{"main"},
 	})
 	if err != nil {
@@ -123,7 +123,7 @@ func TestFetchGitHubBranchProtection_TargetedSkipsMissingBranches(t *testing.T) 
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+	branches, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{
 		ExactNames: []string{"main", "master"},
 	})
 	if err != nil {
@@ -177,7 +177,7 @@ func TestFetchGitHubBranchProtection_TargetedRedirectsToDefault(t *testing.T) {
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+	branches, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{
 		ExactNames: []string{"main", "master"},
 	})
 	if err != nil {
@@ -214,7 +214,7 @@ func TestFetchGitHubBranchProtection_TargetedRulesetOnlyBranch(t *testing.T) {
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+	branches, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{
 		ExactNames: []string{"main"},
 	})
 	if err != nil {
@@ -247,7 +247,7 @@ func TestFetchGitHubBranchProtection_TargetedDetailForbidden_KeepsEntry(t *testi
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+	branches, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{
 		ExactNames: []string{"main"},
 	})
 	if err != nil {
@@ -285,7 +285,7 @@ func TestFetchGitHubBranchProtection_TargetedDetailSucceeds_MarksKnown(t *testin
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+	branches, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{
 		ExactNames: []string{"main"},
 	})
 	if err != nil {
@@ -309,7 +309,7 @@ func TestFetchGitHubBranchProtection_NoOpWhenNeitherTargetedNorListing(t *testin
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{})
+	branches, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -372,7 +372,7 @@ func TestFetchGitHubBranchProtection_ListingPaginates(t *testing.T) {
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+	branches, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{
 		ExactNames: []string{"main"},
 		Listing:    true,
 	})
@@ -410,7 +410,7 @@ func TestFetchGitHubBranchProtection_ListingCapsAtMaxPages(t *testing.T) {
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{Listing: true})
+	branches, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{Listing: true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -434,7 +434,7 @@ func TestFetchGitHubBranchProtection_TargetedForbidden_DegradesToEmpty(t *testin
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+	branches, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{
 		ExactNames: []string{"main"},
 	})
 	if err != nil {
@@ -468,7 +468,7 @@ func TestFetchGitHubBranchProtection_ListingForbidden_KeepsTargeted(t *testing.T
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+	branches, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{
 		ExactNames: []string{"main"},
 		Listing:    true,
 	})
@@ -505,7 +505,7 @@ func TestFetchGitHubBranchProtection_TargetedDedupesDuplicateNames(t *testing.T)
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+	branches, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{
 		ExactNames: []string{"main", "main"},
 	})
 	if err != nil {
@@ -548,11 +548,11 @@ func TestFetchGitHubBranchProtection_TargetedAndListingProduceSameShape(t *testi
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	targeted, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{ExactNames: []string{"main"}})
+	targeted, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{ExactNames: []string{"main"}})
 	if err != nil {
 		t.Fatalf("targeted: %v", err)
 	}
-	listed, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{Listing: true})
+	listed, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{Listing: true})
 	if err != nil {
 		t.Fatalf("listing: %v", err)
 	}
@@ -585,7 +585,7 @@ func TestFetchGitHubDefaultBranch_HappyPath(t *testing.T) {
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	name, err := FetchGitHubDefaultBranch("", "owner", "repo")
+	name, err := FetchGitHubDefaultBranch(enterpriseHost, "owner", "repo")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -603,7 +603,7 @@ func TestFetchGitHubDefaultBranch_404_DegradesToEmpty(t *testing.T) {
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	name, err := FetchGitHubDefaultBranch("", "owner", "repo")
+	name, err := FetchGitHubDefaultBranch(enterpriseHost, "owner", "repo")
 	if err != nil {
 		t.Fatalf("expected nil error on 404, got %v", err)
 	}
@@ -679,7 +679,7 @@ func TestFetchGitHubBranchProtection_RulesetOnlyCodeOwner(t *testing.T) {
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+	branches, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{
 		ExactNames: []string{"main"},
 	})
 	if err != nil {
@@ -713,7 +713,7 @@ func TestFetchGitHubBranchProtection_ClassicPlusRulesetMerge(t *testing.T) {
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+	branches, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{
 		ExactNames: []string{"main"},
 	})
 	if err != nil {
@@ -751,7 +751,7 @@ func TestFetchGitHubBranchProtection_MultipleRulesetsBothHaveCodeOwner(t *testin
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+	branches, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{
 		ExactNames: []string{"main"},
 	})
 	if err != nil {
@@ -777,7 +777,7 @@ func TestFetchGitHubBranchProtection_RulesetsForbidden_ClassicSucceeds(t *testin
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+	branches, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{
 		ExactNames: []string{"main"},
 	})
 	if err != nil {
@@ -807,7 +807,7 @@ func TestFetchGitHubBranchProtection_BothForbidden(t *testing.T) {
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+	branches, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{
 		ExactNames: []string{"main"},
 	})
 	if err != nil {
@@ -832,7 +832,7 @@ func TestFetchGitHubBranchProtection_RulesetsEmpty(t *testing.T) {
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+	branches, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{
 		ExactNames: []string{"main"},
 	})
 	if err != nil {
@@ -864,7 +864,7 @@ func TestFetchGitHubBranchProtection_OrgLevelRuleset(t *testing.T) {
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+	branches, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{
 		ExactNames: []string{"main"},
 	})
 	if err != nil {
@@ -885,7 +885,7 @@ func TestFetchGitHubDefaultBranch_403_DegradesToEmpty(t *testing.T) {
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	name, err := FetchGitHubDefaultBranch("", "owner", "repo")
+	name, err := FetchGitHubDefaultBranch(enterpriseHost, "owner", "repo")
 	if err != nil {
 		t.Fatalf("expected nil error on 403, got %v", err)
 	}

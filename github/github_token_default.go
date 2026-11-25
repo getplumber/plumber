@@ -481,6 +481,18 @@ func scopeWrite(scopes map[string]string) string {
 // proves nothing about which token ran; a release's author is the
 // identity GitHub actually authenticated when it was published.
 func defaultTokenFromEffect(host, owner, repo string) bool {
+	if isDotcomHost(host) {
+		// The release authors come with the scanned repository's query.
+		r, err := loadScannedRepo(host, owner, repo, nil)
+		if err == nil {
+			err = r.err
+		}
+		if err != nil {
+			logRefusedLane("default token releases", err)
+			return false
+		}
+		return r.botRelease
+	}
 	rest, err := newGitHubRESTClient(host)
 	if err != nil {
 		return false

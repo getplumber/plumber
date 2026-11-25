@@ -2319,7 +2319,13 @@ family call the GitHub API **in process** via `github.com/cli/go-gh`,
 which reuses the locally stored `gh` token. The action metadata (archived
 flag, stars, releases, tags, refs, advisories) is read through the GraphQL
 API, many actions per query; on GitHub Enterprise Server the advisories
-and the immutable-release flag are read over REST.
+and the immutable-release flag are read over REST. On github.com, one
+GraphQL query also reads the scanned repository: its default branch,
+visibility and full name, the branches `branchMustBeProtected` names with
+their protected flag, and the authors of its latest releases. The branch
+listing, protection details, rulesets, environments and Actions runs stay
+on REST, and so does every read of the scanned repository on GitHub
+Enterprise Server.
 Plumber never shells out to the `gh` binary (or any other external
 binary) during analysis — see getplumber/plumber#310. Without
 `gh auth login`, those rules degrade silently (no false positives)

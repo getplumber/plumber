@@ -36,7 +36,7 @@ func TestGitHubRepoVisible(t *testing.T) {
 			defer server.Close()
 			swapRESTClient(t, server)
 
-			visible, err := GitHubRepoVisible("", "owner", "repo")
+			visible, err := GitHubRepoVisible(enterpriseHost, "owner", "repo")
 			if visible != tc.wantVisible {
 				t.Errorf("visible = %v, want %v", visible, tc.wantVisible)
 			}
