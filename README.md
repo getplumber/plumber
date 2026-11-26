@@ -103,6 +103,8 @@ export GH_TOKEN=ghp_xxxx
 export GITLAB_TOKEN=glpat_xxxx
 ```
 
+A GitHub analyze stops at startup without a token. To analyze a local clone without the GitHub API, set `PLUMBER_DISABLE_GITHUB_API=1`: the rules that need the API then stay silent.
+
 ## Run
 
 ```bash

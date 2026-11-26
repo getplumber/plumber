@@ -1,7 +1,6 @@
 package github
 
 import (
-	"net/http"
 	"reflect"
 	"testing"
 )
@@ -40,12 +39,15 @@ func TestSafeActionAPIRef(t *testing.T) {
 }
 
 // The guard must be wired into the call sites, not only the predicate: an
-// unsafe ref returns the zero result without issuing any REST request.
+// unsafe ref returns the zero result without loading anything.
 func TestResolveAndResolveTagShaRejectUnsafeRefWithoutRequest(t *testing.T) {
-	c := stubbedMetadataClient(t, func(r *http.Request) (string, int) {
-		t.Errorf("unexpected REST request for an unsafe ref: %s", r.URL.Path)
-		return "{}", http.StatusOK
+	c, loads, _ := worldClient(t, map[string]*fakeRepo{})
+	t.Cleanup(func() {
+		if len(*loads) != 0 {
+			t.Errorf("unexpected loads for unsafe refs: %+v", *loads)
+		}
 	})
+	c.Prefetch([]string{"owner/repo@../../../../orgs/victim", "owner/repo@v1?per_page=1"})
 	for _, ref := range []string{"owner/repo@../../../../orgs/victim", "owner/repo@v1?per_page=1"} {
 		if got := c.Resolve(ref); !reflect.DeepEqual(got, GitHubMetadata{}) {
 			t.Errorf("Resolve(%q) = %+v, want zero metadata", ref, got)

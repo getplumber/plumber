@@ -1116,7 +1116,7 @@ func defaultGitHubTrustedActionOwners() []string {
 func runAnalyzeAuthHint(providers []string) string {
 	switch {
 	case len(providers) == 1 && providers[0] == "github":
-		return "no token needed for local-clone scan; export GH_TOKEN or run `gh auth login` for full results"
+		return "requires GH_TOKEN in the environment or `gh auth login`"
 	case len(providers) == 1 && providers[0] == "gitlab":
 		return "requires GITLAB_TOKEN in the environment"
 	default:

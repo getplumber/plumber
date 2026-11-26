@@ -2,11 +2,14 @@ package github
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -86,7 +89,7 @@ func TestFetchGitHubBranchProtection_TargetedOnly_BypassesListing(t *testing.T) 
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+	branches, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{
 		ExactNames: []string{"main"},
 	})
 	if err != nil {
@@ -123,7 +126,7 @@ func TestFetchGitHubBranchProtection_TargetedSkipsMissingBranches(t *testing.T) 
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+	branches, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{
 		ExactNames: []string{"main", "master"},
 	})
 	if err != nil {
@@ -162,15 +165,29 @@ func TestFetchGitHubBranchProtection_TargetedRedirectsToDefault(t *testing.T) {
 	mux.HandleFunc("/repos/owner/repo/branches/master", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"name": "main", "protected": true})
 	})
+	// The redirect is discarded, so its protection is never read: on
+	// GitHub that read only 404s (plumber#618).
+	var redirectedDetail []string
+	mux.HandleFunc("/repos/owner/repo/branches/master/protection", func(w http.ResponseWriter, r *http.Request) {
+		redirectedDetail = append(redirectedDetail, r.URL.Path)
+		http.Error(w, "Not Found", http.StatusNotFound)
+	})
+	mux.HandleFunc("/repos/owner/repo/rules/branches/master", func(w http.ResponseWriter, r *http.Request) {
+		redirectedDetail = append(redirectedDetail, r.URL.Path)
+		_, _ = w.Write([]byte("[]"))
+	})
 	server := httptest.NewServer(mux)
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+	branches, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{
 		ExactNames: []string{"main", "master"},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(redirectedDetail) != 0 {
+		t.Errorf("the redirected master must not have its protection read, got %q", redirectedDetail)
 	}
 	if len(branches) != 1 {
 		t.Fatalf("expected 1 branch (main only; master is a default-branch redirect), got %d: %+v", len(branches), branches)
@@ -200,7 +217,7 @@ func TestFetchGitHubBranchProtection_TargetedRulesetOnlyBranch(t *testing.T) {
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+	branches, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{
 		ExactNames: []string{"main"},
 	})
 	if err != nil {
@@ -233,7 +250,7 @@ func TestFetchGitHubBranchProtection_TargetedDetailForbidden_KeepsEntry(t *testi
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+	branches, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{
 		ExactNames: []string{"main"},
 	})
 	if err != nil {
@@ -271,7 +288,7 @@ func TestFetchGitHubBranchProtection_TargetedDetailSucceeds_MarksKnown(t *testin
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+	branches, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{
 		ExactNames: []string{"main"},
 	})
 	if err != nil {
@@ -295,7 +312,7 @@ func TestFetchGitHubBranchProtection_NoOpWhenNeitherTargetedNorListing(t *testin
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{})
+	branches, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -358,7 +375,7 @@ func TestFetchGitHubBranchProtection_ListingPaginates(t *testing.T) {
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+	branches, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{
 		ExactNames: []string{"main"},
 		Listing:    true,
 	})
@@ -396,7 +413,7 @@ func TestFetchGitHubBranchProtection_ListingCapsAtMaxPages(t *testing.T) {
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{Listing: true})
+	branches, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{Listing: true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -420,7 +437,7 @@ func TestFetchGitHubBranchProtection_TargetedForbidden_DegradesToEmpty(t *testin
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+	branches, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{
 		ExactNames: []string{"main"},
 	})
 	if err != nil {
@@ -454,7 +471,7 @@ func TestFetchGitHubBranchProtection_ListingForbidden_KeepsTargeted(t *testing.T
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+	branches, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{
 		ExactNames: []string{"main"},
 		Listing:    true,
 	})
@@ -491,7 +508,7 @@ func TestFetchGitHubBranchProtection_TargetedDedupesDuplicateNames(t *testing.T)
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+	branches, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{
 		ExactNames: []string{"main", "main"},
 	})
 	if err != nil {
@@ -534,11 +551,11 @@ func TestFetchGitHubBranchProtection_TargetedAndListingProduceSameShape(t *testi
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	targeted, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{ExactNames: []string{"main"}})
+	targeted, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{ExactNames: []string{"main"}})
 	if err != nil {
 		t.Fatalf("targeted: %v", err)
 	}
-	listed, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{Listing: true})
+	listed, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{Listing: true})
 	if err != nil {
 		t.Fatalf("listing: %v", err)
 	}
@@ -571,7 +588,7 @@ func TestFetchGitHubDefaultBranch_HappyPath(t *testing.T) {
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	name, err := FetchGitHubDefaultBranch("", "owner", "repo")
+	name, err := FetchGitHubDefaultBranch(enterpriseHost, "owner", "repo")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -589,7 +606,7 @@ func TestFetchGitHubDefaultBranch_404_DegradesToEmpty(t *testing.T) {
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	name, err := FetchGitHubDefaultBranch("", "owner", "repo")
+	name, err := FetchGitHubDefaultBranch(enterpriseHost, "owner", "repo")
 	if err != nil {
 		t.Fatalf("expected nil error on 404, got %v", err)
 	}
@@ -665,7 +682,7 @@ func TestFetchGitHubBranchProtection_RulesetOnlyCodeOwner(t *testing.T) {
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+	branches, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{
 		ExactNames: []string{"main"},
 	})
 	if err != nil {
@@ -699,7 +716,7 @@ func TestFetchGitHubBranchProtection_ClassicPlusRulesetMerge(t *testing.T) {
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+	branches, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{
 		ExactNames: []string{"main"},
 	})
 	if err != nil {
@@ -737,7 +754,7 @@ func TestFetchGitHubBranchProtection_MultipleRulesetsBothHaveCodeOwner(t *testin
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+	branches, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{
 		ExactNames: []string{"main"},
 	})
 	if err != nil {
@@ -763,7 +780,7 @@ func TestFetchGitHubBranchProtection_RulesetsForbidden_ClassicSucceeds(t *testin
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+	branches, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{
 		ExactNames: []string{"main"},
 	})
 	if err != nil {
@@ -793,7 +810,7 @@ func TestFetchGitHubBranchProtection_BothForbidden(t *testing.T) {
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+	branches, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{
 		ExactNames: []string{"main"},
 	})
 	if err != nil {
@@ -818,7 +835,7 @@ func TestFetchGitHubBranchProtection_RulesetsEmpty(t *testing.T) {
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+	branches, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{
 		ExactNames: []string{"main"},
 	})
 	if err != nil {
@@ -850,7 +867,7 @@ func TestFetchGitHubBranchProtection_OrgLevelRuleset(t *testing.T) {
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+	branches, err := FetchGitHubBranchProtection(enterpriseHost, "owner", "repo", BranchFetchOptions{
 		ExactNames: []string{"main"},
 	})
 	if err != nil {
@@ -871,11 +888,159 @@ func TestFetchGitHubDefaultBranch_403_DegradesToEmpty(t *testing.T) {
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	name, err := FetchGitHubDefaultBranch("", "owner", "repo")
+	name, err := FetchGitHubDefaultBranch(enterpriseHost, "owner", "repo")
 	if err != nil {
 		t.Fatalf("expected nil error on 403, got %v", err)
 	}
 	if name != "" {
 		t.Errorf("expected empty default branch on 403, got %q", name)
+	}
+}
+
+// protectedMainAnswer is the scanned repository's answer for acme/widget
+// with one asked branch, main, protected by a classic rule.
+const protectedMainAnswer = `{"data":{"repository":{
+	"nameWithOwner":"acme/widget","visibility":"PUBLIC","isPrivate":false,
+	"defaultBranchRef":{"name":"main","refUpdateRule":{"pattern":"main"},"rules":{"totalCount":0}},
+	"b0":{"name":"main","refUpdateRule":{"pattern":"main"},"rules":{"totalCount":0}},
+	"releases":{"nodes":[{"author":{"login":"someone"}},{"author":null}]}
+}}}`
+
+// TestFetchGitHubBranchProtection_DetailServerErrorFails: a 403 or a 404
+// on a protected branch's details degrades to "details unknown", but a
+// server error is not an answer. The fetch fails and names the branch,
+// whichever of the two sources failed and whichever way the branch was
+// found: asked by name on GitHub Enterprise Server, listed, or read from
+// the scanned repository's query on github.com.
+func TestFetchGitHubBranchProtection_DetailServerErrorFails(t *testing.T) {
+	for _, source := range []struct {
+		name          string
+		classic, rule int
+		wantErr       string
+	}{
+		{"classic protection", http.StatusInternalServerError, http.StatusOK, `branch "main" protection`},
+		{"effective rules", http.StatusOK, http.StatusInternalServerError, `branch "main" rules`},
+	} {
+		for _, mode := range []struct {
+			name string
+			host string
+			opts BranchFetchOptions
+		}{
+			{"enterprise, by name", enterpriseHost, BranchFetchOptions{ExactNames: []string{"main"}}},
+			{"enterprise, listed", enterpriseHost, BranchFetchOptions{Listing: true}},
+			{"github.com", "", BranchFetchOptions{ExactNames: []string{"main"}}},
+		} {
+			t.Run(source.name+"/"+mode.name, func(t *testing.T) {
+				mux := http.NewServeMux()
+				handleBranchEntry(mux, "acme", "widget", "main", true)
+				mux.HandleFunc("/repos/acme/widget/branches", func(w http.ResponseWriter, _ *http.Request) {
+					_ = json.NewEncoder(w).Encode([]map[string]any{{"name": "main", "protected": true}})
+				})
+				if source.classic == http.StatusOK {
+					handleClassicProtection(mux, "acme", "widget", "main", false, true)
+				} else {
+					handleClassicProtectionStatus(mux, "acme", "widget", "main", source.classic)
+				}
+				if source.rule == http.StatusOK {
+					handleEffectiveRules(mux, "acme", "widget", "main", []map[string]any{})
+				} else {
+					handleEffectiveRulesStatus(mux, "acme", "widget", "main", source.rule)
+				}
+				server := httptest.NewServer(mux)
+				defer server.Close()
+				gql, _ := stubbedGraphQL(t, func(graphQLRequest) (string, int) { return protectedMainAnswer, 200 })
+				swapScannedRepoGraphQL(t, gql, nil)
+				swapRESTClient(t, server)
+
+				branches, err := FetchGitHubBranchProtection(mode.host, "acme", "widget", mode.opts)
+				if err == nil || !strings.Contains(err.Error(), source.wantErr) {
+					t.Fatalf("error = %v, want one about %s", err, source.wantErr)
+				}
+				if branches != nil {
+					t.Errorf("branches = %+v, want none beside the error", branches)
+				}
+			})
+		}
+	}
+}
+
+// TestScannedRepoReads_ClientError: when the scanned repository's GraphQL
+// client cannot be built, every read on github.com fails the way its REST
+// form did. A missing token comes back as ErrAuthRequired itself, any
+// other cause wrapped; the reads that never fail the run answer unknown.
+func TestScannedRepoReads_ClientError(t *testing.T) {
+	boom := errors.New("boom")
+	for _, tc := range []struct {
+		name    string
+		err     error
+		wantMsg string
+	}{
+		{"no token", ErrAuthRequired, ErrAuthRequired.Error()},
+		{"another cause", boom, "github graphql client: boom"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			swapScannedRepoGraphQL(t, nil, tc.err)
+			paths := restRecorder(t, nil)
+
+			branches, err := FetchGitHubBranchProtection("", "acme", "widget", BranchFetchOptions{ExactNames: []string{"main"}})
+			if branches != nil || err == nil || err.Error() != tc.wantMsg || !errors.Is(err, tc.err) {
+				t.Errorf("branch protection = %v, %v; want the error %q", branches, err, tc.wantMsg)
+			}
+			def, err := FetchGitHubDefaultBranch("", "acme", "widget")
+			if def != "" || err == nil || err.Error() != tc.wantMsg || !errors.Is(err, tc.err) {
+				t.Errorf("default branch = %q, %v; want the error %q", def, err, tc.wantMsg)
+			}
+			if visible, err := GitHubRepoVisible("", "acme", "widget"); visible || !errors.Is(err, tc.err) {
+				t.Errorf("visible = %v, %v; want false and the error", visible, err)
+			}
+			if vis, name := FetchGitHubRepoIdentity("", "acme", "widget"); vis != ir.VisibilityUnknown || name != "" {
+				t.Errorf("identity = %q, %q; want unknown", vis, name)
+			}
+			if defaultTokenFromEffect("", "acme", "widget") {
+				t.Error("an unread repository must not prove the effect route")
+			}
+			if len(*paths) != 0 {
+				t.Errorf("REST paths = %v, want none", *paths)
+			}
+		})
+	}
+}
+
+// TestFetchGitHubBranchProtection_DotcomListing: on github.com the named
+// branches come from the scanned repository's query and the listing adds
+// the others over REST; a named branch is not read twice.
+func TestFetchGitHubBranchProtection_DotcomListing(t *testing.T) {
+	gql, queries := stubbedGraphQL(t, func(graphQLRequest) (string, int) { return protectedMainAnswer, 200 })
+	swapScannedRepoGraphQL(t, gql, nil)
+	paths := restRecorder(t, map[string]string{
+		"/repos/acme/widget/branches":                 `[{"name":"dev","protected":false},{"name":"main","protected":true}]`,
+		"/repos/acme/widget/branches/main/protection": `{"allow_force_pushes":{"enabled":true}}`,
+		"/repos/acme/widget/rules/branches/main":      `[]`,
+	})
+	branches, err := FetchGitHubBranchProtection("", "acme", "widget", BranchFetchOptions{ExactNames: []string{"main"}, Listing: true})
+	if err != nil {
+		t.Fatalf("branch protection: %v", err)
+	}
+	want := []ir.Branch{
+		{Name: "main", Protected: true, AllowForcePush: true, ProtectionDetailsKnown: true},
+		{Name: "dev"},
+	}
+	if !reflect.DeepEqual(branches, want) {
+		t.Errorf("branches = %+v\nwant %+v", branches, want)
+	}
+	wantREST := []string{
+		"/repos/acme/widget/branches/main/protection",
+		"/repos/acme/widget/rules/branches/main",
+		"/repos/acme/widget/branches",
+	}
+	if !reflect.DeepEqual(*paths, wantREST) {
+		t.Errorf("REST paths = %v\nwant %v", *paths, wantREST)
+	}
+	if len(*queries) != 1 {
+		t.Errorf("queries = %d, want 1", len(*queries))
+	}
+	// The releases were read and none is the bot's.
+	if defaultTokenFromEffect("", "acme", "widget") {
+		t.Error("releases by other authors must not prove the effect route")
 	}
 }

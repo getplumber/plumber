@@ -1,9 +1,55 @@
 package cmd
 
 import (
+	"io"
+	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/getplumber/plumber/internal/httpcount"
 )
+
+// stubDefaultTransport answers every request sent through
+// http.DefaultTransport (where httpcount.DefaultTransport sends) from fn, so
+// a test of a fixed URL never reaches the network.
+type stubDefaultTransport func(*http.Request) (*http.Response, error)
+
+func (f stubDefaultTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// TestCheckForNewerVersion_CountsItsRequest: the version check is one of the
+// run's GitHub requests, so it goes through the counting transport and shows
+// in the run's request count (plumber#618).
+func TestCheckForNewerVersion_CountsItsRequest(t *testing.T) {
+	t.Setenv("CI", "")
+	origVersion, origTransport := Version, http.DefaultTransport
+	t.Cleanup(func() { Version, http.DefaultTransport = origVersion, origTransport })
+	Version = "0.1.0"
+	var asked []string
+	http.DefaultTransport = stubDefaultTransport(func(r *http.Request) (*http.Response, error) {
+		asked = append(asked, r.URL.String())
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{},
+			Body:       io.NopCloser(strings.NewReader(`{"tag_name":"v9.9.9"}`)),
+			Request:    r,
+		}, nil
+	})
+	before := httpcount.Default.Snapshot().Hosts["api.github.com"]
+
+	ch := make(chan string, 1)
+	checkForNewerVersion(ch)
+
+	if msg := <-ch; !strings.Contains(msg, "9.9.9") {
+		t.Errorf("notice = %q, want the newer version 9.9.9", msg)
+	}
+	if len(asked) != 1 || asked[0] != githubLatestReleaseURL {
+		t.Fatalf("requests = %q, want one to %s", asked, githubLatestReleaseURL)
+	}
+	after := httpcount.Default.Snapshot().Hosts["api.github.com"]
+	if after.Requests != before.Requests+1 || after.Status2xx != before.Status2xx+1 {
+		t.Errorf("counted requests to api.github.com went %+v -> %+v, want one more 2xx", before, after)
+	}
+}
 
 func TestCheckForNewerVersion_SkipsDevBuild(t *testing.T) {
 	Version = "dev"

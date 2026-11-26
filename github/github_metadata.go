@@ -1,8 +1,6 @@
 package github
 
 import (
-	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -11,11 +9,11 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/cli/go-gh/v2/pkg/api"
 	version "github.com/hashicorp/go-version"
-	"github.com/sirupsen/logrus"
+
+	"github.com/getplumber/plumber/internal/httpcount"
 )
 
 // EnvDisableGitHubAPI is the variable that, when set to a truthy value, forces every
@@ -30,8 +28,8 @@ const EnvDisableGitHubAPI = "PLUMBER_DISABLE_GITHUB_API"
 // go-gh default chain (gh auth, GH_TOKEN, GITHUB_TOKEN) and is the
 // supported way to resolve actions hosted in an org that gates the Actions
 // GITHUB_TOKEN behind an IP allow list (ISSUE-228); it also carries the
-// 5,000/hr user rate limit rather than the 60/hr anonymous fallback. A
-// token with public-repository read is sufficient.
+// 5,000/hr user rate limit. A token with public-repository read is
+// sufficient.
 const EnvMetadataToken = "PLUMBER_METADATA_TOKEN"
 
 // GitHubMetadata is the facts the API-backed policies need to know
@@ -58,8 +56,8 @@ type GitHubMetadata struct {
 	RepoArchived bool
 	RefExists    bool
 	// RefKnownAbsent is true ONLY when the upstream API definitively
-	// answered that the ref does not exist (a 404 / 422 on a readable
-	// repo). It stays false when the ref could not be verified (private
+	// answered that the ref does not exist (no tag, branch or object of
+	// that name on a readable repo). It stays false when the ref could not be verified (private
 	// repo, rate limit, network error) so impostor-commit (ISSUE-707)
 	// never flags a valid SHA it merely failed to reach.
 	RefKnownAbsent bool
@@ -96,10 +94,10 @@ type GitHubMetadata struct {
 }
 
 // GitHubMetadataClient resolves `owner/repo@ref` references against
-// the real GitHub REST API (via github.com/cli/go-gh which reuses
-// the installed `gh` CLI's stored credentials) and caches every
-// answer so the collector never hits the API twice for the same
-// key. Safe for concurrent use.
+// the GitHub GraphQL API (via github.com/cli/go-gh which reuses the
+// installed `gh` CLI's stored credentials), in batches (Prefetch,
+// metadata_graphql.go), and caches every answer so the collector never
+// asks GitHub twice for the same key. Safe for concurrent use.
 //
 // When `gh` is not authenticated — or go-gh cannot find a token —
 // the client operates in degraded mode: every lookup returns an
@@ -108,19 +106,33 @@ type GitHubMetadata struct {
 // client surfaces, so the degraded-mode output is a zero-finding
 // run rather than a crash.
 type GitHubMetadataClient struct {
+	// rest serves the definition reads, and on GitHub Enterprise Server
+	// the advisory and immutable-release lookups (see dotcom).
 	rest *api.RESTClient
-	// apiBaseURL is the REST base used for unauthenticated fallback reads
-	// (e.g. https://api.github.com). When an authenticated read of a public
-	// action repo is blocked by the owner org's IP allow list (403), the
-	// tags fetch retries anonymously against this base, which the allow
-	// list does not gate (confirmed on a runner, ISSUE-228).
-	apiBaseURL string
+	// gql sends the metadata queries (metadata_graphql.go), with the same
+	// token as rest.
+	gql *api.GraphQLClient
+	// dotcom is true when the client talks to github.com, whose GraphQL
+	// schema has the ACTIONS advisory ecosystem and Release.immutable. A
+	// GitHub Enterprise Server may lack both, so those two lookups go
+	// through REST there.
+	dotcom bool
+	// load fills the caches below for reqs and loadTags fills sha2tagCache;
+	// queryRepos and queryTags, or a test's fake.
+	load     func(reqs []repoRequest)
+	loadTags func(repos []repoKey)
+	// recordCost receives each query's rateLimit cost.
+	recordCost func(graphQLCost)
 	mu         sync.Mutex
 	// repoCache maps "owner/repo" to archived state; populated lazily.
 	repoCache map[string]repoCacheEntry
 	// refCache maps "owner/repo@ref" to the resolved metadata.
 	refCache    map[string]GitHubMetadata
 	latestCache map[string]string
+	// releases holds each repository's newest releases, newest first.
+	releases map[string][]releaseFact
+	// refFacts holds what GitHub said about each "owner/repo@ref".
+	refFacts map[string]*refFacts
 	// advisoryCache stores every advisory known for an action (id +
 	// vulnerable version range), keyed by "owner/repo". Filtering to
 	// advisories that actually cover the pinned ref happens on read.
@@ -177,13 +189,17 @@ type repoCacheEntry struct {
 // GH_ENTERPRISE_TOKEN) that has access to the GHES instance.
 func NewGitHubMetadataClientForHost(host string) *GitHubMetadataClient {
 	c := &GitHubMetadataClient{
-		apiBaseURL:    apiBaseURLForHost(host),
+		dotcom:        isDotcomHost(host),
 		repoCache:     map[string]repoCacheEntry{},
 		refCache:      map[string]GitHubMetadata{},
 		latestCache:   map[string]string{},
+		releases:      map[string][]releaseFact{},
+		refFacts:      map[string]*refFacts{},
 		advisoryCache: map[string][]advisoryInfo{},
 		sha2tagCache:  map[string]map[string]string{},
+		recordCost:    recordGraphQLCost,
 	}
+	c.load, c.loadTags = c.queryRepos, c.queryTags
 	if v := os.Getenv(EnvDisableGitHubAPI); v == "1" || v == "true" {
 		c.disabled = true
 		return c
@@ -193,26 +209,43 @@ func NewGitHubMetadataClientForHost(host string) *GitHubMetadataClient {
 	//      versions from orgs that gate the Actions GITHUB_TOKEN behind an IP
 	//      allow list, at the 5,000/hr user limit.
 	//   2. otherwise the go-gh default chain (gh auth, GH_TOKEN, GITHUB_TOKEN).
-	// Either way a 403 on a public action repo still falls back to an
-	// anonymous read (see fetchAllTags), so a no-token run keeps working.
-	var rest *api.RESTClient
-	var err error
-	opts, token := metadataClientOptions(host)
-	switch {
-	case token != "":
-		rest, err = api.NewRESTClient(opts)
-	case host == "":
-		rest, err = api.DefaultRESTClient()
-	default:
-		rest, err = api.NewRESTClient(opts)
-	}
+	// GraphQL has no anonymous access, so without a token the client is
+	// disabled. Empty Host and AuthToken resolve through the go-gh default
+	// chain, exactly as api.DefaultRESTClient does.
+	opts, _ := metadataClientOptions(host)
+	rest, err := api.NewRESTClient(opts)
 	if err != nil {
 		c.disabled = true
 		c.disableCause = err
 		return c
 	}
-	c.rest = rest
+	gql, err := api.NewGraphQLClient(graphQLClientOptions(opts))
+	if err != nil {
+		c.disabled = true
+		c.disableCause = err
+		return c
+	}
+	c.rest, c.gql = rest, gql
 	return c
+}
+
+// isDotcomHost reports whether host, as the metadata client takes it,
+// names github.com rather than a GitHub Enterprise Server.
+func isDotcomHost(host string) bool {
+	h := strings.ToLower(strings.TrimSpace(host))
+	h = strings.TrimPrefix(strings.TrimPrefix(h, "https://"), "http://")
+	h = strings.TrimSuffix(h, "/")
+	return h == "" || h == "github.com" || h == "api.github.com"
+}
+
+// graphQLClientOptions returns opts for the GraphQL client: same host and
+// token, but sent through httpcount.DefaultTransport, which counts requests
+// and never answers one from memory. The entrypoint prefetch decides from
+// this answer that a file is missing, so the answer must come from GitHub
+// each time, never from Memo.
+func graphQLClientOptions(opts api.ClientOptions) api.ClientOptions {
+	opts.Transport = httpcount.DefaultTransport
+	return opts
 }
 
 // metadataClientOptions resolves the REST client options for the metadata
@@ -220,7 +253,9 @@ func NewGitHubMetadataClientForHost(host string) *GitHubMetadataClient {
 // both the AuthToken on opts and the second return value, signalling the
 // caller to use it in preference to the go-gh default chain. token is empty
 // otherwise. A non-empty host targets a GitHub Enterprise Server instance.
+// Requests go through httpcount so the run can report what it sent.
 func metadataClientOptions(host string) (opts api.ClientOptions, token string) {
+	opts.Transport = httpcount.MemoTransport
 	token = strings.TrimSpace(os.Getenv(EnvMetadataToken))
 	if token != "" {
 		opts.AuthToken = token
@@ -345,12 +380,10 @@ func (c *GitHubMetadataClient) resolveUncached(owner, repo, ref string) GitHubMe
 		m.RefExists = true
 		return m
 	} else if checked && info.err == nil {
-		// The commits endpoint only accepts commit SHAs, so it answers
-		// 422 for a pin that names an annotated tag OBJECT. Dereference
-		// that object before concluding anything (ISSUE-401): the pin is
-		// immutable, resolves in GitHub Actions, and reporting it as
-		// absent is a critical false positive.
-		//
+		// A pin that names an annotated tag OBJECT is no commit.
+		// Dereference that object before concluding anything (ISSUE-401):
+		// the pin is immutable, resolves in GitHub Actions, and reporting
+		// it as absent is a critical false positive.
 		if commit, tagExists, tagChecked := c.tagObjectResolves(owner, repo, ref); tagExists {
 			m.RefKind = "commit"
 			m.RefExists = true
@@ -361,11 +394,11 @@ func (c *GitHubMetadataClient) resolveUncached(owner, repo, ref string) GitHubMe
 			// rule the tag-object shape out. Stay silent.
 			return m
 		}
-		// A definitive absence answer (404 / 422) on a repo we CAN read
-		// means the SHA is not tag, branch, tag object, nor commit
-		// upstream — a genuine impostor commit or typo. We require
-		// info.err == nil so a private / missing repo (whose commits
-		// endpoint also 404s) is never mistaken for an absent commit.
+		// A definitive absence answer on a repo we CAN read means the SHA
+		// is not tag, branch, tag object, nor commit upstream — a genuine
+		// impostor commit or typo. We require info.err == nil so a
+		// private / missing repo (where no object is found either) is
+		// never mistaken for an absent commit.
 		// Left false when the repo itself is unreadable so ISSUE-707
 		// stays silent (see commitResolves).
 		m.RefKnownAbsent = true
@@ -508,10 +541,10 @@ func (c *GitHubMetadataClient) DegradedChecks() []string {
 	return out
 }
 
-// advisoriesForRepo fetches every GitHub Advisory Database entry
-// for an `owner/repo` action package, flattens each vulnerability
-// entry to an advisoryInfo, and caches the result so repeated
-// callers of the same action cost one API call.
+// advisoriesForRepo returns every GitHub Advisory Database entry for an
+// `owner/repo` action package, one advisoryInfo per vulnerability entry,
+// read once per package: from the GraphQL loader on github.com, over REST
+// on GitHub Enterprise Server.
 func (c *GitHubMetadataClient) advisoriesForRepo(owner, repo string) []advisoryInfo {
 	key := owner + "/" + repo
 	c.mu.Lock()
@@ -520,6 +553,19 @@ func (c *GitHubMetadataClient) advisoriesForRepo(owner, repo string) []advisoryI
 		return v
 	}
 	c.mu.Unlock()
+	if c.dotcom {
+		c.load([]repoRequest{{owner: owner, repo: repo, advisories: true}})
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		v, ok := c.advisoryCache[key]
+		if !ok {
+			v = []advisoryInfo{}
+			c.advisoryCache[key] = v
+		}
+		return v
+	}
+	// GitHub Enterprise Server: its GraphQL schema may lack the ACTIONS
+	// ecosystem, so the advisories are read over REST.
 
 	var resp []struct {
 		GhsaID          string `json:"ghsa_id"`
@@ -672,153 +718,9 @@ func _refCoveredByRange(ref string, refVersion *version.Version, rangeExpr strin
 	return _versionInRange(refVersion, rangeExpr)
 }
 
-// resolveCommitToTag returns the release tag pointing at the given
-// commit SHA, or "" when the SHA is not the head of any published
-// tag. The repo's full tag list is fetched once and cached.
-func (c *GitHubMetadataClient) resolveCommitToTag(owner, repo, sha string) string {
-	key := owner + "/" + repo
-	c.mu.Lock()
-	tags, cached := c.sha2tagCache[key]
-	c.mu.Unlock()
-	if !cached {
-		tags = c.fetchAllTags(owner, repo)
-		c.mu.Lock()
-		c.sha2tagCache[key] = tags
-		c.mu.Unlock()
-	}
-	return tags[sha]
-}
-
-// fetchAllTags walks the paginated `/repos/{owner}/{repo}/tags`
-// endpoint and returns a SHA → tag-name map. When several tags point
-// at the same commit — typically a moving major alias (`v4`) and the
-// exact release tag (`v4.3.0`) — the most specific tag wins, so the
-// advisory range filter compares against the real pinned version
-// rather than the alias.
-// tagRef is one entry from the GitHub `/tags` listing: a tag name and the
-// commit it points at.
-type tagRef struct {
-	Name   string `json:"name"`
-	Commit struct {
-		Sha string `json:"sha"`
-	} `json:"commit"`
-}
-
-func (c *GitHubMetadataClient) fetchAllTags(owner, repo string) map[string]string {
-	out := map[string]string{}
-	if c.rest == nil {
-		return out
-	}
-	anonymous := false                  // flips to true once the authenticated read is blocked
-	for page := 1; page <= 20; page++ { // hard cap 2000 tags
-		resp, blocked, err := c.fetchTagsPage(owner, repo, page, anonymous)
-		if blocked {
-			// The authenticated action token hit the owner org's IP allow
-			// list. Action repos are public and an anonymous read is not
-			// gated by the allow list (confirmed on a runner, ISSUE-228),
-			// so retry this page and the rest of them without auth.
-			anonymous = true
-			var anonErr error
-			resp, _, anonErr = c.fetchTagsPage(owner, repo, page, true)
-			if anonErr != nil {
-				err = fmt.Errorf("authenticated read blocked by the org IP allow list (403); the anonymous retry also failed: %w", anonErr)
-			} else {
-				err = nil
-				// The normal authenticated read was blocked but the
-				// anonymous retry resolved it. Surface this at warn level
-				// (visible without --verbose) so the fallback is on the
-				// record: the version was resolved anonymously, not by the
-				// usual token read. Fires once per repo, since `anonymous`
-				// is now set for the remaining pages.
-				logrus.WithField("context", "collector").
-					Warnf("authenticated tags read for %s/%s was blocked by the org IP allow list (403); resolved it with an anonymous retry instead", owner, repo)
-			}
-		}
-		if err != nil {
-			// A tag fetch that fails even anonymously (allow list with no
-			// public route, rate limit, network) means SHA-pinned refs for
-			// this repo cannot be resolved to a version; the advisory filter
-			// then abstains rather than emitting false-positive CVEs (see
-			// _refCoveredByRange and ISSUE-228). Warn so it stays visible.
-			logrus.WithField("context", "collector").
-				Warnf("could not fetch tags for %s/%s on page %d; advisory version checks for SHA-pinned refs will be skipped: %v", owner, repo, page, err)
-			break
-		}
-		if len(resp) == 0 {
-			break
-		}
-		for _, t := range resp {
-			if t.Name == "" || t.Commit.Sha == "" {
-				continue
-			}
-			if prev, ok := out[t.Commit.Sha]; ok {
-				out[t.Commit.Sha] = _moreSpecificTag(prev, t.Name)
-				continue
-			}
-			out[t.Commit.Sha] = t.Name
-		}
-		if len(resp) < 100 {
-			break
-		}
-	}
-	return out
-}
-
-// fetchTagsPage reads one page of a repo's tags. With anonymous=false it
-// uses the authenticated client and returns blocked=true (and no error)
-// when the owner org's IP allow list answers 403, signalling the caller to
-// retry anonymously. With anonymous=true it reads without auth.
-func (c *GitHubMetadataClient) fetchTagsPage(owner, repo string, page int, anonymous bool) (tags []tagRef, blocked bool, err error) {
-	if anonymous {
-		t, _, e := c.anonGetTagsPage(owner, repo, page)
-		return t, false, e
-	}
-	path := fmt.Sprintf("repos/%s/%s/tags?per_page=100&page=%d", owner, repo, page)
-	var resp []tagRef
-	if e := c.rest.Get(path, &resp); e != nil {
-		var httpErr *api.HTTPError
-		if errors.As(e, &httpErr) && httpErr.StatusCode == http.StatusForbidden {
-			return nil, true, nil
-		}
-		return nil, false, e
-	}
-	return resp, false, nil
-}
-
-// anonGetTagsPage reads one page of a repo's tags without authentication,
-// against apiBaseURL. It is the fallback when the authenticated read is
-// blocked by an org IP allow list: public repos are world-readable and the
-// allow list does not gate anonymous reads (confirmed on a runner,
-// ISSUE-228). Subject to GitHub's 60/hour-per-IP unauthenticated limit, so
-// any failure here propagates and the caller abstains. On non-github.com
-// hosts the base URL is best effort; a wrong URL simply fails and abstains.
-func (c *GitHubMetadataClient) anonGetTagsPage(owner, repo string, page int) ([]tagRef, int, error) {
-	reqURL := fmt.Sprintf("%s/repos/%s/%s/tags?per_page=100&page=%d", c.apiBaseURL, owner, repo, page)
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
-	if err != nil {
-		return nil, 0, err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return nil, resp.StatusCode, fmt.Errorf("anonymous tags read returned HTTP %d", resp.StatusCode)
-	}
-	var tags []tagRef
-	if err := json.NewDecoder(resp.Body).Decode(&tags); err != nil {
-		return nil, resp.StatusCode, err
-	}
-	return tags, resp.StatusCode, nil
-}
-
-// apiBaseURLForHost returns the REST base used for unauthenticated fallback
-// reads. An empty host means github.com; any other host (GHES) is used as
-// given, best effort.
+// apiBaseURLForHost returns the REST base the job-log reader builds its
+// URL on. An empty host means github.com; any other host (GHES) is used
+// as given, best effort.
 func apiBaseURLForHost(host string) string {
 	host = strings.TrimSpace(host)
 	if host == "" {
@@ -880,101 +782,6 @@ func _versionInRange(v *version.Version, rangeExpr string) bool {
 	return constraints.Check(v)
 }
 
-// repoInfo fetches and caches the repository object once per
-// owner/repo. The archived flag and the stargazer count both come
-// from the same `GET repos/{owner}/{repo}` response, so callers that
-// need either share a single API round-trip.
-func (c *GitHubMetadataClient) repoInfo(owner, repo string) repoCacheEntry {
-	key := owner + "/" + repo
-	c.mu.Lock()
-	cached, ok := c.repoCache[key]
-	c.mu.Unlock()
-	if ok && cached.fetched {
-		return cached
-	}
-	var resp struct {
-		Archived        bool   `json:"archived"`
-		StargazersCount int    `json:"stargazers_count"`
-		FullName        string `json:"full_name"`
-	}
-	entry := repoCacheEntry{fetched: true}
-	if err := c.rest.Get(fmt.Sprintf("repos/%s/%s", owner, repo), &resp); err != nil {
-		entry.err = err
-	} else {
-		entry.archived = resp.Archived
-		entry.stars = resp.StargazersCount
-		entry.fullName = resp.FullName
-	}
-	c.mu.Lock()
-	c.repoCache[key] = entry
-	c.mu.Unlock()
-	return entry
-}
-
-// latestReleaseTag returns the highest semver tag across a repo's
-// releases. `/releases/latest` alone is not reliable: many action
-// repos (github/codeql-action, actions/download-artifact) publish
-// out-of-band tags — internal bundle snapshots like
-// `codeql-bundle-v2.25.2` or compatibility bridges like
-// `v3.1.0-node20` — that rank as "latest" by date even though they
-// are not the user-facing release. The date-sorted order is also
-// misleading when maintainers backport a fix to an older line and
-// republish it *after* a newer major (e.g. v3.1.0 republished after
-// v8.0.1). ISSUE-709 is a semver-drift signal, so Plumber walks the
-// first few pages and picks the highest semver among non-draft,
-// non-prerelease tags whose semver itself has no prerelease segment.
-func (c *GitHubMetadataClient) latestReleaseTag(owner, repo string) string {
-	key := owner + "/" + repo
-	c.mu.Lock()
-	if v, ok := c.latestCache[key]; ok {
-		c.mu.Unlock()
-		return v
-	}
-	c.mu.Unlock()
-
-	var best *version.Version
-	bestTag := ""
-	for page := 1; page <= 3; page++ {
-		var resp []struct {
-			TagName    string `json:"tag_name"`
-			Draft      bool   `json:"draft"`
-			Prerelease bool   `json:"prerelease"`
-		}
-		path := fmt.Sprintf("repos/%s/%s/releases?per_page=50&page=%d", owner, repo, page)
-		if err := c.rest.Get(path, &resp); err != nil || len(resp) == 0 {
-			break
-		}
-		for _, r := range resp {
-			if r.Draft || r.Prerelease {
-				continue
-			}
-			parsed, err := version.NewVersion(strings.TrimPrefix(r.TagName, "v"))
-			if err != nil {
-				continue
-			}
-			// Reject compatibility bridges / betas whose semver
-			// carries a prerelease segment (e.g. `v3.1.0-node20`,
-			// `v1.0.0-beta`). GitHub sometimes publishes these with
-			// `prerelease: false`, so the API flag alone is not
-			// sufficient.
-			if parsed.Prerelease() != "" {
-				continue
-			}
-			if best == nil || parsed.GreaterThan(best) {
-				best = parsed
-				bestTag = r.TagName
-			}
-		}
-		if len(resp) < 50 {
-			break
-		}
-	}
-	c.mu.Lock()
-	c.latestCache[key] = bestTag
-	c.mu.Unlock()
-	return bestTag
-}
-
 // ResolveTagSha exposes the tag → SHA lookup publicly so the
 // ref-version-mismatch enrichment can query the commented tag
 // without going through the full Resolve() probe chain.
@@ -993,45 +800,6 @@ func (c *GitHubMetadataClient) ResolveTagSha(ownerRepo, tag string) string {
 	return sha
 }
 
-// resolveTag returns (sha, true) when ref is a tag on the repo and
-// we can read the SHA it points at. Returns ("", false) otherwise.
-func (c *GitHubMetadataClient) resolveTag(owner, repo, ref string) (string, bool) {
-	var resp json.RawMessage
-	err := c.rest.Get(fmt.Sprintf("repos/%s/%s/git/ref/tags/%s", owner, repo, ref), &resp)
-	if err != nil {
-		return "", false
-	}
-	// The reply is either a tag ref (object.type="commit") or a tag
-	// object (object.type="tag") — in the latter case, the SHA
-	// points at the tag object, not the commit. Resolving the tag
-	// object to its target commit requires a second call.
-	var parsed struct {
-		Object struct {
-			Sha  string `json:"sha"`
-			Type string `json:"type"`
-			URL  string `json:"url"`
-		} `json:"object"`
-	}
-	if err := json.Unmarshal(resp, &parsed); err != nil {
-		return "", false
-	}
-	if parsed.Object.Type == "tag" {
-		var tagObj struct {
-			Object struct {
-				Sha string `json:"sha"`
-			} `json:"object"`
-		}
-		// git/tags/<sha> resolves the annotated-tag object to the
-		// commit. If this secondary call fails we still return the
-		// tag-object SHA: the policy only needs "is this a tag" plus
-		// a stable identifier.
-		if err := c.rest.Get(fmt.Sprintf("repos/%s/%s/git/tags/%s", owner, repo, parsed.Object.Sha), &tagObj); err == nil {
-			return tagObj.Object.Sha, true
-		}
-	}
-	return parsed.Object.Sha, true
-}
-
 // maxTagObjectDepth caps the ^{commit} walk in tagObjectResolves. A tag
 // object pointing at another tag object is legal but does not occur in
 // released actions; the cap exists so a malformed or self-referential
@@ -1042,16 +810,16 @@ const maxTagObjectDepth = 4
 // OBJECT in the upstream repository, and returns the commit that tag
 // object dereferences to. That shape is what `git rev-parse v1.2.3`
 // yields without `^{commit}`, so it is a normal outcome of pinning an
-// action by hand or with a script (ISSUE-401), yet the commits endpoint
-// answers 422 for it because it only accepts commit SHAs.
+// action by hand or with a script (ISSUE-401), yet it is no commit.
 //
-// Every call is scoped to the upstream repository, and the dereferenced
-// commit is confirmed in that same repository before the pin is called
-// resolvable.
+// The lookup is scoped to the upstream repository, and the chain is read
+// there down to the commit before the pin is called resolvable.
 //
 // Fork-network blind spot. GitHub serves every object in a fork network
 // from the parent, so a tag object pushed only to a FORK of owner/repo
-// still answers 200 here and is accepted. The control already had this
+// still resolves here and is accepted (GraphQL's object(oid:) finds a
+// fork-only commit on the parent as the REST commits endpoint did:
+// checked on actions/checkout, 2026-11-24). The control already had this
 // gap for commits (see impostor_commit.rego); resolving tag objects
 // extends it to them, because before this change every tag object was
 // reported and a fork-only one was caught as collateral of that bug
@@ -1066,132 +834,43 @@ const maxTagObjectDepth = 4
 // shared across the fork network.
 //
 // The tri-state contract matches commitResolves: checked is true ONLY
-// on a definitive answer (a resolvable tag object, or a 404 / 422 that
-// rules one out). Any other failure (403, rate limit, network) leaves
-// checked false so impostor-commit (ISSUE-707) stays silent on a SHA we
-// merely failed to reach.
+// on a definitive answer (a resolvable tag object, or an answer that rules
+// one out). A failed lookup leaves checked false so impostor-commit
+// (ISSUE-707) stays silent on a SHA we merely failed to reach.
 func (c *GitHubMetadataClient) tagObjectResolves(owner, repo, ref string) (commitSha string, exists, checked bool) {
-	// git/tags is keyed by object SHA, so only a SHA-shaped ref can name
-	// a tag object. Answering `v99` or a typo'd branch costs a round trip
-	// against the same rate limit for a guaranteed 404, so rule those out
-	// locally: the answer is definitive without asking.
+	// Only a SHA-shaped ref can name a tag object, so any other ref is
+	// ruled out without asking.
 	if !_isCommitSha(ref) {
 		return "", false, true
 	}
-	// Git resolves SHAs case-insensitively and every other SHA path here
-	// lowercases before comparing, but the git database endpoints are
-	// keyed by the exact object SHA: GitHub answers a mixed-case one with
-	// 500, which is not a definitive absence. Normalise so an uppercase
-	// pin takes the same path as its lowercase equivalent.
-	sha := strings.ToLower(ref)
-
+	f := c.ensureRef(owner, repo, ref)
+	if f.failed || !f.objectChecked {
+		return "", false, false
+	}
+	// No object, or one that is not a tag object: definitive for the ref
+	// we were asked about, so the caller may fall through to "absent
+	// upstream".
+	if f.object == nil || f.object.Typename != "Tag" {
+		return "", false, true
+	}
+	// Past this point the SHA plainly exists in the upstream repository.
 	// `git rev-parse <tag>^{commit}` peels through however many tag
-	// objects sit in the chain. Nesting beyond one level does not occur
-	// in practice, so the cap is a cheap guard against a malformed or
-	// self-referential chain rather than a real traversal budget.
-	for depth := 0; depth < maxTagObjectDepth; depth++ {
-		var resp struct {
-			Object struct {
-				Sha  string `json:"sha"`
-				Type string `json:"type"`
-			} `json:"object"`
-		}
-		err := c.rest.Get(fmt.Sprintf("repos/%s/%s/git/tags/%s", owner, repo, sha), &resp)
-		if err != nil {
-			var httpErr *api.HTTPError
-			if errors.As(err, &httpErr) {
-				switch httpErr.StatusCode {
-				// 404 / 422: the SHA is not a tag object on a repo we can
-				// read. Definitive for the ref we were asked about, so the
-				// caller may fall through to "absent upstream". Deeper in
-				// the chain it only means we lost the thread, so abstain.
-				case http.StatusNotFound, http.StatusUnprocessableEntity:
-					return "", false, depth == 0
-				}
-			}
-			return "", false, false
-		}
-		// Past this point git/tags served the SHA, so it plainly exists in
-		// the upstream repository. Anything we cannot turn into a confirmed
-		// commit abstains (checked=false) rather than falling through to
-		// "does not exist upstream", which would be a false statement at
-		// critical severity.
-		switch {
-		case resp.Object.Sha == "":
-			return "", false, false
-		case resp.Object.Type == "commit":
-			if ok, _ := c.commitResolves(owner, repo, resp.Object.Sha); !ok {
-				return "", false, false
-			}
-			return resp.Object.Sha, true, true
-		case resp.Object.Type == "tag":
-			sha = resp.Object.Sha
-		default:
-			// A tag pointing at a tree or blob is legal in git but is not
-			// something we can describe as a commit pin.
-			return "", false, false
-		}
+	// objects sit in the chain; the query read maxTagObjectDepth of them.
+	// Anything we cannot turn into a commit abstains (checked=false)
+	// rather than falling through to "does not exist upstream", which
+	// would be a false statement at critical severity. A tag pointing at a
+	// tree or blob is legal in git but is not something we can describe as
+	// a commit pin.
+	if sha := peeledCommit(f.object); sha != "" {
+		return sha, true, true
 	}
 	return "", false, false
 }
 
-// branchExists reports whether a branch named EXACTLY ref exists upstream.
-//
-// A 200 from /branches/{ref} is not proof on its own. GitHub keeps a renamed
-// branch's old name as a redirect, and that endpoint follows it: on
-// github/codeql-action, GET /branches/v2 answers 200 with the RENAMED branch
-// ("releases/v2"), while `git ls-remote` shows no refs/heads/v2 at all. Taking
-// that 200 as a branch made ISSUE-402 call `github/codeql-action/init@v2` an
-// ambiguous tag-and-branch ref that a single command disproves (#482), and a
-// policy that pins third-party actions only had no way to clear it short of
-// disabling the control. The name the API returns is compared with the name
-// asked for; a mismatch is a redirect, not a branch of that name - the same
-// guard fetchBranchByName already applies on the protection path.
-func (c *GitHubMetadataClient) branchExists(owner, repo, ref string) bool {
-	var resp remoteBranchEntry
-	err := c.rest.Get(fmt.Sprintf("repos/%s/%s/branches/%s", owner, repo, ref), &resp)
-	return err == nil && resp.Name == ref
-}
-
-// commitResolves reports whether ref resolves to a commit upstream.
-// The second return value, checked, is true ONLY when the API gave a
-// definitive answer: exists=true on success, or exists=false on a 404 /
-// 422. On any other error (403, rate limit, private repo, network)
-// checked is false and the caller must not conclude the commit is
-// absent — impostor-commit (ISSUE-707) fires only on a confirmed
-// absence, never on a SHA it merely failed to reach.
-func (c *GitHubMetadataClient) commitResolves(owner, repo, ref string) (exists, checked bool) {
-	// GitHub's commits endpoint accepts short SHAs too, but for
-	// impostor-commit we specifically want to know if a full 40-
-	// char SHA resolves.
-	var resp json.RawMessage
-	err := c.rest.Get(fmt.Sprintf("repos/%s/%s/commits/%s", owner, repo, ref), &resp)
-	if err == nil {
-		return true, true
-	}
-	var httpErr *api.HTTPError
-	if errors.As(err, &httpErr) {
-		switch httpErr.StatusCode {
-		// 404: the ref (short SHA / branch form) is not present. 422
-		// "No commit found for SHA": a well-formed 40-char SHA the repo
-		// does not contain — the endpoint's answer for the exact case
-		// impostor-commit cares about. Both are definitive "does not
-		// exist" answers for a repo we can read (resolveUncached only
-		// trusts this after repoInfo succeeded).
-		case http.StatusNotFound, http.StatusUnprocessableEntity:
-			return false, true
-		}
-	}
-	return false, false
-}
-
-// releaseIsImmutable reports whether the GitHub release published for
-// tag is immutable. It fails closed: a 404 (the tag has no release, the
-// normal answer for a floating major such as v4) is a definitive "no";
-// any other failure is also "no", but is recorded as a degraded check
-// so the run says why a possibly-immutable tag was still flagged.
-// Callers cache the answer per owner/repo@ref through Resolve.
-func (c *GitHubMetadataClient) releaseIsImmutable(owner, repo, tag string) bool {
+// releaseIsImmutableREST is releaseIsImmutable over REST, for GitHub
+// Enterprise Server: a 404 (the tag has no release) is a definitive "no";
+// any other failure is also "no", but is recorded as a degraded check.
+func (c *GitHubMetadataClient) releaseIsImmutableREST(owner, repo, tag string) bool {
 	var resp struct {
 		Immutable bool `json:"immutable"`
 	}
@@ -1203,11 +882,7 @@ func (c *GitHubMetadataClient) releaseIsImmutable(owner, repo, tag string) bool 
 	if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusNotFound {
 		return false
 	}
-	key := owner + "/" + repo + "@" + tag
-	c.recordDegradedMessage("release:"+key, fmt.Sprintf(
-		"%s: the release for this tag could not be read (%v), so the immutable-release exemption of ISSUE-701 was not applied",
-		key, err,
-	))
+	c.recordReleaseUnread(owner, repo, tag, err)
 	return false
 }
 

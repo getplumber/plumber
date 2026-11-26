@@ -116,6 +116,19 @@ func FetchGitHubBranchProtection(host, owner, repo string, opts BranchFetchOptio
 		return nil, fmt.Errorf("github api client: %w", err)
 	}
 
+	// On github.com the exact names come from the scanned repository's
+	// query (scanned_repo.go); the protection details stay on REST.
+	var facts *scannedRepo
+	if isDotcomHost(host) {
+		facts, err = loadScannedRepo(host, owner, repo, opts.ExactNames)
+		if err != nil {
+			if errors.Is(err, ErrAuthRequired) {
+				return nil, err
+			}
+			return nil, fmt.Errorf("github graphql client: %w", err)
+		}
+	}
+
 	seen := map[string]bool{}
 	out := make([]ir.Branch, 0, len(opts.ExactNames))
 
@@ -139,7 +152,13 @@ func FetchGitHubBranchProtection(host, owner, repo string, opts BranchFetchOptio
 		if opts.OnProgress != nil {
 			opts.OnProgress(fmt.Sprintf("Resolving protection for %s", name))
 		}
-		entry, ferr := fetchBranchByName(rest, owner, repo, name)
+		var entry *ir.Branch
+		var ferr error
+		if facts != nil {
+			entry, ferr = facts.branch(rest, owner, repo, name)
+		} else {
+			entry, ferr = fetchBranchByName(rest, owner, repo, name)
+		}
 		if ferr != nil {
 			if isUnauthorized(ferr) {
 				// 401/403 on a targeted fetch usually means the
@@ -159,13 +178,9 @@ func FetchGitHubBranchProtection(host, owner, repo string, opts BranchFetchOptio
 			}
 			return nil, fmt.Errorf("branch %q: %w", name, ferr)
 		}
+		// nil: GitHub redirected name to another branch (see
+		// fetchBranchByName). The user did not ask about that branch.
 		if entry == nil {
-			continue
-		}
-		// Drop entries where GitHub silently redirected us to a
-		// different branch (default-branch fallback for stale or
-		// renamed names). The user did not ask about that branch.
-		if entry.Name != name {
 			continue
 		}
 		if seen[entry.Name] {
@@ -205,33 +220,8 @@ func FetchGitHubBranchProtection(host, owner, repo string, opts BranchFetchOptio
 			if opts.OnProgress != nil {
 				opts.OnProgress(fmt.Sprintf("Resolving protection for %s", b.Name))
 			}
-			// Same two-source merge as fetchBranchByName: classic
-			// Branch Protection + Rulesets effective-rules. Stricter
-			// wins; ProtectionDetailsKnown turns true if either
-			// source returned 200. See fetchBranchByName for the
-			// rationale.
-			detail, derr := fetchBranchProtection(rest, owner, repo, b.Name)
-			classicOK := false
-			switch {
-			case derr == nil && detail != nil:
-				entry.AllowForcePush = detail.AllowForcePushes.Enabled
-				entry.CodeOwnerApprovalRequired = detail.RequiredPullRequestReviews.RequireCodeOwnerReviews
-				classicOK = true
-			case derr != nil && (isNotFound(derr) || isUnauthorized(derr)):
-				// Detail unavailable on this source.
-			case derr != nil:
-				return nil, fmt.Errorf("branch %q protection: %w", b.Name, derr)
-			}
-
-			rules, rulesOK, rerr := fetchBranchEffectiveRules(rest, owner, repo, b.Name)
-			if rerr != nil {
-				return nil, rerr
-			}
-			if rulesOK {
-				applyEffectiveRules(&entry, rules)
-			}
-			if classicOK || rulesOK {
-				entry.ProtectionDetailsKnown = true
+			if err := addProtectionDetails(rest, owner, repo, &entry); err != nil {
+				return nil, err
 			}
 		}
 		out = append(out, entry)
@@ -257,47 +247,64 @@ func FetchGitHubBranchProtection(host, owner, repo string, opts BranchFetchOptio
 // branches managed purely by Rulesets used to land at PDK=false
 // because classic /protection 404s, and that hid real ISSUE-505
 // findings (or false-positived them when classic had stale data).
+//
+// It returns nil, nil when GitHub redirected name to another branch.
 func fetchBranchByName(rest *api.RESTClient, owner, repo, name string) (*ir.Branch, error) {
 	endpoint := fmt.Sprintf("repos/%s/%s/branches/%s", owner, repo, name)
 	var entry remoteBranchEntry
 	if err := rest.Get(endpoint, &entry); err != nil {
 		return nil, err
 	}
+	// GitHub silently redirects a stale or renamed name to another branch
+	// (the default branch, the new name). The caller did not ask about
+	// that branch, and reading the old name's protection would only buy
+	// a 404 (plumber#618).
+	if entry.Name != name {
+		return nil, nil
+	}
 	out := &ir.Branch{Name: entry.Name, Protected: entry.Protected}
 	if !entry.Protected {
 		return out, nil
 	}
+	if err := addProtectionDetails(rest, owner, repo, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
 
+// addProtectionDetails reads a protected branch's details from the two
+// sources described on fetchBranchByName and merges them into b.
+func addProtectionDetails(rest *api.RESTClient, owner, repo string, b *ir.Branch) error {
 	// Classic Branch Protection — may 404 (ruleset-only branch) or
 	// 403 (token lacks scope); both degrade to "detail unknown".
-	detail, derr := fetchBranchProtection(rest, owner, repo, name)
+	detail, derr := fetchBranchProtection(rest, owner, repo, b.Name)
 	classicOK := false
 	switch {
 	case derr == nil && detail != nil:
-		out.AllowForcePush = detail.AllowForcePushes.Enabled
-		out.CodeOwnerApprovalRequired = detail.RequiredPullRequestReviews.RequireCodeOwnerReviews
+		b.AllowForcePush = detail.AllowForcePushes.Enabled
+		b.CodeOwnerApprovalRequired = detail.RequiredPullRequestReviews.RequireCodeOwnerReviews
 		classicOK = true
 	case derr != nil && (isNotFound(derr) || isUnauthorized(derr)):
 		// Detail unavailable on this source; rulesets may still answer.
 	case derr != nil:
-		return nil, fmt.Errorf("branch %q protection: %w", name, derr)
+		return fmt.Errorf("branch %q protection: %w", b.Name, derr)
 	}
 
 	// Repository + Organization Rulesets via the effective-rules
 	// endpoint. Stricter wins: applyEffectiveRules can only tighten
 	// flags relative to what classic returned, never loosen them.
-	rules, rulesOK, rerr := fetchBranchEffectiveRules(rest, owner, repo, name)
+	rules, rulesOK, rerr := fetchBranchEffectiveRules(rest, owner, repo, b.Name)
 	if rerr != nil {
-		return nil, rerr
+		return rerr
 	}
 	if rulesOK {
-		applyEffectiveRules(out, rules)
+		applyEffectiveRules(b, rules)
 	}
 
 	if classicOK || rulesOK {
-		out.ProtectionDetailsKnown = true
+		b.ProtectionDetailsKnown = true
 	}
-	return out, nil
+	return nil
 }
 
 // remoteBranchEntry is the slim subset of /repos/{o}/{r}/branches we
@@ -362,12 +369,31 @@ type remoteRepoMetadata struct {
 	FullName string `json:"full_name"`
 }
 
-// FetchGitHubDefaultBranch resolves the repo's default branch name
-// via the REST API. Returns an empty string with no error when the
+// FetchGitHubDefaultBranch resolves the repo's default branch name, from
+// the scanned repository's GraphQL query on github.com (scanned_repo.go)
+// and the REST API on GHES. Returns an empty string with no error when the
 // repo can't be queried (degraded mode), which keeps the
 // `defaultMustBeProtected` rule a silent no-op rather than a noisy
 // crash.
 func FetchGitHubDefaultBranch(host, owner, repo string) (string, error) {
+	if isDotcomHost(host) {
+		r, err := loadScannedRepo(host, owner, repo, nil)
+		switch {
+		case errors.Is(err, ErrAuthRequired):
+			return "", err
+		case err != nil:
+			return "", fmt.Errorf("github graphql client: %w", err)
+		case r.err != nil && (isUnauthorized(r.err) || isNotFound(r.err)):
+			return "", nil
+		case r.err != nil:
+			return "", r.err
+		case r.defaultBranchErr != nil:
+			// GitHub could not answer the default branch: an error, as a
+			// failed REST read was, never "no default branch".
+			return "", r.defaultBranchErr
+		}
+		return r.defaultBranch, nil
+	}
 	rest, err := newGitHubRESTClient(host)
 	if err != nil {
 		if errors.Is(err, ErrAuthRequired) {
@@ -386,8 +412,9 @@ func FetchGitHubDefaultBranch(host, owner, repo string) (string, error) {
 	return meta.DefaultBranch, nil
 }
 
-// FetchGitHubRepoIdentity answers, from the one repos/{owner}/{repo}
-// lookup, the repository's visibility and its canonical owner/repo. The
+// FetchGitHubRepoIdentity answers, from the one repository lookup (the
+// scanned repository's GraphQL query on github.com, repos/{owner}/{repo}
+// on GHES), the repository's visibility and its canonical owner/repo. The
 // visibility is public, private or internal as GitHub sees it, normalized
 // to the three situation-fact values, or unknown when the API cannot
 // answer (no token, no access, not found, any other error); it never
@@ -401,17 +428,28 @@ func FetchGitHubDefaultBranch(host, owner, repo string) (string, error) {
 // answers no owner/repo shaped name, and the caller then keeps the path
 // it was given.
 func FetchGitHubRepoIdentity(host, owner, repo string) (visibility, fullName string) {
-	rest, err := newGitHubRESTClient(host)
-	if err != nil {
-		logrus.WithField("context", "collector").
-			Debugf("visibility lookup failed, recorded as unknown: %v", err)
-		return ir.VisibilityUnknown, ""
-	}
 	var meta remoteRepoMetadata
-	if err := rest.Get(fmt.Sprintf("repos/%s/%s", owner, repo), &meta); err != nil {
-		logrus.WithField("context", "collector").
-			Debugf("visibility lookup failed, recorded as unknown: %v", err)
-		return ir.VisibilityUnknown, ""
+	if isDotcomHost(host) {
+		r, err := loadScannedRepo(host, owner, repo, nil)
+		if err == nil {
+			err = r.err
+		}
+		if err != nil {
+			logrus.WithField("context", "collector").
+				Debugf("visibility lookup failed, recorded as unknown: %v", err)
+			return ir.VisibilityUnknown, ""
+		}
+		meta = remoteRepoMetadata{Private: r.private, Visibility: r.visibility, FullName: r.fullName}
+	} else {
+		rest, err := newGitHubRESTClient(host)
+		if err == nil {
+			err = rest.Get(fmt.Sprintf("repos/%s/%s", owner, repo), &meta)
+		}
+		if err != nil {
+			logrus.WithField("context", "collector").
+				Debugf("visibility lookup failed, recorded as unknown: %v", err)
+			return ir.VisibilityUnknown, ""
+		}
 	}
 	if o, r, ok := strings.Cut(meta.FullName, "/"); ok && o != "" && r != "" && !strings.Contains(r, "/") {
 		fullName = meta.FullName
@@ -435,6 +473,18 @@ func FetchGitHubRepoIdentity(host, owner, repo string) (visibility, fullName str
 // FetchGitHubDefaultBranch this deliberately does NOT fold 404/401 into
 // a silent success -- telling the difference is its whole job.
 func GitHubRepoVisible(host, owner, repo string) (bool, error) {
+	if isDotcomHost(host) {
+		r, err := loadScannedRepo(host, owner, repo, nil)
+		switch {
+		case err != nil:
+			return false, err
+		case r.err != nil && (isUnauthorized(r.err) || isNotFound(r.err)):
+			return false, nil
+		case r.err != nil:
+			return false, r.err
+		}
+		return true, nil
+	}
 	rest, err := newGitHubRESTClient(host)
 	if err != nil {
 		return false, err
@@ -560,7 +610,7 @@ func isUnauthorized(err error) bool {
 		return false
 	}
 	msg := err.Error()
-	if strings.Contains(msg, "HTTP 401") || strings.Contains(msg, "HTTP 403") {
+	if strings.Contains(msg, "HTTP 401") || strings.Contains(msg, "HTTP 403") || errors.Is(err, errRepoForbidden) {
 		return true
 	}
 	// go-gh returns api.ErrAuthRequired for some no-auth paths.

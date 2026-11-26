@@ -8,6 +8,10 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/sirupsen/logrus"
+
+	"github.com/getplumber/plumber/internal/httpcount"
 )
 
 // defaultTokenRunsPerPage is the page size requested from
@@ -56,7 +60,8 @@ var defaultTokenEligibleEvents = map[string]bool{
 // process's GitHub credentials must never reach bundled in the same
 // request.
 var jobLogsAPIClient = &http.Client{
-	Timeout: 15 * time.Second,
+	Timeout:   15 * time.Second,
+	Transport: httpcount.DefaultTransport,
 	CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 		return http.ErrUseLastResponse
 	},
@@ -66,7 +71,7 @@ var jobLogsAPIClient = &http.Client{
 // plain client, bounded to 15 seconds so a slow or unresponsive log
 // store never hangs this lane, and never given an Authorization
 // header (built fresh for every call, see fetchJobLogHead).
-var jobLogsStoreClient = &http.Client{Timeout: 15 * time.Second}
+var jobLogsStoreClient = &http.Client{Timeout: 15 * time.Second, Transport: httpcount.DefaultTransport}
 
 // remoteRunsResponse is the slim subset of the workflow-runs listing
 // endpoint response this reads.
@@ -478,6 +483,26 @@ func scopeWrite(scopes map[string]string) string {
 // proves nothing about which token ran; a release's author is the
 // identity GitHub actually authenticated when it was published.
 func defaultTokenFromEffect(host, owner, repo string) bool {
+	if isDotcomHost(host) {
+		// The release authors come with the scanned repository's query.
+		r, err := loadScannedRepo(host, owner, repo, nil)
+		if err == nil {
+			err = r.err
+		}
+		if err != nil {
+			logRefusedLane("default token releases", err)
+			return false
+		}
+		if r.releasesErr != nil {
+			// GitHub answered the repository but not its releases: the
+			// effect route proves nothing, and the run says why.
+			logrus.WithField("context", "collector").
+				WithField("lane", "default token releases").
+				Debugf("releases could not be read, the default token's effect stays unknown: %v", r.releasesErr)
+			return false
+		}
+		return r.botRelease
+	}
 	rest, err := newGitHubRESTClient(host)
 	if err != nil {
 		return false

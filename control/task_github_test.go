@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/getplumber/plumber/configuration"
@@ -494,4 +495,184 @@ func findControlEntry(t *testing.T, entries []ControlEntry, name string) Control
 	}
 	t.Fatalf("no control entry named %s", name)
 	return ControlEntry{}
+}
+
+// TestRunGitHubAnalysis_PrefetchesTheScannedRepository: the scanned
+// repository's query goes out before the default-branch lookup, with the
+// exact branch names branchMustBeProtected reads (the wildcard patterns go
+// to the listing), so the run sends one query for it. Without the control
+// it asks no branch.
+func TestRunGitHubAnalysis_PrefetchesTheScannedRepository(t *testing.T) {
+	enabled := true
+	withBranches := &configuration.PlumberConfig{
+		Version: "2.0",
+		GitHub: &configuration.ProviderConfig{Controls: configuration.ControlsConfig{
+			BranchMustBeProtected: &configuration.BranchProtectionControlConfig{
+				Enabled:      &enabled,
+				NamePatterns: []string{"main", "release/*", "dev"},
+			},
+		}},
+	}
+	for _, tc := range []struct {
+		name string
+		pc   *configuration.PlumberConfig
+		want []string
+	}{
+		{"branchMustBeProtected on", withBranches, []string{"main", "dev"}},
+		{"branchMustBeProtected off", &configuration.PlumberConfig{}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls []string
+			var gotBranches []string
+			orig := prefetchGitHubScannedRepo
+			prefetchGitHubScannedRepo = func(host, owner, repo string, branches []string) {
+				calls = append(calls, "prefetch "+owner+"/"+repo)
+				gotBranches = branches
+			}
+			t.Cleanup(func() { prefetchGitHubScannedRepo = orig })
+			swapDefaultBranchFetch(t, func(host, owner, repo string) (string, error) {
+				calls = append(calls, "default branch")
+				return "main", nil
+			})
+
+			conf := &configuration.Configuration{
+				ProjectPath:   "toptal/chewy",
+				GitRepoRoot:   writeMinimalWorkflow(t),
+				GithubAPIHost: "127.0.0.1:1",
+				PlumberConfig: tc.pc,
+			}
+			if _, err := RunGitHubAnalysis(conf); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(calls) < 2 || calls[0] != "prefetch toptal/chewy" || calls[1] != "default branch" {
+				t.Errorf("calls = %v, want the prefetch before the default-branch lookup", calls)
+			}
+			if !reflect.DeepEqual(gotBranches, tc.want) {
+				t.Errorf("prefetched branches = %v, want %v", gotBranches, tc.want)
+			}
+		})
+	}
+}
+
+// branchProtectionConfig builds a GitHub config whose branchMustBeProtected
+// reads patterns, enabled or not.
+func branchProtectionConfig(enabled bool, patterns ...string) *configuration.PlumberConfig {
+	return &configuration.PlumberConfig{
+		Version: "2.0",
+		GitHub: &configuration.ProviderConfig{Controls: configuration.ControlsConfig{
+			BranchMustBeProtected: &configuration.BranchProtectionControlConfig{
+				Enabled:      &enabled,
+				NamePatterns: patterns,
+			},
+		}},
+	}
+}
+
+// swapScannedRepoPrefetch records every call to the scanned repository's
+// prefetch seam as "owner/repo", and the branches of the last one.
+func swapScannedRepoPrefetch(t *testing.T, onCall func(project string, branches []string)) {
+	t.Helper()
+	orig := prefetchGitHubScannedRepo
+	prefetchGitHubScannedRepo = func(_, owner, repo string, branches []string) {
+		onCall(owner+"/"+repo, branches)
+	}
+	t.Cleanup(func() { prefetchGitHubScannedRepo = orig })
+}
+
+// TestPrefetchScannedRepo_ControlScope: a branchMustBeProtected the run
+// leaves out (--skip-controls, or --controls naming another one) prefetches
+// no branch, the repository is still asked; a project path that is not
+// owner/repo sends nothing.
+func TestPrefetchScannedRepo_ControlScope(t *testing.T) {
+	pc := branchProtectionConfig(true, "main", "dev")
+	for _, tc := range []struct {
+		name         string
+		conf         *configuration.Configuration
+		project      string
+		wantCalls    []string
+		wantBranches []string
+	}{
+		{"control runs", &configuration.Configuration{PlumberConfig: pc}, "acme/app", []string{"acme/app"}, []string{"main", "dev"}},
+		{"listed in --controls", &configuration.Configuration{PlumberConfig: pc, ControlsFilter: []string{controlBranchMustBeProtected}}, "acme/app", []string{"acme/app"}, []string{"main", "dev"}},
+		{"skipped by --skip-controls", &configuration.Configuration{PlumberConfig: pc, SkipControlsFilter: []string{controlBranchMustBeProtected}}, "acme/app", []string{"acme/app"}, nil},
+		{"left out by --controls", &configuration.Configuration{PlumberConfig: pc, ControlsFilter: []string{"someOtherControl"}}, "acme/app", []string{"acme/app"}, nil},
+		{"empty project path", &configuration.Configuration{PlumberConfig: pc}, "", nil, nil},
+		{"single segment", &configuration.Configuration{PlumberConfig: pc}, "app", nil, nil},
+		{"empty repository", &configuration.Configuration{PlumberConfig: pc}, "acme/", nil, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls []string
+			var gotBranches []string
+			swapScannedRepoPrefetch(t, func(project string, branches []string) {
+				calls = append(calls, project)
+				gotBranches = branches
+			})
+			prefetchScannedRepo(tc.conf, tc.project)
+			if !reflect.DeepEqual(calls, tc.wantCalls) {
+				t.Errorf("prefetch calls = %v, want %v", calls, tc.wantCalls)
+			}
+			if !reflect.DeepEqual(gotBranches, tc.wantBranches) {
+				t.Errorf("prefetched branches = %v, want %v", gotBranches, tc.wantBranches)
+			}
+		})
+	}
+}
+
+// TestRunGitHubAnalysisRemote_PrefetchesTheScannedRepository: the remote
+// path sends the scanned repository's query too, for the owner/repo it was
+// asked (conf.ProjectPath is not what names it), before the default-branch
+// lookup.
+func TestRunGitHubAnalysisRemote_PrefetchesTheScannedRepository(t *testing.T) {
+	swapRemoteScan(t, remoteScanStub)
+	var calls []string
+	var gotBranches []string
+	swapScannedRepoPrefetch(t, func(project string, branches []string) {
+		calls = append(calls, "prefetch "+project)
+		gotBranches = branches
+	})
+	swapDefaultBranchFetch(t, func(host, owner, repo string) (string, error) {
+		calls = append(calls, "default branch")
+		return "main", nil
+	})
+
+	conf := &configuration.Configuration{
+		GithubAPIHost: "127.0.0.1:1",
+		PlumberConfig: branchProtectionConfig(true, "main", "release/*", "dev"),
+	}
+	if _, err := RunGitHubAnalysisRemote(conf, "owner", "repo", "main"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(calls) < 2 || calls[0] != "prefetch owner/repo" || calls[1] != "default branch" {
+		t.Errorf("calls = %v, want the prefetch of owner/repo before the default-branch lookup", calls)
+	}
+	if want := []string{"main", "dev"}; !reflect.DeepEqual(gotBranches, want) {
+		t.Errorf("prefetched branches = %v, want %v", gotBranches, want)
+	}
+}
+
+// TestBranchTargets: the exact names are the non-glob, non-empty patterns; a
+// glob asks for the listing; a missing or disabled control is inactive.
+func TestBranchTargets(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		pc          *configuration.PlumberConfig
+		wantExact   []string
+		wantListing bool
+		wantActive  bool
+	}{
+		{"no config", nil, nil, false, false},
+		{"control not configured", &configuration.PlumberConfig{}, nil, false, false},
+		{"control disabled", branchProtectionConfig(false, "main"), nil, false, false},
+		{"exact names", branchProtectionConfig(true, "main", "dev"), []string{"main", "dev"}, false, true},
+		{"empty pattern skipped", branchProtectionConfig(true, "", "main"), []string{"main"}, false, true},
+		{"globs go to the listing", branchProtectionConfig(true, "release/*", "v?", "[ab]", "main"), []string{"main"}, true, true},
+		{"no pattern", branchProtectionConfig(true), []string{}, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			exact, listing, active := branchTargets(tc.pc)
+			if !reflect.DeepEqual(exact, tc.wantExact) || listing != tc.wantListing || active != tc.wantActive {
+				t.Errorf("branchTargets = %v, %v, %v; want %v, %v, %v", exact, listing, active, tc.wantExact, tc.wantListing, tc.wantActive)
+			}
+		})
+	}
 }

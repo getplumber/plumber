@@ -58,8 +58,16 @@ func resolveWith(t *testing.T, stub *stubDefinitions, scope nestedScope, jobs ..
 		scope.projectPath = "acme/app"
 	}
 	p := &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, ProjectPath: scope.projectPath, Jobs: jobs}
-	resolveNestedActions(p, newDefinitionFetcher(stub.fetch, nil), scope)
+	resolveNestedActions(p, tokenFetcher(stub.fetch, nil), scope)
 	return p
+}
+
+// tokenFetcher is newDefinitionFetcher over a raw fetcher that reads with
+// a token, as definitionFetcherForHost builds it when one is set.
+func tokenFetcher(raw rawFetcher, client *GitHubMetadataClient) *definitionFetcher {
+	f := newDefinitionFetcher(raw, client)
+	f.rawToken = "test-token"
+	return f
 }
 
 // entry renders one resolved entry for comparison: uses | via | definedIn | line.
@@ -312,7 +320,7 @@ func TestResolveNested_LocalCompositeExpandsOffline(t *testing.T) {
 	t.Setenv(EnvMetadataToken, "test-token")
 	t.Setenv(EnvDisableGitHubAPI, "1")
 	p := &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, ProjectPath: "acme/app", Jobs: []ir.Job{oneJob("./.github/actions/x")}}
-	resolveNestedActions(p, newDefinitionFetcher(stub.fetch, nil), nestedScope{projectPath: "acme/app", readLocal: diskReader(root), localOnDisk: true})
+	resolveNestedActions(p, tokenFetcher(stub.fetch, nil), nestedScope{projectPath: "acme/app", readLocal: diskReader(root), localOnDisk: true})
 	want := []string{
 		"./.github/actions/x |  |  | 10",
 		"evil/e@main | ./.github/actions/x | ./.github/actions/x/action.yml:7 | 10",
@@ -352,7 +360,7 @@ func TestResolveNested_LocalOnlyClosureOfflineHasNoCause(t *testing.T) {
 	t.Setenv(EnvMetadataToken, "test-token")
 	t.Setenv(EnvDisableGitHubAPI, "1")
 	p := &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, ProjectPath: "acme/app", Jobs: []ir.Job{oneJob("./.github/actions/x")}}
-	resolveNestedActions(p, newDefinitionFetcher(stub.fetch, nil), nestedScope{projectPath: "acme/app", readLocal: diskReader(root), localOnDisk: true})
+	resolveNestedActions(p, tokenFetcher(stub.fetch, nil), nestedScope{projectPath: "acme/app", readLocal: diskReader(root), localOnDisk: true})
 	want := []string{
 		"./.github/actions/x |  |  | 10",
 		"./.github/actions/y | ./.github/actions/x | ./.github/actions/x/action.yml:7 | 10",
@@ -375,12 +383,16 @@ func TestResolveNested_LocalCompositeRemoteMode(t *testing.T) {
 			_, _ = w.Write([]byte(`{"encoding":"base64","content":"` + b64(body) + `"}`))
 		}
 	}
-	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/acme/app/contents/.github/workflows", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`[{"name":"ci.yml","path":".github/workflows/ci.yml","type":"file"}]`))
+	// The workflow and the composite it calls come from GraphQL; the
+	// composite only that composite calls reads over the contents API.
+	swapGitRepo(t, gitRepo{
+		refs: []string{"refs/heads/main"},
+		files: map[string]fakeFile{
+			".github/workflows/ci.yml":     {text: ciYAML},
+			".github/actions/x/action.yml": {text: composite("./.github/actions/y")},
+		},
 	})
-	mux.HandleFunc("/repos/acme/app/contents/.github/workflows/ci.yml", serve(ciYAML))
-	mux.HandleFunc("/repos/acme/app/contents/.github/actions/x/action.yml", serve(composite("./.github/actions/y")))
+	mux := http.NewServeMux()
 	mux.HandleFunc("/repos/acme/app/contents/.github/actions/y/action.yml", serve(composite()))
 	swapRESTClient(t, httptestServer(t, mux))
 
@@ -415,7 +427,7 @@ func TestResolveNested_NoAPIScoresOnDirectReferences(t *testing.T) {
 	t.Setenv(EnvMetadataToken, "test-token")
 	t.Setenv(EnvDisableGitHubAPI, "1")
 	p := &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, ProjectPath: "acme/app", Jobs: []ir.Job{oneJob("acme/b@v1", "docker://alpine:3")}}
-	resolveNestedActions(p, newDefinitionFetcher(stub.fetch, nil), nestedScope{projectPath: "acme/app"})
+	resolveNestedActions(p, tokenFetcher(stub.fetch, nil), nestedScope{projectPath: "acme/app"})
 	if len(p.Jobs[0].Uses) != 2 {
 		t.Fatalf("nothing is appended without the API, got %q", entries(p.Jobs[0]))
 	}
@@ -438,7 +450,7 @@ func TestResolveNested_MutableExecReusesTheDefinition(t *testing.T) {
 	t.Setenv(EnvDisableGitHubAPI, "0")
 	t.Setenv(EnvMetadataToken, "test-token")
 	client := stubbedMetadataClient(t, func(*http.Request) (string, int) { return `{}`, http.StatusNotFound })
-	defs := newDefinitionFetcher(stub.fetch, client)
+	defs := tokenFetcher(stub.fetch, client)
 	p := &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, ProjectPath: "acme/app", Jobs: []ir.Job{oneJob("acme/b@v1")}}
 	resolveNestedActions(p, defs, nestedScope{projectPath: "acme/app"})
 	enrichActions(p, client, defs, true, nil)
@@ -696,9 +708,10 @@ func TestDefinitionFetcherForHost_EnterpriseNeverReadsTheRawHost(t *testing.T) {
 // TestReadWith_FallsBackToContentsAPIOnGitHubCom pins the readWith fallback
 // on github.com (review of PR 549, spec section 4.2): a private or
 // token-gated repository the raw host cannot read falls back to the
-// authenticated contents API, both when the raw host answers missing and
-// when it errors outright, and the composite it serves still splices its
-// steps into the job with their via.
+// authenticated contents API, both when an anonymous raw read answers
+// missing (the client's token comes from `gh auth`, which the raw host
+// never sees) and when the raw host errors outright, and the composite it
+// serves still splices its steps into the job with their via.
 func TestReadWith_FallsBackToContentsAPIOnGitHubCom(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -706,13 +719,14 @@ func TestReadWith_FallsBackToContentsAPIOnGitHubCom(t *testing.T) {
 		// action.yml: fetchMissing (the default, nothing stubbed) or
 		// fetchError when true.
 		rawErr bool
+		// rawToken is the token the raw host reads with, "" for none.
+		rawToken string
 	}{
-		{name: "raw host misses, contents API serves it"},
-		{name: "raw host errors, contents API serves it", rawErr: true},
+		{name: "anonymous raw host misses, contents API serves it"},
+		{name: "raw host errors, contents API serves it", rawErr: true, rawToken: "test-token"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv(EnvDisableGitHubAPI, "0")
-			t.Setenv(EnvMetadataToken, "test-token")
 			stub := newStub(map[string]string{})
 			if tc.rawErr {
 				stub.errs["acme/b@v1:action.yml"] = true
@@ -726,6 +740,7 @@ func TestReadWith_FallsBackToContentsAPIOnGitHubCom(t *testing.T) {
 				return `{"message":"Not Found"}`, http.StatusNotFound
 			})
 			defs := newDefinitionFetcher(stub.fetch, client)
+			defs.rawToken = tc.rawToken
 			p := &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, ProjectPath: "acme/app", Jobs: []ir.Job{oneJob("acme/b@v1")}}
 			resolveNestedActions(p, defs, nestedScope{projectPath: "acme/app"})
 			if d := defs.action("acme", "b", "", "v1"); d.Status != fetchOK {
@@ -740,6 +755,317 @@ func TestReadWith_FallsBackToContentsAPIOnGitHubCom(t *testing.T) {
 			}
 			if got := entries(p.Jobs[0]); !slices.Equal(got, want) {
 				t.Fatalf("%s: the composite's step must splice in with its via:\n got %q\nwant %q", tc.name, got, want)
+			}
+		})
+	}
+}
+
+// TestReadWith_AuthenticatedRawMissIsFinal: a raw read sent with a token
+// answers a private file too, so once the contents API accepted that token
+// a raw 404 is final and the API is not asked the same question again at
+// the cost of the quota (plumber#618). The first miss still asks, as the
+// raw host 404s an expired token too.
+func TestReadWith_AuthenticatedRawMissIsFinal(t *testing.T) {
+	t.Setenv(EnvDisableGitHubAPI, "0")
+	stub := newStub(map[string]string{})
+	var apiPaths []string
+	client := stubbedMetadataClient(t, func(r *http.Request) (string, int) {
+		apiPaths = append(apiPaths, r.URL.Path)
+		return `{"message":"Not Found"}`, http.StatusNotFound
+	})
+	defs := newDefinitionFetcher(stub.fetch, client)
+	defs.rawToken = "test-token"
+	for _, p := range []string{"action.yml", "action.yaml", "dist/index.js"} {
+		if _, st := defs.read("acme", "b", testSHA, p); st != fetchMissing {
+			t.Fatalf("%s: status = %v, want fetchMissing", p, st)
+		}
+	}
+	if len(apiPaths) != 1 || !strings.HasSuffix(apiPaths[0], "/contents/action.yml") {
+		t.Fatalf("only the first authenticated raw 404 may ask the contents API, got %q", apiPaths)
+	}
+}
+
+const testSHA = "0123456789abcdef0123456789abcdef01234567"
+
+// TestReadWith_ServedFileProvesTheRepository: the contents API serving a
+// file accepts the token as much as its 404 does. In a repository it only
+// ever served files for, a later raw 404 at a commit SHA is final and the
+// API is not asked again (plumber#618).
+func TestReadWith_ServedFileProvesTheRepository(t *testing.T) {
+	t.Setenv(EnvDisableGitHubAPI, "0")
+	stub := newStub(map[string]string{})
+	// The raw host fails on action.yml, so the contents API is asked and
+	// serves it; every other path is a plain raw 404.
+	stub.errs["acme/b@"+testSHA+":action.yml"] = true
+	var apiPaths []string
+	client := stubbedMetadataClient(t, func(r *http.Request) (string, int) {
+		apiPaths = append(apiPaths, r.URL.Path)
+		if strings.HasSuffix(r.URL.Path, "/contents/action.yml") {
+			return `{"encoding":"base64","content":"` + b64(composite()) + `"}`, http.StatusOK
+		}
+		return `{"message":"Not Found"}`, http.StatusNotFound
+	})
+	defs := newDefinitionFetcher(stub.fetch, client)
+	defs.rawToken = "test-token"
+	if text, st := defs.read("acme", "b", testSHA, "action.yml"); st != fetchOK || text != composite() {
+		t.Fatalf("action.yml: %q, %v; want the contents API's file", text, st)
+	}
+	for _, p := range []string{"action.yaml", "dist/index.js"} {
+		if _, st := defs.read("acme", "b", testSHA, p); st != fetchMissing {
+			t.Fatalf("%s: status = %v, want fetchMissing", p, st)
+		}
+	}
+	if len(apiPaths) != 1 || !strings.HasSuffix(apiPaths[0], "/contents/action.yml") {
+		t.Fatalf("the served file proves the repository: no raw 404 after it may ask the contents API, got %q", apiPaths)
+	}
+}
+
+// TestReadWith_RawMissOnAMovableRefAsksTheAPI: the raw host's CDN keeps a
+// 404 for about a minute, so a file pushed to a branch (or under a moved
+// tag) right after a miss is still a 404 there. Only a full commit SHA,
+// whose content never changes, makes a raw miss final; on any other ref
+// every miss asks the contents API, which answers from the repository.
+func TestReadWith_RawMissOnAMovableRefAsksTheAPI(t *testing.T) {
+	t.Setenv(EnvDisableGitHubAPI, "0")
+	stub := newStub(map[string]string{})
+	var apiPaths []string
+	client := stubbedMetadataClient(t, func(r *http.Request) (string, int) {
+		apiPaths = append(apiPaths, r.URL.Path)
+		if strings.HasSuffix(r.URL.Path, "/contents/new/action.yml") {
+			return `{"content":"bmFtZTogbmV3Cg==","encoding":"base64"}`, http.StatusOK
+		}
+		return `{"message":"Not Found"}`, http.StatusNotFound
+	})
+	defs := tokenFetcher(stub.fetch, client)
+	if _, st := defs.read("acme", "b", "main", "action.yml"); st != fetchMissing {
+		t.Fatalf("first miss: status = %v, want fetchMissing", st)
+	}
+	text, st := defs.read("acme", "b", "main", "new/action.yml")
+	if st != fetchOK || text != "name: new\n" {
+		t.Fatalf("file the raw host still 404s: got %q, %v, want the API's answer", text, st)
+	}
+	if len(apiPaths) != 2 {
+		t.Fatalf("every raw miss on a branch must ask the contents API, got %q", apiPaths)
+	}
+}
+
+// TestReadWith_TokenIsProvenPerRepository: a token the contents API
+// accepted for one repository can still be refused for another, by SAML
+// SSO or an IP allow list of its organization (403), while the raw host
+// answers 404 there. A raw miss is final only in a repository where the
+// API accepted the token, so the refused one stays could-not-verify.
+func TestReadWith_TokenIsProvenPerRepository(t *testing.T) {
+	t.Setenv(EnvDisableGitHubAPI, "0")
+	stub := newStub(map[string]string{})
+	var apiPaths []string
+	client := stubbedMetadataClient(t, func(r *http.Request) (string, int) {
+		apiPaths = append(apiPaths, r.URL.Path)
+		if strings.HasPrefix(r.URL.Path, "/repos/sso-org/") {
+			return `{"message":"Resource protected by organization SAML enforcement."}`, http.StatusForbidden
+		}
+		return `{"message":"Not Found"}`, http.StatusNotFound
+	})
+	defs := tokenFetcher(stub.fetch, client)
+	if _, st := defs.read("acme", "b", testSHA, "action.yml"); st != fetchMissing {
+		t.Fatalf("acme/b: status = %v, want fetchMissing", st)
+	}
+	for _, p := range []string{"action.yml", "action.yaml"} {
+		if _, st := defs.read("sso-org", "private", testSHA, p); st != fetchError {
+			t.Fatalf("sso-org/private %s: status = %v, want fetchError", p, st)
+		}
+	}
+	if _, st := defs.read("ACME", "B", testSHA, "action.yaml"); st != fetchMissing {
+		t.Fatalf("acme/b again: status = %v, want fetchMissing", st)
+	}
+	if len(apiPaths) != 3 {
+		t.Fatalf("want one API request for acme/b and one per sso-org/private miss, got %q", apiPaths)
+	}
+}
+
+// TestReadWith_RejectedTokenNeverMakesARawMissFinal: an expired or revoked
+// token gets a 404 from the raw host and a 401 from the contents API. The
+// token is never accepted, so every miss asks the API again and stays a
+// fetch error (could-not-verify), never a missing file that lets the
+// checks pass. It reads at a commit SHA, the only ref where a raw miss
+// can be final, so a 401 that marked the repository proven would fail it.
+func TestReadWith_RejectedTokenNeverMakesARawMissFinal(t *testing.T) {
+	t.Setenv(EnvDisableGitHubAPI, "0")
+	stub := newStub(map[string]string{})
+	var apiPaths []string
+	client := stubbedMetadataClient(t, func(r *http.Request) (string, int) {
+		apiPaths = append(apiPaths, r.URL.Path)
+		return `{"message":"Bad credentials"}`, http.StatusUnauthorized
+	})
+	defs := newDefinitionFetcher(stub.fetch, client)
+	defs.rawToken = "expired-token"
+	for _, p := range []string{"action.yml", "dist/index.js"} {
+		if _, st := defs.read("acme", "b", testSHA, p); st != fetchError {
+			t.Fatalf("%s: status = %v, want fetchError", p, st)
+		}
+	}
+	if len(apiPaths) != 2 {
+		t.Fatalf("every miss must ask the contents API while the token is rejected, got %q", apiPaths)
+	}
+}
+
+// TestReadWith_RawErrorInAProvenRepositoryAsksTheAPI: only a raw miss is
+// final in a proven repository. A raw read that failed (a 5xx, a timeout)
+// says nothing about the file, so the contents API is still asked and its
+// file is read.
+func TestReadWith_RawErrorInAProvenRepositoryAsksTheAPI(t *testing.T) {
+	t.Setenv(EnvDisableGitHubAPI, "0")
+	stub := newStub(map[string]string{})
+	stub.errs["acme/b@"+testSHA+":dist/index.js"] = true
+	var apiPaths []string
+	client := stubbedMetadataClient(t, func(r *http.Request) (string, int) {
+		apiPaths = append(apiPaths, r.URL.Path)
+		if strings.HasSuffix(r.URL.Path, "/contents/dist/index.js") {
+			return `{"encoding":"base64","content":"` + b64("console.log(1)") + `"}`, http.StatusOK
+		}
+		return `{"message":"Not Found"}`, http.StatusNotFound
+	})
+	defs := tokenFetcher(stub.fetch, client)
+	// The first miss asks the API, whose 404 proves the repository; the
+	// second miss is then final.
+	for _, p := range []string{"action.yml", "action.yaml"} {
+		if _, st := defs.read("acme", "b", testSHA, p); st != fetchMissing {
+			t.Fatalf("%s: status = %v, want fetchMissing", p, st)
+		}
+	}
+	if len(apiPaths) != 1 {
+		t.Fatalf("API paths = %q, want the repository proven by one request", apiPaths)
+	}
+	text, st := defs.read("acme", "b", testSHA, "dist/index.js")
+	if st != fetchOK || text != "console.log(1)" {
+		t.Fatalf("dist/index.js: got %q, %v; want the contents API's file after the raw host failed", text, st)
+	}
+	if len(apiPaths) != 2 || !strings.HasSuffix(apiPaths[1], "/contents/dist/index.js") {
+		t.Fatalf("API paths = %q, want the failed raw read asked again over the API", apiPaths)
+	}
+}
+
+// TestReadWith_AnonymousRawMissIsNeverFinal: a raw read sent with no token
+// cannot tell an absent file from a private one, so it never proves a
+// repository. Every miss asks the contents API, even at a commit SHA.
+func TestReadWith_AnonymousRawMissIsNeverFinal(t *testing.T) {
+	t.Setenv(EnvDisableGitHubAPI, "0")
+	stub := newStub(map[string]string{})
+	var apiPaths []string
+	client := stubbedMetadataClient(t, func(r *http.Request) (string, int) {
+		apiPaths = append(apiPaths, r.URL.Path)
+		return `{"message":"Not Found"}`, http.StatusNotFound
+	})
+	defs := newDefinitionFetcher(stub.fetch, client) // rawToken stays ""
+	for _, p := range []string{"action.yml", "dist/index.js"} {
+		if _, st := defs.read("acme", "b", testSHA, p); st != fetchMissing {
+			t.Fatalf("%s: status = %v, want fetchMissing", p, st)
+		}
+	}
+	if len(apiPaths) != 2 {
+		t.Fatalf("API paths = %q, want every anonymous raw miss asked over the API", apiPaths)
+	}
+	if _, proven := defs.provenRepos.Load("acme/b"); proven {
+		t.Fatal("an anonymous raw read must not prove the repository")
+	}
+}
+
+// recordRawRequests sends the raw host's requests to a recorder that
+// answers body, and returns the requests it saw.
+func recordRawRequests(t *testing.T, body string) *[]*http.Request {
+	t.Helper()
+	var got []*http.Request
+	saved := rawHTTPClient.Transport
+	rawHTTPClient.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		got = append(got, r)
+		rec := httptest.NewRecorder()
+		_, _ = rec.WriteString(body)
+		resp := rec.Result()
+		resp.Request = r
+		return resp, nil
+	})
+	t.Cleanup(func() { rawHTTPClient.Transport = saved })
+	return &got
+}
+
+// TestRawFetcherWithToken_SendsTheTokenItWasGiven: the raw read carries
+// the token it was built with, whatever the environment holds, and none
+// when built anonymous. The body is cut at the fetcher's limit.
+func TestRawFetcherWithToken_SendsTheTokenItWasGiven(t *testing.T) {
+	t.Setenv(EnvDisableGitHubAPI, "0")
+	t.Setenv(EnvMetadataToken, "env-token")
+	t.Setenv("GH_TOKEN", "env-token")
+	got := recordRawRequests(t, "0123456789ABCDEF")
+
+	body, st := rawFetcherWithToken("tkn", 10)("acme", "b", "v1", "dir/action.yml")
+	if st != fetchOK || body != "0123456789" {
+		t.Errorf("read = %q, %v; want the first 10 bytes", body, st)
+	}
+	body, st = rawFetcherWithToken("", 100)("acme", "b", "", "action.yml")
+	if st != fetchOK || body != "0123456789ABCDEF" {
+		t.Errorf("anonymous read = %q, %v; want the whole body", body, st)
+	}
+	if len(*got) != 2 {
+		t.Fatalf("raw requests = %d, want 2", len(*got))
+	}
+	if auth := (*got)[0].Header.Values("Authorization"); !slices.Equal(auth, []string{"token tkn"}) {
+		t.Errorf("Authorization = %q, want the fetcher's token", auth)
+	}
+	if u := (*got)[0].URL.String(); u != "https://raw.githubusercontent.com/acme/b/v1/dir/action.yml" {
+		t.Errorf("URL = %s", u)
+	}
+	if auth := (*got)[1].Header.Values("Authorization"); len(auth) != 0 {
+		t.Errorf("anonymous Authorization = %q, want none", auth)
+	}
+	if u := (*got)[1].URL.String(); u != "https://raw.githubusercontent.com/acme/b/HEAD/action.yml" {
+		t.Errorf("URL = %s, want an empty ref read at HEAD", u)
+	}
+
+	t.Setenv(EnvDisableGitHubAPI, "1")
+	if _, st := rawFetcherWithToken("tkn", 10)("acme", "b", "v1", "action.yml"); st != fetchDisabled || len(*got) != 2 {
+		t.Errorf("offline read = %v with %d requests, want fetchDisabled and no request", st, len(*got))
+	}
+}
+
+// TestDefinitionFetcherForHost_RawReadsCarryTheTokenItRecords: on
+// github.com a raw miss at a commit SHA is final only where the contents
+// API accepted rawToken, so both raw fetchers must send exactly that
+// token: the run's, or none when the run has none.
+func TestDefinitionFetcherForHost_RawReadsCarryTheTokenItRecords(t *testing.T) {
+	for _, tc := range []struct {
+		name, token string
+		want        []string
+	}{
+		{"metadata token", "run-token", []string{"token run-token"}},
+		{"no token", "", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			noToken(t)
+			t.Setenv(EnvMetadataToken, tc.token)
+			got := recordRawRequests(t, strings.Repeat("x", maxWorkflowFileBytes+5))
+
+			for _, host := range []string{"", "github.com", "https://api.github.com/"} {
+				f := definitionFetcherForHost(host, nil)
+				if f.rawToken != tc.token {
+					t.Fatalf("%q: rawToken = %q, want %q", host, f.rawToken, tc.token)
+				}
+				if f.raw == nil || f.rawDefinition == nil {
+					t.Fatalf("%q: raw fetchers not set", host)
+				}
+				*got = nil
+				if body, st := f.raw("acme", "b", "v1", "dist/index.js"); st != fetchOK || len(body) != maxWorkflowFileBytes+5 {
+					t.Errorf("%q: raw read = %d bytes, %v; want the whole file", host, len(body), st)
+				}
+				if body, st := f.rawDefinition("acme", "b", "v1", "action.yml"); st != fetchOK || len(body) != maxWorkflowFileBytes+1 {
+					t.Errorf("%q: definition read = %d bytes, %v; want one byte past the definition bound", host, len(body), st)
+				}
+				if len(*got) != 2 {
+					t.Fatalf("%q: raw requests = %d, want 2", host, len(*got))
+				}
+				for _, r := range *got {
+					if auth := r.Header.Values("Authorization"); !slices.Equal(auth, tc.want) {
+						t.Errorf("%q: %s sent Authorization %q, want %q", host, r.URL.Path, auth, tc.want)
+					}
+				}
 			}
 		})
 	}

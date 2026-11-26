@@ -235,6 +235,8 @@ func init() {
 	analyzeCmd.Flags().StringVar(&defaultBranch, "branch", "", "Branch to analyze (defaults to project's default branch)")
 	analyzeCmd.Flags().BoolVar(&printOutput, "print", true, "Print the human-readable report (and, on a terminal, the progress bar); JSON/SARIF file outputs are unaffected")
 	analyzeCmd.Flags().StringVarP(&outputFile, "output", "o", "", "Write JSON results to file")
+	analyzeCmd.Flags().StringVar(&debugFile, "debug", "", "Write a markdown report of every GitHub request and the rate limit to file (bare --debug: "+defaultDebugFile+")")
+	analyzeCmd.Flags().Lookup("debug").NoOptDefVal = defaultDebugFile
 	analyzeCmd.Flags().StringVar(&pbomFile, "pbom", "", "Write PBOM (Pipeline Bill of Materials) to file")
 	analyzeCmd.Flags().StringVar(&pbomCycloneDXFile, "pbom-cyclonedx", "", "Write PBOM in CycloneDX format (for security tool integration)")
 	analyzeCmd.Flags().StringVar(&sarifFile, "sarif", "", "Write SARIF 2.1.0 results to file (for GitHub Code Scanning / GitLab Security Dashboard)")
@@ -660,6 +662,7 @@ var envKeys = map[string]string{
 	"fail-warnings":       "PLUMBER_ANALYZE_FAIL_WARNINGS",
 	"ci-config-path":      "PLUMBER_ANALYZE_CI_CONFIG_PATH",
 	"verbose":             "PLUMBER_ANALYZE_VERBOSE",
+	"debug":               "PLUMBER_ANALYZE_DEBUG",
 	"score-profile":       "PLUMBER_ANALYZE_SCORE_PROFILE",
 }
 
@@ -790,6 +793,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		func() error { return envStringFallback(cmd, "branch", envKeys["branch"], &defaultBranch) },
 		func() error { return envStringFallback(cmd, "config", envKeys["config"], &configFile) },
 		func() error { return envStringFallback(cmd, "output", envKeys["output"], &outputFile) },
+		func() error { return resolveDebugFile(cmd) },
 		func() error { return envStringFallback(cmd, "pbom", envKeys["pbom"], &pbomFile) },
 		func() error {
 			return envStringFallback(cmd, "pbom-cyclonedx", envKeys["pbom-cyclonedx"], &pbomCycloneDXFile)
@@ -877,6 +881,9 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 
 	if providerName == "github" {
 		return dispatchGitHub(flags, remoteInfo, controlsFilterList, skipControlsList)
+	}
+	if debugFile != "" {
+		logrus.Warn("--debug reports GitHub requests only; no report is written for a GitLab analyze")
 	}
 
 	remote, err := resolveGitLabTarget(flags, remoteInfo)
