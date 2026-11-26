@@ -215,6 +215,8 @@ const (
 	CodeBranchNonCompliant ErrorCode = "ISSUE-505"
 	// ISSUE-506: The project's merge-request/merge settings do not meet the configured expectations
 	CodeMRSettingsNonCompliant ErrorCode = "ISSUE-506"
+	// ISSUE-510: A release tag pattern in use is not protected (updates, deletions or creation left open)
+	CodeTagUnprotected ErrorCode = "ISSUE-510"
 	// ISSUE-803: Job runs with overly broad permissions (write-all)
 	CodeExcessivePermissions ErrorCode = "ISSUE-803"
 )
@@ -752,6 +754,16 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Update branch protection settings in GitLab: Settings > Repository > Protected Branches. Ensure force push is disabled, access levels meet the minimum, and code owner approval is required per your .plumber.yaml configuration.",
 		DocURL:      docsBaseURL + string(CodeBranchNonCompliant),
 		ControlName: "branchMustBeProtected",
+		Role:        RoleGate,
+	},
+	CodeTagUnprotected: {
+		Code:        CodeTagUnprotected,
+		Severity:    SeverityCritical,
+		Title:       "Tag pattern not protected",
+		Description: "Tags in use (all tags by default, or the configured patterns) are not fully protected: anyone with push access can move, delete or create a release tag, and ship code that consumers pinned to that tag, or that a tag-triggered release workflow publishes, without review.",
+		Remediation: "Protect all tags with one rule. On GitLab: Settings > Repository > Protected tags, add `*` with Maintainers (or a narrower set) allowed to create. On GitHub: Settings > Rules > Rulesets, add an active tag ruleset targeting All tags with Restrict creations, Restrict updates and Restrict deletions, and grant your release automation a bypass. With namePatterns configured, target those patterns instead.",
+		DocURL:      docsBaseURL + string(CodeTagUnprotected),
+		ControlName: "tagMustBeProtected",
 		Role:        RoleGate,
 	},
 	CodeMRSettingsNonCompliant: {
