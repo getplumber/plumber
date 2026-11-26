@@ -186,7 +186,7 @@ jobs:
       LATEST: ${{ needs.latest.outputs.version }}
       PLUMBER_NO_UPDATE_CHECK: "1"
     steps:
-      - uses: actions/setup-go@v7.0.0
+      - uses: actions/setup-go@v7.1.0
         with:
           # Same pin as ci.yml: the toolchain go.mod asks for.
           go-version: '1.26.11'

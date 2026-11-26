@@ -33,14 +33,14 @@ jobs:
       # workflow and OIDC claims. A solution is still to be found
       # (upstream digest pin, or dropping the badge for a pinned CLI).
       - name: Run Scorecard
-        uses: ossf/scorecard-action@v2.5.0
+        uses: ossf/scorecard-action@v2.6.0
         with:
           results_file: results.sarif
           results_format: sarif
           publish_results: true
 
       - name: Upload SARIF
-        uses: github/codeql-action/upload-sarif@v4.39.0
+        uses: github/codeql-action/upload-sarif@v4.39.4
         with:
           sarif_file: results.sarif
 
