@@ -1,0 +1,22 @@
+# A comparison or contains() over the comment body expands to true or
+# false (#624): written straight into $GITHUB_ENV, or bound in env: and
+# written into $GITHUB_ENV and $GITHUB_PATH, it opens no second variable
+# and names no directory anybody chose. Expect 0.
+name: Boolean to env
+on: [issue_comment]
+
+jobs:
+  direct:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "IS_APPROVE=${{ github.event.comment.body == '/approve' }}" >> "$GITHUB_ENV"
+          echo "IS_CMD=${{ contains(fromJSON('["/a","/b"]'), github.event.comment.body) }}" >> "$GITHUB_ENV"
+  bound:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          HAS_CMD: ${{ contains(github.event.comment.body, '/approve') }}
+        run: |
+          echo "HAS_CMD=$HAS_CMD" >> "$GITHUB_ENV"
+          echo "$HAS_CMD" >> "$GITHUB_PATH"
