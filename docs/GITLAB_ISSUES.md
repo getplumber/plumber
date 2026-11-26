@@ -40,9 +40,9 @@ supply-chain entry point.
 In the score, this finding joins the attack path that the include's
 pinning finding (ISSUE-402 or ISSUE-404) anchors on the same component,
 on every job the include shapes, and lifts that path's ceiling from
-Medium to High; alone, it is an individual finding. It reads Medium when
-the component is pinned by a full commit SHA (the source can no longer
-change what runs), High otherwise. This ceiling only ever lowers the
+Medium to High; alone, it is an individual finding and reads High
+whether or not the component is pinned. ISSUE-402 and ISSUE-404 report
+the pin; this finding reports the source. This ceiling only ever lowers the
 path from the tier its proven reach already gives it: a claim elsewhere
 on the path that could not be settled (a secret Plumber could not list,
 a write token whose source was never declared) stays unproven and never
@@ -127,9 +127,8 @@ stat, not as a violation of this rule.
 
 In the score, this finding stands as an individual finding: no pinning
 control exists yet for functions, so there is no attack path for it to
-join. It reads Medium when the function is pinned by an image digest
-(`@sha256:` followed by 64 hex characters, so the source can no longer
-change what runs), High otherwise.
+join. It reads High whether or not the function is pinned by an image
+digest.
 
 A reference is **trusted** when any of these hold:
 

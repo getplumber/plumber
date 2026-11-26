@@ -2,7 +2,6 @@ package control
 
 import (
 	"math"
-	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -174,13 +173,12 @@ type ScoreInputV4 struct {
 // IndividualSeverity is what a finding on no path is priced and labelled
 // at: its registry severity, except a missing branch protection on a
 // branch other than the default one (High; Critical on the default
-// branch, or when the default branch is unknown), an action or a GitLab
-// component from an unauthorized source pinned by a full commit SHA
-// (Medium; High otherwise) and a GitLab function from an unauthorized
-// source pinned by an image digest (Medium; High otherwise). The policy
-// says so on the finding (Data "occurrenceSeverity"), which is read when
-// it holds a severity; the same rule is computed here for a finding that
-// carries none.
+// branch, or when the default branch is unknown). The policy says so on
+// the finding (Data "occurrenceSeverity"), which is read when it holds a
+// severity, as is the Low a gated entry finding gets (markGatedFindings);
+// the branch rule is computed here for a finding that carries none. A
+// finding about an unauthorized source keeps its registered High however
+// its reference is pinned: the pinning finding judges the pin.
 func IndividualSeverity(f opaengine.Finding, defaultBranch string) IssueSeverity {
 	if occ, _ := f.Data["occurrenceSeverity"].(string); occ != "" {
 		switch sev := IssueSeverity(occ); sev {
@@ -188,27 +186,14 @@ func IndividualSeverity(f opaengine.Finding, defaultBranch string) IssueSeverity
 			return sev
 		}
 	}
-	switch code := ErrorCode(f.Code); code {
-	case CodeBranchUnprotected:
+	code := ErrorCode(f.Code)
+	if code == CodeBranchUnprotected {
 		if branch, _ := f.Data["branchName"].(string); branch != "" && defaultBranch != "" && branch != defaultBranch {
 			return SeverityHigh
 		}
-	case CodeActionUnauthorizedSource, CodeComponentUnauthorizedSource:
-		if fullCommitSHARef.MatchString(entrySubject(f)) {
-			return SeverityMedium
-		}
-		return SeverityHigh
-	case CodeFunctionUnauthorizedSource:
-		if imageDigestRef.MatchString(entrySubject(f)) {
-			return SeverityMedium
-		}
-		return SeverityHigh
 	}
-	return SeverityForCode(ErrorCode(f.Code))
+	return SeverityForCode(code)
 }
-
-// imageDigestRef is a reference pinned by an image digest.
-var imageDigestRef = regexp.MustCompile(`@sha256:[0-9a-f]{64}$`)
 
 // findingHash is identity.PlatformHash(f.IdentityInput()) with the ok flag
 // folded into deduped: false only for a codeless finding, which has

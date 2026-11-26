@@ -122,7 +122,7 @@ A finding that a path uses costs nothing more on its own: the entry findings of 
 
 ### Severity shown per finding
 
-Each finding shows the severity it is charged at. A finding that is the entry of a path shows the tier of the strongest path it starts; a credential or permission held by a job a path walks shows that path's tier; every other finding shows its own severity, the price it pays, with two readings of its own: a missing branch protection is Critical on the default branch and High on any other, and an action or reusable workflow from an owner outside the authorized list is High, Medium when it is pinned by a full commit SHA. Every output also keeps the finding's own severity next to it as `baseSeverity` (JSON, SARIF, GitLab SAST, CSV, OCSF, the platform push).
+Each finding shows the severity it is charged at. A finding that is the entry of a path shows the tier of the strongest path it starts; a credential or permission held by a job a path walks shows that path's tier; every other finding shows its own severity, the price it pays, with one reading of its own: a missing branch protection is Critical on the default branch and High on any other. An action, reusable workflow, component or function from a source outside the authorized list stays High even when it is pinned; the pinning finding reports the pin. Every output also keeps the finding's own severity next to it as `baseSeverity` (JSON, SARIF, GitLab SAST, CSV, OCSF, the platform push).
 
 ---
 

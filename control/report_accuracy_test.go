@@ -184,13 +184,14 @@ func TestBestFixPricesEveryFindingOnItsSubject(t *testing.T) {
 	sit := &Situation{Exposure: ir.VisibilityPublic, Provider: "github", Jobs: map[string]JobSituation{}}
 	in := ScoreInputV4{Findings: findings}
 	cur := ComputePlumberScoreV4(in)
-	// Five actions pinned by a full commit SHA, Medium each: 25.
-	if cur.FinalPoints != 75 {
-		t.Fatalf("current = %v, want 75", cur.FinalPoints)
+	// Five actions from an unauthorized owner, High each however they are
+	// pinned: 50, capped at 30.
+	if cur.FinalPoints != 70 {
+		t.Fatalf("current = %v, want 70", cur.FinalPoints)
 	}
 	cur.BestFix = ComputeBestFix(in, sit, cur)
 	fix := cur.BestFix
-	if fix == nil || fix.PointsGained != 20 || fix.NewPoints != 95 || fix.Subject != pinnedSpelling {
+	if fix == nil || fix.PointsGained != 20 || fix.NewPoints != 90 || fix.Subject != pinnedSpelling {
 		t.Fatalf("fix = %+v, want the four findings on %s fixed together, +20", fix, pinnedSpelling)
 	}
 	if got := BestFixSummary(&cur); !strings.HasPrefix(got, "use an action from a trusted source (check-spelling/check-spelling@cfb6f7e75bbf)") {

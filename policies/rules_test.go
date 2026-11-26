@@ -3093,19 +3093,18 @@ func TestIssue414_ComponentAuthorizedSources(t *testing.T) {
 
 	// The finding names the include at its ref as its subject, the way the
 	// include fact and ISSUE-404 do, so the attack path on that include is
-	// the one it joins; and it says what this occurrence deserves: medium
-	// when the component is pinned by a full commit SHA, high otherwise.
-	t.Run("subject_and_occurrence_severity", func(t *testing.T) {
+	// the one it joins. It carries no occurrence severity and no pin
+	// reading, whatever the ref: the finding is about the source, and
+	// whether the ref can move is ISSUE-402/404's to judge.
+	t.Run("subject_without_pin_reading", func(t *testing.T) {
 		const source = "gitlab.example.com/attacker/evil-component"
 		const sha = "0123456789abcdef0123456789abcdef01234567"
 		for _, tc := range []struct {
 			name, ref, subject string
-			pinned             bool
-			severity           string
 		}{
-			{"pinned by sha", sha, source + "@" + sha, true, "medium"},
-			{"on a version", "1.0.0", source + "@1.0.0", false, "high"},
-			{"without a ref", "", source, false, "high"},
+			{"pinned by sha", sha, source + "@" + sha},
+			{"on a version", "1.0.0", source + "@1.0.0"},
+			{"without a ref", "", source},
 		} {
 			pipeline := &ir.NormalizedPipeline{
 				Provider:    ir.ProviderGitLab,
@@ -3129,11 +3128,10 @@ func TestIssue414_ComponentAuthorizedSources(t *testing.T) {
 			if f.Subject != tc.subject {
 				t.Errorf("%s: subject %q, want %q", tc.name, f.Subject, tc.subject)
 			}
-			if pinned, _ := f.Data["pinnedBySha"].(bool); pinned != tc.pinned {
-				t.Errorf("%s: pinnedBySha %v, want %v", tc.name, f.Data["pinnedBySha"], tc.pinned)
-			}
-			if sev, _ := f.Data["occurrenceSeverity"].(string); sev != tc.severity {
-				t.Errorf("%s: occurrenceSeverity %q, want %q", tc.name, sev, tc.severity)
+			for _, key := range []string{"occurrenceSeverity", "pinnedBySha"} {
+				if v, ok := f.Data[key]; ok {
+					t.Errorf("%s: carries %s %v, want none", tc.name, key, v)
+				}
 			}
 		}
 	})
@@ -3483,17 +3481,15 @@ func TestIssue415_FunctionAuthorizedSources(t *testing.T) {
 		}
 	})
 
-	// The finding says what this occurrence deserves: medium when the
-	// function is pinned by an image digest, high otherwise.
-	t.Run("occurrence_severity", func(t *testing.T) {
+	// The finding carries no occurrence severity and no pin reading,
+	// whatever the ref: it is about the source, an image digest included.
+	t.Run("no_pin_reading", func(t *testing.T) {
 		for _, tc := range []struct {
 			name, ref string
-			pinned    bool
-			severity  string
 		}{
-			{"pinned by digest", "registry.evil.example/x/backdoor@sha256:" + strings.Repeat("a", 64), true, "medium"},
-			{"on a tag", "registry.evil.example/x/backdoor:1", false, "high"},
-			{"on a short digest", "registry.evil.example/x/backdoor@sha256:" + strings.Repeat("a", 40), false, "high"},
+			{"pinned by digest", "registry.evil.example/x/backdoor@sha256:" + strings.Repeat("a", 64)},
+			{"on a tag", "registry.evil.example/x/backdoor:1"},
+			{"on a short digest", "registry.evil.example/x/backdoor@sha256:" + strings.Repeat("a", 40)},
 		} {
 			pipeline := &ir.NormalizedPipeline{
 				Provider:    ir.ProviderGitLab,
@@ -3513,12 +3509,10 @@ func TestIssue415_FunctionAuthorizedSources(t *testing.T) {
 			if len(got) != 1 {
 				t.Fatalf("%s: want one ISSUE-415 finding, got %+v", tc.name, findings)
 			}
-			f := got[0]
-			if pinned, _ := f.Data["pinnedBySha"].(bool); pinned != tc.pinned {
-				t.Errorf("%s: pinnedBySha %v, want %v", tc.name, f.Data["pinnedBySha"], tc.pinned)
-			}
-			if sev, _ := f.Data["occurrenceSeverity"].(string); sev != tc.severity {
-				t.Errorf("%s: occurrenceSeverity %q, want %q", tc.name, sev, tc.severity)
+			for _, key := range []string{"occurrenceSeverity", "pinnedBySha"} {
+				if v, ok := got[0].Data[key]; ok {
+					t.Errorf("%s: carries %s %v, want none", tc.name, key, v)
+				}
 			}
 		}
 	})

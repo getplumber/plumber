@@ -13,9 +13,10 @@ import (
 // single occurrence deserves, carried on the finding next to the code's
 // registered severity (which stays the code's own): an unprotected
 // branch (ISSUE-501) is critical on the default branch and high on any
-// other branch; an action from an unauthorized owner (ISSUE-713) is high
-// on a movable ref and medium when pinned by a full commit SHA, a
-// reusable workflow call included.
+// other branch. An action from an unauthorized owner (ISSUE-713) carries
+// no occurrence severity and no pin reading, whatever its ref, a reusable
+// workflow call included: the finding is about the owner, and whether the
+// ref can move is ISSUE-701's to judge.
 func TestOccurrenceSeverityOfBranchAndSourceFindings(t *testing.T) {
 	engine := opaengine.New()
 	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
@@ -43,6 +44,7 @@ func TestOccurrenceSeverityOfBranchAndSourceFindings(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := map[string]string{}
+	seen713 := map[string]bool{}
 	for _, f := range findings {
 		switch f.Code {
 		case "ISSUE-501":
@@ -54,20 +56,27 @@ func TestOccurrenceSeverityOfBranchAndSourceFindings(t *testing.T) {
 			if f.Severity != "high" {
 				t.Errorf("ISSUE-713 keeps its registered severity, got %q", f.Severity)
 			}
-			got[f.Data["uses"].(string)], _ = f.Data["occurrenceSeverity"].(string)
+			uses, _ := f.Data["uses"].(string)
+			seen713[uses] = true
+			for _, key := range []string{"occurrenceSeverity", "pinnedBySha"} {
+				if v, ok := f.Data[key]; ok {
+					t.Errorf("ISSUE-713 %s: carries %s %v, want none", uses, key, v)
+				}
+			}
 		}
 	}
 	want := map[string]string{
-		"main":                "critical",
-		"release/1":           "high",
-		"other/tag@v1":        "high",
-		"other/pinned@" + sha: "medium",
-		"other/short@0123456": "high",
-		"other/wf/.github/workflows/x.yml@" + sha: "medium",
+		"main":      "critical",
+		"release/1": "high",
 	}
 	for k, w := range want {
 		if got[k] != w {
 			t.Errorf("%s: occurrenceSeverity = %q, want %q (all: %v)", k, got[k], w, got)
+		}
+	}
+	for _, uses := range []string{"other/tag@v1", "other/pinned@" + sha, "other/short@0123456", "other/wf/.github/workflows/x.yml@" + sha} {
+		if !seen713[uses] {
+			t.Errorf("no ISSUE-713 finding for %s", uses)
 		}
 	}
 }
