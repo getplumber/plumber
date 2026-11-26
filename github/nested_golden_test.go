@@ -57,7 +57,7 @@ func resolveRecorded(t *testing.T, defs *definitionFetcher) *ir.NormalizedPipeli
 func TestNestedGolden_Reproduction(t *testing.T) {
 	t.Setenv(EnvDisableGitHubAPI, "0")
 	t.Setenv(EnvMetadataToken, "test-token")
-	p := resolveRecorded(t, newDefinitionFetcher(recordedFetch(nil), nil))
+	p := resolveRecorded(t, tokenFetcher(recordedFetch(nil), nil))
 	got, err := json.MarshalIndent(p.Jobs[0].Uses, "", "  ")
 	if err != nil {
 		t.Fatal(err)
@@ -92,7 +92,7 @@ func TestNestedGolden_NestedEntryGetsTheMutableExecScan(t *testing.T) {
 	t.Setenv(EnvDisableGitHubAPI, "0")
 	t.Setenv(EnvMetadataToken, "test-token")
 	client := stubbedMetadataClient(t, func(*http.Request) (string, int) { return `{}`, http.StatusNotFound })
-	defs := newDefinitionFetcher(recordedFetch(map[string]string{"e": filepath.Join(nestedGoldenRoot, "synthetic", "e", "action.yml")}), client)
+	defs := tokenFetcher(recordedFetch(map[string]string{"e": filepath.Join(nestedGoldenRoot, "synthetic", "e", "action.yml")}), client)
 	p := resolveRecorded(t, defs)
 	enrichActions(p, client, defs, true, nil)
 	uses := p.Jobs[0].Uses

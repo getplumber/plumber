@@ -12,6 +12,7 @@ import (
 
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
+	githubpkg "github.com/getplumber/plumber/github"
 	"github.com/getplumber/plumber/internal/platform"
 	"github.com/getplumber/plumber/utils"
 )
@@ -182,6 +183,8 @@ func writeMinimalConfig(path string) error {
 // afterwards would be recorded as an empty one (platform decision row 62).
 func TestRunGitHubAnalyze_Row62_EstablishesPlatformModeBeforeCollection(t *testing.T) {
 	t.Setenv("CI", "true")
+	// Remote mode needs a token to start at all.
+	swapTokenSource(t, "GH_TOKEN")
 
 	policy := policyWithTree("Actions", "actionsMustNotExecuteMutableRemoteCode", `{"enabled":true}`)
 	contextBody, err := json.Marshal(platform.ProjectContext{Policies: []platform.Policy{policy}})
@@ -269,5 +272,112 @@ func TestRunGitHubAnalyze_Row62_EstablishesPlatformModeBeforeCollection(t *testi
 				t.Fatalf("collecting configurations at collection = %d, want the one resolved policy's tree", collectionConfigsAtCollection)
 			}
 		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// startup stop without a token (#637)
+// ---------------------------------------------------------------------------
+
+// swapTokenSource makes the run see source as its GitHub token source ("" for
+// none), so no test reads the gh CLI's real credential.
+func swapTokenSource(t *testing.T, source string) {
+	t.Helper()
+	orig := githubTokenSource
+	githubTokenSource = func(string) string { return source }
+	t.Cleanup(func() { githubTokenSource = orig })
+}
+
+// TestRequireGitHubToken: a GitHub analyze needs a token. A local clone runs
+// without one only when the API is switched off; remote mode always needs
+// one, since it reads the workflows through the API.
+func TestRequireGitHubToken(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		source      string
+		apiDisabled bool
+		remote      bool
+		wantErr     bool
+	}{
+		{"local, no token", "", false, false, true},
+		{"local, no token, API disabled", "", true, false, false},
+		{"local, token", "GH_TOKEN", false, false, false},
+		{"remote, no token, API disabled", "", true, true, true},
+		{"remote, token", "gh", false, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			swapTokenSource(t, tc.source)
+			disabled := ""
+			if tc.apiDisabled {
+				disabled = "1"
+			}
+			t.Setenv(githubpkg.EnvDisableGitHubAPI, disabled)
+			err := requireGitHubToken("", tc.remote)
+			if tc.wantErr != errors.Is(err, githubpkg.ErrAuthRequired) || (!tc.wantErr && err != nil) {
+				t.Errorf("err = %v, want ErrAuthRequired: %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestRunGitHubAnalyze_StopsWithoutToken: both entry points stop before any
+// collection, with the actionable message unwrapped.
+func TestRunGitHubAnalyze_StopsWithoutToken(t *testing.T) {
+	swapTokenSource(t, "")
+	t.Setenv(githubpkg.EnvDisableGitHubAPI, "")
+	collected := false
+	origLocal, origRemote := githubAnalysis, githubAnalysisRemote
+	githubAnalysis = func(*configuration.Configuration) (*control.AnalysisResult, error) {
+		collected = true
+		return nil, errors.New("collected")
+	}
+	githubAnalysisRemote = func(*configuration.Configuration, string, string, string) (*control.AnalysisResult, error) {
+		collected = true
+		return nil, errors.New("collected")
+	}
+	t.Cleanup(func() { githubAnalysis, githubAnalysisRemote = origLocal, origRemote })
+
+	info := &utils.GitRemoteInfo{Host: githubDotCom, ProjectPath: "owner/repo", RepoRoot: t.TempDir()}
+	if err := runGitHubAnalyze(info, nil, nil); err != githubpkg.ErrAuthRequired {
+		t.Errorf("local: err = %v, want ErrAuthRequired unwrapped", err)
+	}
+	if err := runGitHubAnalyzeRemote(githubDotCom, "owner/repo", "main", nil, nil); err != githubpkg.ErrAuthRequired {
+		t.Errorf("remote: err = %v, want ErrAuthRequired unwrapped", err)
+	}
+	if collected {
+		t.Error("the run reached collection without a token")
+	}
+}
+
+// TestErrAuthRequiredNamesTheWayOut: the message names the token sources and
+// the switch that runs a local clone without the API.
+func TestErrAuthRequiredNamesTheWayOut(t *testing.T) {
+	msg := githubpkg.ErrAuthRequired.Error()
+	for _, want := range []string{"GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "gh auth login", githubpkg.EnvDisableGitHubAPI} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("message lacks %q:\n%s", want, msg)
+		}
+	}
+	if strings.Contains(msg, "upstream-fetch") {
+		t.Errorf("the message applies to both modes, not only remote:\n%s", msg)
+	}
+}
+
+// TestGitHubAuthValue_APIDisabled: with the API switched off and no token, the
+// header says the API is off rather than calling the run degraded.
+func TestGitHubAuthValue_APIDisabled(t *testing.T) {
+	swapTokenSource(t, "")
+	t.Setenv(githubpkg.EnvDisableGitHubAPI, "1")
+	if got, want := githubAuthValue(""), "none, GitHub API disabled ("+githubpkg.EnvDisableGitHubAPI+")"; got != want {
+		t.Errorf("auth value = %q, want %q", got, want)
+	}
+}
+
+// TestRunAnalyzeAuthHint_GitHubNeedsAToken: the init prompt no longer says a
+// local-clone scan needs no token.
+func TestRunAnalyzeAuthHint_GitHubNeedsAToken(t *testing.T) {
+	got := runAnalyzeAuthHint([]string{"github"})
+	if strings.Contains(got, "no token needed") || !strings.Contains(got, "requires") {
+		t.Errorf("hint = %q, want a token requirement", got)
 	}
 }

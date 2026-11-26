@@ -1,96 +1,15 @@
 package github
 
 import (
-	"io"
 	"net/http"
-	"net/http/httptest"
-	"strconv"
+	"reflect"
 	"strings"
 	"testing"
 
-	"github.com/cli/go-gh/v2/pkg/api"
 	version "github.com/hashicorp/go-version"
+
+	"github.com/getplumber/plumber/internal/httpcount"
 )
-
-// Test_latestReleaseTag_picksTheHighestCleanSemver pins the ISSUE-709
-// latest-release pick across the releases listing: the highest semver
-// wins (v10.0.0 over v3.x, never a lexical order), a draft or a
-// prerelease is skipped whatever its version, a clean-looking release
-// whose semver carries a prerelease segment (`v3.1.0-node20`, published
-// with prerelease false) is rejected, and a later page is read when the
-// first one is full.
-func Test_latestReleaseTag_picksTheHighestCleanSemver(t *testing.T) {
-	var page1 strings.Builder
-	page1.WriteString(`[{"tag_name":"v2.0.0"},{"tag_name":"v3.1.0-node20","prerelease":false},{"tag_name":"v99.0.0","draft":true},{"tag_name":"v98.0.0","prerelease":true},{"tag_name":"codeql-bundle-v2.25.2"}`)
-	for i := 0; i < 45; i++ {
-		page1.WriteString(`,{"tag_name":"v1.0.` + strconv.Itoa(i) + `"}`)
-	}
-	page1.WriteString(`]`)
-	c := stubbedMetadataClient(t, func(r *http.Request) (string, int) {
-		if !strings.HasSuffix(r.URL.Path, "/repos/acme/widget/releases") {
-			return `{}`, http.StatusNotFound
-		}
-		switch r.URL.Query().Get("page") {
-		case "1":
-			return page1.String(), http.StatusOK
-		case "2":
-			return `[{"tag_name":"v10.0.0"},{"tag_name":"v9.9.9"}]`, http.StatusOK
-		}
-		return `[]`, http.StatusOK
-	})
-	if got := c.latestReleaseTag("acme", "widget"); got != "v10.0.0" {
-		t.Fatalf("latestReleaseTag = %q, want v10.0.0", got)
-	}
-}
-
-// Test_latestReleaseTag_rejectsAPrereleaseSegment pins the guard on its
-// own: a listing whose only higher entry is `v3.1.0-node20` (published
-// with prerelease false) still answers the clean v2.0.0.
-func Test_latestReleaseTag_rejectsAPrereleaseSegment(t *testing.T) {
-	c := stubbedMetadataClient(t, func(r *http.Request) (string, int) {
-		if r.URL.Query().Get("page") == "1" {
-			return `[{"tag_name":"v2.0.0"},{"tag_name":"v3.1.0-node20","prerelease":false}]`, http.StatusOK
-		}
-		return `[]`, http.StatusOK
-	})
-	if got := c.latestReleaseTag("acme", "widget"); got != "v2.0.0" {
-		t.Fatalf("latestReleaseTag = %q, want v2.0.0", got)
-	}
-}
-
-// Test_resolveTag_dereferencesAnAnnotatedTag pins the second lookup an
-// annotated tag needs: git/ref/tags/<tag> answers the tag object, and
-// git/tags/<object sha> names the commit it points at. The commit SHA
-// is what the ref-version-mismatch enrichment compares, never the tag
-// object's own SHA. A lightweight tag (object type commit) answers its
-// commit directly.
-func Test_resolveTag_dereferencesAnAnnotatedTag(t *testing.T) {
-	const (
-		tagObjSha = "1111111111111111111111111111111111111111"
-		commitSha = "2222222222222222222222222222222222222222"
-		lightSha  = "3333333333333333333333333333333333333333"
-	)
-	c := stubbedMetadataClient(t, func(r *http.Request) (string, int) {
-		switch r.URL.Path {
-		case "/repos/foo/bar/git/ref/tags/v7":
-			return `{"object":{"type":"tag","sha":"` + tagObjSha + `"}}`, http.StatusOK
-		case "/repos/foo/bar/git/tags/" + tagObjSha:
-			return `{"object":{"type":"commit","sha":"` + commitSha + `"}}`, http.StatusOK
-		case "/repos/foo/bar/git/ref/tags/v8":
-			return `{"object":{"type":"commit","sha":"` + lightSha + `"}}`, http.StatusOK
-		}
-		return `{}`, http.StatusNotFound
-	})
-	if sha, ok := c.resolveTag("foo", "bar", "v7"); !ok || sha != commitSha {
-		t.Fatalf("resolveTag(v7) = %q %v, want the dereferenced commit %q", sha, ok, commitSha)
-	}
-	if got := c.ResolveTagSha("foo/bar", "v7"); got != commitSha {
-		t.Fatalf("ResolveTagSha(v7) = %q, want %q", got, commitSha)
-	}
-	if sha, ok := c.resolveTag("foo", "bar", "v8"); !ok || sha != lightSha {
-		t.Fatalf("resolveTag(v8) = %q %v, want %q", sha, ok, lightSha)
-	}
-}
 
 // roundTripFunc adapts a function into an http.RoundTripper so tests can
 // stub the authenticated REST transport.
@@ -374,6 +293,24 @@ func Test_metadataClientOptions(t *testing.T) {
 	}
 }
 
+// Test_graphQLClientOptions pins that the GraphQL client never goes through
+// Memo: it keeps the host and token of the REST options but sends through
+// the counting-only transport, so an "absent" answer is never replayed.
+func Test_graphQLClientOptions(t *testing.T) {
+	t.Setenv(EnvMetadataToken, "ghp_metadata")
+	rest, _ := metadataClientOptions("ghes.example.com")
+	gql := graphQLClientOptions(rest)
+	if gql.Transport != httpcount.DefaultTransport {
+		t.Fatalf("GraphQL transport = %T, want httpcount.DefaultTransport", gql.Transport)
+	}
+	if gql.AuthToken != "ghp_metadata" || gql.Host != "ghes.example.com" {
+		t.Fatalf("GraphQL options: auth=%q host=%q, want the REST ones", gql.AuthToken, gql.Host)
+	}
+	if rest.Transport != httpcount.MemoTransport {
+		t.Fatalf("REST transport = %T, want httpcount.MemoTransport", rest.Transport)
+	}
+}
+
 // Test_NewClient_withMetadataToken_constructs verifies the real constructor
 // builds a usable REST client from PLUMBER_METADATA_TOKEN with an empty host
 // (go-gh defaults the host to api.github.com), so the token path does not
@@ -387,111 +324,6 @@ func Test_NewClient_withMetadataToken_constructs(t *testing.T) {
 	}
 	if c.rest == nil {
 		t.Fatal("rest client should be constructed from the metadata token")
-	}
-}
-
-// Test_fetchAllTags_anonymousFallbackOn403 is the ISSUE-228 Problem 2
-// regression: when the authenticated tags read is blocked by the owner
-// org's IP allow list (403), Plumber retries anonymously (public repos are
-// not gated for anonymous reads) and resolves the version instead of
-// abstaining. The authenticated transport always 403s; the anonymous base
-// URL points at a test server that serves the tags only when no auth header
-// is present.
-func Test_fetchAllTags_anonymousFallbackOn403(t *testing.T) {
-	const sha = "abcdef0000000000000000000000000000000000"
-	anon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "" {
-			w.WriteHeader(http.StatusForbidden)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `[{"name":"v1.2.3","commit":{"sha":"`+sha+`"}}]`)
-	}))
-	defer anon.Close()
-
-	c := NewGitHubMetadataClientForHost("")
-	c.apiBaseURL = anon.URL
-	rest, err := api.NewRESTClient(api.ClientOptions{
-		AuthToken: "x",
-		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-			return &http.Response{
-				StatusCode: http.StatusForbidden,
-				Body:       io.NopCloser(strings.NewReader(`{"message":"org has an IP allow list enabled"}`)),
-				Header:     make(http.Header),
-				Request:    r,
-			}, nil
-		}),
-	})
-	if err != nil {
-		t.Fatalf("new rest client: %v", err)
-	}
-	c.rest = rest
-
-	tags := c.fetchAllTags("aquasecurity", "trivy-action")
-	if tags[sha] != "v1.2.3" {
-		t.Fatalf("anonymous fallback did not resolve the SHA: got %v, want %s -> v1.2.3", tags, sha)
-	}
-}
-
-// Test_commitResolves_triState is the ISSUE-707 correctness guard: a
-// commit lookup must distinguish a definitive answer (the SHA is absent
-// upstream) from an unverifiable error (403, rate limit, network). Only
-// the confirmed-absent case may drive impostor-commit; every other
-// failure must leave checked=false so a valid SHA we could not reach is
-// never flagged. GitHub answers a well-formed but nonexistent 40-char
-// SHA with 422 "No commit found for SHA" (NOT 404) — that 422 case is
-// the exact real-world signal this control depends on. The old
-// bool-only commitExists conflated 403 with a real absence.
-func Test_commitResolves_triState(t *testing.T) {
-	const (
-		presentSHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-		absent422  = "dddddddddddddddddddddddddddddddddddddddd"
-		absent404  = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
-		gatedSHA   = "ffffffffffffffffffffffffffffffffffffffff"
-	)
-	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		body, status := `{}`, http.StatusOK
-		switch {
-		case strings.HasSuffix(r.URL.Path, "/commits/"+absent422):
-			body, status = `{"message":"No commit found for SHA: `+absent422+`"}`, http.StatusUnprocessableEntity
-		case strings.HasSuffix(r.URL.Path, "/commits/"+absent404):
-			body, status = `{"message":"Not Found"}`, http.StatusNotFound
-		case strings.HasSuffix(r.URL.Path, "/commits/"+gatedSHA):
-			body, status = `{"message":"API rate limit exceeded"}`, http.StatusForbidden
-		}
-		return &http.Response{
-			StatusCode: status,
-			Body:       io.NopCloser(strings.NewReader(body)),
-			Header:     make(http.Header),
-			Request:    r,
-		}, nil
-	})
-	c := NewGitHubMetadataClientForHost("")
-	rest, err := api.NewRESTClient(api.ClientOptions{AuthToken: "x", Transport: rt})
-	if err != nil {
-		t.Fatalf("new rest client: %v", err)
-	}
-	c.rest = rest
-
-	cases := []struct {
-		name        string
-		sha         string
-		wantExists  bool
-		wantChecked bool
-	}{
-		{"present SHA resolves", presentSHA, true, true},
-		{"absent full SHA is a confirmed 422", absent422, false, true},
-		{"absent ref is a confirmed 404", absent404, false, true},
-		{"rate-limited lookup is unverified", gatedSHA, false, false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			exists, checked := c.commitResolves("actions", "checkout", tc.sha)
-			if exists != tc.wantExists || checked != tc.wantChecked {
-				t.Fatalf("commitResolves = (exists=%v, checked=%v), want (exists=%v, checked=%v)",
-					exists, checked, tc.wantExists, tc.wantChecked)
-			}
-		})
 	}
 }
 
@@ -524,281 +356,64 @@ func Test_isZeroMetadata_refKnownAbsent(t *testing.T) {
 
 // Test_resolveUncached_refKnownAbsentGuard is the ISSUE-707 critical-FP
 // guard test. commitResolves alone cannot prove the repo was readable —
-// that gate (`checked && info.err == nil`) lives in resolveUncached — so
-// we drive the whole method through an httptest transport. A
-// private/missing repo whose commits endpoint also 404s must NOT be
-// reported as an impostor: that would be a critical false positive on a
-// legitimately unreachable action. The readable-repo positive path is
-// locked too, so a broken guard cannot silently disable the control.
+// that gate (`checked && info.err == nil`) lives in resolveUncached. A
+// private/missing repo must NOT be reported as an impostor: that would be
+// a critical false positive on a legitimately unreachable action. The
+// readable-repo positive path is locked too, so a broken guard cannot
+// silently disable the control.
 func Test_resolveUncached_refKnownAbsentGuard(t *testing.T) {
-	const (
-		owner = "acme"
-		repo  = "widget"
-		sha   = "abcdef0123456789abcdef0123456789abcdef01"
-	)
-	// The tag / branch / commit lookups are all absent so the ref falls
-	// through to the commit probe; repoStatus decides whether the
-	// repository object itself reads (info.err == nil) or errors.
-	newClient := func(t *testing.T, repoStatus, commitStatus int) *GitHubMetadataClient {
-		rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-			p := r.URL.Path
-			body, status := `{}`, http.StatusNotFound
-			switch {
-			case p == "/repos/"+owner+"/"+repo:
-				body, status = `{"archived":false,"stargazers_count":0}`, repoStatus
-			case strings.Contains(p, "/releases"):
-				body, status = `[]`, http.StatusOK
-			case strings.HasPrefix(p, "/advisories"):
-				body, status = `[]`, http.StatusOK
-			case strings.Contains(p, "/commits/"):
-				body, status = `{"message":"No commit found for SHA"}`, commitStatus
-			}
-			return &http.Response{
-				StatusCode: status,
-				Body:       io.NopCloser(strings.NewReader(body)),
-				Header:     make(http.Header),
-				Request:    r,
-			}, nil
-		})
-		c := NewGitHubMetadataClientForHost("")
-		rest, err := api.NewRESTClient(api.ClientOptions{AuthToken: "x", Transport: rt})
-		if err != nil {
-			t.Fatalf("new rest client: %v", err)
-		}
-		c.rest = rest
-		return c
-	}
-
+	const sha = "abcdef0123456789abcdef0123456789abcdef01"
 	t.Run("readable repo + absent commit is a confirmed impostor", func(t *testing.T) {
-		c := newClient(t, http.StatusOK, http.StatusUnprocessableEntity)
-		m := c.resolveUncached(owner, repo, sha)
-		if !m.RefKnownAbsent {
-			t.Fatal("readable repo whose commit 422s must set RefKnownAbsent=true")
-		}
-		if m.RefExists {
-			t.Fatal("RefExists must stay false for an absent commit")
+		c, _, _ := worldClient(t, map[string]*fakeRepo{"acme/widget": {}})
+		m := c.resolveUncached("acme", "widget", sha)
+		if !m.RefKnownAbsent || m.RefExists {
+			t.Fatalf("meta = %+v, want RefKnownAbsent and not RefExists", m)
 		}
 	})
-
 	t.Run("unreadable repo does not become an impostor", func(t *testing.T) {
-		c := newClient(t, http.StatusNotFound, http.StatusNotFound)
-		m := c.resolveUncached(owner, repo, sha)
-		if m.RefKnownAbsent {
-			t.Fatal("a private/missing repo (repoInfo errors) must NOT be reported as an impostor; RefKnownAbsent must stay false")
+		c, _, _ := worldClient(t, map[string]*fakeRepo{})
+		if m := c.resolveUncached("acme", "widget", sha); m.RefKnownAbsent {
+			t.Fatal("a private/missing repo must NOT be reported as an impostor; RefKnownAbsent must stay false")
 		}
 	})
 }
 
 // Test_resolveUncached_redirectedOwner pins the RedirectedOwner signal
 // trust.actorFor reads a sibling-organisation redirect off: the
-// repository object's own `full_name` is who can actually change the
-// code, which can differ from the `uses` owner after a rename or an
-// organisation transfer (ask-bonk/ask-bonk -> Cloudflare-Studio/ask-bonk).
+// repository's current nameWithOwner is who can actually change the code,
+// which can differ from the `uses` owner after a rename or an organisation
+// transfer (ask-bonk/ask-bonk -> Cloudflare-Studio/ask-bonk).
 func Test_resolveUncached_redirectedOwner(t *testing.T) {
-	const (
-		usesOwner = "ask-bonk"
-		repo      = "ask-bonk"
-	)
-	newClient := func(t *testing.T, fullName string) *GitHubMetadataClient {
-		rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-			p := r.URL.Path
-			body, status := `{}`, http.StatusNotFound
-			switch {
-			case p == "/repos/"+usesOwner+"/"+repo:
-				body, status = `{"archived":false,"stargazers_count":0,"full_name":"`+fullName+`"}`, http.StatusOK
-			case strings.Contains(p, "/releases"):
-				body, status = `[]`, http.StatusOK
-			case strings.HasPrefix(p, "/advisories"):
-				body, status = `[]`, http.StatusOK
-			}
-			return &http.Response{
-				StatusCode: status,
-				Body:       io.NopCloser(strings.NewReader(body)),
-				Header:     make(http.Header),
-				Request:    r,
-			}, nil
-		})
-		c := NewGitHubMetadataClientForHost("")
-		rest, err := api.NewRESTClient(api.ClientOptions{AuthToken: "x", Transport: rt})
-		if err != nil {
-			t.Fatalf("new rest client: %v", err)
+	for _, tc := range []struct{ fullName, want string }{
+		{"Cloudflare-Studio/ask-bonk", "Cloudflare-Studio"},
+		{"ask-bonk/ask-bonk", ""},
+		{"ASK-BONK/ask-bonk", ""},
+	} {
+		c, _, _ := worldClient(t, map[string]*fakeRepo{"ask-bonk/ask-bonk": {info: repoCacheEntry{fullName: tc.fullName}}})
+		if m := c.resolveUncached("ask-bonk", "ask-bonk", "main"); m.RedirectedOwner != tc.want {
+			t.Errorf("full name %q: RedirectedOwner = %q, want %q", tc.fullName, m.RedirectedOwner, tc.want)
 		}
-		c.rest = rest
-		return c
-	}
-
-	t.Run("redirected owner is reported", func(t *testing.T) {
-		c := newClient(t, "Cloudflare-Studio/"+repo)
-		m := c.resolveUncached(usesOwner, repo, "main")
-		if m.RedirectedOwner != "Cloudflare-Studio" {
-			t.Fatalf("RedirectedOwner = %q, want %q", m.RedirectedOwner, "Cloudflare-Studio")
-		}
-	})
-
-	t.Run("same owner (no redirect) is not reported", func(t *testing.T) {
-		c := newClient(t, usesOwner+"/"+repo)
-		m := c.resolveUncached(usesOwner, repo, "main")
-		if m.RedirectedOwner != "" {
-			t.Fatalf("RedirectedOwner = %q, want empty (same owner)", m.RedirectedOwner)
-		}
-	})
-}
-
-// Test_tagObjectResolves covers the ISSUE-401 dereference step. A pin
-// can name an annotated tag OBJECT rather than the commit that tag
-// points at (what `git rev-parse v1.2.3` returns without `^{commit}`).
-// The commits endpoint answers 422 for those SHAs, so the collector
-// needs git/tags/{sha} to tell a real tag object apart from a SHA that
-// is genuinely absent upstream. The tri-state contract matches
-// commitResolves: checked is true only on a definitive answer.
-func Test_tagObjectResolves(t *testing.T) {
-	const (
-		tagObjectSHA = "7088e561eb65bb68695d245aa206f005ef30921d"
-		commitSHA    = "a7487c7e89a18df4991f7f222e4898a00d66ddda"
-		absentSHA    = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-		gatedSHA     = "ffffffffffffffffffffffffffffffffffffffff"
-		nestedSHA    = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-		danglingSHA  = "cccccccccccccccccccccccccccccccccccccccc"
-		danglingCmt  = "1111111111111111111111111111111111111111"
-		treeTagSHA   = "2222222222222222222222222222222222222222"
-		loopSHA      = "3333333333333333333333333333333333333333"
-	)
-	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		p := r.URL.Path
-		body, status := `{}`, http.StatusOK
-		switch {
-		case strings.HasSuffix(p, "/git/tags/"+tagObjectSHA):
-			body = `{"sha":"` + tagObjectSHA + `","tag":"v4.1.0","object":{"sha":"` + commitSHA + `","type":"commit"}}`
-		case strings.HasSuffix(p, "/git/tags/"+nestedSHA):
-			body = `{"sha":"` + nestedSHA + `","tag":"v9","object":{"sha":"` + tagObjectSHA + `","type":"tag"}}`
-		case strings.HasSuffix(p, "/git/tags/"+danglingSHA):
-			body = `{"sha":"` + danglingSHA + `","tag":"v8","object":{"sha":"` + danglingCmt + `","type":"commit"}}`
-		case strings.HasSuffix(p, "/git/tags/"+treeTagSHA):
-			body = `{"sha":"` + treeTagSHA + `","tag":"v7","object":{"sha":"` + commitSHA + `","type":"tree"}}`
-		case strings.HasSuffix(p, "/git/tags/"+loopSHA):
-			// Points at itself: an unterminated ^{commit} walk.
-			body = `{"sha":"` + loopSHA + `","tag":"v6","object":{"sha":"` + loopSHA + `","type":"tag"}}`
-		case strings.HasSuffix(p, "/git/tags/"+absentSHA):
-			body, status = `{"message":"Not Found"}`, http.StatusNotFound
-		case strings.HasSuffix(p, "/git/tags/"+gatedSHA):
-			body, status = `{"message":"API rate limit exceeded"}`, http.StatusForbidden
-		case strings.HasSuffix(p, "/commits/"+commitSHA):
-			body = `{"sha":"` + commitSHA + `"}`
-		case strings.HasSuffix(p, "/commits/"+danglingCmt):
-			body, status = `{"message":"No commit found for SHA"}`, http.StatusUnprocessableEntity
-		default:
-			// Anything else, including a mixed-case SHA, is not a key the
-			// git database endpoints recognise. GitHub answers a
-			// mixed-case object SHA with 500, which is NOT a definitive
-			// absence answer.
-			if strings.Contains(p, "/git/tags/") {
-				body, status = `{"message":"Server Error"}`, http.StatusInternalServerError
-			}
-		}
-		return &http.Response{
-			StatusCode: status,
-			Body:       io.NopCloser(strings.NewReader(body)),
-			Header:     make(http.Header),
-			Request:    r,
-		}, nil
-	})
-	c := NewGitHubMetadataClientForHost("")
-	rest, err := api.NewRESTClient(api.ClientOptions{AuthToken: "x", Transport: rt})
-	if err != nil {
-		t.Fatalf("new rest client: %v", err)
-	}
-	c.rest = rest
-
-	cases := []struct {
-		name        string
-		sha         string
-		wantCommit  string
-		wantExists  bool
-		wantChecked bool
-	}{
-		{"annotated tag object dereferences to its commit", tagObjectSHA, commitSHA, true, true},
-		// An uppercase pin is the same object: git resolves SHAs
-		// case-insensitively and every other SHA path here already
-		// lowercases. The git database endpoints do NOT, so the ref must
-		// be normalised before the lookup.
-		{"uppercase pin resolves like its lowercase equivalent", strings.ToUpper(tagObjectSHA), commitSHA, true, true},
-		{"absent SHA is a confirmed 404", absentSHA, "", false, true},
-		{"rate-limited lookup is unverified", gatedSHA, "", false, false},
-		// ^{commit} semantics: a tag object may point at another tag
-		// object, and the walk must follow it to the commit.
-		{"nested tag object dereferences through to the commit", nestedSHA, commitSHA, true, true},
-		{"self-referential tag object stops at the depth cap", loopSHA, "", false, false},
-		// The SHA plainly exists upstream (git/tags served it), so
-		// "does not exist in the upstream repository" would be a false
-		// statement at critical severity. Abstain instead.
-		{"tag object whose commit will not confirm abstains", danglingSHA, "", false, false},
-		{"tag object pointing at a tree is not a commit pin", treeTagSHA, "", false, false},
-		// A non-SHA ref cannot be a tag object SHA, so the answer is
-		// definitive without spending a request.
-		{"non-SHA ref is definitively not a tag object", "v99", "", false, true},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			commit, exists, checked := c.tagObjectResolves("pnpm", "action-setup", tc.sha)
-			if commit != tc.wantCommit || exists != tc.wantExists || checked != tc.wantChecked {
-				t.Fatalf("tagObjectResolves = (%q, exists=%v, checked=%v), want (%q, exists=%v, checked=%v)",
-					commit, exists, checked, tc.wantCommit, tc.wantExists, tc.wantChecked)
-			}
-		})
 	}
 }
 
 // Test_resolveUncached_annotatedTagObjectPin is the ISSUE-401
 // regression guard. Pinning an action to the SHA of an annotated tag
 // object is a normal outcome of pinning by hand or with a script, the
-// pin is immutable, and GitHub Actions resolves it. The commits
-// endpoint still answers 422 for it, so without the git/tags fallback
-// the collector marks it RefKnownAbsent and impostor-commit
-// (ISSUE-707, critical) fires on a perfectly valid pin.
+// pin is immutable, and GitHub Actions resolves it. It is no commit, so
+// without the tag-object dereference the collector marks it
+// RefKnownAbsent and impostor-commit (ISSUE-707, critical) fires on a
+// perfectly valid pin.
 func Test_resolveUncached_annotatedTagObjectPin(t *testing.T) {
 	const (
-		owner        = "pnpm"
-		repo         = "action-setup"
 		tagObjectSHA = "7088e561eb65bb68695d245aa206f005ef30921d"
 		commitSHA    = "a7487c7e89a18df4991f7f222e4898a00d66ddda"
 	)
-	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		p := r.URL.Path
-		body, status := `{}`, http.StatusNotFound
-		switch {
-		case p == "/repos/"+owner+"/"+repo:
-			body, status = `{"archived":false,"stargazers_count":900}`, http.StatusOK
-		case strings.Contains(p, "/releases"):
-			body, status = `[]`, http.StatusOK
-		case strings.HasPrefix(p, "/advisories"):
-			body, status = `[]`, http.StatusOK
-		case strings.HasSuffix(p, "/git/tags/"+tagObjectSHA):
-			body, status = `{"sha":"`+tagObjectSHA+`","tag":"v4.1.0","object":{"sha":"`+commitSHA+`","type":"commit"}}`, http.StatusOK
-		case strings.HasSuffix(p, "/commits/"+commitSHA):
-			body, status = `{"sha":"`+commitSHA+`"}`, http.StatusOK
-		case strings.HasSuffix(p, "/commits/"+tagObjectSHA):
-			body, status = `{"message":"No commit found for SHA: `+tagObjectSHA+`"}`, http.StatusUnprocessableEntity
-		}
-		return &http.Response{
-			StatusCode: status,
-			Body:       io.NopCloser(strings.NewReader(body)),
-			Header:     make(http.Header),
-			Request:    r,
-		}, nil
-	})
-	c := NewGitHubMetadataClientForHost("")
-	rest, err := api.NewRESTClient(api.ClientOptions{AuthToken: "x", Transport: rt})
-	if err != nil {
-		t.Fatalf("new rest client: %v", err)
-	}
-	c.rest = rest
-
-	m := c.resolveUncached(owner, repo, tagObjectSHA)
-	if m.RefKnownAbsent {
-		t.Fatal("a pin naming a resolvable annotated tag object must NOT be reported as absent upstream (ISSUE-707 false positive)")
-	}
-	if !m.RefExists {
-		t.Fatal("a resolvable annotated tag object must count as existing upstream")
+	c, _, _ := worldClient(t, map[string]*fakeRepo{"pnpm/action-setup": {refs: map[string]refFacts{
+		tagObjectSHA: {objectChecked: true, object: tagObj(tagObjectSHA, commitObj(commitSHA))},
+	}}})
+	m := c.resolveUncached("pnpm", "action-setup", tagObjectSHA)
+	if m.RefKnownAbsent || !m.RefExists {
+		t.Fatalf("meta = %+v: a resolvable annotated tag object exists upstream (ISSUE-707 false positive)", m)
 	}
 	if m.RefKind != "commit" {
 		t.Fatalf("RefKind = %q, want \"commit\": the pin designates a commit through the tag object, and refKind==\"tag\" means the ref is a tag NAME", m.RefKind)
@@ -809,211 +424,62 @@ func Test_resolveUncached_annotatedTagObjectPin(t *testing.T) {
 }
 
 // Test_resolveUncached_tagObjectAbstainKeepsIssue707Silent locks the
-// abstain branch that sits between the git/tags fallback and
-// RefKnownAbsent. When the commits endpoint answers a definitive 422 on
-// a readable repo but the tag-object lookup CANNOT be completed, the
-// collector must leave RefKnownAbsent false: impostor-commit (ISSUE-707,
-// critical) fires only on confirmed absence, never on a SHA we merely
-// failed to classify. Without this test, deleting `else if !tagChecked`
-// would silently reintroduce the false positive this fix removes.
+// abstain branch that sits between the tag-object dereference and
+// RefKnownAbsent. When the ref is definitively no commit on a readable
+// repo but the tag object cannot be followed to a commit, the collector
+// must leave RefKnownAbsent false: impostor-commit (ISSUE-707, critical)
+// fires only on confirmed absence, never on a SHA we merely failed to
+// classify.
 func Test_resolveUncached_tagObjectAbstainKeepsIssue707Silent(t *testing.T) {
 	const (
-		owner = "acme"
-		repo  = "widget"
 		sha   = "abcdef0123456789abcdef0123456789abcdef01"
 		inner = "fedcba9876543210fedcba9876543210fedcba98"
 	)
-	// gitTagBody/gitTagStatus stand in for whatever git/tags answers;
-	// every other probe is a miss so the ref reaches the commit branch.
-	newClient := func(t *testing.T, gitTagBody string, gitTagStatus int) *GitHubMetadataClient {
-		rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-			p := r.URL.Path
-			body, status := `{}`, http.StatusNotFound
-			switch {
-			case p == "/repos/"+owner+"/"+repo:
-				body, status = `{"archived":false,"stargazers_count":0}`, http.StatusOK
-			case strings.Contains(p, "/releases"):
-				body, status = `[]`, http.StatusOK
-			case strings.HasPrefix(p, "/advisories"):
-				body, status = `[]`, http.StatusOK
-			case strings.Contains(p, "/git/tags/"):
-				body, status = gitTagBody, gitTagStatus
-			case strings.Contains(p, "/commits/"):
-				body, status = `{"message":"No commit found for SHA"}`, http.StatusUnprocessableEntity
-			}
-			return &http.Response{
-				StatusCode: status,
-				Body:       io.NopCloser(strings.NewReader(body)),
-				Header:     make(http.Header),
-				Request:    r,
-			}, nil
-		})
-		c := NewGitHubMetadataClientForHost("")
-		rest, err := api.NewRESTClient(api.ClientOptions{AuthToken: "x", Transport: rt})
-		if err != nil {
-			t.Fatalf("new rest client: %v", err)
-		}
-		c.rest = rest
-		return c
-	}
-
-	cases := []struct {
-		name       string
-		gitTagBody string
-		gitTagCode int
+	for _, tc := range []struct {
+		name   string
+		object *gitObject
 	}{
-		{
-			name:       "rate-limited tag lookup",
-			gitTagBody: `{"message":"API rate limit exceeded"}`,
-			gitTagCode: http.StatusForbidden,
-		},
-		{
-			name:       "tag object pointing at a tree",
-			gitTagBody: `{"sha":"` + sha + `","tag":"v1","object":{"sha":"` + inner + `","type":"tree"}}`,
-			gitTagCode: http.StatusOK,
-		},
-		{
-			name:       "tag object whose target commit will not confirm",
-			gitTagBody: `{"sha":"` + sha + `","tag":"v1","object":{"sha":"` + inner + `","type":"commit"}}`,
-			gitTagCode: http.StatusOK,
-		},
-	}
-	for _, tc := range cases {
+		{"tag object pointing at a tree", tagObj(sha, &gitObject{Typename: "Tree", Oid: inner})},
+		{"tag object chain longer than was read", tagObj(sha, tagObj(inner, nil))},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
-			m := newClient(t, tc.gitTagBody, tc.gitTagCode).resolveUncached(owner, repo, sha)
-			if m.RefKnownAbsent {
-				t.Fatal("an unclassifiable tag lookup must leave RefKnownAbsent false, or ISSUE-707 fires critical on a SHA we never confirmed absent")
-			}
-			if m.RefExists {
-				t.Fatal("abstaining must not claim the ref exists either")
+			c, _, _ := worldClient(t, map[string]*fakeRepo{"acme/widget": {refs: map[string]refFacts{sha: {objectChecked: true, object: tc.object}}}})
+			if m := c.resolveUncached("acme", "widget", sha); m.RefKnownAbsent || m.RefExists {
+				t.Fatalf("meta = %+v: an unclassifiable tag object must leave RefKnownAbsent and RefExists false", m)
 			}
 		})
 	}
-
-	// The guard must not swallow the real thing: a confirmed 404 from
-	// git/tags still means the SHA is nothing upstream.
-	t.Run("confirmed absent tag object still reports the impostor", func(t *testing.T) {
-		m := newClient(t, `{"message":"Not Found"}`, http.StatusNotFound).resolveUncached(owner, repo, sha)
-		if !m.RefKnownAbsent {
+	t.Run("failed lookup", func(t *testing.T) {
+		c, _, _ := worldClient(t, map[string]*fakeRepo{"acme/widget": {refs: map[string]refFacts{sha: {failed: true}}}})
+		if m := c.resolveUncached("acme", "widget", sha); m.RefKnownAbsent || m.RefExists {
+			t.Fatalf("meta = %+v: a failed lookup must leave RefKnownAbsent and RefExists false", m)
+		}
+	})
+	// The guard must not swallow the real thing: no object at all still
+	// means the SHA is nothing upstream.
+	t.Run("confirmed absent object still reports the impostor", func(t *testing.T) {
+		c, _, _ := worldClient(t, map[string]*fakeRepo{"acme/widget": {}})
+		if m := c.resolveUncached("acme", "widget", sha); !m.RefKnownAbsent {
 			t.Fatal("a SHA that is neither commit nor tag object upstream must still be reported (ISSUE-707)")
 		}
 	})
 }
 
-// Test_resolveUncached_tagObjectProbeOnlyForShaRefs keeps the ISSUE-401
-// fallback off the hot path. git/tags/{sha} is keyed by object SHA, so
-// asking it about a ref that is not SHA-shaped ("v99", a typo'd branch)
-// can only 404. Every unresolvable non-SHA ref would otherwise pay an
-// extra round trip against the same rate limit budget, for an answer
-// that cannot change the outcome.
-func Test_resolveUncached_tagObjectProbeOnlyForShaRefs(t *testing.T) {
-	const (
-		owner = "acme"
-		repo  = "widget"
-	)
-	newClient := func(t *testing.T, gitTagCalls *int) *GitHubMetadataClient {
-		rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-			p := r.URL.Path
-			body, status := `{}`, http.StatusNotFound
-			switch {
-			case p == "/repos/"+owner+"/"+repo:
-				body, status = `{"archived":false,"stargazers_count":0}`, http.StatusOK
-			case strings.Contains(p, "/releases"):
-				body, status = `[]`, http.StatusOK
-			case strings.HasPrefix(p, "/advisories"):
-				body, status = `[]`, http.StatusOK
-			case strings.Contains(p, "/git/tags/"):
-				*gitTagCalls++
-			}
-			return &http.Response{
-				StatusCode: status,
-				Body:       io.NopCloser(strings.NewReader(body)),
-				Header:     make(http.Header),
-				Request:    r,
-			}, nil
-		})
-		c := NewGitHubMetadataClientForHost("")
-		rest, err := api.NewRESTClient(api.ClientOptions{AuthToken: "x", Transport: rt})
-		if err != nil {
-			t.Fatalf("new rest client: %v", err)
-		}
-		c.rest = rest
-		return c
+// Test_resolveUncached_absentNonShaRef: a ref that is no tag, no branch
+// and no object is reported absent whatever its shape; only a SHA can name
+// a tag object, so a name never reaches that dereference.
+func Test_resolveUncached_absentNonShaRef(t *testing.T) {
+	c, _, _ := worldClient(t, map[string]*fakeRepo{"acme/widget": {}})
+	if m := c.resolveUncached("acme", "widget", "v99"); !m.RefKnownAbsent {
+		t.Fatalf("meta = %+v, want RefKnownAbsent for an absent v99", m)
 	}
-
-	t.Run("non-SHA ref skips the tag object probe", func(t *testing.T) {
-		calls := 0
-		c := newClient(t, &calls)
-		m := c.resolveUncached(owner, repo, "v99")
-		if calls != 0 {
-			t.Fatalf("git/tags called %d time(s) for a non-SHA ref; the endpoint is keyed by object SHA so the call cannot succeed", calls)
-		}
-		if !m.RefKnownAbsent {
-			t.Fatal("skipping the probe must not change the verdict for an absent non-SHA ref")
-		}
-	})
-
-	t.Run("SHA ref still pays for the probe", func(t *testing.T) {
-		calls := 0
-		c := newClient(t, &calls)
-		c.resolveUncached(owner, repo, "abcdef0123456789abcdef0123456789abcdef01")
-		if calls != 1 {
-			t.Fatalf("git/tags called %d time(s) for a SHA-shaped ref, want exactly 1", calls)
-		}
-	})
-
-	// The fallback lives behind a definitive commit-absent answer, so an
-	// ordinary commit-SHA pin (the overwhelming majority of refs in a
-	// real scan) must not pay for it at all.
-	t.Run("resolvable commit pin skips the probe entirely", func(t *testing.T) {
-		const good = "abcdef0123456789abcdef0123456789abcdef01"
-		calls := 0
-		rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-			p := r.URL.Path
-			body, status := `{}`, http.StatusNotFound
-			switch {
-			case p == "/repos/"+owner+"/"+repo:
-				body, status = `{"archived":false,"stargazers_count":0}`, http.StatusOK
-			case strings.Contains(p, "/releases"):
-				body, status = `[]`, http.StatusOK
-			case strings.HasPrefix(p, "/advisories"):
-				body, status = `[]`, http.StatusOK
-			case strings.Contains(p, "/git/tags/"):
-				calls++
-			case strings.HasSuffix(p, "/commits/"+good):
-				body, status = `{"sha":"`+good+`"}`, http.StatusOK
-			}
-			return &http.Response{
-				StatusCode: status,
-				Body:       io.NopCloser(strings.NewReader(body)),
-				Header:     make(http.Header),
-				Request:    r,
-			}, nil
-		})
-		c := NewGitHubMetadataClientForHost("")
-		rest, err := api.NewRESTClient(api.ClientOptions{AuthToken: "x", Transport: rt})
-		if err != nil {
-			t.Fatalf("new rest client: %v", err)
-		}
-		c.rest = rest
-
-		m := c.resolveUncached(owner, repo, good)
-		if !m.RefExists || m.RefKind != "commit" {
-			t.Fatalf("a resolvable commit pin must resolve as before: RefExists=%v RefKind=%q", m.RefExists, m.RefKind)
-		}
-		if calls != 0 {
-			t.Fatalf("git/tags called %d time(s) on the happy path; the fallback must cost nothing for an ordinary commit pin", calls)
-		}
-	})
 }
 
 // Test_resolveUncached_realWorldTagObjectVectors replays the five
-// annotated-tag-object pins reported in ISSUE-401 against a transport
-// that reproduces the upstream API's real answers: 422 from the commits
-// endpoint for the tag object, 200 from git/tags with the commit it
-// dereferences to. Every one must resolve, and the fabricated control
-// SHA (absent from both endpoints) must still be reported, because a fix
-// that merely relaxes the check is worse than the bug.
+// annotated-tag-object pins reported in ISSUE-401, each a tag object that
+// GitHub resolves to its commit. Every one must resolve, and the
+// fabricated control SHA (no object upstream) must still be reported,
+// because a fix that merely relaxes the check is worse than the bug.
 //
 // SHAs and dereferenced commits verified against the live API. The
 // deliberately absent control is the one from the report.
@@ -1036,83 +502,100 @@ func Test_resolveUncached_realWorldTagObjectVectors(t *testing.T) {
 		// every ref while remaining a valid, immutable, resolvable object
 		// whose commit is in the repo. It is the reason the fork-network
 		// blind spot documented on tagObjectResolves cannot be closed by
-		// checking membership in the repo's own tag refs
-		// (git/matching-refs/tags/): that check rejects this pin and
-		// reinstates the ISSUE-401 false positive for every moving tag.
+		// checking membership in the repo's own tag refs: that check
+		// rejects this pin and reinstates the ISSUE-401 false positive for
+		// every moving tag.
 		{"astral-sh", "setup-uv", "884ad927a57e558e7a70b92f2bccf9198a4be546", "v6", "bd01e18f51369d5a26f1651c3cb451d3417e3bba"},
 	}
 	const absentSHA = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-
-	byTagObject := map[string]vector{}
-	byCommit := map[string]bool{}
+	world := map[string]*fakeRepo{"actions/checkout": {}}
 	for _, v := range vectors {
-		byTagObject[v.tagObject] = v
-		byCommit[v.commit] = true
+		world[v.owner+"/"+v.repo] = &fakeRepo{refs: map[string]refFacts{
+			v.tagObject: {objectChecked: true, object: tagObj(v.tagObject, commitObj(v.commit))},
+		}}
 	}
-	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		p := r.URL.Path
-		body, status := `{}`, http.StatusNotFound
-		switch {
-		case strings.Count(p, "/") == 3 && strings.HasPrefix(p, "/repos/"):
-			body, status = `{"archived":false,"stargazers_count":1200}`, http.StatusOK
-		case strings.Contains(p, "/releases"):
-			body, status = `[]`, http.StatusOK
-		case strings.HasPrefix(p, "/advisories"):
-			body, status = `[]`, http.StatusOK
-		case strings.Contains(p, "/git/tags/"):
-			sha := p[strings.LastIndex(p, "/")+1:]
-			if v, ok := byTagObject[sha]; ok {
-				body, status = `{"sha":"`+sha+`","tag":"`+v.tag+`","object":{"sha":"`+v.commit+`","type":"commit"}}`, http.StatusOK
-			}
-		case strings.Contains(p, "/commits/"):
-			sha := p[strings.LastIndex(p, "/")+1:]
-			if byCommit[sha] {
-				body, status = `{"sha":"`+sha+`"}`, http.StatusOK
-			} else {
-				// What GitHub really answers for a tag object SHA, and
-				// for a SHA that is not in the repository at all.
-				body, status = `{"message":"No commit found for SHA: `+sha+`"}`, http.StatusUnprocessableEntity
-			}
-		}
-		return &http.Response{
-			StatusCode: status,
-			Body:       io.NopCloser(strings.NewReader(body)),
-			Header:     make(http.Header),
-			Request:    r,
-		}, nil
-	})
-	newClient := func(t *testing.T) *GitHubMetadataClient {
-		c := NewGitHubMetadataClientForHost("")
-		rest, err := api.NewRESTClient(api.ClientOptions{AuthToken: "x", Transport: rt})
-		if err != nil {
-			t.Fatalf("new rest client: %v", err)
-		}
-		c.rest = rest
-		return c
-	}
-
 	for _, v := range vectors {
 		t.Run(v.owner+"/"+v.repo+"@"+v.tag, func(t *testing.T) {
-			m := newClient(t).resolveUncached(v.owner, v.repo, v.tagObject)
-			if !m.RefExists {
-				t.Fatalf("RefExists = false for %s@%s, a valid annotated tag object that GitHub Actions resolves", v.owner+"/"+v.repo, v.tag)
-			}
-			if m.RefKnownAbsent {
-				t.Fatalf("RefKnownAbsent = true for %s@%s: ISSUE-707 would fire critical on a valid pin", v.owner+"/"+v.repo, v.tag)
-			}
-			if m.RefCommitSha != v.commit {
-				t.Fatalf("RefCommitSha = %q, want %q", m.RefCommitSha, v.commit)
+			c, _, _ := worldClient(t, world)
+			m := c.resolveUncached(v.owner, v.repo, v.tagObject)
+			if !m.RefExists || m.RefKnownAbsent || m.RefCommitSha != v.commit {
+				t.Fatalf("meta = %+v, want an existing pin on %s", m, v.commit)
 			}
 		})
 	}
-
 	t.Run("fabricated SHA is still reported", func(t *testing.T) {
-		m := newClient(t).resolveUncached("actions", "checkout", absentSHA)
-		if !m.RefKnownAbsent {
-			t.Fatal("a SHA absent from both endpoints must still set RefKnownAbsent, or the fix has softened the control instead of resolving the object")
-		}
-		if m.RefExists {
-			t.Fatal("a fabricated SHA must not be reported as existing")
+		c, _, _ := worldClient(t, world)
+		m := c.resolveUncached("actions", "checkout", absentSHA)
+		if !m.RefKnownAbsent || m.RefExists {
+			t.Fatalf("meta = %+v: a SHA with no object upstream must still set RefKnownAbsent", m)
 		}
 	})
+}
+
+// Test_advisoriesForRepo_enterpriseREST: on GitHub Enterprise Server the
+// advisories are read over REST, one call per package asking the Advisory
+// Database for the actions ecosystem. Only this package's vulnerabilities
+// count (matched without regard to case), with the severity lower-cased
+// and the ranges kept as listed. The answer is kept for the run.
+func Test_advisoriesForRepo_enterpriseREST(t *testing.T) {
+	var asked []string
+	c := stubbedMetadataClient(t, func(r *http.Request) (string, int) {
+		asked = append(asked, r.URL.Path+"?"+r.URL.RawQuery)
+		return `[
+			{"ghsa_id":"GHSA-aaaa","severity":"HIGH","vulnerabilities":[
+				{"package":{"name":"Acme/Deploy"},"vulnerable_version_range":"< 2.1.0","patched_versions":"2.1.0"},
+				{"package":{"name":"acme/other"},"vulnerable_version_range":"< 9.0.0","patched_versions":"9.0.0"}
+			]},
+			{"ghsa_id":"GHSA-bbbb","severity":"moderate","vulnerabilities":[
+				{"package":{"name":"someone/else"},"vulnerable_version_range":"< 1.0.0","patched_versions":"1.0.0"}
+			]}
+		]`, http.StatusOK
+	})
+	c.dotcom = false
+
+	got := c.advisoriesForRepo("acme", "deploy")
+	want := []advisoryInfo{{GhsaID: "GHSA-aaaa", VulnerableRange: "< 2.1.0", PatchedVersions: "2.1.0", Severity: "high"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("advisories = %+v\nwant %+v", got, want)
+	}
+	if wantAsked := []string{"/advisories?ecosystem=actions&affects=acme/deploy&per_page=100"}; !reflect.DeepEqual(asked, wantAsked) {
+		t.Errorf("REST requests = %v, want %v", asked, wantAsked)
+	}
+	if d := c.DegradedChecks(); len(d) != 0 {
+		t.Errorf("degraded = %q, want none", d)
+	}
+	c.advisoriesForRepo("acme", "deploy")
+	if len(asked) != 1 {
+		t.Errorf("sent %d requests for one package, want the answer kept", len(asked))
+	}
+}
+
+// Test_advisoriesForRepo_enterpriseRESTFailureIsDegraded: a refused or
+// failed Advisory Database lookup on GHES never reads as "no advisories"
+// without a word: the known-CVE check is reported as skipped (ISSUE-703),
+// and the empty answer is kept so one rate limit does not turn into one
+// request per action.
+func Test_advisoriesForRepo_enterpriseRESTFailureIsDegraded(t *testing.T) {
+	for _, status := range []int{http.StatusForbidden, http.StatusInternalServerError} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			requests := 0
+			c := stubbedMetadataClient(t, func(*http.Request) (string, int) {
+				requests++
+				return `{"message":"nope"}`, status
+			})
+			c.dotcom = false
+
+			if got := c.advisoriesForRepo("acme", "deploy"); len(got) != 0 {
+				t.Errorf("advisories = %+v, want none", got)
+			}
+			d := c.DegradedChecks()
+			if len(d) != 1 || !strings.Contains(d[0], "acme/deploy: the GitHub Advisory Database could not be queried") {
+				t.Errorf("degraded = %q, want the skipped known-CVE check for acme/deploy", d)
+			}
+			c.advisoriesForRepo("acme", "deploy")
+			if requests != 1 {
+				t.Errorf("sent %d requests, want the failed answer kept", requests)
+			}
+		})
+	}
 }

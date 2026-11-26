@@ -1,14 +1,10 @@
 package github
 
 import (
-	"io"
-	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
-	"github.com/cli/go-gh/v2/pkg/api"
 	"github.com/getplumber/plumber/internal/ir"
 )
 
@@ -473,39 +469,12 @@ func Test_enrichActionsWithClient_carriesTagObjectMetadata(t *testing.T) {
 		commitSHA    = "a7487c7e89a18df4991f7f222e4898a00d66ddda"
 		absentSHA    = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 	)
-	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		p := r.URL.Path
-		body, status := `{}`, http.StatusNotFound
-		switch {
-		case strings.Count(p, "/") == 3 && strings.HasPrefix(p, "/repos/"):
-			body, status = `{"archived":false,"stargazers_count":900}`, http.StatusOK
-		case strings.Contains(p, "/releases"):
-			body, status = `[]`, http.StatusOK
-		case strings.HasPrefix(p, "/advisories"):
-			body, status = `[]`, http.StatusOK
-		case strings.HasSuffix(p, "/git/tags/"+tagObjectSHA):
-			body, status = `{"sha":"`+tagObjectSHA+`","tag":"v4.1.0","object":{"sha":"`+commitSHA+`","type":"commit"}}`, http.StatusOK
-		case strings.HasSuffix(p, "/commits/"+commitSHA):
-			body, status = `{"sha":"`+commitSHA+`"}`, http.StatusOK
-		case strings.Contains(p, "/commits/"):
-			body, status = `{"message":"No commit found for SHA"}`, http.StatusUnprocessableEntity
-		}
-		return &http.Response{
-			StatusCode: status,
-			Body:       io.NopCloser(strings.NewReader(body)),
-			Header:     make(http.Header),
-			Request:    r,
-		}, nil
+	client, _, _ := worldClient(t, map[string]*fakeRepo{
+		owner + "/" + repo: {info: repoCacheEntry{stars: 900}, refs: map[string]refFacts{
+			tagObjectSHA: {objectChecked: true, object: tagObj(tagObjectSHA, commitObj(commitSHA))},
+		}},
+		"actions/checkout": {info: repoCacheEntry{stars: 900}},
 	})
-	client := NewGitHubMetadataClientForHost("")
-	// TestMain disables the API package-wide; re-enable this instance so
-	// the enrichment loop actually runs against the stub.
-	client.disabled = false
-	rest, err := api.NewRESTClient(api.ClientOptions{AuthToken: "x", Transport: rt})
-	if err != nil {
-		t.Fatalf("new rest client: %v", err)
-	}
-	client.rest = rest
 
 	pipeline := &ir.NormalizedPipeline{
 		Provider: ir.ProviderGitHub,
@@ -543,5 +512,28 @@ func Test_enrichActionsWithClient_carriesTagObjectMetadata(t *testing.T) {
 	}
 	if absent.Metadata.RefCommitSha != "" {
 		t.Fatalf("Metadata.RefCommitSha = %q for an absent SHA, want empty", absent.Metadata.RefCommitSha)
+	}
+}
+
+// TestEnrichPrefetchesTheCommentVersion: the `# vX` comment's tag is
+// loaded in the same prefetch as the pins, so checking the pin against it
+// (ResolveTagSha) costs no load of its own.
+func TestEnrichPrefetchesTheCommentVersion(t *testing.T) {
+	const sha = "a7487c7e89a18df4991f7f222e4898a00d66ddda"
+	client, loads, _ := worldClient(t, map[string]*fakeRepo{"pnpm/action-setup": {refs: map[string]refFacts{
+		sha:      {objectChecked: true, object: commitObj(sha)},
+		"v4.1.0": {tag: commitObj(sha)},
+	}}})
+	pipeline := &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{{
+		Name: "build",
+		Uses: []ir.Action{{Uses: "pnpm/action-setup@" + sha, Comment: "v4.1.0"}},
+	}}}
+	enrichActionsWithClient(pipeline, client, false, nil)
+
+	if md := pipeline.Jobs[0].Uses[0].Metadata; md == nil || md.CommentTagSha != sha {
+		t.Fatalf("metadata = %+v, want CommentTagSha %s", md, sha)
+	}
+	if len(*loads) != 1 {
+		t.Fatalf("loads = %+v, want the pin and the comment tag in one load", *loads)
 	}
 }

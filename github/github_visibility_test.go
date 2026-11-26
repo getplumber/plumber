@@ -44,7 +44,7 @@ func TestFetchGitHubRepoIdentityVisibility(t *testing.T) {
 			// client pointed at the httptest server and restores it
 			// via t.Cleanup.
 			swapRESTClient(t, srv)
-			if got, _ := FetchGitHubRepoIdentity("github.com", "acme", "widget"); got != tc.want {
+			if got, _ := FetchGitHubRepoIdentity(enterpriseHost, "acme", "widget"); got != tc.want {
 				t.Errorf("visibility = %q, want %q", got, tc.want)
 			}
 		})
@@ -84,7 +84,7 @@ func TestFetchGitHubRepoIdentity(t *testing.T) {
 			}))
 			defer srv.Close()
 			swapRESTClient(t, srv)
-			vis, name := FetchGitHubRepoIdentity("github.com", "acme", "widget")
+			vis, name := FetchGitHubRepoIdentity(enterpriseHost, "acme", "widget")
 			if vis != tc.wantVis || name != tc.wantName {
 				t.Errorf("identity = (%q, %q), want (%q, %q)", vis, name, tc.wantVis, tc.wantName)
 			}

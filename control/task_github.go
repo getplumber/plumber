@@ -22,6 +22,33 @@ var fetchGitHubDefaultBranch = func(host, owner, repo string) (string, error) {
 	return githubpkg.FetchGitHubDefaultBranch(host, owner, repo)
 }
 
+// prefetchGitHubScannedRepo is a test seam over the scanned repository's
+// query. The default honors PLUMBER_DISABLE_GITHUB_API (same contract as
+// fetchGitHubDefaultBranch above).
+var prefetchGitHubScannedRepo = func(host, owner, repo string, branches []string) {
+	if v := os.Getenv(githubpkg.EnvDisableGitHubAPI); v == "1" || v == "true" {
+		return
+	}
+	githubpkg.PrefetchScannedRepo(host, owner, repo, branches)
+}
+
+// prefetchScannedRepo sends the scanned repository's query before its first
+// read (the default branch), with the exact branch names
+// branchMustBeProtected reads, so that the default branch, the visibility,
+// the canonical name, those branches and the default token's releases come
+// from one query (plumber#637).
+func prefetchScannedRepo(conf *configuration.Configuration, projectPath string) {
+	owner, repo, ok := gitHubOwnerRepo(projectPath)
+	if !ok {
+		return
+	}
+	var branches []string
+	if shouldRunControl(controlBranchMustBeProtected, conf) {
+		branches, _, _ = branchTargets(collectionBranchProtectionConfig(conf))
+	}
+	prefetchGitHubScannedRepo(conf.GithubAPIHost, owner, repo, branches)
+}
+
 // scanGitHubWorkflowsRemote is a test seam over the remote workflow fetch,
 // which otherwise needs network and auth.
 var scanGitHubWorkflowsRemote = githubpkg.ScanGitHubWorkflowsRemote
@@ -338,16 +365,14 @@ func eligibleDefaultTokenWorkflow(pipeline *ir.NormalizedPipeline, workflowPath 
 // green (#220). Returns false when the control is disabled/benched/out
 // of scope (nothing to fetch) or the fetch succeeded.
 func enrichGitHubBranches(l *logrus.Entry, pipeline *ir.NormalizedPipeline, host string, pc *configuration.PlumberConfig, projectPath string, onProgress func(message string)) (fetchFailed bool) {
-	if pipeline == nil || pc == nil {
+	if pipeline == nil {
 		return false
 	}
-	if configuration.IsBenched("github", "branchMustBeProtected") {
+	exact, listing, active := branchTargets(pc)
+	if !active {
 		return false
 	}
 	cfg := pc.ControlsFor("github").BranchMustBeProtected
-	if cfg == nil || !cfg.IsEnabled() {
-		return false
-	}
 	owner, repo, addressable := gitHubOwnerRepo(projectPath)
 	if !addressable {
 		return false
@@ -360,21 +385,8 @@ func enrichGitHubBranches(l *logrus.Entry, pipeline *ir.NormalizedPipeline, host
 	// (FetchGitHubDefaultBranch folds 404/401 into a silent empty success
 	// by contract), so the zero-branch probe below owns that case.
 
-	// Build the targeted-fetch set from non-glob patterns plus the
-	// default branch (when defaultMustBeProtected is on). Wildcard
-	// patterns trip the listing fallthrough; on a typical config —
-	// `main`, `master`, `default` — we never list at all.
-	exact := make([]string, 0, len(cfg.NamePatterns))
-	listing := false
-	for _, p := range cfg.NamePatterns {
-		if isBranchGlob(p) {
-			listing = true
-			continue
-		}
-		if p != "" {
-			exact = append(exact, p)
-		}
-	}
+	// The targeted-fetch set is the non-glob patterns plus the default
+	// branch (when defaultMustBeProtected is on).
 	if cfg.DefaultMustBeProtected != nil && *cfg.DefaultMustBeProtected && pipeline.DefaultBranch != "" {
 		exact = append(exact, pipeline.DefaultBranch)
 	}
@@ -435,6 +447,33 @@ func enrichGitHubBranches(l *logrus.Entry, pipeline *ir.NormalizedPipeline, host
 	}
 	pipeline.Branches = branches
 	return false
+}
+
+// branchTargets reads branchMustBeProtected's configuration: the branch
+// names it reads one by one (its non-glob patterns, without the default
+// branch, which the caller adds), and whether a wildcard pattern needs the
+// branch listing. On a typical config (`main`, `master`, `default`) it never
+// lists at all. active is false when the control is off, benched, or not
+// configured, and nothing is fetched.
+func branchTargets(pc *configuration.PlumberConfig) (exact []string, listing, active bool) {
+	if pc == nil || configuration.IsBenched("github", "branchMustBeProtected") {
+		return nil, false, false
+	}
+	cfg := pc.ControlsFor("github").BranchMustBeProtected
+	if cfg == nil || !cfg.IsEnabled() {
+		return nil, false, false
+	}
+	exact = make([]string, 0, len(cfg.NamePatterns))
+	for _, p := range cfg.NamePatterns {
+		if isBranchGlob(p) {
+			listing = true
+			continue
+		}
+		if p != "" {
+			exact = append(exact, p)
+		}
+	}
+	return exact, listing, true
 }
 
 // gitHubOwnerRepo splits an owner/repo project path, reporting ok=false for
@@ -505,6 +544,7 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 	}
 	logInvalidWorkflows(l, pipeline, conf)
 
+	prefetchScannedRepo(conf, conf.ProjectPath)
 	resolveGitHubDefaultBranch(l, pipeline, conf.GithubAPIHost, conf.ProjectPath)
 	applyGitHubVisibility(pipeline, conf.GithubAPIHost, conf.ProjectPath)
 	if owner, repo, addressable := gitHubOwnerRepo(conf.ProjectPath); addressable {
@@ -661,6 +701,7 @@ func RunGitHubAnalysisRemote(conf *configuration.Configuration, owner, repo, ref
 		l.WithError(perr).Warn("GitHub workflow read: partial failure (file skipped)")
 	}
 	logInvalidWorkflows(l, pipeline, conf)
+	prefetchScannedRepo(conf, owner+"/"+repo)
 	applyGitHubVisibility(pipeline, conf.GithubAPIHost, owner+"/"+repo)
 
 	resolveGitHubDefaultBranch(l, pipeline, conf.GithubAPIHost, owner+"/"+repo)

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/getplumber/plumber/configuration"
@@ -494,4 +495,61 @@ func findControlEntry(t *testing.T, entries []ControlEntry, name string) Control
 	}
 	t.Fatalf("no control entry named %s", name)
 	return ControlEntry{}
+}
+
+// TestRunGitHubAnalysis_PrefetchesTheScannedRepository: the scanned
+// repository's query goes out before the default-branch lookup, with the
+// exact branch names branchMustBeProtected reads (the wildcard patterns go
+// to the listing), so the run sends one query for it. Without the control
+// it asks no branch.
+func TestRunGitHubAnalysis_PrefetchesTheScannedRepository(t *testing.T) {
+	enabled := true
+	withBranches := &configuration.PlumberConfig{
+		Version: "2.0",
+		GitHub: &configuration.ProviderConfig{Controls: configuration.ControlsConfig{
+			BranchMustBeProtected: &configuration.BranchProtectionControlConfig{
+				Enabled:      &enabled,
+				NamePatterns: []string{"main", "release/*", "dev"},
+			},
+		}},
+	}
+	for _, tc := range []struct {
+		name string
+		pc   *configuration.PlumberConfig
+		want []string
+	}{
+		{"branchMustBeProtected on", withBranches, []string{"main", "dev"}},
+		{"branchMustBeProtected off", &configuration.PlumberConfig{}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls []string
+			var gotBranches []string
+			orig := prefetchGitHubScannedRepo
+			prefetchGitHubScannedRepo = func(host, owner, repo string, branches []string) {
+				calls = append(calls, "prefetch "+owner+"/"+repo)
+				gotBranches = branches
+			}
+			t.Cleanup(func() { prefetchGitHubScannedRepo = orig })
+			swapDefaultBranchFetch(t, func(host, owner, repo string) (string, error) {
+				calls = append(calls, "default branch")
+				return "main", nil
+			})
+
+			conf := &configuration.Configuration{
+				ProjectPath:   "toptal/chewy",
+				GitRepoRoot:   writeMinimalWorkflow(t),
+				GithubAPIHost: "127.0.0.1:1",
+				PlumberConfig: tc.pc,
+			}
+			if _, err := RunGitHubAnalysis(conf); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(calls) < 2 || calls[0] != "prefetch toptal/chewy" || calls[1] != "default branch" {
+				t.Errorf("calls = %v, want the prefetch before the default-branch lookup", calls)
+			}
+			if !reflect.DeepEqual(gotBranches, tc.want) {
+				t.Errorf("prefetched branches = %v, want %v", gotBranches, tc.want)
+			}
+		})
+	}
 }

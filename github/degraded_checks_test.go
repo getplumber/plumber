@@ -1,6 +1,7 @@
 package github
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -10,9 +11,12 @@ import (
 	"github.com/getplumber/plumber/internal/ir"
 )
 
-// stubbedMetadataClient returns a client whose REST calls are answered by
-// respond. TestMain disables the API package-wide, so the instance is
-// re-enabled here the way the other enrichment tests do.
+// stubbedMetadataClient returns a client whose REST calls (the definition
+// reads, and the GitHub Enterprise Server lookups) are answered by
+// respond. It has no GraphQL client, so its metadata lookups fail rather
+// than reach GitHub; worldClient serves those. TestMain disables the API
+// package-wide, so the instance is re-enabled here the way the other
+// enrichment tests do.
 func stubbedMetadataClient(t *testing.T, respond func(*http.Request) (string, int)) *GitHubMetadataClient {
 	t.Helper()
 	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -31,6 +35,7 @@ func stubbedMetadataClient(t *testing.T, respond func(*http.Request) (string, in
 		t.Fatalf("new rest client: %v", err)
 	}
 	client.rest = rest
+	client.gql = nil // no live GraphQL query from a test
 	return client
 }
 
@@ -44,24 +49,15 @@ func pipelineWithOneAction(uses string) *ir.NormalizedPipeline {
 // TestAdvisoryLookupFailureIsNotACleanBillOfHealth covers the silent pass on
 // the one control whose entire purpose is knowing about published CVEs.
 //
-// A 403 secondary rate limit on /advisories left an empty result cached and
+// A rate limit on the advisory lookup left an empty result cached and
 // served as an answer, so every action from that repo reported clean on
 // ISSUE-703. Nothing logged, nothing warned: the check simply did not happen
 // and the report said it passed.
 func TestAdvisoryLookupFailureIsNotACleanBillOfHealth(t *testing.T) {
-	client := stubbedMetadataClient(t, func(r *http.Request) (string, int) {
-		p := r.URL.Path
-		switch {
-		case strings.HasPrefix(p, "/advisories"):
-			// The failure under test.
-			return `{"message":"API rate limit exceeded"}`, http.StatusForbidden
-		case strings.Count(p, "/") == 3 && strings.HasPrefix(p, "/repos/"):
-			return `{"archived":false,"stargazers_count":900}`, http.StatusOK
-		case strings.Contains(p, "/releases"):
-			return `[]`, http.StatusOK
-		}
-		return `{}`, http.StatusNotFound
-	})
+	client, _, _ := worldClient(t, map[string]*fakeRepo{"actions/checkout": {
+		info:        repoCacheEntry{stars: 900},
+		advisoryErr: errors.New("API rate limit exceeded"),
+	}})
 
 	pipeline := pipelineWithOneAction("actions/checkout@v4")
 	enrichActionsWithClient(pipeline, client, false, nil)
@@ -101,18 +97,7 @@ func TestUnavailableMetadataClientWarnsRatherThanPassing(t *testing.T) {
 // lookup that genuinely succeeded and found nothing must stay silent, or the
 // warning channel becomes noise and gets ignored.
 func TestAvailableClientWithCleanAdvisoriesDoesNotWarn(t *testing.T) {
-	client := stubbedMetadataClient(t, func(r *http.Request) (string, int) {
-		p := r.URL.Path
-		switch {
-		case strings.HasPrefix(p, "/advisories"):
-			return `[]`, http.StatusOK
-		case strings.Count(p, "/") == 3 && strings.HasPrefix(p, "/repos/"):
-			return `{"archived":false,"stargazers_count":900}`, http.StatusOK
-		case strings.Contains(p, "/releases"):
-			return `[]`, http.StatusOK
-		}
-		return `{}`, http.StatusNotFound
-	})
+	client, _, _ := worldClient(t, map[string]*fakeRepo{"actions/checkout": {info: repoCacheEntry{stars: 900}}})
 
 	pipeline := pipelineWithOneAction("actions/checkout@v4")
 	enrichActionsWithClient(pipeline, client, false, nil)
@@ -131,19 +116,7 @@ func TestAvailableClientWithCleanAdvisoriesDoesNotWarn(t *testing.T) {
 // action nobody could look at. The rule fires only on archived==true, so no
 // Rego guard can catch this; the collector has to say so.
 func TestUnreadableRepoDoesNotReportNotArchived(t *testing.T) {
-	client := stubbedMetadataClient(t, func(r *http.Request) (string, int) {
-		p := r.URL.Path
-		switch {
-		case strings.Count(p, "/") == 3 && strings.HasPrefix(p, "/repos/"):
-			// The failure under test: the repo object is unreadable.
-			return `{"message":"Must have admin rights"}`, http.StatusForbidden
-		case strings.HasPrefix(p, "/advisories"):
-			return `[]`, http.StatusOK
-		case strings.Contains(p, "/releases"):
-			return `[]`, http.StatusOK
-		}
-		return `{}`, http.StatusNotFound
-	})
+	client, _, _ := worldClient(t, map[string]*fakeRepo{"actions/checkout": {unreadable: errors.New("Resource not accessible by integration")}})
 
 	pipeline := pipelineWithOneAction("actions/checkout@v4")
 	enrichActionsWithClient(pipeline, client, false, nil)
@@ -157,18 +130,7 @@ func TestUnreadableRepoDoesNotReportNotArchived(t *testing.T) {
 // TestReadableRepoDoesNotWarnAboutArchived is the negative case: a repo that
 // was read must not produce the warning, or it becomes noise.
 func TestReadableRepoDoesNotWarnAboutArchived(t *testing.T) {
-	client := stubbedMetadataClient(t, func(r *http.Request) (string, int) {
-		p := r.URL.Path
-		switch {
-		case strings.Count(p, "/") == 3 && strings.HasPrefix(p, "/repos/"):
-			return `{"archived":false,"stargazers_count":900}`, http.StatusOK
-		case strings.HasPrefix(p, "/advisories"):
-			return `[]`, http.StatusOK
-		case strings.Contains(p, "/releases"):
-			return `[]`, http.StatusOK
-		}
-		return `{}`, http.StatusNotFound
-	})
+	client, _, _ := worldClient(t, map[string]*fakeRepo{"actions/checkout": {info: repoCacheEntry{stars: 900}}})
 
 	pipeline := pipelineWithOneAction("actions/checkout@v4")
 	enrichActionsWithClient(pipeline, client, false, nil)
@@ -200,20 +162,12 @@ func TestNestedResolutionWarningsSurviveEnrichActions(t *testing.T) {
 		t.Fatalf("resolveNestedActions must warn about the skipped job id before enrichment runs, got %q", p.AdvisoryWarnings)
 	}
 
-	client := stubbedMetadataClient(t, func(r *http.Request) (string, int) {
-		path := r.URL.Path
-		switch {
-		case strings.HasPrefix(path, "/advisories"):
-			// The DegradedChecks() entry under test: enrichActions must
-			// append its own warning, not overwrite the nested one.
-			return `{"message":"API rate limit exceeded"}`, http.StatusForbidden
-		case strings.Count(path, "/") == 3 && strings.HasPrefix(path, "/repos/"):
-			return `{"archived":false,"stargazers_count":900}`, http.StatusOK
-		case strings.Contains(path, "/releases"):
-			return `[]`, http.StatusOK
-		}
-		return `{}`, http.StatusNotFound
-	})
+	// The DegradedChecks() entry under test: enrichActions must append its
+	// own warning, not overwrite the nested one.
+	client, _, _ := worldClient(t, map[string]*fakeRepo{"actions/checkout": {
+		info:        repoCacheEntry{stars: 900},
+		advisoryErr: errors.New("API rate limit exceeded"),
+	}})
 	enrichActionsWithClient(p, client, false, nil)
 
 	joined := strings.Join(p.AdvisoryWarnings, " | ")
