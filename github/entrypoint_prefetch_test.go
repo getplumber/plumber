@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -100,6 +101,9 @@ func TestPrefetchAbsent_ErrorMarksNothing(t *testing.T) {
 		// GitHub keeps the repository but nulls the one object it failed
 		// to resolve: that null is the error, not an absent file.
 		"one object": {`{"data":{"r0":{"p0":null}},"errors":[{"path":["r0","p0"],"message":"Something went wrong while executing your query."}]}`, http.StatusOK},
+		// A repository GitHub answers null for with no error says nothing
+		// about its files.
+		"null repository, no error": {`{"data":{"r0":null}}`, http.StatusOK},
 	} {
 		t.Run(name, func(t *testing.T) {
 			gql, _ := stubbedGraphQL(t, func(graphQLRequest) (string, int) { return answer.body, answer.status })
@@ -207,19 +211,73 @@ func TestPrefetchAbsent_SendsNothing(t *testing.T) {
 }
 
 // TestPrefetchAbsent_Chunks: a run with many actions sends one query per
-// chunk of prefetchChunkSize references.
+// chunk of prefetchChunkSize references. The aliases start again in each
+// chunk, so an answer must land on the reference of its own chunk.
 func TestPrefetchAbsent_Chunks(t *testing.T) {
 	t.Setenv(EnvDisableGitHubAPI, "0")
-	gql, queries := stubbedGraphQL(t, func(graphQLRequest) (string, int) { return `{"data":{}}`, http.StatusOK })
+	last := "js" + strconv.Itoa(prefetchChunkSize)
+	gql, queries := stubbedGraphQL(t, func(q graphQLRequest) (string, int) {
+		// The second chunk holds the last reference alone, as r0.
+		if q.Variables["n0"] == last {
+			return `{"data":{"r0":{"p0":null}}}`, http.StatusOK
+		}
+		return `{"data":{}}`, http.StatusOK
+	})
 	defs := tokenFetcher(newStub(nil).fetch, nil)
 	defs.gql = gql
 	refs := make([]candidateRef, prefetchChunkSize+1)
 	for i := range refs {
-		refs[i] = candidateRef{owner: "acme", repo: "js", ref: "v1", paths: []string{"action.js"}}
+		refs[i] = candidateRef{owner: "acme", repo: "js" + strconv.Itoa(i), ref: "v1", paths: []string{"action.js"}}
 	}
 	defs.prefetchAbsent(refs)
 	if len(*queries) != 2 {
 		t.Fatalf("want 2 queries for %d references, got %d", len(refs), len(*queries))
+	}
+	first, second := (*queries)[0].Variables, (*queries)[1].Variables
+	if first["n0"] != "js0" || first["n"+strconv.Itoa(prefetchChunkSize-1)] != "js"+strconv.Itoa(prefetchChunkSize-1) || first["n"+strconv.Itoa(prefetchChunkSize)] != nil {
+		t.Errorf("first chunk variables = %v, want the first %d references", first, prefetchChunkSize)
+	}
+	if second["n0"] != last || second["n1"] != nil {
+		t.Errorf("second chunk variables = %v, want %s alone", second, last)
+	}
+	want := map[string]struct{}{containerKey("acme", last, "action.js", "v1"): {}}
+	if !reflect.DeepEqual(defs.absent, want) {
+		t.Errorf("absent = %v, want %v: the answer of the second chunk's r0 is %s's, not js0's", defs.absent, want, last)
+	}
+}
+
+// TestPrefetchAbsent_AbsentFileCostsNoRequest: a file the prefetch found
+// absent is answered from it. Neither the raw host nor the contents API is
+// asked, at a ref where a raw miss alone would ask the API.
+func TestPrefetchAbsent_AbsentFileCostsNoRequest(t *testing.T) {
+	t.Setenv(EnvDisableGitHubAPI, "0")
+	t.Setenv(EnvMetadataToken, "test-token")
+	gql, _ := stubbedGraphQL(t, func(graphQLRequest) (string, int) {
+		return `{"data":{"r0":{"p0":null,"p1":null}}}`, http.StatusOK
+	})
+	var apiPaths []string
+	client := stubbedMetadataClient(t, func(r *http.Request) (string, int) {
+		apiPaths = append(apiPaths, r.URL.Path)
+		return `{"message":"Not Found"}`, http.StatusNotFound
+	})
+	stub := newStub(map[string]string{})
+	defs := tokenFetcher(stub.fetch, client)
+	defs.gql = gql
+	defs.prefetchAbsent([]candidateRef{{owner: "acme", repo: "js", ref: "v1", paths: []string{"action.js", "index.js"}}})
+
+	if _, st := defs.read("acme", "js", "v1", "action.js"); st != fetchMissing {
+		t.Fatalf("action.js: status = %v, want fetchMissing", st)
+	}
+	if len(stub.calls) != 0 || len(apiPaths) != 0 {
+		t.Fatalf("raw requests = %v, API paths = %q; want none for a file GitHub said is absent", stub.calls, apiPaths)
+	}
+	// A file the prefetch did not ask about is still read: the raw host,
+	// then the contents API.
+	if _, st := defs.read("acme", "js", "v1", "src/index.js"); st != fetchMissing {
+		t.Fatalf("src/index.js: status = %v, want fetchMissing", st)
+	}
+	if stub.calls["acme/js@v1:src/index.js"] != 1 || len(apiPaths) != 1 {
+		t.Fatalf("raw requests = %v, API paths = %q; want one of each for a file the prefetch did not check", stub.calls, apiPaths)
 	}
 }
 

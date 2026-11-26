@@ -1,6 +1,7 @@
 package github
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -141,5 +142,31 @@ func TestEnrichCarriesImmutableReleaseToStepsAndReusableWorkflows(t *testing.T) 
 	}
 	if len(*loads) != 1 || len((*loads)[0]) != 2 {
 		t.Fatalf("loads = %+v, want one load for both repositories", *loads)
+	}
+}
+
+// Test_releaseIsImmutable_unreadRefIsDegraded: on github.com a tag whose
+// facts could not be read is not exempt (fail-closed), and the run says
+// the immutable-release exemption was not applied.
+func Test_releaseIsImmutable_unreadRefIsDegraded(t *testing.T) {
+	c, loads, _ := worldClient(t, map[string]*fakeRepo{"o/r": {refs: map[string]refFacts{
+		"v1": {failed: true, err: errors.New("query timed out")},
+		"v2": {tag: commitObj(shaA), release: ptr(true)},
+	}}})
+	if c.releaseIsImmutable("o", "r", "v1") {
+		t.Error("an unread release reads as immutable")
+	}
+	d := c.DegradedChecks()
+	if len(d) != 1 || !strings.Contains(d[0], "o/r@v1: the release for this tag could not be read (query timed out)") ||
+		!strings.Contains(d[0], "immutable-release exemption of ISSUE-701 was not applied") {
+		t.Errorf("degraded = %q, want the unread release of o/r@v1", d)
+	}
+	// Asked again, it is neither loaded nor reported a second time.
+	c.releaseIsImmutable("o", "r", "v1")
+	if len(c.DegradedChecks()) != 1 || len(*loads) != 1 {
+		t.Errorf("degraded = %q, loads = %d; want one of each", c.DegradedChecks(), len(*loads))
+	}
+	if !c.releaseIsImmutable("o", "r", "v2") || len(c.DegradedChecks()) != 1 {
+		t.Errorf("a read immutable release must be exempt and add no degraded check: %q", c.DegradedChecks())
 	}
 }

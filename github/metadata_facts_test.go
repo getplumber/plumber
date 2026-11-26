@@ -491,3 +491,115 @@ func Test_tagObjectResolves(t *testing.T) {
 		})
 	}
 }
+
+// Test_ensure_LoaderThatAnswersNothing: a load that stores nothing for
+// what was asked must not read as "absent". The repository is unreadable
+// and the ref could-not-verify (errNotLoaded), and neither is asked again.
+func Test_ensure_LoaderThatAnswersNothing(t *testing.T) {
+	c, _, _ := worldClient(t, map[string]*fakeRepo{})
+	loads := 0
+	c.load = func([]repoRequest) { loads++ }
+
+	if exists, checked := c.commitResolves("o", "r", shaA); exists || checked {
+		t.Errorf("commitResolves = %v, %v; want could-not-verify", exists, checked)
+	}
+	if f := c.refFacts["o/r@"+shaA]; f == nil || !f.failed || !errors.Is(f.err, errNotLoaded) {
+		t.Errorf("ref facts = %+v, want failed with errNotLoaded", f)
+	}
+	if sha, ok := c.resolveTag("o", "r", shaA); ok || sha != "" {
+		t.Errorf("resolveTag = %q, %v; want none", sha, ok)
+	}
+	if info := c.repoInfo("o", "r"); !info.fetched || !errors.Is(info.err, errNotLoaded) {
+		t.Errorf("repo info = %+v, want errNotLoaded", info)
+	}
+	if loads != 2 {
+		t.Fatalf("loads = %d, want 2 (one for the ref, one for the repository)", loads)
+	}
+	c.commitResolves("o", "r", shaA)
+	c.repoInfo("o", "r")
+	if tag := c.latestReleaseTag("o", "r"); tag != "" {
+		t.Errorf("latest release = %q, want none", tag)
+	}
+	if loads != 2 {
+		t.Errorf("loads = %d after the same reads, want the answers kept", loads)
+	}
+}
+
+// TestPrefetch_Guards: a prefetch asks only what the run does not hold
+// yet, and nothing at all on a disabled client.
+func TestPrefetch_Guards(t *testing.T) {
+	adv := []advisoryInfo{{GhsaID: "GHSA-x", VulnerableRange: "< 2"}}
+	t.Run("disabled client", func(t *testing.T) {
+		c, loads, tagLoads := worldClient(t, map[string]*fakeRepo{})
+		c.disabled = true
+		c.Prefetch([]string{"a/x@v1", "a/x@" + shaA})
+		if len(*loads) != 0 || len(*tagLoads) != 0 {
+			t.Errorf("loads = %v, tag loads = %v; want none", *loads, *tagLoads)
+		}
+	})
+	t.Run("enterprise asks no advisories", func(t *testing.T) {
+		c, loads, _ := worldClient(t, map[string]*fakeRepo{})
+		c.dotcom = false
+		c.Prefetch([]string{"a/x@v1"})
+		if len(*loads) != 1 || len((*loads)[0]) != 1 {
+			t.Fatalf("loads = %+v, want one request", *loads)
+		}
+		if r := (*loads)[0][0]; !r.info || r.advisories || !slices.Equal(r.refs, []string{"v1"}) {
+			t.Errorf("request = %+v, want info and the ref, no advisories", r)
+		}
+	})
+	t.Run("new ref of a repository already read", func(t *testing.T) {
+		c, loads, _ := worldClient(t, map[string]*fakeRepo{"a/x": {
+			releases: []releaseFact{{tag: "v9.0.0"}},
+		}})
+		c.Prefetch([]string{"a/x@v1"})
+		// v1, then the latest release's tag.
+		if len(*loads) != 2 {
+			t.Fatalf("loads = %+v, want 2", *loads)
+		}
+		c.Prefetch([]string{"a/x@v1", "a/x@v2"})
+		if len(*loads) != 3 || len((*loads)[2]) != 1 {
+			t.Fatalf("loads = %+v, want one more with one request", *loads)
+		}
+		if r := (*loads)[2][0]; r.info || r.advisories || !slices.Equal(r.refs, []string{"v2"}) {
+			t.Errorf("request = %+v, want the new ref alone", r)
+		}
+	})
+	t.Run("latest tag not asked for a repository read before", func(t *testing.T) {
+		c, loads, _ := worldClient(t, map[string]*fakeRepo{})
+		c.repoCache["a/x"] = repoCacheEntry{fetched: true}
+		c.releases["a/x"] = []releaseFact{{tag: "v9.0.0"}}
+		c.advisoryCache["a/x"] = nil
+		c.Prefetch([]string{"a/x@v1"})
+		if len(*loads) != 1 || len((*loads)[0]) != 1 {
+			t.Fatalf("loads = %+v, want the ref's load only", *loads)
+		}
+		if r := (*loads)[0][0]; r.info || r.advisories || !slices.Equal(r.refs, []string{"v1"}) {
+			t.Errorf("request = %+v, want the ref alone", r)
+		}
+	})
+	t.Run("latest tag already held", func(t *testing.T) {
+		c, loads, _ := worldClient(t, map[string]*fakeRepo{"a/x": {
+			releases: []releaseFact{{tag: "v9.0.0"}},
+		}})
+		c.Prefetch([]string{"a/x@v9.0.0"})
+		if len(*loads) != 1 {
+			t.Errorf("loads = %+v, want 1: the latest release's tag is the ref just read", *loads)
+		}
+	})
+	t.Run("tags already listed", func(t *testing.T) {
+		c, _, tagLoads := worldClient(t, map[string]*fakeRepo{"a/x": {advisories: adv}})
+		c.sha2tagCache["a/x"] = map[string]string{}
+		c.Prefetch([]string{"a/x@" + shaA})
+		if len(*tagLoads) != 0 {
+			t.Errorf("tag loads = %v, want none", *tagLoads)
+		}
+	})
+	t.Run("one tag listing for several SHA pins", func(t *testing.T) {
+		c, _, tagLoads := worldClient(t, map[string]*fakeRepo{"a/x": {advisories: adv}})
+		c.Prefetch([]string{"a/x@" + shaA, "a/x/sub@" + shaB})
+		if len(*tagLoads) != 1 || !slices.Equal((*tagLoads)[0], []repoKey{{"a", "x"}}) {
+			t.Errorf("tag loads = %v, want a/x once", *tagLoads)
+		}
+	})
+}

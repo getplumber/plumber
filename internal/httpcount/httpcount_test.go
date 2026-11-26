@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/cli/go-gh/v2/pkg/api"
 )
@@ -101,6 +102,16 @@ func TestTransport_keepsLowestQuotaPerWindow(t *testing.T) {
 			name:      "a window reported a second apart",
 			responses: [][2]string{{"4898", "201"}, {"4786", "200"}},
 			want:      []Quota{{Remaining: 4786, Reset: 201, Requests: 2}},
+		},
+		{
+			name:      "resets five seconds apart are one window",
+			responses: [][2]string{{"4898", "200"}, {"4786", "205"}},
+			want:      []Quota{{Remaining: 4786, Reset: 205, Requests: 2}},
+		},
+		{
+			name:      "resets six seconds apart are two windows",
+			responses: [][2]string{{"4898", "200"}, {"4786", "206"}},
+			want:      []Quota{{Remaining: 4898, Reset: 200, Requests: 1}, {Remaining: 4786, Reset: 206, Requests: 1}},
 		},
 	}
 	for _, tc := range cases {
@@ -370,6 +381,20 @@ func TestTemplate(t *testing.T) {
 		{"ghes.example.com", "/api/v3/repos/o/r/tags", "/api/v3/repos/{owner}/{repo}/tags"},
 		{"raw.githubusercontent.com", "/actions/checkout/abc123/action.yml", "/{owner}/{repo}/{ref}/action.yml"},
 		{"raw.githubusercontent.com", "/o/r/v1/dist/index.js", "/{owner}/{repo}/{ref}/dist/index.js"},
+		// A raw path with no file is no file probe: it stays as sent.
+		{"raw.githubusercontent.com", "/o/r/main", "/o/r/main"},
+		{"raw.githubusercontent.com", "/", "/"},
+		// An Enterprise path no route knows keeps its prefix.
+		{"ghes.example.com", "/api/v3/advisories", "/api/v3/advisories"},
+		{"ghes.example.com", "/api/v3/repos/o/r", "/api/v3/repos/{owner}/{repo}"},
+		// The bare prefix, or a path that only starts like it, is not stripped.
+		{"ghes.example.com", "/api/v3", "/api/v3"},
+		{"ghes.example.com", "/api/v3x/repos/o/r", "/api/v3x/repos/o/r"},
+		// A run or job id is a number: anything else is not that route.
+		{"api.github.com", "/repos/o/r/actions/runs/abc/jobs", "/repos/o/r/actions/runs/abc/jobs"},
+		{"api.github.com", "/repos/o/r/actions/jobs/abc/logs", "/repos/o/r/actions/jobs/abc/logs"},
+		// The raw host's path shape applies to that host only.
+		{"api.github.com", "/o/r/v1/action.yml", "/o/r/v1/action.yml"},
 	}
 	for _, tc := range cases {
 		if got := Template(tc.host, tc.path); got != tc.want {
@@ -389,4 +414,185 @@ func mustHost(t *testing.T, raw string) string {
 		t.Fatal(err)
 	}
 	return u.Host
+}
+
+// A request that got no response is an entry with status 0. A transport
+// error says why in Err; a transport that returns neither a response nor an
+// error is still counted as an error, with nothing to say.
+func TestRegistry_logRecordsRequestsWithoutAResponse(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		err     error
+		wantErr string
+	}{
+		{"transport error", errors.New("dial failed"), "dial failed"},
+		{"no response and no error", nil, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reg := &Registry{}
+			reg.EnableLog()
+			tr := &Transport{Registry: reg, Next: roundTripFunc(func(*http.Request) (*http.Response, error) { return nil, tc.err })}
+			req, _ := http.NewRequest(http.MethodGet, "https://api.github.com/repos/o/r", nil)
+			if resp, err := tr.RoundTrip(req); resp != nil || err != tc.err {
+				t.Fatalf("RoundTrip = %v, %v", resp, err)
+			}
+
+			snap := reg.Snapshot()
+			if got := snap.Hosts["api.github.com"]; got != (HostStats{Requests: 1, Errors: 1}) {
+				t.Fatalf("stats = %+v", got)
+			}
+			if len(snap.Entries) != 1 || len(snap.Quotas) != 0 {
+				t.Fatalf("entries = %+v, quotas = %+v", snap.Entries, snap.Quotas)
+			}
+			if e := snap.Entries[0]; e.Seq != 1 || e.Path != "/repos/o/r" || e.Status != 0 || e.Err != tc.wantErr || e.HasQuota {
+				t.Fatalf("entry = %+v, want status 0 and Err %q", e, tc.wantErr)
+			}
+		})
+	}
+}
+
+// A response is counted by a quota only when it tells both the limit and
+// what is left: half of the headers, or a value that is no number, is
+// outside the API quotas.
+func TestTransport_halfAQuotaIsUnmetered(t *testing.T) {
+	for _, tc := range []struct{ name, limit, remaining string }{
+		{"limit only", "5000", ""},
+		{"remaining only", "", "4999"},
+		{"limit is no number", "many", "4999"},
+		{"remaining is no number", "5000", "some"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if tc.limit != "" {
+					w.Header().Set("X-RateLimit-Limit", tc.limit)
+				}
+				if tc.remaining != "" {
+					w.Header().Set("X-RateLimit-Remaining", tc.remaining)
+				}
+				w.Header().Set("X-RateLimit-Resource", "core")
+				w.Header().Set("X-RateLimit-Reset", "100")
+			}))
+			defer srv.Close()
+
+			reg := &Registry{}
+			reg.EnableLog()
+			get(t, newClient(reg, nil), srv.URL)
+
+			snap := reg.Snapshot()
+			if got := snap.Hosts[mustHost(t, srv.URL)]; got != (HostStats{Requests: 1, Status2xx: 1, Unmetered: 1}) {
+				t.Fatalf("stats = %+v", got)
+			}
+			if len(snap.Quotas) != 0 || snap.Entries[0].HasQuota {
+				t.Fatalf("quotas = %+v, entry = %+v, want none", snap.Quotas, snap.Entries[0])
+			}
+		})
+	}
+}
+
+// Quotas come out by host, then resource, then tokens before anonymous,
+// the larger limit first, the earlier window first, and last the lowest
+// remaining, whatever order the responses arrived in.
+func TestSnapshot_sortsQuotas(t *testing.T) {
+	type answer struct {
+		host, auth, resource, limit, remaining, reset string
+	}
+	answers := []answer{
+		{"b.example", "token a", "core", "5000", "10", "100"},
+		{"a.example", "", "core", "60", "59", "100"},
+		{"a.example", "token a", "search", "30", "29", "100"},
+		{"a.example", "token b", "core", "5000", "4000", "100"},
+		{"a.example", "token a", "core", "5000", "4000", "900"},
+		{"a.example", "token c", "core", "15000", "1", "100"},
+		{"a.example", "token d", "core", "5000", "3000", "100"},
+	}
+	reg := &Registry{}
+	tr := &Transport{Registry: reg, Next: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		h := http.Header{}
+		q := r.URL.Query()
+		h.Set("X-RateLimit-Resource", q.Get("resource"))
+		h.Set("X-RateLimit-Limit", q.Get("limit"))
+		h.Set("X-RateLimit-Remaining", q.Get("remaining"))
+		h.Set("X-RateLimit-Reset", q.Get("reset"))
+		return &http.Response{StatusCode: http.StatusOK, Header: h, Body: http.NoBody, Request: r}, nil
+	})}
+	for _, a := range answers {
+		u := "https://" + a.host + "/x?" + url.Values{"resource": {a.resource}, "limit": {a.limit}, "remaining": {a.remaining}, "reset": {a.reset}}.Encode()
+		req, _ := http.NewRequest(http.MethodGet, u, nil)
+		if a.auth != "" {
+			req.Header.Set("Authorization", a.auth)
+		}
+		if _, err := tr.RoundTrip(req); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	want := []Quota{
+		{Host: "a.example", Resource: "core", Credential: CredentialKey("token c"), Limit: 15000, Remaining: 1, Reset: 100, Requests: 1},
+		{Host: "a.example", Resource: "core", Credential: CredentialKey("token d"), Limit: 5000, Remaining: 3000, Reset: 100, Requests: 1},
+		{Host: "a.example", Resource: "core", Credential: CredentialKey("token b"), Limit: 5000, Remaining: 4000, Reset: 100, Requests: 1},
+		{Host: "a.example", Resource: "core", Credential: CredentialKey("token a"), Limit: 5000, Remaining: 4000, Reset: 900, Requests: 1},
+		{Host: "a.example", Resource: "core", Anonymous: true, Limit: 60, Remaining: 59, Reset: 100, Requests: 1},
+		{Host: "a.example", Resource: "search", Credential: CredentialKey("token a"), Limit: 30, Remaining: 29, Reset: 100, Requests: 1},
+		{Host: "b.example", Resource: "core", Credential: CredentialKey("token a"), Limit: 5000, Remaining: 10, Reset: 100, Requests: 1},
+	}
+	if got := reg.Snapshot().Quotas; !slices.Equal(got, want) {
+		t.Fatalf("quotas =\n%+v\nwant\n%+v", got, want)
+	}
+}
+
+// EnableLog starts the log's clock once: a second call does not move it,
+// so every entry's offset is counted from the first.
+func TestRegistry_enableLogTwiceKeepsTheStart(t *testing.T) {
+	reg := &Registry{}
+	reg.EnableLog()
+	start := reg.logStart
+	if start.IsZero() {
+		t.Fatal("EnableLog did not start the clock")
+	}
+	req, _ := http.NewRequest(http.MethodGet, "https://api.github.com/repos/o/r", nil)
+	reg.record(req, nil, errors.New("x"), start.Add(3*time.Second), 40*time.Millisecond)
+	reg.EnableLog()
+	if !reg.logStart.Equal(start) {
+		t.Fatalf("second EnableLog moved the start from %v to %v", start, reg.logStart)
+	}
+	reg.record(req, nil, errors.New("x"), start.Add(5*time.Second), 70*time.Millisecond)
+
+	entries := reg.Snapshot().Entries
+	if len(entries) != 2 {
+		t.Fatalf("entries = %+v, want the one before the second call and the one after", entries)
+	}
+	if entries[0].Offset != 3*time.Second || entries[0].Duration != 40*time.Millisecond ||
+		entries[1].Offset != 5*time.Second || entries[1].Duration != 70*time.Millisecond || entries[1].Seq != 2 {
+		t.Fatalf("entries = %+v", entries)
+	}
+}
+
+// A snapshot is a copy: changing it changes neither the registry nor the
+// next snapshot.
+func TestSnapshot_isACopy(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-RateLimit-Limit", "5000")
+		w.Header().Set("X-RateLimit-Remaining", "4999")
+	}))
+	defer srv.Close()
+	reg := &Registry{}
+	reg.EnableLog()
+	reg.RecordGraphQL("query", 1, 4999)
+	get(t, newClient(reg, nil), srv.URL+"/first")
+	host := mustHost(t, srv.URL)
+
+	snap := reg.Snapshot()
+	snap.Hosts[host] = HostStats{Requests: 99}
+	snap.Hosts["added.example"] = HostStats{Requests: 1}
+	snap.Entries[0].Path = "/changed"
+	snap.Quotas[0].Remaining = -1
+	snap.GraphQL[0].Label = "changed"
+
+	again := reg.Snapshot()
+	if len(again.Hosts) != 1 || again.Hosts[host] != (HostStats{Requests: 1, Status2xx: 1}) {
+		t.Fatalf("hosts = %+v", again.Hosts)
+	}
+	if again.Entries[0].Path != "/first" || again.Quotas[0].Remaining != 4999 || again.GraphQL[0].Label != "query" {
+		t.Fatalf("entries = %+v, quotas = %+v, graphql = %+v", again.Entries, again.Quotas, again.GraphQL)
+	}
 }

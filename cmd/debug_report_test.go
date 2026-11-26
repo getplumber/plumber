@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"net/http"
@@ -51,6 +52,11 @@ func TestDebugFlag(t *testing.T) {
 		{name: "flag 0", args: []string{"--debug=0"}, want: ""},
 		{name: "flag true", args: []string{"--debug=true"}, want: defaultDebugFile},
 		{name: "flag false wins over env", args: []string{"--debug=false"}, env: "report.md", want: ""},
+		// Surrounding whitespace is not part of the value, either way.
+		{name: "env boolean with spaces", env: " true ", want: defaultDebugFile},
+		{name: "env path with spaces", env: " out.md ", want: "out.md"},
+		{name: "flag path with spaces", args: []string{"--debug= out.md "}, want: "out.md"},
+		{name: "flag false with spaces", args: []string{"--debug= false "}, want: ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -236,5 +242,179 @@ func TestStartGitHubDebugReport_logsTheRun(t *testing.T) {
 	_, log, ok := strings.Cut(string(data), "## All requests")
 	if !ok || strings.Contains(log, "_No request logged._") || !strings.Contains(log, "/repos/o/r") {
 		t.Fatalf("the report's request log lacks GET /repos/o/r:\n%s", data)
+	}
+}
+
+// The real analyze command binds --debug as newDebugCmd does: a bare --debug
+// writes the default file.
+func TestAnalyzeCmd_bareDebugFlag(t *testing.T) {
+	f := analyzeCmd.Flags().Lookup("debug")
+	if f == nil || f.NoOptDefVal != defaultDebugFile || f.DefValue != "" {
+		t.Fatalf("analyze --debug = %+v, want a flag off by default whose bare form is %q", f, defaultDebugFile)
+	}
+}
+
+// --debug reports GitHub requests only: a GitLab analyze says so and writes
+// no report.
+func TestRunAnalyze_debugOnGitLabWarns(t *testing.T) {
+	restoreAnalyzeFlags(t)
+	newDebugCmd(t)
+	t.Chdir(t.TempDir())
+	t.Setenv(envKeys["debug"], "debug.md")
+	t.Setenv("GITLAB_TOKEN", "")
+	t.Setenv("CI_JOB_TOKEN", "")
+	origPrint := printOutput
+	printOutput = false
+	t.Cleanup(func() { printOutput = origPrint })
+	hook := capturedLog(t)
+
+	var runErr error
+	_ = captureStderr(t, func() {
+		runErr = runAnalyze(analyzeCmd, []string{"https://gitlab.com/group/project"})
+	})
+	if runErr == nil || !strings.Contains(runErr.Error(), "GITLAB_TOKEN") {
+		t.Fatalf("want the run to stop at the GitLab token check, got %v", runErr)
+	}
+	warned := false
+	for _, e := range hook.AllEntries() {
+		warned = warned || strings.Contains(e.Message, "--debug reports GitHub requests only")
+	}
+	if !warned {
+		t.Errorf("no warning that --debug does nothing on a GitLab analyze; logged %d entries", len(hook.AllEntries()))
+	}
+	if files, err := os.ReadDir("."); err != nil || len(files) != 0 {
+		t.Errorf("files written by a GitLab analyze with --debug: %v (%v)", files, err)
+	}
+}
+
+// A rate limit that could not be read lands in the report as the reason,
+// and the change of that credential's resources reads n/a, never a number.
+func TestStartGitHubDebugReport_failedRateLimitRead(t *testing.T) {
+	newDebugCmd(t)
+	debugFile = filepath.Join(t.TempDir(), "debug.md")
+	setDebugTokens(t, "lanes-tok", "meta-tok")
+	saved := fetchRateLimit
+	t.Cleanup(func() { fetchRateLimit = saved })
+	// The lanes' token fails its first read, the metadata token its second.
+	reads := map[string]int{}
+	fetchRateLimit = func(_, token string) (map[string]httpcount.RateResource, error) {
+		reads[token]++
+		if (token == "lanes-tok") == (reads[token] == 1) {
+			return nil, errors.New("HTTP 502 for " + token)
+		}
+		return map[string]httpcount.RateResource{"core": {Limit: 5000, Used: 12, Remaining: 4988, Reset: 1795000000}}, nil
+	}
+
+	startGitHubDebugReport(&configuration.Configuration{ProjectPath: "o/r"}, "remote")()
+
+	data, err := os.ReadFile(debugFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := string(data)
+	lanes, metadata := strings.Index(report, "### GH_TOKEN"), strings.Index(report, "### "+githubpkg.EnvMetadataToken)
+	if lanes < 0 || metadata < lanes {
+		t.Fatalf("missing or misordered credential sections:\n%s", report)
+	}
+	for _, want := range []string{"_Before the run: HTTP 502 for lanes-tok_", "| core | 5000 | 0 | 12 | n/a |"} {
+		if !strings.Contains(report[lanes:metadata], want) {
+			t.Errorf("GH_TOKEN section lacks %q:\n%s", want, report)
+		}
+	}
+	for _, want := range []string{"_After the run: HTTP 502 for meta-tok_", "| 12 | 0 | n/a |"} {
+		if !strings.Contains(report[metadata:], want) {
+			t.Errorf("%s section lacks %q:\n%s", githubpkg.EnvMetadataToken, want, report)
+		}
+	}
+}
+
+// A report that cannot be written is a warning: the run goes on, and nothing
+// claims a file was written.
+func TestStartGitHubDebugReport_unwritablePath(t *testing.T) {
+	newDebugCmd(t)
+	debugFile = filepath.Join(t.TempDir(), "missing-dir", "debug.md")
+	setDebugTokens(t, "lanes-tok", "")
+	saved := fetchRateLimit
+	t.Cleanup(func() { fetchRateLimit = saved })
+	fetchRateLimit = func(string, string) (map[string]httpcount.RateResource, error) {
+		return map[string]httpcount.RateResource{}, nil
+	}
+	hook := capturedLog(t)
+
+	stderr := captureStderr(t, startGitHubDebugReport(&configuration.Configuration{ProjectPath: "o/r"}, "remote"))
+
+	if strings.Contains(stderr, "Debug report written to") {
+		t.Errorf("stderr claims a report was written:\n%s", stderr)
+	}
+	if _, err := os.Stat(debugFile); !os.IsNotExist(err) {
+		t.Errorf("stat %s = %v, want no file", debugFile, err)
+	}
+	warned := false
+	for _, e := range hook.AllEntries() {
+		warned = warned || (strings.HasPrefix(e.Message, "debug report: ") && strings.Contains(e.Message, "missing-dir"))
+	}
+	if !warned {
+		t.Errorf("no warning naming the path that could not be written; logged %d entries", len(hook.AllEntries()))
+	}
+}
+
+// The report names what was analyzed and the API host it read; the rate
+// limit is read on that host, with the credential of that host.
+func TestStartGitHubDebugReport_targetAndHost(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		conf       configuration.Configuration
+		mode       string
+		wantRows   []string
+		wantHost   string
+		wantToken  string
+		wantSource string
+	}{
+		{
+			name:     "github.com, no branch",
+			conf:     configuration.Configuration{ProjectPath: "o/r"},
+			mode:     "local",
+			wantRows: []string{"| Target | o/r (local) |", "| GitHub API host | api.github.com |"},
+			wantHost: "", wantToken: "lanes-tok", wantSource: "GH_TOKEN",
+		},
+		{
+			name:     "enterprise, with a branch",
+			conf:     configuration.Configuration{ProjectPath: "o/r", Branch: "main", GithubAPIHost: "ghe.example.com"},
+			mode:     "remote",
+			wantRows: []string{"| Target | o/r (remote), branch main |", "| GitHub API host | ghe.example.com |"},
+			wantHost: "ghe.example.com", wantToken: "ent-tok", wantSource: "GH_ENTERPRISE_TOKEN",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			newDebugCmd(t)
+			debugFile = filepath.Join(t.TempDir(), "debug.md")
+			setDebugTokens(t, "lanes-tok", "")
+			t.Setenv("GH_ENTERPRISE_TOKEN", "ent-tok")
+			saved := fetchRateLimit
+			t.Cleanup(func() { fetchRateLimit = saved })
+			type read struct{ host, token string }
+			var got []read
+			fetchRateLimit = func(host, token string) (map[string]httpcount.RateResource, error) {
+				got = append(got, read{host, token})
+				return map[string]httpcount.RateResource{}, nil
+			}
+
+			conf := tc.conf
+			startGitHubDebugReport(&conf, tc.mode)()
+
+			data, err := os.ReadFile(debugFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, row := range append(tc.wantRows, "GitHub lanes: "+tc.wantSource) {
+				if !strings.Contains(string(data), row) {
+					t.Errorf("report lacks %q:\n%s", row, data)
+				}
+			}
+			want := []read{{tc.wantHost, tc.wantToken}, {tc.wantHost, tc.wantToken}}
+			if !slices.Equal(got, want) {
+				t.Errorf("rate limit reads = %+v, want %+v (before and after)", got, want)
+			}
+		})
 	}
 }

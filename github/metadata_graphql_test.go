@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/cli/go-gh/v2/pkg/api"
+	logtest "github.com/sirupsen/logrus/hooks/test"
 )
 
 // graphQLMetadataClient is a metadata client whose GraphQL queries go to
@@ -507,5 +508,555 @@ func TestQueryRepos_RecordsTheQueryCost(t *testing.T) {
 	}
 	if len(recorded) != 1 || recorded[0].Cost != 3 || recorded[0].Remaining != 4000 || recorded[0].Label == "" {
 		t.Errorf("recorded = %+v", recorded)
+	}
+}
+
+// releasesPageBody is a releases connection of n releases.
+func releasesPageBody(n int, next bool, cursor string) string {
+	var nodes []string
+	for i := range n {
+		nodes = append(nodes, fmt.Sprintf(`{"tagName":"v1.0.%d","isDraft":false,"isPrerelease":false}`, i))
+	}
+	return fmt.Sprintf(`{"nodes":[%s],"pageInfo":{"hasNextPage":%t,"endCursor":%q}}`, strings.Join(nodes, ","), next, cursor)
+}
+
+// TestQueryRepos_FailedSecondReleasesPageKeepsTheFirst: the second page of
+// releases only adds to the first. When it fails, as a whole or for that
+// repository alone, or answers something unreadable, the 100 releases
+// already read stay and the repository is still readable.
+func TestQueryRepos_FailedSecondReleasesPageKeepsTheFirst(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		status     int
+	}{
+		{"rate limited", `{"message":"rate limited"}`, 403},
+		{"server error", `<html>502 Bad Gateway</html>`, 502},
+		{"timeout answered 200", timeoutBody, 200},
+		{"error on the alias", `{"data":{"r0":null},"errors":[{"path":["r0"],"message":"timeout"}]}`, 200},
+		{"null alias", `{"data":{"r0":null}}`, 200},
+		{"unreadable alias", `{"data":{"r0":"x"}}`, 200},
+		{"unreadable releases", `{"data":{"r0":{"releases":"x"}}}`, 200},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, got := graphQLMetadataClient(t, func(q graphQLRequest) (string, int) {
+				if _, second := q.Variables["c0"]; second {
+					return tc.body, tc.status
+				}
+				return `{"data":{"r0":{"nameWithOwner":"o/r","isArchived":false,"stargazerCount":1,"releases":` + releasesPageBody(100, true, "cur") + `}}}`, 200
+			})
+			c.queryRepos([]repoRequest{{owner: "o", repo: "r", info: true}})
+			if len(*got) != 2 {
+				t.Fatalf("queries = %d, want 2 (the second page is asked once)", len(*got))
+			}
+			rel := c.releases["o/r"]
+			if len(rel) != 100 || rel[0].tag != "v1.0.0" || rel[99].tag != "v1.0.99" {
+				t.Errorf("releases = %d, want the 100 of the first page kept", len(rel))
+			}
+			if e := c.repoCache["o/r"]; !e.fetched || e.err != nil || e.fullName != "o/r" {
+				t.Errorf("repo = %+v, want it still readable", e)
+			}
+			if tag := c.latestReleaseTag("o", "r"); tag != "v1.0.99" {
+				t.Errorf("latest release = %q, want v1.0.99 from the first page", tag)
+			}
+		})
+	}
+}
+
+// TestQueryRepos_SecondReleasesPageFailsForOneRepository: an error on one
+// repository's second page leaves the other's 50 more releases read.
+func TestQueryRepos_SecondReleasesPageFailsForOneRepository(t *testing.T) {
+	c, _ := graphQLMetadataClient(t, func(q graphQLRequest) (string, int) {
+		if _, second := q.Variables["c0"]; second {
+			return `{"data":{"r0":null,"r1":{"releases":` + releasesPageBody(50, false, "") + `}},"errors":[{"path":["r0","releases"],"message":"timeout"}]}`, 200
+		}
+		first := `{"nameWithOwner":"o/x","isArchived":false,"stargazerCount":1,"releases":` + releasesPageBody(100, true, "cur") + `}`
+		return `{"data":{"r0":` + first + `,"r1":` + first + `}}`, 200
+	})
+	c.queryRepos([]repoRequest{{owner: "o", repo: "a", info: true}, {owner: "o", repo: "b", info: true}})
+	if n := len(c.releases["o/a"]); n != 100 {
+		t.Errorf("o/a releases = %d, want the first page kept", n)
+	}
+	if n := len(c.releases["o/b"]); n != 150 {
+		t.Errorf("o/b releases = %d, want 150", n)
+	}
+}
+
+// TestQueryRepos_AliasWithoutAnswerIsUnreadable: a repository alias that
+// is null or missing, with no error of its own, is unreadable. Its refs
+// are could-not-verify, never absent: impostor-commit (ISSUE-707) fires
+// only on a confirmed absence.
+func TestQueryRepos_AliasWithoutAnswerIsUnreadable(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"null", `{"data":{"r0":null}}`},
+		{"missing", `{"data":{}}`},
+		{"not an object", `{"data":{"r0":5}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, got := graphQLMetadataClient(t, func(graphQLRequest) (string, int) { return tc.body, 200 })
+			c.queryRepos([]repoRequest{{owner: "o", repo: "r", info: true, refs: []string{shaA}}})
+			e := c.repoCache["o/r"]
+			if !e.fetched || e.err == nil {
+				t.Fatalf("repo = %+v, want unreadable", e)
+			}
+			if tc.name != "not an object" && !strings.Contains(e.err.Error(), "r0") {
+				t.Errorf("repo error = %v, want it to name r0", e.err)
+			}
+			if f := c.refFacts["o/r@"+shaA]; f == nil || !f.failed || f.err == nil {
+				t.Errorf("ref facts = %+v, want failed", f)
+			}
+			if exists, checked := c.commitResolves("o", "r", shaA); exists || checked {
+				t.Errorf("commitResolves = %v, %v; want could-not-verify", exists, checked)
+			}
+			if rel := c.releases["o/r"]; rel != nil {
+				t.Errorf("releases = %v, want none", rel)
+			}
+			if len(*got) != 1 {
+				t.Errorf("queries = %d, want 1", len(*got))
+			}
+		})
+	}
+}
+
+// TestQueryRepos_AdvisoryAliasFailsAlone: an advisory lookup that fails
+// while its repository answers is cached empty and recorded as a degraded
+// check, so it never reads as "no advisories"; the repository stays read.
+func TestQueryRepos_AdvisoryAliasFailsAlone(t *testing.T) {
+	const repo = `"r0":{"nameWithOwner":"o/r","isArchived":false,"stargazerCount":7}`
+	for _, tc := range []struct{ name, body, cause string }{
+		{"error on the alias", `{"data":{` + repo + `,"a0":null},"errors":[{"path":["a0"],"message":"boom"}]}`, "boom"},
+		{"null", `{"data":{` + repo + `,"a0":null}}`, "a0"},
+		{"missing", `{"data":{` + repo + `}}`, "a0"},
+		{"not an object", `{"data":{` + repo + `,"a0":"garbage"}}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := graphQLMetadataClient(t, func(graphQLRequest) (string, int) { return tc.body, 200 })
+			c.queryRepos([]repoRequest{{owner: "o", repo: "r", info: true, advisories: true}})
+			if adv, ok := c.advisoryCache["o/r"]; !ok || adv == nil || len(adv) != 0 {
+				t.Errorf("advisories = %v (cached %v), want an empty cached list", adv, ok)
+			}
+			d := strings.Join(c.DegradedChecks(), "\n")
+			if !strings.Contains(d, "o/r: the GitHub Advisory Database could not be queried") || !strings.Contains(d, tc.cause) {
+				t.Errorf("degraded = %q, want the advisory warning with %q", d, tc.cause)
+			}
+			if e := c.repoCache["o/r"]; e.err != nil || e.stars != 7 {
+				t.Errorf("repo = %+v, want it read", e)
+			}
+		})
+	}
+}
+
+// TestQueryRepos_ErrorUnderAnAlias: an error on a field under a
+// repository alias spoils that repository only, with the first message
+// GitHub gave for it. An error whose path does not start at an alias
+// spoils the whole answer.
+func TestQueryRepos_ErrorUnderAnAlias(t *testing.T) {
+	const a = `"r0":{"nameWithOwner":"o/a","isArchived":false,"stargazerCount":1,"t0":null,"h0":{"name":"main"},"x0":null,"l0":null}`
+	const b = `"r1":{"nameWithOwner":"o/b","isArchived":false,"stargazerCount":2,"t0":null,"h0":{"name":"main"},"x0":null,"l0":null}`
+	reqs := []repoRequest{
+		{owner: "o", repo: "a", info: true, refs: []string{"main"}},
+		{owner: "o", repo: "b", info: true, refs: []string{"main"}},
+	}
+	t.Run("nested field", func(t *testing.T) {
+		c, _ := graphQLMetadataClient(t, func(graphQLRequest) (string, int) {
+			return `{"data":{` + a + `,` + b + `},"errors":[{"path":["r0","l0"],"message":"first"},{"path":["r0","t0"],"message":"second"}]}`, 200
+		})
+		c.queryRepos(reqs)
+		if e := c.repoCache["o/a"]; e.err == nil || e.err.Error() != "first" {
+			t.Errorf("o/a = %+v, want the first error GitHub gave", e)
+		}
+		if f := c.refFacts["o/a@main"]; f == nil || !f.failed || f.branch {
+			t.Errorf("o/a ref facts = %+v, want failed", f)
+		}
+		if e := c.repoCache["o/b"]; e.err != nil || e.stars != 2 {
+			t.Errorf("o/b = %+v, want it read", e)
+		}
+		if f := c.refFacts["o/b@main"]; f == nil || f.failed || !f.branch {
+			t.Errorf("o/b ref facts = %+v, want read", f)
+		}
+	})
+	t.Run("path that names no alias", func(t *testing.T) {
+		c, got := graphQLMetadataClient(t, func(graphQLRequest) (string, int) {
+			return `{"data":{` + a + `,` + b + `},"errors":[{"path":[0],"message":"odd"}]}`, 200
+		})
+		c.queryRepos(reqs)
+		for _, name := range []string{"a", "b"} {
+			if e := c.repoCache["o/"+name]; e.err == nil {
+				t.Errorf("o/%s = %+v, want could-not-verify", name, e)
+			}
+			if f := c.refFacts["o/"+name+"@main"]; f == nil || !f.failed {
+				t.Errorf("o/%s ref facts = %+v, want failed", name, f)
+			}
+		}
+		if len(*got) != 1 {
+			t.Errorf("queries = %d, want 1 (not split)", len(*got))
+		}
+	})
+}
+
+// TestQueryRepos_NoGraphQLClient: a client with no GraphQL client answers
+// could-not-verify for everything and sends nothing.
+func TestQueryRepos_NoGraphQLClient(t *testing.T) {
+	c, got := graphQLMetadataClient(t, func(graphQLRequest) (string, int) { return `{"data":{}}`, 200 })
+	c.gql = nil
+	c.queryRepos([]repoRequest{{owner: "o", repo: "r", info: true, advisories: true, refs: []string{"v1"}}})
+	if e := c.repoCache["o/r"]; !e.fetched || e.err != errNoGraphQL {
+		t.Errorf("repo = %+v, want errNoGraphQL", e)
+	}
+	if f := c.refFacts["o/r@v1"]; f == nil || !f.failed {
+		t.Errorf("ref facts = %+v, want failed", f)
+	}
+	if d := strings.Join(c.DegradedChecks(), "\n"); !strings.Contains(d, "Advisory Database could not be queried") {
+		t.Errorf("degraded = %q, want the advisory warning", d)
+	}
+	c.queryTags([]repoKey{{"o", "r"}})
+	if tags, ok := c.sha2tagCache["o/r"]; !ok || len(tags) != 0 {
+		t.Errorf("sha2tag = %v (cached %v), want an empty cached listing", tags, ok)
+	}
+	if len(*got) != 0 {
+		t.Errorf("queries = %d, want 0", len(*got))
+	}
+}
+
+// TestQueryRepos_QueryCostGuards: the cost is recorded when GitHub gives
+// it, also beside an alias error; an answer without it records nothing,
+// and a client with no recorder does not fail.
+func TestQueryRepos_QueryCostGuards(t *testing.T) {
+	reqs := []repoRequest{{owner: "o", repo: "r", info: true}}
+	t.Run("no rateLimit field", func(t *testing.T) {
+		c, _ := graphQLMetadataClient(t, func(graphQLRequest) (string, int) { return `{"data":{"r0":{"nameWithOwner":"o/r"}}}`, 200 })
+		var recorded []graphQLCost
+		c.recordCost = func(gc graphQLCost) { recorded = append(recorded, gc) }
+		c.queryRepos(reqs)
+		if len(recorded) != 0 {
+			t.Errorf("recorded = %+v, want nothing", recorded)
+		}
+	})
+	t.Run("failed query", func(t *testing.T) {
+		c, _ := graphQLMetadataClient(t, func(graphQLRequest) (string, int) { return `{"message":"no"}`, 401 })
+		var recorded []graphQLCost
+		c.recordCost = func(gc graphQLCost) { recorded = append(recorded, gc) }
+		c.queryRepos(reqs)
+		if len(recorded) != 0 {
+			t.Errorf("recorded = %+v, want nothing", recorded)
+		}
+	})
+	t.Run("no recorder", func(t *testing.T) {
+		c, _ := graphQLMetadataClient(t, func(graphQLRequest) (string, int) {
+			return `{"data":{"rateLimit":{"cost":3,"remaining":4000},"r0":{"nameWithOwner":"o/r"}}}`, 200
+		})
+		c.recordCost = nil
+		c.queryRepos(reqs)
+		if e := c.repoCache["o/r"]; e.err != nil || e.fullName != "o/r" {
+			t.Errorf("repo = %+v, want it read", e)
+		}
+	})
+	t.Run("beside an alias error", func(t *testing.T) {
+		c, _ := graphQLMetadataClient(t, func(graphQLRequest) (string, int) {
+			return `{"data":{"rateLimit":{"cost":2,"remaining":10},"r0":null},"errors":[{"type":"NOT_FOUND","path":["r0"],"message":"gone"}]}`, 200
+		})
+		var recorded []graphQLCost
+		c.recordCost = func(gc graphQLCost) { recorded = append(recorded, gc) }
+		c.queryRepos(reqs)
+		want := graphQLCost{Label: "action metadata: 1 repositories", Cost: 2, Remaining: 10}
+		if len(recorded) != 1 || recorded[0] != want {
+			t.Errorf("recorded = %+v, want %+v", recorded, want)
+		}
+	})
+}
+
+// TestQueryRepos_MalformedReleases: a repository whose releases are
+// missing or unreadable is read with no releases, and a next page GitHub
+// gives no cursor for is not asked.
+func TestQueryRepos_MalformedReleases(t *testing.T) {
+	for _, tc := range []struct {
+		name, releases string
+		want           int
+	}{
+		{"missing", ``, 0},
+		{"null", `,"releases":null`, 0},
+		{"not an object", `,"releases":"x"`, 0},
+		{"next page without a cursor", `,"releases":` + releasesPageBody(3, true, ""), 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, got := graphQLMetadataClient(t, func(graphQLRequest) (string, int) {
+				return `{"data":{"r0":{"nameWithOwner":"o/r","isArchived":true,"stargazerCount":1` + tc.releases + `}}}`, 200
+			})
+			c.queryRepos([]repoRequest{{owner: "o", repo: "r", info: true}})
+			if len(*got) != 1 {
+				t.Errorf("queries = %d, want 1 (no second page)", len(*got))
+			}
+			if n := len(c.releases["o/r"]); n != tc.want {
+				t.Errorf("releases = %d, want %d", n, tc.want)
+			}
+			if e := c.repoCache["o/r"]; e.err != nil || !e.archived {
+				t.Errorf("repo = %+v, want it read", e)
+			}
+		})
+	}
+}
+
+// TestQueryRepos_ChunksPastTheChunkSize: more repositories than one query
+// takes go out in several, the aliases starting again at r0 in each, and
+// every answer lands under its own repository. The second pages of
+// releases are chunked the same way.
+func TestQueryRepos_ChunksPastTheChunkSize(t *testing.T) {
+	var sizes, pageSizes []int
+	c, _ := graphQLMetadataClient(t, func(q graphQLRequest) (string, int) {
+		var parts []string
+		_, second := q.Variables["c0"]
+		n := 0
+		for ; q.Variables["n"+strconv.Itoa(n)] != nil; n++ {
+			name := q.Variables["n"+strconv.Itoa(n)].(string)
+			if second {
+				parts = append(parts, fmt.Sprintf(`"r%d":{"releases":{"nodes":[{"tagName":"second-%s"}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}`, n, name))
+				continue
+			}
+			parts = append(parts, fmt.Sprintf(`"r%d":{"nameWithOwner":"o/%s","isArchived":false,"stargazerCount":1,"releases":{"nodes":[{"tagName":"first-%s"}],"pageInfo":{"hasNextPage":true,"endCursor":"cur-%s"}}}`, n, name, name, name))
+		}
+		if second {
+			pageSizes = append(pageSizes, n)
+			for i := range n {
+				if want := "cur-" + q.Variables["n"+strconv.Itoa(i)].(string); q.Variables["c"+strconv.Itoa(i)] != want {
+					t.Errorf("cursor c%d = %v, want %s", i, q.Variables["c"+strconv.Itoa(i)], want)
+				}
+			}
+		} else {
+			sizes = append(sizes, n)
+		}
+		return `{"data":{` + strings.Join(parts, ",") + `}}`, 200
+	})
+	var reqs []repoRequest
+	for i := range metadataChunkSize + 1 {
+		reqs = append(reqs, repoRequest{owner: "o", repo: "repo" + strconv.Itoa(i), info: true})
+	}
+	c.queryRepos(reqs)
+	if want := []int{metadataChunkSize, 1}; !slices.Equal(sizes, want) || !slices.Equal(pageSizes, want) {
+		t.Fatalf("query sizes = %v, second pages = %v; want %v for both", sizes, pageSizes, want)
+	}
+	for _, r := range reqs {
+		key := "o/" + r.repo
+		if e := c.repoCache[key]; e.err != nil || e.fullName != key {
+			t.Errorf("%s = %+v, want its own answer", key, e)
+		}
+		want := []releaseFact{{tag: "first-" + r.repo}, {tag: "second-" + r.repo}}
+		if rel := c.releases[key]; !slices.Equal(rel, want) {
+			t.Errorf("%s releases = %+v, want %+v", key, rel, want)
+		}
+	}
+}
+
+// TestQueryRepos_DecodedRefFactsFollowTheRefShape: a ref outside the
+// plain-name grammar was not looked up as an object, so its facts say the
+// object was not checked rather than that it is absent. The release is
+// asked on github.com only.
+func TestQueryRepos_DecodedRefFactsFollowTheRefShape(t *testing.T) {
+	const answer = `{"data":{"r0":{
+		"t0":null,"h0":null,"x0":{"__typename":"Commit","oid":"c1"},"l0":null,
+		"t1":null,"h1":{"name":"main"},"x1":{"__typename":"Commit","oid":"c2"},"l1":{"immutable":false},
+		"t2":{"target":{"__typename":"Commit","oid":"c3"}},"h2":null,"l2":{"immutable":true}
+	}}}`
+	sha := strings.Repeat("AB", 20)
+	refs := []string{sha, "main", "v1@{0}"}
+	for _, dotcom := range []bool{true, false} {
+		t.Run(fmt.Sprintf("dotcom=%v", dotcom), func(t *testing.T) {
+			c, got := graphQLMetadataClient(t, func(graphQLRequest) (string, int) { return answer, 200 })
+			c.dotcom = dotcom
+			c.queryRepos([]repoRequest{{owner: "o", repo: "r", refs: refs}})
+			if asked := strings.Contains((*got)[0].Query, "release(tagName:"); asked != dotcom {
+				t.Errorf("release asked = %v, want %v", asked, dotcom)
+			}
+			bySha := c.refFacts["o/r@"+sha]
+			if bySha == nil || bySha.failed || !bySha.objectChecked || bySha.object == nil || bySha.object.Oid != "c1" || bySha.branch || bySha.tag != nil || bySha.release != nil {
+				t.Errorf("SHA facts = %+v", bySha)
+			}
+			main := c.refFacts["o/r@main"]
+			if main == nil || !main.branch || !main.objectChecked || main.object == nil || main.object.Oid != "c2" {
+				t.Fatalf("branch facts = %+v", main)
+			}
+			odd := c.refFacts["o/r@v1@{0}"]
+			if odd == nil || odd.failed || odd.objectChecked || odd.object != nil || odd.tag == nil || odd.tag.Oid != "c3" {
+				t.Fatalf("facts of a ref outside the grammar = %+v, want the object not checked", odd)
+			}
+			if exists, checked := c.commitResolves("o", "r", "v1@{0}"); exists || checked {
+				t.Errorf("commitResolves = %v, %v; want could-not-verify", exists, checked)
+			}
+			if dotcom {
+				if main.release == nil || *main.release || odd.release == nil || !*odd.release {
+					t.Errorf("releases = %v, %v; want false, true", main.release, odd.release)
+				}
+			}
+		})
+	}
+}
+
+// TestQueryRepos_EnterpriseRecordsNoRelease: a GitHub Enterprise Server
+// answer carries no release alias, so the ref facts hold none and the
+// advisories stay off the GraphQL cache.
+func TestQueryRepos_EnterpriseRecordsNoRelease(t *testing.T) {
+	c, _ := graphQLMetadataClient(t, func(graphQLRequest) (string, int) {
+		return `{"data":{"r0":{"nameWithOwner":"o/r","isArchived":false,"stargazerCount":1,"t0":{"target":{"__typename":"Commit","oid":"c1"}},"h0":null,"x0":{"__typename":"Commit","oid":"c1"}}}}`, 200
+	})
+	c.dotcom = false
+	c.queryRepos([]repoRequest{{owner: "o", repo: "r", info: true, advisories: true, refs: []string{"v1"}}})
+	f := c.refFacts["o/r@v1"]
+	if f == nil || f.failed || f.release != nil || f.tag == nil || f.tag.Oid != "c1" || !f.objectChecked || f.object == nil {
+		t.Errorf("ref facts = %+v, want the tag read and no release", f)
+	}
+	if _, ok := c.advisoryCache["o/r"]; ok {
+		t.Error("advisories cached from GraphQL on GHES")
+	}
+	if len(c.DegradedChecks()) != 0 {
+		t.Errorf("degraded = %v, want none", c.DegradedChecks())
+	}
+}
+
+// tagsPage is one repository's page of a tag listing.
+func tagsPage(next bool, cursor string, tags ...string) string {
+	var nodes []string
+	for i := 0; i+1 < len(tags); i += 2 {
+		nodes = append(nodes, fmt.Sprintf(`{"name":%q,"target":{"__typename":"Commit","oid":%q}}`, tags[i], tags[i+1]))
+	}
+	return fmt.Sprintf(`{"refs":{"nodes":[%s],"pageInfo":{"hasNextPage":%t,"endCursor":%q}}}`, strings.Join(nodes, ","), next, cursor)
+}
+
+// TestQueryTags_SeveralRepositories: repositories are listed together. One
+// whose listing ended leaves the next round, where the others take the
+// aliases from r0 again; each repository keeps its own tags and cursor.
+func TestQueryTags_SeveralRepositories(t *testing.T) {
+	c, got := graphQLMetadataClient(t, func(q graphQLRequest) (string, int) {
+		if q.Variables["n1"] != nil {
+			return `{"data":{"r0":` + tagsPage(false, "", "v1.0.0", "a1") + `,"r1":` + tagsPage(true, "p2", "v2.0.0", "b1") + `}}`, 200
+		}
+		return `{"data":{"r0":` + tagsPage(false, "", "v2.1.0", "b2") + `}}`, 200
+	})
+	c.queryTags([]repoKey{{"o", "a"}, {"o", "b"}})
+	if len(*got) != 2 {
+		t.Fatalf("queries = %d, want 2", len(*got))
+	}
+	first, second := (*got)[0].Variables, (*got)[1].Variables
+	if first["n0"] != "a" || first["n1"] != "b" || first["c0"] != nil || first["c1"] != nil {
+		t.Errorf("first round = %v, want a and b from their first page", first)
+	}
+	if second["n0"] != "b" || second["c0"] != "p2" || second["n1"] != nil {
+		t.Errorf("second round = %v, want b alone as r0, after p2", second)
+	}
+	if _, ok := second["c1"]; ok {
+		t.Errorf("second round = %v, want no second repository", second)
+	}
+	if tags := c.sha2tagCache["o/a"]; !maps.Equal(tags, map[string]string{"a1": "v1.0.0"}) {
+		t.Errorf("o/a = %v", tags)
+	}
+	if tags := c.sha2tagCache["o/b"]; !maps.Equal(tags, map[string]string{"b1": "v2.0.0", "b2": "v2.1.0"}) {
+		t.Errorf("o/b = %v", tags)
+	}
+}
+
+// TestQueryTags_OneRepositoryFails: an error on one repository of a
+// listing is logged and ends that repository's listing with what was
+// read, cached so it is not listed again; the other keeps its tags.
+func TestQueryTags_OneRepositoryFails(t *testing.T) {
+	hook := logtest.NewGlobal()
+	t.Cleanup(hook.Reset)
+	c, got := graphQLMetadataClient(t, func(graphQLRequest) (string, int) {
+		return `{"data":{"r0":null,"r1":` + tagsPage(false, "", "v2.0.0", "b1", "", "b9") + `},"errors":[{"path":["r0"],"message":"listing timed out"}]}`, 200
+	})
+	c.queryTags([]repoKey{{"o", "a"}, {"o", "b"}})
+	if len(*got) != 1 {
+		t.Fatalf("queries = %d, want 1 (a failed listing is not asked again)", len(*got))
+	}
+	if tags, ok := c.sha2tagCache["o/a"]; !ok || tags == nil || len(tags) != 0 {
+		t.Errorf("o/a = %v (cached %v), want an empty cached listing", tags, ok)
+	}
+	// The tag with no name is skipped.
+	if tags := c.sha2tagCache["o/b"]; !maps.Equal(tags, map[string]string{"b1": "v2.0.0"}) {
+		t.Errorf("o/b = %v, want its named tag only", tags)
+	}
+	var warned []string
+	for _, e := range hook.AllEntries() {
+		if strings.Contains(e.Message, "could not fetch tags for") {
+			warned = append(warned, e.Message)
+		}
+	}
+	if len(warned) != 1 || !strings.Contains(warned[0], "o/a on page 1") || !strings.Contains(warned[0], "listing timed out") {
+		t.Errorf("warnings = %q, want one naming o/a, page 1 and GitHub's error", warned)
+	}
+}
+
+// TestQueryTags_FailureIsLoggedAndCached: a listing that fails, on its
+// first page or a later one, is logged with the page, is not asked again
+// and is cached with what was read.
+func TestQueryTags_FailureIsLoggedAndCached(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		failAt      int
+		wantQueries int
+		want        map[string]string
+	}{
+		{"first page", 1, 1, map[string]string{}},
+		{"second page", 2, 2, map[string]string{"c1": "v1.0.0"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hook := logtest.NewGlobal()
+			t.Cleanup(hook.Reset)
+			page := 0
+			c, got := graphQLMetadataClient(t, func(graphQLRequest) (string, int) {
+				page++
+				if page == tc.failAt {
+					return `{"message":"rate limited"}`, 403
+				}
+				return `{"data":{"r0":` + tagsPage(true, "p2", "v1.0.0", "c1") + `}}`, 200
+			})
+			c.queryTags([]repoKey{{"o", "r"}})
+			if len(*got) != tc.wantQueries {
+				t.Errorf("queries = %d, want %d", len(*got), tc.wantQueries)
+			}
+			if tags, ok := c.sha2tagCache["o/r"]; !ok || tags == nil || !maps.Equal(tags, tc.want) {
+				t.Errorf("sha2tag = %v (cached %v), want %v", tags, ok, tc.want)
+			}
+			logged := false
+			for _, e := range hook.AllEntries() {
+				if strings.Contains(e.Message, fmt.Sprintf("could not fetch tags for o/r on page %d", tc.failAt)) {
+					logged = true
+				}
+			}
+			if !logged {
+				t.Errorf("no warning for page %d", tc.failAt)
+			}
+		})
+	}
+}
+
+// TestDoRetrying_OurOwnTimeout: a try our own timeout cuts short is sent
+// again, with a fresh timeout of its own.
+func TestDoRetrying_OurOwnTimeout(t *testing.T) {
+	orig := metadataQueryTimeout
+	metadataQueryTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { metadataQueryTimeout = orig })
+
+	tries := 0
+	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		tries++
+		if tries == 1 {
+			<-r.Context().Done() // GitHub takes longer than we wait
+			return nil, r.Context().Err()
+		}
+		if err := r.Context().Err(); err != nil {
+			t.Errorf("try %d starts with a spent context: %v", tries, err)
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"data":{"viewer":{"login":"me"}}}`)),
+			Header: http.Header{"Content-Type": []string{"application/json"}}, Request: r}, nil
+	})
+	gql, err := api.NewGraphQLClient(api.ClientOptions{AuthToken: "x", Transport: rt})
+	if err != nil {
+		t.Fatalf("new graphql client: %v", err)
+	}
+	var data struct {
+		Viewer struct{ Login string }
+	}
+	if err := doRetrying(gql, "{ viewer { login } }", nil, &data); err != nil {
+		t.Fatalf("doRetrying = %v, want the second try's answer", err)
+	}
+	if tries != 2 || data.Viewer.Login != "me" {
+		t.Errorf("tries = %d, login = %q; want 2, me", tries, data.Viewer.Login)
 	}
 }

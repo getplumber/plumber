@@ -1,8 +1,12 @@
 package github
 
 import (
+	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/getplumber/plumber/internal/ir"
@@ -535,5 +539,87 @@ func TestEnrichPrefetchesTheCommentVersion(t *testing.T) {
 	}
 	if len(*loads) != 1 {
 		t.Fatalf("loads = %+v, want the pin and the comment tag in one load", *loads)
+	}
+}
+
+// TestEnrichActions_NoEntrypointPrefetchWithoutTheMutableExecScan: the
+// entrypoint prefetch serves the mutable-exec scan only. With the scan
+// off, no entrypoint is asked about and none is read.
+func TestEnrichActions_NoEntrypointPrefetchWithoutTheMutableExecScan(t *testing.T) {
+	t.Setenv(EnvDisableGitHubAPI, "0")
+	t.Setenv(EnvMetadataToken, "test-token")
+	stub := newStub(map[string]string{"acme/js@v1:action.yml": composite()})
+	client := stubbedMetadataClient(t, func(*http.Request) (string, int) { return `{}`, http.StatusNotFound })
+	gql, queries := stubbedGraphQL(t, func(graphQLRequest) (string, int) {
+		body, _ := json.Marshal(map[string]any{"data": map[string]any{}})
+		return string(body), http.StatusOK
+	})
+	client.gql = gql
+	defs := tokenFetcher(stub.fetch, client)
+	p := &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, ProjectPath: "acme/app", Jobs: []ir.Job{oneJob("acme/js@v1")}}
+	resolveNestedActions(p, defs, nestedScope{projectPath: "acme/app"})
+	enrichActions(p, client, defs, false, nil)
+
+	if len(*queries) == 0 {
+		t.Fatal("the metadata of the action must still be loaded")
+	}
+	for _, q := range *queries {
+		if strings.Contains(q.Query, "object(expression: $e0_0)") {
+			t.Errorf("an entrypoint prefetch was sent with the mutable-exec scan off:\n%s", q.Query)
+		}
+	}
+	if len(defs.absent) != 0 {
+		t.Errorf("absent = %v, want nothing recorded", defs.absent)
+	}
+	for _, candidate := range entrypointCandidates {
+		if n := stub.calls["acme/js@v1:"+candidate]; n != 0 {
+			t.Errorf("%s read %d times, want 0 with the scan off", candidate, n)
+		}
+	}
+}
+
+// TestPrefetchRefs: the prefetch loads every reference the enrichment
+// resolves, sorted, then the `owner/repo@version` of each version comment
+// in the order of the steps. A step the enrichment does not resolve, a
+// comment with no version and a reference with no owner/repo add nothing.
+func TestPrefetchRefs(t *testing.T) {
+	const sha = "a7487c7e89a18df4991f7f222e4898a00d66ddda"
+	pipeline := &ir.NormalizedPipeline{Jobs: []ir.Job{
+		{Uses: []ir.Action{
+			{Uses: "pnpm/action-setup@" + sha, Comment: "v4.1.0"},
+			{Uses: "acme/plain@v1"},
+			{Uses: "acme/noted@" + sha, Comment: "pinned on purpose"},
+			{Uses: "acme/refused@" + sha, Comment: "v9.9.9"},
+		}},
+		{Uses: []ir.Action{
+			{Uses: "./local", Comment: "v3"},
+			{Uses: "acme/mono/tools/lint@" + sha, Comment: "tag v2"},
+		}},
+	}}
+	// acme/refused is a nested action past the budget: enrichActions leaves
+	// it out of the references it resolves.
+	uniqueRefs := map[string]struct{}{
+		"pnpm/action-setup@" + sha:               {},
+		"acme/plain@v1":                          {},
+		"acme/noted@" + sha:                      {},
+		"./local":                                {},
+		"acme/mono/tools/lint@" + sha:            {},
+		"acme/wf/.github/workflows/build.yml@v1": {},
+	}
+	want := []string{
+		"./local",
+		"acme/mono/tools/lint@" + sha,
+		"acme/noted@" + sha,
+		"acme/plain@v1",
+		"acme/wf/.github/workflows/build.yml@v1",
+		"pnpm/action-setup@" + sha,
+		"pnpm/action-setup@v4.1.0",
+		"acme/mono@v2",
+	}
+	if got := prefetchRefs(pipeline, uniqueRefs); !reflect.DeepEqual(got, want) {
+		t.Errorf("prefetchRefs = %q\nwant %q", got, want)
+	}
+	if got := prefetchRefs(&ir.NormalizedPipeline{}, nil); len(got) != 0 {
+		t.Errorf("prefetchRefs of an empty pipeline = %q, want none", got)
 	}
 }

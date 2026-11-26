@@ -3,11 +3,15 @@ package github
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/getplumber/plumber/internal/httpcount"
 	"github.com/getplumber/plumber/internal/ir"
 )
 
@@ -370,3 +374,84 @@ func TestIsAuthTokenMissing(t *testing.T) {
 type stubError struct{ msg string }
 
 func (s *stubError) Error() string { return s.msg }
+
+// TestScanGitHubWorkflowsRemote_GraphQLClientError: without a GraphQL
+// client the scan stops before any request. The missing-token error keeps
+// its actionable message, unwrapped; any other names the client.
+func TestScanGitHubWorkflowsRemote_GraphQLClientError(t *testing.T) {
+	boom := errors.New("boom")
+	for _, tc := range []struct {
+		name    string
+		err     error
+		wantMsg string
+	}{
+		{"no token", ErrAuthRequired, ErrAuthRequired.Error()},
+		{"other error", boom, "github graphql client: boom"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			swapScannedRepoGraphQL(t, nil, tc.err)
+			paths := restRecorder(t, nil)
+			p, partial, err := ScanGitHubWorkflowsRemote("", "acme", "app", "main", false, false, nil)
+			if p != nil || len(partial) != 0 {
+				t.Errorf("pipeline = %v, partial = %v; want neither", p, partial)
+			}
+			if err == nil || err.Error() != tc.wantMsg || !errors.Is(err, tc.err) {
+				t.Errorf("err = %v, want %q", err, tc.wantMsg)
+			}
+			if len(*paths) != 0 {
+				t.Errorf("REST paths = %v, want no request", *paths)
+			}
+		})
+	}
+}
+
+// TestNewGoghRESTClient: the REST client of the scanned repository sends
+// through httpcount.MemoTransport, so its requests are counted and a
+// repeated GET is answered from memory. An empty host is api.github.com;
+// a GitHub Enterprise Server host is that host's API.
+func TestNewGoghRESTClient(t *testing.T) {
+	for _, tc := range []struct{ name, host, wantHost, wantPath string }{
+		{"github.com", "", "api.github.com", "/repos/acme/app"},
+		{"enterprise", "ghes.example.com", "ghes.example.com", "/api/v3/repos/acme/app"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, env := range []string{"GITHUB_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "GH_HOST"} {
+				t.Setenv(env, "")
+			}
+			t.Setenv("GH_TOKEN", "ghp_scan")
+			t.Setenv("GH_ENTERPRISE_TOKEN", "ghp_scan")
+			t.Setenv("GH_CONFIG_DIR", t.TempDir())
+			t.Setenv("GH_PATH", filepath.Join(t.TempDir(), "no-gh"))
+			var got []*http.Request
+			orig := httpcount.MemoTransport
+			httpcount.MemoTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				got = append(got, r)
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(`{}`)),
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Request:    r,
+				}, nil
+			})
+			t.Cleanup(func() { httpcount.MemoTransport = orig })
+
+			rest, err := newGoghRESTClient(tc.host)
+			if err != nil {
+				t.Fatalf("client: %v", err)
+			}
+			var out map[string]any
+			if err := rest.Get("repos/acme/app", &out); err != nil {
+				t.Fatalf("get: %v", err)
+			}
+			if len(got) != 1 {
+				t.Fatalf("httpcount.MemoTransport saw %d requests, want 1", len(got))
+			}
+			if got[0].URL.Host != tc.wantHost || got[0].URL.Path != tc.wantPath {
+				t.Errorf("request = %s%s, want %s%s", got[0].URL.Host, got[0].URL.Path, tc.wantHost, tc.wantPath)
+			}
+			if auth := got[0].Header.Get("Authorization"); auth != "token ghp_scan" {
+				t.Errorf("Authorization = %q, want the run's token", auth)
+			}
+		})
+	}
+}

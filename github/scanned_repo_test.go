@@ -1,9 +1,12 @@
 package github
 
 import (
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -13,8 +16,13 @@ import (
 	"github.com/sirupsen/logrus"
 	logtest "github.com/sirupsen/logrus/hooks/test"
 
+	"github.com/getplumber/plumber/internal/httpcount"
 	"github.com/getplumber/plumber/internal/ir"
 )
+
+// productionScannedRepoGraphQL is the constructor the run uses, kept aside
+// before init replaces it for every test.
+var productionScannedRepoGraphQL = newScannedRepoGraphQL
 
 // enterpriseHost is a GitHub Enterprise Server host. The tests that cover
 // the REST reads of the scanned repository use it, since github.com reads
@@ -523,4 +531,342 @@ func TestScannedRepo_FieldErrorIsNotAnAnswer(t *testing.T) {
 			t.Error("default branch: want an error, not the quiet degrade of a missing repository")
 		}
 	})
+}
+
+// TestNewScannedRepoGraphQL runs the constructor the tests replace. The
+// scanned repository is read with the run's own token, never
+// PLUMBER_METADATA_TOKEN: that token alone is no token (ErrAuthRequired).
+// With one, the client sends it through httpcount.DefaultTransport, which
+// counts the query and never answers it from memory.
+func TestNewScannedRepoGraphQL(t *testing.T) {
+	isolate := func(t *testing.T) {
+		t.Helper()
+		for _, env := range []string{EnvMetadataToken, "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "GH_HOST"} {
+			t.Setenv(env, "")
+		}
+		t.Setenv("GH_CONFIG_DIR", t.TempDir())
+		t.Setenv("GH_PATH", filepath.Join(t.TempDir(), "no-gh")) // no keyring login through `gh auth token`
+	}
+	t.Run("the metadata token alone is no token", func(t *testing.T) {
+		isolate(t)
+		t.Setenv(EnvMetadataToken, "ghp_metadata")
+		if gql, err := productionScannedRepoGraphQL(""); gql != nil || err != ErrAuthRequired {
+			t.Fatalf("client = %v, err = %v; want ErrAuthRequired", gql, err)
+		}
+	})
+	t.Run("sends the run's token through the counting transport", func(t *testing.T) {
+		isolate(t)
+		t.Setenv("GH_TOKEN", "ghp_scan")
+		t.Setenv(EnvMetadataToken, "ghp_metadata")
+		var got []*http.Request
+		orig := httpcount.DefaultTransport
+		httpcount.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			got = append(got, r)
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{"data":{}}`)),
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Request:    r,
+			}, nil
+		})
+		t.Cleanup(func() { httpcount.DefaultTransport = orig })
+
+		gql, err := productionScannedRepoGraphQL("")
+		if err != nil || gql == nil {
+			t.Fatalf("client = %v, err = %v; want a client", gql, err)
+		}
+		var data map[string]json.RawMessage
+		if err := gql.Do("{ viewer { login } }", nil, &data); err != nil {
+			t.Fatalf("query: %v", err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("httpcount.DefaultTransport saw %d requests, want the query", len(got))
+		}
+		if auth := got[0].Header.Get("Authorization"); auth != "token ghp_scan" {
+			t.Errorf("Authorization = %q, want the run's token, never the metadata token", auth)
+		}
+		if host := got[0].URL.Host; host != "api.github.com" {
+			t.Errorf("host = %q, want api.github.com", host)
+		}
+	})
+}
+
+// TestPrefetchScannedRepo_NeedsOwnerAndRepo: with no owner or no
+// repository there is nothing to ask, so no query is sent.
+func TestPrefetchScannedRepo_NeedsOwnerAndRepo(t *testing.T) {
+	gql, queries := stubbedGraphQL(t, func(graphQLRequest) (string, int) { return acmeWidget, 200 })
+	swapScannedRepoGraphQL(t, gql, nil)
+
+	PrefetchScannedRepo("", "", "widget", []string{"main"})
+	PrefetchScannedRepo("", "acme", "", []string{"main"})
+	if len(*queries) != 0 {
+		t.Errorf("sent %d queries, want 0", len(*queries))
+	}
+	scannedRepos.Lock()
+	kept := len(scannedRepos.m)
+	scannedRepos.Unlock()
+	if kept != 0 {
+		t.Errorf("kept %d answers, want none", kept)
+	}
+}
+
+// TestScannedRepo_AsksEachBranchOnce: an empty name and a repeated one
+// cost no alias of their own.
+func TestScannedRepo_AsksEachBranchOnce(t *testing.T) {
+	gql, queries := stubbedGraphQL(t, func(graphQLRequest) (string, int) {
+		return `{"data":{"repository":{"nameWithOwner":"acme/widget","b0":{"name":"dev","refUpdateRule":null,"rules":{"totalCount":0}},"b1":null}}}`, 200
+	})
+	swapScannedRepoGraphQL(t, gql, nil)
+
+	PrefetchScannedRepo("", "acme", "widget", []string{"", "dev", "dev", "gone", ""})
+
+	if len(*queries) != 1 {
+		t.Fatalf("sent %d queries, want 1", len(*queries))
+	}
+	wantVars := map[string]any{
+		"owner": "acme", "name": "widget",
+		"b0": "refs/heads/dev", "b1": "refs/heads/gone",
+		"releases": float64(defaultTokenRunsPerPage),
+	}
+	if got := (*queries)[0].Variables; !reflect.DeepEqual(got, wantVars) {
+		t.Errorf("variables = %v\nwant %v", got, wantVars)
+	}
+	scannedRepos.Lock()
+	branches := scannedRepos.m["|acme/widget"].branches
+	scannedRepos.Unlock()
+	want := map[string]branchFact{"dev": {exists: true}, "gone": {}}
+	if !reflect.DeepEqual(branches, want) {
+		t.Errorf("branches = %+v, want %+v", branches, want)
+	}
+}
+
+// TestScannedRepo_LaterBranchClientFails: a branch a later read asks needs
+// the GraphQL client again. Without one the read fails with the client's
+// error, and what the first query answered stays.
+func TestScannedRepo_LaterBranchClientFails(t *testing.T) {
+	gql, queries := stubbedGraphQL(t, func(graphQLRequest) (string, int) { return acmeWidget, 200 })
+	swapScannedRepoGraphQL(t, gql, nil)
+	restRecorder(t, nil)
+
+	if def, _ := FetchGitHubDefaultBranch("", "acme", "widget"); def != "main" {
+		t.Fatalf("default branch = %q, want main", def)
+	}
+	// swapScannedRepoGraphQL's cleanup restores the constructor.
+	newScannedRepoGraphQL = func(string) (*api.GraphQLClient, error) { return nil, errors.New("boom") }
+
+	branches, err := FetchGitHubBranchProtection("", "acme", "widget", BranchFetchOptions{ExactNames: []string{"dev"}})
+	if len(branches) != 0 || err == nil || !strings.Contains(err.Error(), "github graphql client: boom") {
+		t.Errorf("branches = %+v, err = %v; want the client's error", branches, err)
+	}
+	if len(*queries) != 1 {
+		t.Errorf("sent %d queries, want the first one only", len(*queries))
+	}
+	// A read that asks no new branch needs no client.
+	if vis, name := FetchGitHubRepoIdentity("", "acme", "widget"); vis != ir.VisibilityPrivate || name != "Acme/Widget" {
+		t.Errorf("identity = %q, %q; want the first answer", vis, name)
+	}
+}
+
+// TestScannedRepo_LaterBranchQueryNotFound: the repository can be gone by
+// the time a later read asks one more branch. That branch then reads as
+// REST's 404 did, no branch and no error, and the first answer stays.
+func TestScannedRepo_LaterBranchQueryNotFound(t *testing.T) {
+	gql, queries := stubbedGraphQL(t, func(q graphQLRequest) (string, int) {
+		if _, first := q.Variables["releases"]; !first {
+			return `{"data":{"repository":null},"errors":[{"type":"NOT_FOUND","path":["repository"],"message":"Could not resolve to a Repository"}]}`, 200
+		}
+		return acmeWidget, 200
+	})
+	swapScannedRepoGraphQL(t, gql, nil)
+	restRecorder(t, nil)
+
+	if def, _ := FetchGitHubDefaultBranch("", "acme", "widget"); def != "main" {
+		t.Fatalf("default branch = %q, want main", def)
+	}
+	branches, err := FetchGitHubBranchProtection("", "acme", "widget", BranchFetchOptions{ExactNames: []string{"dev"}})
+	if len(branches) != 0 || err != nil {
+		t.Errorf("branches = %+v, err = %v; want none and no error", branches, err)
+	}
+	if len(*queries) != 2 {
+		t.Errorf("sent %d queries, want 2", len(*queries))
+	}
+	scannedRepos.Lock()
+	fact := scannedRepos.m["|acme/widget"].branches["dev"]
+	scannedRepos.Unlock()
+	if !errors.Is(fact.err, errRepoNotFound) {
+		t.Errorf("dev = %+v, want the repository's not-found kept", fact)
+	}
+	if def, err := FetchGitHubDefaultBranch("", "acme", "widget"); def != "main" || err != nil {
+		t.Errorf("default branch = %q, %v; want the first answer", def, err)
+	}
+}
+
+// TestScannedRepoErrors reads a query's error into the aliases it fails
+// and the error that spoils the whole repository.
+func TestScannedRepoErrors(t *testing.T) {
+	gqlErr := func(items ...api.GraphQLErrorItem) error { return &api.GraphQLError{Errors: items} }
+	item := func(typ, message string, path ...any) api.GraphQLErrorItem {
+		return api.GraphQLErrorItem{Type: typ, Message: message, Path: path}
+	}
+	plain := errors.New("HTTP 502")
+	unknownType := gqlErr(item("INTERNAL", "boom", "repository"))
+	noPath := gqlErr(item("RATE_LIMITED", "slow down"))
+	elsewhere := gqlErr(item("", "cost unavailable", "rateLimit"))
+	for _, tc := range []struct {
+		name       string
+		err        error
+		wantFailed map[string]string
+		wantErr    error
+	}{
+		{name: "no error"},
+		{name: "not a GraphQL error", err: plain, wantErr: plain},
+		{name: "repository not found", err: gqlErr(item("NOT_FOUND", "gone", "repository")), wantErr: errRepoNotFound},
+		{name: "repository forbidden", err: gqlErr(item("FORBIDDEN", "sso", "repository")), wantErr: errRepoForbidden},
+		{name: "repository error of another type", err: unknownType, wantErr: unknownType},
+		{name: "error with no path", err: noPath, wantErr: noPath},
+		{name: "error outside the repository", err: elsewhere, wantErr: elsewhere},
+		{
+			name: "aliases, the first error of each kept",
+			err: gqlErr(
+				item("", "b0 first", "repository", "b0", "rules"),
+				item("", "b0 second", "repository", "b0"),
+				item("", "releases timed out", "repository", "releases"),
+			),
+			wantFailed: map[string]string{"b0": "b0 first", "releases": "releases timed out"},
+		},
+		{
+			// The repository's own error wins over an alias's.
+			name:    "alias error then repository not found",
+			err:     gqlErr(item("", "b0 failed", "repository", "b0"), item("NOT_FOUND", "gone", "repository")),
+			wantErr: errRepoNotFound,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			failed, err := scannedRepoErrors(tc.err)
+			if err != tc.wantErr {
+				t.Errorf("err = %v, want %v", err, tc.wantErr)
+			}
+			got := map[string]string{}
+			for alias, ferr := range failed {
+				got[alias] = ferr.Error()
+			}
+			if len(got) != len(tc.wantFailed) || (len(got) > 0 && !reflect.DeepEqual(got, tc.wantFailed)) {
+				t.Errorf("failed = %v, want %v", got, tc.wantFailed)
+			}
+		})
+	}
+}
+
+// TestNullRepositoryError: a repository GitHub answers null for does not
+// exist, unless a field's error nulled it. With several failed fields the
+// error is the alphabetically first one's, the same on every run.
+func TestNullRepositoryError(t *testing.T) {
+	if err := nullRepositoryError(nil); err != errRepoNotFound {
+		t.Errorf("no failed field: err = %v, want errRepoNotFound", err)
+	}
+	if err := nullRepositoryError(map[string]error{}); err != errRepoNotFound {
+		t.Errorf("empty failed fields: err = %v, want errRepoNotFound", err)
+	}
+	releases, def, branch := errors.New("releases"), errors.New("default branch"), errors.New("branch")
+	for range 20 { // map order must not pick the error
+		if err := nullRepositoryError(map[string]error{"releases": releases, "defaultBranchRef": def, "b0": branch}); err != branch {
+			t.Fatalf("err = %v, want b0's, the alphabetically first alias", err)
+		}
+	}
+}
+
+// TestScannedRepo_SeveralFieldErrorsNullTheRepository: a repository nulled
+// by errors on two of its fields reports one of them, the same on every
+// run, and never reads as a repository that does not exist.
+func TestScannedRepo_SeveralFieldErrorsNullTheRepository(t *testing.T) {
+	gql, _ := stubbedGraphQL(t, func(graphQLRequest) (string, int) {
+		return `{"data":{"repository":null},"errors":[{"path":["repository","releases"],"message":"releases timed out"},{"path":["repository","defaultBranchRef"],"message":"default branch timed out"}]}`, 200
+	})
+	swapScannedRepoGraphQL(t, gql, nil)
+	restRecorder(t, nil)
+	if visible, err := GitHubRepoVisible("", "acme", "widget"); visible || err == nil || err.Error() != "default branch timed out" {
+		t.Errorf("visible = %v, %v; want the default branch's error", visible, err)
+	}
+}
+
+// TestScannedRepo_DecodesPartialFields: a release whose author GitHub no
+// longer knows (a deleted account) does not hide the bot release after it,
+// a default branch protected by a ruleset alone is protected, and a
+// default branch with no name is no default branch.
+func TestScannedRepo_DecodesPartialFields(t *testing.T) {
+	t.Run("null author and ruleset-only default branch", func(t *testing.T) {
+		gql, _ := stubbedGraphQL(t, func(graphQLRequest) (string, int) {
+			return `{"data":{"repository":{"nameWithOwner":"acme/widget","visibility":"PUBLIC","isPrivate":false,
+				"defaultBranchRef":{"name":"main","refUpdateRule":null,"rules":{"totalCount":1}},
+				"releases":{"nodes":[{"author":null},{"author":{"login":"github-actions[bot]"}}]}}}}`, 200
+		})
+		swapScannedRepoGraphQL(t, gql, nil)
+		restRecorder(t, map[string]string{"/repos/acme/widget/rules/branches/main": `[]`})
+
+		if !defaultTokenFromEffect("", "acme", "widget") {
+			t.Error("a release with no author must not hide the bot release after it")
+		}
+		branches, err := FetchGitHubBranchProtection("", "acme", "widget", BranchFetchOptions{ExactNames: []string{"main"}})
+		if err != nil || len(branches) != 1 || branches[0].Name != "main" || !branches[0].Protected {
+			t.Errorf("branches = %+v, %v; want main protected by its ruleset", branches, err)
+		}
+	})
+	t.Run("no bot release", func(t *testing.T) {
+		gql, _ := stubbedGraphQL(t, func(graphQLRequest) (string, int) {
+			return `{"data":{"repository":{"nameWithOwner":"acme/widget","visibility":"PUBLIC","isPrivate":false,
+				"defaultBranchRef":{"name":"main","refUpdateRule":null,"rules":{"totalCount":0}},
+				"releases":{"nodes":[{"author":null},{"author":{"login":"someone"}}]}}}}`, 200
+		})
+		swapScannedRepoGraphQL(t, gql, nil)
+		restRecorder(t, nil)
+		if defaultTokenFromEffect("", "acme", "widget") {
+			t.Error("no release by github-actions[bot]: the effect route proves nothing")
+		}
+	})
+	t.Run("default branch with no name", func(t *testing.T) {
+		gql, _ := stubbedGraphQL(t, func(graphQLRequest) (string, int) {
+			return `{"data":{"repository":{"nameWithOwner":"acme/widget","visibility":"PUBLIC","isPrivate":false,
+				"defaultBranchRef":{"name":"","refUpdateRule":{"pattern":"*"},"rules":{"totalCount":0}},
+				"releases":{"nodes":[]}}}}`, 200
+		})
+		swapScannedRepoGraphQL(t, gql, nil)
+		restRecorder(t, nil)
+		if def, err := FetchGitHubDefaultBranch("", "acme", "widget"); def != "" || err != nil {
+			t.Errorf("default branch = %q, %v; want none", def, err)
+		}
+		scannedRepos.Lock()
+		branches := scannedRepos.m["|acme/widget"].branches
+		scannedRepos.Unlock()
+		if len(branches) != 0 {
+			t.Errorf("branches = %+v, want no branch kept under an empty name", branches)
+		}
+	})
+}
+
+// TestScannedRepoBranch_NotAsked: a branch the query did not ask has no
+// answer. Reading it is an error, never a branch that does not exist.
+func TestScannedRepoBranch_NotAsked(t *testing.T) {
+	r := &scannedRepo{branches: map[string]branchFact{"main": {exists: true}}}
+	b, err := r.branch(nil, "acme", "widget", "dev")
+	if b != nil || err == nil || !strings.Contains(err.Error(), `branch "dev" was not asked`) {
+		t.Errorf("branch = %+v, err = %v; want the not-asked error", b, err)
+	}
+	if b, err := r.branch(nil, "acme", "widget", "main"); err != nil || b == nil || b.Name != "main" || b.Protected {
+		t.Errorf("branch = %+v, err = %v; want main, unprotected", b, err)
+	}
+}
+
+// TestScannedRepo_RecordsTheQueryCost: the scanned repository's query asks
+// for its cost and keeps it for the --debug report.
+func TestScannedRepo_RecordsTheQueryCost(t *testing.T) {
+	gql, _ := stubbedGraphQL(t, func(graphQLRequest) (string, int) { return acmeWidget, 200 })
+	swapScannedRepoGraphQL(t, gql, nil)
+	before := len(httpcount.Default.Snapshot().GraphQL)
+
+	PrefetchScannedRepo("", "acme", "widget", nil)
+
+	want := []httpcount.GraphQLQuery{{Label: "scanned repository", Cost: 1, Remaining: 4999}}
+	if got := graphQLCostsSince(before); !reflect.DeepEqual(got, want) {
+		t.Errorf("recorded costs = %+v, want %+v", got, want)
+	}
 }

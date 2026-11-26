@@ -18,6 +18,7 @@ import (
 
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
+	"github.com/getplumber/plumber/internal/httpcount"
 	providerPkg "github.com/getplumber/plumber/provider"
 )
 
@@ -101,12 +102,20 @@ func TestFetchGitHubActionsIDToken(t *testing.T) {
 	}))
 	defer srv.Close()
 
+	host := strings.TrimPrefix(srv.URL, "http://")
+	before := httpcount.Default.Snapshot().Hosts[host]
+
 	tok, err := fetchGitHubActionsIDToken(srv.URL+"?x=1", "req-tok", "https://score.getplumber.io")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if tok != "id-token-123" {
 		t.Fatalf("token = %q, want id-token-123", tok)
+	}
+	// The id-token request is one of the run's requests: it is counted.
+	after := httpcount.Default.Snapshot().Hosts[host]
+	if after.Requests != before.Requests+1 || after.Status2xx != before.Status2xx+1 {
+		t.Errorf("counted requests to %s went %+v -> %+v, want one more 2xx", host, before, after)
 	}
 }
 

@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/getplumber/plumber/internal/httpcount"
 )
 
 // fakeFile is one file of a gitRepo.
@@ -18,6 +20,8 @@ type fakeFile struct {
 	// text: GraphQL's Blob.text is not byte-faithful (it rewrote a literal
 	// "\u0000" in home-assistant/core's detect-duplicate-issues.yml).
 	served string
+	// binary and noText are a file GitHub answers no usable text for.
+	binary, noText bool
 }
 
 // blob is the file as the query answers it, with the oid of its real
@@ -27,7 +31,11 @@ func (f fakeFile) blob() map[string]any {
 	if f.served != "" {
 		text = f.served
 	}
-	return map[string]any{"__typename": "Blob", "text": text, "oid": gitBlobOID(f.text), "isTruncated": f.truncated, "isBinary": false}
+	blob := map[string]any{"__typename": "Blob", "text": text, "oid": gitBlobOID(f.text), "isTruncated": f.truncated, "isBinary": f.binary}
+	if f.noText {
+		blob["text"] = nil
+	}
+	return blob
 }
 
 // gitRepo is a repository the fake GraphQL endpoint answers from: the
@@ -208,6 +216,12 @@ func TestWorkflowTree_RefShapes(t *testing.T) {
 		{"", "HEAD", 1},
 		{"refs/pull/7/head", "refs/pull/7/head", 1},
 		{"pull/7/head", "pull/7/head", 2},
+		// The shortest and longest names shaped like a SHA are read as
+		// written in the first query; one character less or more is a ref
+		// of another kind.
+		{"0123abc", "0123abc", 1},
+		{"0123ab", "0123ab", 2},
+		{"0123456789abcdef0123456789abcdef012345678", "0123456789abcdef0123456789abcdef012345678", 2},
 	} {
 		t.Run(tc.exists, func(t *testing.T) {
 			queries := swapGitRepo(t, gitRepo{refs: []string{tc.exists}, files: files})
@@ -491,5 +505,552 @@ func TestLocalComposites_UnlistedDirectoryReadsOverREST(t *testing.T) {
 	}
 	if want := []string{"/repos/acme/app/contents/.github/actions/x/action.yml"}; !reflect.DeepEqual(*paths, want) {
 		t.Errorf("REST paths = %v, want %v", *paths, want)
+	}
+}
+
+// swapPatchedGitRepo serves repo like swapGitRepo, after patch changed the
+// repository's fields of each answer. The errors patch returns travel with
+// the answer.
+func swapPatchedGitRepo(t *testing.T, repo gitRepo, patch func(q graphQLRequest, fields map[string]any) []map[string]any) *[]graphQLRequest {
+	t.Helper()
+	gql, queries := stubbedGraphQL(t, func(q graphQLRequest) (string, int) {
+		body, status := repo.respond(q)
+		var answer map[string]any
+		_ = json.Unmarshal([]byte(body), &answer)
+		if errs := patch(q, answer["data"].(map[string]any)["repository"].(map[string]any)); errs != nil {
+			answer["errors"] = errs
+		}
+		out, _ := json.Marshal(answer)
+		return string(out), status
+	})
+	swapScannedRepoGraphQL(t, gql, nil)
+	return queries
+}
+
+// aliasReading is the alias of q that reads expr, "" when q has none.
+func aliasReading(q graphQLRequest, expr string) string {
+	for alias, v := range q.Variables {
+		if v == expr {
+			return alias
+		}
+	}
+	return ""
+}
+
+// failAlias nulls the alias of q reading expr and returns GitHub's error
+// for it, nil when q does not read expr.
+func failAlias(q graphQLRequest, fields map[string]any, expr, message string) []map[string]any {
+	alias := aliasReading(q, expr)
+	if alias == "" {
+		return nil
+	}
+	fields[alias] = nil
+	return []map[string]any{{"path": []string{"repository", alias}, "message": message}}
+}
+
+// usesX is a workflow whose one job calls the local composite x.
+const usesX = "on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ./.github/actions/x\n"
+
+// contentsBody is the contents API's answer for a file holding text.
+func contentsBody(text string) string {
+	return `{"encoding":"base64","content":"` + b64(text) + `"}`
+}
+
+// TestWorkflowTree_TreeAliasFailed: an error GitHub ties to the workflows
+// tree of a ref that exists is that error. A tree GitHub could not read
+// must not read as a repository with no workflows, which scores a vacuous
+// 100% (ISSUE #222).
+func TestWorkflowTree_TreeAliasFailed(t *testing.T) {
+	swapPatchedGitRepo(t, gitRepo{
+		refs:  []string{"refs/heads/main"},
+		files: map[string]fakeFile{".github/workflows/ci.yml": {text: probeWorkflow}},
+	}, func(q graphQLRequest, fields map[string]any) []map[string]any {
+		return failAlias(q, fields, "refs/heads/main:"+githubWorkflowsSubdir, "tree timed out")
+	})
+	restRecorder(t, nil)
+	p, _, err := ScanGitHubWorkflowsRemote("", "acme", "app", "main", false, false, nil)
+	if err == nil || !strings.Contains(err.Error(), "tree timed out") {
+		t.Errorf("err = %v (pipeline %v), want GitHub's error", err, p)
+	}
+}
+
+// TestWorkflowTree_OtherRefTreeQueryFails: a ref that is neither a branch
+// nor a tag costs a second query for its tree. That query failing, as a
+// whole or on its one alias, fails the listing: the ref exists, so an
+// unread tree is not an empty pipeline.
+func TestWorkflowTree_OtherRefTreeQueryFails(t *testing.T) {
+	repo := gitRepo{
+		refs:  []string{"pull/7/head"},
+		files: map[string]fakeFile{".github/workflows/ci.yml": {text: probeWorkflow}},
+	}
+	for _, tc := range []struct {
+		name, body string
+		status     int
+		want       string
+	}{
+		{"server error", `oops`, 500, "HTTP 500"},
+		{"tree alias failed", `{"data":{"repository":{"t0":null}},"errors":[{"path":["repository","t0"],"message":"tree timed out"}]}`, 200, "tree timed out"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			second := 0
+			gql, _ := stubbedGraphQL(t, func(q graphQLRequest) (string, int) {
+				// The first query asks each candidate's commit; the second
+				// reads the tree only.
+				if _, first := q.Variables["c0"]; first {
+					return repo.respond(q)
+				}
+				second++
+				return tc.body, tc.status
+			})
+			swapScannedRepoGraphQL(t, gql, nil)
+			restRecorder(t, nil)
+			p, _, err := ScanGitHubWorkflowsRemote("", "acme", "app", "pull/7/head", false, false, nil)
+			if second == 0 {
+				t.Fatal("the tree of a ref of another kind was not asked in a second query")
+			}
+			if err == nil || !strings.Contains(err.Error(), "list workflows") || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %v (pipeline %v), want the listing error carrying %q", err, p, tc.want)
+			}
+		})
+	}
+}
+
+// TestWorkflowTree_ForbiddenRepository: a repository GitHub refuses to
+// show the token fails the listing with that refusal. It is neither a
+// repository with no workflows nor one that does not exist.
+func TestWorkflowTree_ForbiddenRepository(t *testing.T) {
+	gql, _ := stubbedGraphQL(t, func(graphQLRequest) (string, int) {
+		return `{"data":{"repository":null},"errors":[{"type":"FORBIDDEN","path":["repository"],"message":"Resource protected by organization SAML enforcement."}]}`, 200
+	})
+	swapScannedRepoGraphQL(t, gql, nil)
+	restRecorder(t, nil)
+	p, _, err := ScanGitHubWorkflowsRemote("", "acme", "app", "main", false, false, nil)
+	if err == nil || !strings.Contains(err.Error(), "list workflows") || !strings.Contains(err.Error(), "forbidden") || strings.Contains(err.Error(), "not found") {
+		t.Errorf("err = %v (pipeline %v), want the listing refused, not a missing repository", err, p)
+	}
+}
+
+// TestWorkflowTree_RetriesAQueryGitHubCouldNotFinish: the tree query
+// cannot be made smaller, so one 5xx (or a timeout answered as a 200) is
+// sent again instead of costing the run its workflows.
+func TestWorkflowTree_RetriesAQueryGitHubCouldNotFinish(t *testing.T) {
+	repo := gitRepo{
+		refs:  []string{"refs/heads/main"},
+		files: map[string]fakeFile{".github/workflows/ci.yml": {text: probeWorkflow}},
+	}
+	for _, tc := range []struct {
+		name, body string
+		status     int
+	}{
+		{"502", `bad gateway`, 502},
+		{"timeout answered 200", timeoutBody, 200},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			first := true
+			gql, queries := stubbedGraphQL(t, func(q graphQLRequest) (string, int) {
+				if first {
+					first = false
+					return tc.body, tc.status
+				}
+				return repo.respond(q)
+			})
+			swapScannedRepoGraphQL(t, gql, nil)
+			restRecorder(t, nil)
+			p, partial, err := ScanGitHubWorkflowsRemote("", "acme", "app", "main", false, false, nil)
+			if err != nil || len(partial) != 0 {
+				t.Fatalf("scan: %v %v", err, partial)
+			}
+			if len(p.AnalyzedWorkflows) != 1 {
+				t.Errorf("read %d workflows, want 1", len(p.AnalyzedWorkflows))
+			}
+			if len(*queries) != 2 {
+				t.Errorf("sent %d queries, want 2 (the failure, then the retry)", len(*queries))
+			}
+		})
+	}
+}
+
+// TestWorkflowTree_ErrorOutsideTheRepositoryFailsTheQuery: an error GitHub
+// ties to nothing under the repository (here the query's own cost) spoils
+// the whole answer, so the listing fails instead of trusting the rest.
+func TestWorkflowTree_ErrorOutsideTheRepositoryFailsTheQuery(t *testing.T) {
+	swapPatchedGitRepo(t, gitRepo{
+		refs:  []string{"refs/heads/main"},
+		files: map[string]fakeFile{".github/workflows/ci.yml": {text: probeWorkflow}},
+	}, func(graphQLRequest, map[string]any) []map[string]any {
+		return []map[string]any{{"path": []string{"rateLimit"}, "message": "cost unavailable"}}
+	})
+	restRecorder(t, nil)
+	p, _, err := ScanGitHubWorkflowsRemote("", "acme", "app", "main", false, false, nil)
+	if err == nil || !strings.Contains(err.Error(), "cost unavailable") {
+		t.Errorf("err = %v (pipeline %v), want GitHub's error", err, p)
+	}
+}
+
+// TestWorkflowTree_FileWithoutTextReadsOverREST: a file GitHub flags as
+// binary, or answers no text for, is read over the contents API.
+func TestWorkflowTree_FileWithoutTextReadsOverREST(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		file fakeFile
+	}{
+		{"binary", fakeFile{text: probeWorkflow, binary: true}},
+		{"no text", fakeFile{text: probeWorkflow, noText: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			swapGitRepo(t, gitRepo{
+				refs:  []string{"refs/heads/main"},
+				files: map[string]fakeFile{".github/workflows/ci.yml": tc.file},
+			})
+			paths := restRecorder(t, map[string]string{
+				"/repos/acme/app/contents/.github/workflows/ci.yml": contentsBody(probeWorkflow),
+			})
+			p, partial, err := ScanGitHubWorkflowsRemote("", "acme", "app", "main", false, false, nil)
+			if err != nil || len(partial) != 0 {
+				t.Fatalf("scan: %v %v", err, partial)
+			}
+			if len(p.AnalyzedWorkflows) != 1 || p.AnalyzedWorkflows[0].Content != probeWorkflow {
+				t.Errorf("read %+v, want the REST content", p.AnalyzedWorkflows)
+			}
+			if want := []string{"/repos/acme/app/contents/.github/workflows/ci.yml"}; !reflect.DeepEqual(*paths, want) {
+				t.Errorf("REST paths = %v, want %v", *paths, want)
+			}
+		})
+	}
+}
+
+// TestWorkflowTree_KeepsRegularFilesSortedByName: the listing GitHub
+// answers is not trusted to be sorted or to hold files only. A submodule
+// and a directory named like a workflow are skipped, and the files come
+// out by name.
+func TestWorkflowTree_KeepsRegularFilesSortedByName(t *testing.T) {
+	entry := func(name string, mode int) map[string]any {
+		return map[string]any{"name": name, "path": githubWorkflowsSubdir + "/" + name, "mode": mode, "object": fakeFile{text: probeWorkflow}.blob()}
+	}
+	body, _ := json.Marshal(map[string]any{"data": map[string]any{"repository": map[string]any{
+		"c0": map[string]any{"__typename": "Commit"},
+		"t0": map[string]any{"entries": []map[string]any{
+			entry("z.yml", 0o100644),
+			entry("sub.yml", 0o160000),
+			entry("dir.yml", 0o40000),
+			entry("m.yaml", 0o100755),
+			entry("a.yml", 0o100644),
+		}},
+	}}})
+	gql, _ := stubbedGraphQL(t, func(graphQLRequest) (string, int) { return string(body), 200 })
+	swapScannedRepoGraphQL(t, gql, nil)
+	paths := restRecorder(t, nil)
+
+	p, partial, err := ScanGitHubWorkflowsRemote("", "acme", "app", "main", false, false, nil)
+	if err != nil || len(partial) != 0 {
+		t.Fatalf("scan: %v %v", err, partial)
+	}
+	var got []string
+	for _, w := range p.AnalyzedWorkflows {
+		got = append(got, w.Path)
+	}
+	want := []string{".github/workflows/a.yml", ".github/workflows/m.yaml", ".github/workflows/z.yml"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("workflows = %v, want %v", got, want)
+	}
+	if p.WorkflowFileCount != 3 {
+		t.Errorf("file count = %d, want 3", p.WorkflowFileCount)
+	}
+	if len(*paths) != 0 {
+		t.Errorf("REST paths = %v, want none", *paths)
+	}
+}
+
+// TestLocalCompositeDirs: the directories the composite query reads are
+// the local composites the steps call, once each and cleaned. A reference
+// holding an expression, one climbing out of the repository and one that
+// is not local are left to the nested walk.
+func TestLocalCompositeDirs(t *testing.T) {
+	got := localCompositeDirs([]string{
+		"./.github/actions/${{ matrix.a }}",
+		" ./.github/actions/x ",
+		"./.github/actions/x",
+		"./.github/actions/x/",
+		"acme/b@v1",
+		"docker://alpine:3",
+		"./../outside",
+		"./",
+		"./.github/actions/y",
+	})
+	if want := []string{".github/actions/x", "", ".github/actions/y"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("localCompositeDirs = %q, want %q", got, want)
+	}
+	if got := localCompositeDirs(nil); got != nil {
+		t.Errorf("localCompositeDirs(nil) = %q, want nil", got)
+	}
+}
+
+// TestRegularFile: a definition is trusted as a blob only when its
+// directory lists it as a regular or executable file. A symlink, a
+// submodule, a name the listing does not hold and a listing GitHub did not
+// give all answer false: the mode is then unknown.
+func TestRegularFile(t *testing.T) {
+	listing := json.RawMessage(`{"entries":[
+		{"name":"action.yml","mode":33188},
+		{"name":"run.yml","mode":33261},
+		{"name":"link.yml","mode":40960},
+		{"name":"sub.yml","mode":57344},
+		{"name":"dir.yml","mode":16384}
+	]}`)
+	for _, tc := range []struct {
+		name string
+		raw  json.RawMessage
+		file string
+		want bool
+	}{
+		{"regular", listing, "action.yml", true},
+		{"executable", listing, "run.yml", true},
+		{"symlink", listing, "link.yml", false},
+		{"submodule", listing, "sub.yml", false},
+		{"directory", listing, "dir.yml", false},
+		{"not listed", listing, "action.yaml", false},
+		{"null listing", json.RawMessage(`null`), "action.yml", false},
+		{"no listing", nil, "action.yml", false},
+		{"unreadable listing", json.RawMessage(`"x"`), "action.yml", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := regularFile(tc.raw, tc.file); got != tc.want {
+				t.Errorf("regularFile = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestLocalComposites_ExecutableDefinitionReadsFromTheQuery: an action.yml
+// with the executable bit is a regular file, so it is read from the query
+// with no REST request.
+func TestLocalComposites_ExecutableDefinitionReadsFromTheQuery(t *testing.T) {
+	queries := swapGitRepo(t, gitRepo{
+		refs: []string{"refs/heads/main"},
+		files: map[string]fakeFile{
+			".github/workflows/ci.yml":     {text: usesX},
+			".github/actions/x/action.yml": {text: composite("./.github/actions/y"), mode: 0o100755},
+			".github/actions/y/action.yml": {text: composite()},
+		},
+	})
+	paths := restRecorder(t, map[string]string{
+		"/repos/acme/app/contents/.github/actions/y/action.yml": contentsBody(composite()),
+	})
+
+	p, partial, err := ScanGitHubWorkflowsRemote("", "acme", "app", "main", false, false, nil)
+	if err != nil || len(partial) != 0 {
+		t.Fatalf("scan: %v %v", err, partial)
+	}
+	if len(*queries) != 2 {
+		t.Fatalf("sent %d queries, want 2", len(*queries))
+	}
+	// y is only called by x, so it reads over REST; x must not.
+	if want := []string{"/repos/acme/app/contents/.github/actions/y/action.yml"}; !reflect.DeepEqual(*paths, want) {
+		t.Errorf("REST paths = %v, want %v", *paths, want)
+	}
+	if got := strings.Join(entries(p.Jobs[0]), "\n"); !strings.Contains(got, "./.github/actions/y |") {
+		t.Errorf("job entries %q, missing the step of the executable definition", got)
+	}
+}
+
+// TestLocalComposites_ReadAtTheTreeRev: the composites are read at the
+// expression the workflows were found at (the tag, HEAD), so both come
+// from the same commit.
+func TestLocalComposites_ReadAtTheTreeRev(t *testing.T) {
+	for _, tc := range []struct{ ref, exists string }{
+		{"v1", "refs/tags/v1"},
+		{"", "HEAD"},
+		{"0123456789abcdef0123456789abcdef01234567", "0123456789abcdef0123456789abcdef01234567"},
+	} {
+		t.Run(tc.exists, func(t *testing.T) {
+			queries := swapGitRepo(t, gitRepo{
+				refs: []string{tc.exists},
+				files: map[string]fakeFile{
+					".github/workflows/ci.yml":     {text: usesX},
+					".github/actions/x/action.yml": {text: composite()},
+				},
+			})
+			paths := restRecorder(t, nil)
+			if _, partial, err := ScanGitHubWorkflowsRemote("", "acme", "app", tc.ref, false, false, nil); err != nil || len(partial) != 0 {
+				t.Fatalf("scan: %v %v", err, partial)
+			}
+			if len(*queries) != 2 {
+				t.Fatalf("sent %d queries, want 2", len(*queries))
+			}
+			var exprs []string
+			for k, v := range (*queries)[1].Variables {
+				if k != "owner" && k != "name" {
+					exprs = append(exprs, v.(string))
+				}
+			}
+			sort.Strings(exprs)
+			want := []string{
+				tc.exists + ":.github/actions/x",
+				tc.exists + ":.github/actions/x/action.yaml",
+				tc.exists + ":.github/actions/x/action.yml",
+			}
+			if !reflect.DeepEqual(exprs, want) {
+				t.Errorf("composite expressions = %v\nwant %v", exprs, want)
+			}
+			if len(*paths) != 0 {
+				t.Errorf("REST paths = %v, want none", *paths)
+			}
+		})
+	}
+}
+
+// TestLocalComposites_DefinitionAliasFailed: an error GitHub ties to a
+// definition nulls that alias. The null is the error, not a file that does
+// not exist: the definition reads over REST and its steps are still
+// resolved.
+func TestLocalComposites_DefinitionAliasFailed(t *testing.T) {
+	swapPatchedGitRepo(t, gitRepo{
+		refs: []string{"refs/heads/main"},
+		files: map[string]fakeFile{
+			".github/workflows/ci.yml":     {text: usesX},
+			".github/actions/x/action.yml": {text: composite("./.github/actions/y")},
+		},
+	}, func(q graphQLRequest, fields map[string]any) []map[string]any {
+		return failAlias(q, fields, "refs/heads/main:.github/actions/x/action.yml", "blob timed out")
+	})
+	paths := restRecorder(t, map[string]string{
+		"/repos/acme/app/contents/.github/actions/x/action.yml": contentsBody(composite("./.github/actions/y")),
+		"/repos/acme/app/contents/.github/actions/y/action.yml": contentsBody(composite()),
+	})
+
+	p, partial, err := ScanGitHubWorkflowsRemote("", "acme", "app", "main", false, false, nil)
+	if err != nil || len(partial) != 0 {
+		t.Fatalf("scan: %v %v", err, partial)
+	}
+	if asked := strings.Join(*paths, "\n"); !strings.Contains(asked, "/repos/acme/app/contents/.github/actions/x/action.yml") {
+		t.Errorf("REST paths = %v, want the definition GitHub could not answer read over the contents API", *paths)
+	}
+	if got := strings.Join(entries(p.Jobs[0]), "\n"); !strings.Contains(got, "./.github/actions/y |") {
+		t.Errorf("job entries %q, missing the composite's own step", got)
+	}
+}
+
+// TestLocalComposites_QueryFails: the composite query failing as a whole
+// answers nothing about any definition. Each one reads over REST and the
+// scan goes on, with no error.
+func TestLocalComposites_QueryFails(t *testing.T) {
+	repo := gitRepo{
+		refs: []string{"refs/heads/main"},
+		files: map[string]fakeFile{
+			".github/workflows/ci.yml":     {text: usesX},
+			".github/actions/x/action.yml": {text: composite("./.github/actions/y")},
+		},
+	}
+	for _, tc := range []struct {
+		name, body string
+		status     int
+	}{
+		{"server error", `oops`, 500},
+		{"rate limited", rateLimited, 200},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gql, _ := stubbedGraphQL(t, func(q graphQLRequest) (string, int) {
+				if aliasReading(q, "refs/heads/main:.github/actions/x") != "" {
+					return tc.body, tc.status
+				}
+				return repo.respond(q)
+			})
+			swapScannedRepoGraphQL(t, gql, nil)
+			paths := restRecorder(t, map[string]string{
+				"/repos/acme/app/contents/.github/actions/x/action.yml": contentsBody(composite("./.github/actions/y")),
+				"/repos/acme/app/contents/.github/actions/y/action.yml": contentsBody(composite()),
+			})
+
+			p, partial, err := ScanGitHubWorkflowsRemote("", "acme", "app", "main", false, false, nil)
+			if err != nil || len(partial) != 0 {
+				t.Fatalf("scan: %v %v; a failed composite query must not fail the scan", err, partial)
+			}
+			if asked := strings.Join(*paths, "\n"); !strings.Contains(asked, "/repos/acme/app/contents/.github/actions/x/action.yml") {
+				t.Errorf("REST paths = %v, want the definition read over the contents API", *paths)
+			}
+			got := strings.Join(entries(p.Jobs[0]), "\n")
+			for _, u := range []string{"./.github/actions/x |", "./.github/actions/y |"} {
+				if !strings.Contains(got, u) {
+					t.Errorf("job entries %q, missing %s", got, u)
+				}
+			}
+		})
+	}
+}
+
+// TestLocalComposites_UnusableBlobReadsOverREST: a definition GitHub
+// truncates, or whose text does not hash to its oid, reads over the
+// contents API like a workflow file does, so the composite's steps come
+// from the file as it is.
+func TestLocalComposites_UnusableBlobReadsOverREST(t *testing.T) {
+	real := composite("./.github/actions/y")
+	for _, tc := range []struct {
+		name string
+		file fakeFile
+	}{
+		{"truncated", fakeFile{text: "name: x\nruns:\n  using: comp", truncated: true}},
+		{"altered text", fakeFile{text: real, served: composite("./.github/actions/wrong")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			swapGitRepo(t, gitRepo{
+				refs: []string{"refs/heads/main"},
+				files: map[string]fakeFile{
+					".github/workflows/ci.yml":     {text: usesX},
+					".github/actions/x/action.yml": tc.file,
+				},
+			})
+			paths := restRecorder(t, map[string]string{
+				"/repos/acme/app/contents/.github/actions/x/action.yml": contentsBody(real),
+				"/repos/acme/app/contents/.github/actions/y/action.yml": contentsBody(composite()),
+			})
+
+			p, partial, err := ScanGitHubWorkflowsRemote("", "acme", "app", "main", false, false, nil)
+			if err != nil || len(partial) != 0 {
+				t.Fatalf("scan: %v %v", err, partial)
+			}
+			if asked := strings.Join(*paths, "\n"); !strings.Contains(asked, "/repos/acme/app/contents/.github/actions/x/action.yml") {
+				t.Errorf("REST paths = %v, want the definition read over the contents API", *paths)
+			}
+			got := strings.Join(entries(p.Jobs[0]), "\n")
+			if !strings.Contains(got, "./.github/actions/y |") || strings.Contains(got, "./.github/actions/wrong") {
+				t.Errorf("job entries %q, want the steps of the file as it is", got)
+			}
+		})
+	}
+}
+
+// graphQLCostsSince are the query costs the run recorded after the first n.
+func graphQLCostsSince(n int) []httpcount.GraphQLQuery {
+	return httpcount.Default.Snapshot().GraphQL[n:]
+}
+
+// TestWorkflowTree_RecordsTheQueryCost: the tree query and the composite
+// query ask for their cost and keep it for the --debug report, each under
+// its own label.
+func TestWorkflowTree_RecordsTheQueryCost(t *testing.T) {
+	queries := swapGitRepo(t, gitRepo{
+		refs: []string{"refs/heads/main"},
+		files: map[string]fakeFile{
+			".github/workflows/ci.yml":     {text: usesX},
+			".github/actions/x/action.yml": {text: composite()},
+		},
+	})
+	restRecorder(t, nil)
+	before := len(httpcount.Default.Snapshot().GraphQL)
+
+	if _, partial, err := ScanGitHubWorkflowsRemote("", "acme", "app", "main", false, false, nil); err != nil || len(partial) != 0 {
+		t.Fatalf("scan: %v %v", err, partial)
+	}
+	want := []httpcount.GraphQLQuery{
+		{Label: "remote workflows", Cost: 1, Remaining: 4999},
+		{Label: "local composites", Cost: 1, Remaining: 4999},
+	}
+	if got := graphQLCostsSince(before); !reflect.DeepEqual(got, want) {
+		t.Errorf("recorded costs = %+v\nwant %+v", got, want)
+	}
+	for _, q := range *queries {
+		if !strings.Contains(q.Query, "rateLimit { cost remaining }") {
+			t.Errorf("the query must ask for its cost:\n%s", q.Query)
+		}
 	}
 }

@@ -599,3 +599,112 @@ func Test_advisoriesForRepo_enterpriseRESTFailureIsDegraded(t *testing.T) {
 		})
 	}
 }
+
+// Test_isDotcomHost: the host decides whether the GraphQL query asks the
+// fields a GitHub Enterprise Server may lack (advisories, immutable
+// releases), so only github.com itself, however written, counts.
+func Test_isDotcomHost(t *testing.T) {
+	t.Setenv(EnvDisableGitHubAPI, "1")
+	for _, tc := range []struct {
+		host string
+		want bool
+	}{
+		{"", true},
+		{"   ", true},
+		{"github.com", true},
+		{"api.github.com", true},
+		{"API.GitHub.com", true},
+		{"https://github.com/", true},
+		{" http://api.github.com ", true},
+		{"ghes.example.com", false},
+		{"https://ghes.example.com/api/v3", false},
+		{"github.com.evil.io", false},
+		{"evil-github.com", false},
+		{"github.com/api/v3", false},
+	} {
+		if got := isDotcomHost(tc.host); got != tc.want {
+			t.Errorf("isDotcomHost(%q) = %v, want %v", tc.host, got, tc.want)
+		}
+		if c := NewGitHubMetadataClientForHost(tc.host); c.dotcom != tc.want {
+			t.Errorf("NewGitHubMetadataClientForHost(%q).dotcom = %v, want %v", tc.host, c.dotcom, tc.want)
+		}
+	}
+}
+
+// Test_advisoriesForRepo_dotcomLoadsAdvisoriesOnly: on github.com a
+// package no prefetch covered is loaded once, its advisories alone. A
+// loader that stores nothing leaves an empty list, kept for the run.
+func Test_advisoriesForRepo_dotcomLoadsAdvisoriesOnly(t *testing.T) {
+	adv := []advisoryInfo{{GhsaID: "GHSA-x", VulnerableRange: "< 2", Severity: "high"}}
+	c, loads, _ := worldClient(t, map[string]*fakeRepo{"o/r": {advisories: adv}})
+	c.repoCache["o/r"] = repoCacheEntry{fetched: true}
+
+	if got := c.advisoriesForRepo("o", "r"); !reflect.DeepEqual(got, adv) {
+		t.Errorf("advisories = %+v, want %+v", got, adv)
+	}
+	c.advisoriesForRepo("o", "r")
+	if len(*loads) != 1 || len((*loads)[0]) != 1 {
+		t.Fatalf("loads = %+v, want one request", *loads)
+	}
+	if r := (*loads)[0][0]; r.owner != "o" || r.repo != "r" || !r.advisories || r.info || len(r.refs) != 0 {
+		t.Errorf("request = %+v, want the advisories of o/r alone", r)
+	}
+
+	asked := 0
+	c.load = func([]repoRequest) { asked++ }
+	got := c.advisoriesForRepo("o", "silent")
+	if got == nil || len(got) != 0 {
+		t.Errorf("advisories = %#v, want an empty list", got)
+	}
+	if cached, ok := c.advisoryCache["o/silent"]; !ok || cached == nil {
+		t.Errorf("cache = %#v (present %v), want the empty list kept", cached, ok)
+	}
+	c.advisoriesForRepo("o", "silent")
+	if asked != 1 {
+		t.Errorf("loads = %d, want 1", asked)
+	}
+}
+
+// Test_NewClient_wiring: the constructor builds the GraphQL client beside
+// the REST one, wires the loaders and the cost recorder, and a disabled
+// client has neither client.
+func Test_NewClient_wiring(t *testing.T) {
+	t.Setenv(EnvDisableGitHubAPI, "")
+	t.Setenv(EnvMetadataToken, "ghp_metadata")
+	c := NewGitHubMetadataClientForHost("")
+	if c.rest == nil || c.gql == nil || !c.dotcom || c.disabled {
+		t.Errorf("github.com client: rest=%v gql=%v dotcom=%v disabled=%v", c.rest != nil, c.gql != nil, c.dotcom, c.disabled)
+	}
+	if c.load == nil || c.loadTags == nil || c.recordCost == nil {
+		t.Error("loaders or cost recorder not wired")
+	}
+	if e := NewGitHubMetadataClientForHost("ghes.example.com"); e.rest == nil || e.gql == nil || e.dotcom {
+		t.Errorf("GHES client: rest=%v gql=%v dotcom=%v", e.rest != nil, e.gql != nil, e.dotcom)
+	}
+
+	for _, v := range []string{"1", "true"} {
+		t.Setenv(EnvDisableGitHubAPI, v)
+		d := NewGitHubMetadataClientForHost("")
+		if d.Available() || d.rest != nil || d.gql != nil {
+			t.Errorf("%s=%s: available=%v rest=%v gql=%v, want a disabled client", EnvDisableGitHubAPI, v, d.Available(), d.rest != nil, d.gql != nil)
+		}
+		// A disabled client prefetches nothing and so never reaches its
+		// missing GraphQL client.
+		d.Prefetch([]string{"a/x@v1"})
+	}
+}
+
+// Test_httpClients_areCounted: the raw host is read through Memo (the same
+// file is asked many times in a run), the job-log clients through the
+// counting-only transport, so the --debug report lists every request.
+func Test_httpClients_areCounted(t *testing.T) {
+	if rawHTTPClient.Transport != httpcount.MemoTransport {
+		t.Errorf("rawHTTPClient transport = %T, want httpcount.MemoTransport", rawHTTPClient.Transport)
+	}
+	if jobLogsAPIClient.Transport != httpcount.DefaultTransport {
+		t.Errorf("jobLogsAPIClient transport = %T, want httpcount.DefaultTransport", jobLogsAPIClient.Transport)
+	}
+	if jobLogsStoreClient.Transport != httpcount.DefaultTransport {
+		t.Errorf("jobLogsStoreClient transport = %T, want httpcount.DefaultTransport", jobLogsStoreClient.Transport)
+	}
+}

@@ -13,6 +13,7 @@ import (
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
 	githubpkg "github.com/getplumber/plumber/github"
+	"github.com/getplumber/plumber/internal/httpcount"
 	"github.com/getplumber/plumber/internal/platform"
 	"github.com/getplumber/plumber/utils"
 )
@@ -379,5 +380,185 @@ func TestRunAnalyzeAuthHint_GitHubNeedsAToken(t *testing.T) {
 	got := runAnalyzeAuthHint([]string{"github"})
 	if strings.Contains(got, "no token needed") || !strings.Contains(got, "requires") {
 		t.Errorf("hint = %q, want a token requirement", got)
+	}
+}
+
+// TestGitHubAPIDisabled: PLUMBER_DISABLE_GITHUB_API switches the API off
+// with "1" or "true", nothing else.
+func TestGitHubAPIDisabled(t *testing.T) {
+	for value, want := range map[string]bool{"": false, "0": false, "false": false, "yes": false, "1": true, "true": true} {
+		t.Setenv(githubpkg.EnvDisableGitHubAPI, value)
+		if got := githubAPIDisabled(); got != want {
+			t.Errorf("%s=%q: disabled = %v, want %v", githubpkg.EnvDisableGitHubAPI, value, got, want)
+		}
+	}
+	// "true" lets a local clone start without a token, as "1" does.
+	swapTokenSource(t, "")
+	t.Setenv(githubpkg.EnvDisableGitHubAPI, "true")
+	if err := requireGitHubToken("", false); err != nil {
+		t.Errorf("local, no token, API disabled with true: err = %v, want nil", err)
+	}
+}
+
+// TestLocalGitHubAPIHost: --github-url wins, with its scheme stripped; else
+// a remote that is not github.com (any letter case) is an Enterprise host;
+// else empty, which reads as api.github.com.
+func TestLocalGitHubAPIHost(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		githubURL string
+		host      string
+		want      string
+	}{
+		{"github.com clone", "", "github.com", ""},
+		{"github.com in another case", "", "GitHub.com", ""},
+		{"no remote host", "", "", ""},
+		{"enterprise clone", "", "ghe.example.com", "ghe.example.com"},
+		{"--github-url wins over the remote", "https://flag.example.com", "ghe.example.com", "flag.example.com"},
+		{"--github-url on a github.com clone", "http://flag.example.com", "github.com", "flag.example.com"},
+		{"--github-url without a scheme", "flag.example.com", "", "flag.example.com"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			orig := githubURL
+			githubURL = tc.githubURL
+			t.Cleanup(func() { githubURL = orig })
+			if got := localGitHubAPIHost(&utils.GitRemoteInfo{Host: tc.host}); got != tc.want {
+				t.Errorf("localGitHubAPIHost = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// stopAtCollection makes both GitHub entry points return stopped from the
+// collection seam, and sets the globals a run reads on its way there, so a
+// test can observe what happens up to (and around) the collection.
+func stopAtCollection(t *testing.T, stopped error) {
+	t.Helper()
+	origLocal, origRemote := githubAnalysis, githubAnalysisRemote
+	githubAnalysis = func(*configuration.Configuration) (*control.AnalysisResult, error) { return nil, stopped }
+	githubAnalysisRemote = func(*configuration.Configuration, string, string, string) (*control.AnalysisResult, error) {
+		return nil, stopped
+	}
+	origURL, origPrint, origConfig, origExplicit, origGitHubURL := platformURL, printOutput, configFile, configExplicitlySet, githubURL
+	platformURL, printOutput, githubURL = "", false, ""
+	configFile, configExplicitlySet = filepath.Join(t.TempDir(), ".plumber.yaml"), false
+	t.Cleanup(func() {
+		githubAnalysis, githubAnalysisRemote = origLocal, origRemote
+		platformURL, printOutput, githubURL = origURL, origPrint, origGitHubURL
+		configFile, configExplicitlySet = origConfig, origExplicit
+	})
+	t.Setenv("CI", "")
+	t.Setenv("GITHUB_ACTIONS", "")
+}
+
+// TestRunGitHubAnalyze_TokenCheckSeesTheAPIHost: the startup token check
+// asks for the token of the host the run will read: the Enterprise remote of
+// a local clone, and --github-url without its scheme in remote mode. A token
+// that exists only for that host lets the run reach collection.
+func TestRunGitHubAnalyze_TokenCheckSeesTheAPIHost(t *testing.T) {
+	stopped := errors.New("collection reached")
+	stopAtCollection(t, stopped)
+	t.Setenv(githubpkg.EnvDisableGitHubAPI, "")
+	var asked []string
+	orig := githubTokenSource
+	githubTokenSource = func(host string) string {
+		asked = append(asked, host)
+		if host == "ghe.example.com" {
+			return "gh"
+		}
+		return ""
+	}
+	t.Cleanup(func() { githubTokenSource = orig })
+
+	for _, tc := range []struct {
+		name string
+		run  func() error
+	}{
+		{"local clone", func() error {
+			info := &utils.GitRemoteInfo{Host: "ghe.example.com", ProjectPath: "owner/repo", RepoRoot: t.TempDir()}
+			return runGitHubAnalyze(info, nil, nil)
+		}},
+		{"upstream fetch, https", func() error {
+			return runGitHubAnalyzeRemote("https://ghe.example.com", "owner/repo", "main", nil, nil)
+		}},
+		{"upstream fetch, http", func() error {
+			return runGitHubAnalyzeRemote("http://ghe.example.com", "owner/repo", "main", nil, nil)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			asked = nil
+			var err error
+			_ = captureStderr(t, func() { err = tc.run() })
+			if !errors.Is(err, stopped) {
+				t.Fatalf("err = %v, want the run to reach collection", err)
+			}
+			if len(asked) == 0 || asked[0] != "ghe.example.com" {
+				t.Errorf("token check asked hosts %q, want ghe.example.com first", asked)
+			}
+		})
+	}
+}
+
+// TestRunGitHubAnalyze_DebugReport: with --debug, a run whose analysis fails
+// still writes its report (the requests of a failed run are what the report
+// is for); a run stopped by the token check writes none, and reads no rate
+// limit.
+func TestRunGitHubAnalyze_DebugReport(t *testing.T) {
+	stopped := errors.New("collection reached")
+	runs := map[string]func(t *testing.T) error{
+		"local clone": func(t *testing.T) error {
+			info := &utils.GitRemoteInfo{Host: githubDotCom, ProjectPath: "owner/repo", RepoRoot: t.TempDir()}
+			return runGitHubAnalyze(info, nil, nil)
+		},
+		"upstream fetch": func(*testing.T) error {
+			return runGitHubAnalyzeRemote(githubDotCom, "owner/repo", "main", nil, nil)
+		},
+	}
+	for name, run := range runs {
+		for _, tc := range []struct {
+			name       string
+			source     string
+			wantErr    error
+			wantReport bool
+		}{
+			{"analysis fails", "GH_TOKEN", stopped, true},
+			{"no token", "", githubpkg.ErrAuthRequired, false},
+		} {
+			t.Run(name+", "+tc.name, func(t *testing.T) {
+				stopAtCollection(t, stopped)
+				t.Setenv(githubpkg.EnvDisableGitHubAPI, "")
+				swapTokenSource(t, tc.source)
+				newDebugCmd(t)
+				debugFile = filepath.Join(t.TempDir(), "debug.md")
+				setDebugTokens(t, "lanes-tok", "")
+				savedRegistry, savedFetch := httpcount.Default, fetchRateLimit
+				t.Cleanup(func() { httpcount.Default, fetchRateLimit = savedRegistry, savedFetch })
+				httpcount.Default = &httpcount.Registry{}
+				reads := 0
+				fetchRateLimit = func(string, string) (map[string]httpcount.RateResource, error) {
+					reads++
+					return map[string]httpcount.RateResource{}, nil
+				}
+
+				var err error
+				stderr := captureStderr(t, func() { err = run(t) })
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("err = %v, want %v", err, tc.wantErr)
+				}
+				data, readErr := os.ReadFile(debugFile)
+				if tc.wantReport {
+					if readErr != nil || !strings.Contains(string(data), "owner/repo") {
+						t.Fatalf("no debug report for a failed analysis: %v\n%s", readErr, data)
+					}
+					if reads != 2 || !strings.Contains(stderr, "Debug report written to: "+debugFile) {
+						t.Errorf("rate limit reads = %d, want 2 (before and after); stderr:\n%s", reads, stderr)
+					}
+					return
+				}
+				if !os.IsNotExist(readErr) || reads != 0 || strings.Contains(stderr, "Debug report written") {
+					t.Errorf("a run stopped at the token check wrote a report (read err %v) or read the rate limit %d times; stderr:\n%s", readErr, reads, stderr)
+				}
+			})
+		}
 	}
 }
