@@ -107,6 +107,66 @@ func TestAggregate_UppercaseShaCountsAsPinned(t *testing.T) {
 	}
 }
 
+// TestAggregate_TrustedOwnersIgnoreCase locks the action-pinning counter
+// to _is_trusted_owner in action_unpinned.rego, which compares the owner
+// without regard to case (#623): `Actions/checkout@v4` is a trusted
+// owner's reference and stays out of the counted refs.
+func TestAggregate_TrustedOwnersIgnoreCase(t *testing.T) {
+	pipeline := &ir.NormalizedPipeline{
+		Jobs: []ir.Job{
+			{
+				Name: "build",
+				Uses: []ir.Action{
+					{Uses: "Actions/checkout@v4"},
+					{Uses: "someowner/somerepo@v4"}, // the only third-party ref
+				},
+			},
+		},
+	}
+	pc := &configuration.PlumberConfig{GitHub: &configuration.ProviderConfig{}}
+	stats := AggregateGitHubStats(pipeline, pc)
+
+	if stats.ActionRefsTotal != 1 || stats.ActionRefsUnpinned != 1 {
+		t.Fatalf("ActionRefsTotal = %d, ActionRefsUnpinned = %d, want 1 and 1 (Actions/ is the trusted owner actions)", stats.ActionRefsTotal, stats.ActionRefsUnpinned)
+	}
+}
+
+// TestAggregate_TrustedOwnersMatchLikeRego locks the counter to the
+// entry forms _is_trusted_owner accepts: an owner, `owner/repo` or a
+// deeper path, the owner and repository compared without regard to
+// case, a path below them exactly (#623).
+func TestAggregate_TrustedOwnersMatchLikeRego(t *testing.T) {
+	pipeline := &ir.NormalizedPipeline{
+		Jobs: []ir.Job{
+			{
+				Name: "build",
+				Uses: []ir.Action{
+					{Uses: "myorg/x@v1"},         // under MyOrg
+					{Uses: "ACME/Deploy/sub@v1"}, // under acme/deploy
+					{Uses: "acme/deploy@v1"},     // the entry itself: nothing below it
+					{Uses: "Tools/Kit/lib/a@v1"}, // under tools/kit/lib
+					{Uses: "tools/kit/Lib/a@v1"}, // path differs in case
+					{Uses: "other/thing@v1"},     // not trusted
+				},
+			},
+		},
+	}
+	pc := &configuration.PlumberConfig{
+		GitHub: &configuration.ProviderConfig{
+			Controls: configuration.ControlsConfig{
+				ActionsMustBePinnedByCommitSha: &configuration.ActionsPinnedByShaControlConfig{
+					TrustedOwners: []string{"MyOrg", "acme/deploy", "tools/kit/lib"},
+				},
+			},
+		},
+	}
+	stats := AggregateGitHubStats(pipeline, pc)
+
+	if stats.ActionRefsTotal != 3 {
+		t.Fatalf("ActionRefsTotal = %d, want 3 (acme/deploy@v1, tools/kit/Lib/a@v1, other/thing@v1)", stats.ActionRefsTotal)
+	}
+}
+
 // TestAggregate_ActionRefsAbsentUpstreamCounter locks the ISSUE-707
 // "Impostor Refs Found" metric to what the rego actually flags. The
 // counter is deliberately guarded by isShaPinned — unlike its sibling

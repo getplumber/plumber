@@ -366,14 +366,33 @@ func ownerOf(ref string) string {
 	return ""
 }
 
+// isTrustedOwner mirrors _is_trusted_owner in action_unpinned.rego:
+// the reference sits below an entry (`owner`, `owner/repo` or a deeper
+// path). Owner and repository compare without regard to case, as GitHub
+// resolves them; a path below them compares exactly. strings.ToLower
+// matches Rego's lower().
 func isTrustedOwner(ref string, trustedOwners []string) bool {
-	owner := ownerOf(ref)
+	head := strings.Split(strings.SplitN(ref, "@", 2)[0], "/")
 	for _, t := range trustedOwners {
-		if owner == t {
+		prefix := strings.Split(t, "/")
+		if len(head) > len(prefix) && segmentsMatch(prefix, head) {
 			return true
 		}
 	}
 	return false
+}
+
+func segmentsMatch(prefix, head []string) bool {
+	for i, want := range prefix {
+		got := head[i]
+		if i < 2 {
+			want, got = strings.ToLower(want), strings.ToLower(got)
+		}
+		if want != got {
+			return false
+		}
+	}
+	return true
 }
 
 func isShaPinned(ref string) bool {
