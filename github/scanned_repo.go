@@ -10,7 +10,6 @@ package github
 // Server keeps its REST requests: its schema may lack Ref.rules.
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -159,9 +158,7 @@ func queryScannedRepo(gql *api.GraphQLClient, owner, repo string, branches []str
 	q.WriteString(" } rateLimit { cost remaining } }")
 
 	var data map[string]json.RawMessage
-	ctx, cancel := context.WithTimeout(context.Background(), metadataQueryTimeout)
-	defer cancel()
-	err := gql.DoWithContext(ctx, "query("+strings.Join(params, ", ")+") "+q.String(), vars, &data)
+	err := doRetrying(gql, "query("+strings.Join(params, ", ")+") "+q.String(), vars, &data)
 	var cost *struct {
 		Cost      int `json:"cost"`
 		Remaining int `json:"remaining"`

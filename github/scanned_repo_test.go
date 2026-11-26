@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cli/go-gh/v2/pkg/api"
 
@@ -21,6 +22,9 @@ const enterpriseHost = "ghes.example.com"
 // A test that reaches the scanned repository's query on github.com without
 // stubbing it fails instead of querying GitHub.
 func init() {
+	// A retried query waits between tries; the tests keep the two retries
+	// and drop the waits.
+	unfinishedRetryDelays = []time.Duration{0, 0}
 	newScannedRepoGraphQL = func(string) (*api.GraphQLClient, error) {
 		return nil, errors.New("test: the scanned repository's GraphQL client is not stubbed")
 	}
@@ -326,5 +330,58 @@ func TestScannedRepo_EnterpriseStaysOnREST(t *testing.T) {
 	}
 	if len(*paths) != 1 {
 		t.Errorf("REST paths = %v, want the repository read", *paths)
+	}
+}
+
+// TestScannedRepo_RetriesAQueryGitHubCouldNotFinish: one 5xx must not cost
+// the run the default branch, the visibility, the identity, the branch
+// protection and the bot release together. The query cannot be made
+// smaller, so it is sent again, and the reads get the answer.
+func TestScannedRepo_RetriesAQueryGitHubCouldNotFinish(t *testing.T) {
+	first := true
+	gql, queries := stubbedGraphQL(t, func(graphQLRequest) (string, int) {
+		if first {
+			first = false
+			return `bad gateway`, 502
+		}
+		return acmeWidget, 200
+	})
+	swapScannedRepoGraphQL(t, gql, nil)
+	restRecorder(t, nil)
+
+	if def, err := FetchGitHubDefaultBranch("", "acme", "widget"); def != "main" || err != nil {
+		t.Errorf("default branch = %q, %v; want main, nil", def, err)
+	}
+	if vis, _ := FetchGitHubRepoIdentity("", "acme", "widget"); vis != ir.VisibilityPrivate {
+		t.Errorf("visibility = %q, want private", vis)
+	}
+	if len(*queries) != 2 {
+		t.Errorf("sent %d queries, want 2 (the 502, then the retry)", len(*queries))
+	}
+}
+
+// TestScannedRepo_RetriesAreBounded: a query GitHub keeps failing is sent
+// once plus one time per retry delay, then the failure is kept for the run
+// and the reads report it. An error that is not a 5xx or a timeout (here a
+// 401) is never sent again.
+func TestScannedRepo_RetriesAreBounded(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		want   int
+	}{
+		{"server error", 500, 1 + len(unfinishedRetryDelays)},
+		{"unauthorized", 401, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gql, queries := stubbedGraphQL(t, func(graphQLRequest) (string, int) { return `{"message":"no"}`, tc.status })
+			swapScannedRepoGraphQL(t, gql, nil)
+			restRecorder(t, nil)
+			_, _ = FetchGitHubDefaultBranch("", "acme", "widget")
+			_, _ = GitHubRepoVisible("", "acme", "widget")
+			if len(*queries) != tc.want {
+				t.Errorf("sent %d queries, want %d", len(*queries), tc.want)
+			}
+		})
 	}
 }

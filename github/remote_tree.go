@@ -7,7 +7,6 @@ package github
 // calls are read over the contents API, as before.
 
 import (
-	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
@@ -126,9 +125,7 @@ func queryObjects(gql *api.GraphQLClient, label, owner, repo string, items []tre
 	q.WriteString(" } rateLimit { cost remaining } }")
 
 	var data map[string]json.RawMessage
-	ctx, cancel := context.WithTimeout(context.Background(), metadataQueryTimeout)
-	defer cancel()
-	err := gql.DoWithContext(ctx, "query("+strings.Join(params, ", ")+") "+q.String(), vars, &data)
+	err := doRetrying(gql, "query("+strings.Join(params, ", ")+") "+q.String(), vars, &data)
 	var cost *struct {
 		Cost      int `json:"cost"`
 		Remaining int `json:"remaining"`

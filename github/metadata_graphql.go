@@ -219,6 +219,30 @@ func unfinished(err error) bool {
 	return errors.Is(err, context.DeadlineExceeded)
 }
 
+// unfinishedRetryDelays is how long doRetrying waits before each new try of
+// a query GitHub could not finish: two retries, a second then three apart.
+// A var so the tests do not sleep.
+var unfinishedRetryDelays = []time.Duration{time.Second, 3 * time.Second}
+
+// doRetrying sends a query that cannot be made smaller, and sends it again
+// when GitHub could not finish it (unfinished: a 5xx or our own timeout).
+// queryReposChunk splits such a query instead; one about a single
+// repository has nothing to split, and without a retry one 502 costs the
+// run every read that query answers. Any other error (auth, a rate limit,
+// a GraphQL error) would fail the same way and comes back at once. Each
+// try has its own metadataQueryTimeout.
+func doRetrying(gql *api.GraphQLClient, query string, vars map[string]any, data any) error {
+	for attempt := 0; ; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), metadataQueryTimeout)
+		err := gql.DoWithContext(ctx, query, vars, data)
+		cancel()
+		if !unfinished(err) || attempt >= len(unfinishedRetryDelays) {
+			return err
+		}
+		time.Sleep(unfinishedRetryDelays[attempt])
+	}
+}
+
 // aliasError is why alias has no usable answer, nil when it has one. A
 // null answer with no error of its own is GitHub's "no such repository".
 func aliasError(alias string, data map[string]json.RawMessage, failed map[string]error, err error) error {
