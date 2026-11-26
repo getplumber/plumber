@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/cli/go-gh/v2/pkg/api"
+	"github.com/sirupsen/logrus"
+	logtest "github.com/sirupsen/logrus/hooks/test"
 
 	"github.com/getplumber/plumber/internal/ir"
 )
@@ -337,44 +339,59 @@ func TestScannedRepo_EnterpriseStaysOnREST(t *testing.T) {
 // the run the default branch, the visibility, the identity, the branch
 // protection and the bot release together. The query cannot be made
 // smaller, so it is sent again, and the reads get the answer.
+//
+// The same holds for a timeout GitHub answers as a 200 with an error.
 func TestScannedRepo_RetriesAQueryGitHubCouldNotFinish(t *testing.T) {
-	first := true
-	gql, queries := stubbedGraphQL(t, func(graphQLRequest) (string, int) {
-		if first {
-			first = false
-			return `bad gateway`, 502
-		}
-		return acmeWidget, 200
-	})
-	swapScannedRepoGraphQL(t, gql, nil)
-	restRecorder(t, nil)
+	for _, tc := range []struct {
+		name, body string
+		status     int
+	}{
+		{"502", `bad gateway`, 502},
+		{"timeout answered 200", timeoutBody, 200},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			first := true
+			gql, queries := stubbedGraphQL(t, func(graphQLRequest) (string, int) {
+				if first {
+					first = false
+					return tc.body, tc.status
+				}
+				return acmeWidget, 200
+			})
+			swapScannedRepoGraphQL(t, gql, nil)
+			restRecorder(t, nil)
 
-	if def, err := FetchGitHubDefaultBranch("", "acme", "widget"); def != "main" || err != nil {
-		t.Errorf("default branch = %q, %v; want main, nil", def, err)
-	}
-	if vis, _ := FetchGitHubRepoIdentity("", "acme", "widget"); vis != ir.VisibilityPrivate {
-		t.Errorf("visibility = %q, want private", vis)
-	}
-	if len(*queries) != 2 {
-		t.Errorf("sent %d queries, want 2 (the 502, then the retry)", len(*queries))
+			if def, err := FetchGitHubDefaultBranch("", "acme", "widget"); def != "main" || err != nil {
+				t.Errorf("default branch = %q, %v; want main, nil", def, err)
+			}
+			if vis, _ := FetchGitHubRepoIdentity("", "acme", "widget"); vis != ir.VisibilityPrivate {
+				t.Errorf("visibility = %q, want private", vis)
+			}
+			if len(*queries) != 2 {
+				t.Errorf("sent %d queries, want 2 (the failure, then the retry)", len(*queries))
+			}
+		})
 	}
 }
 
 // TestScannedRepo_RetriesAreBounded: a query GitHub keeps failing is sent
 // once plus one time per retry delay, then the failure is kept for the run
 // and the reads report it. An error that is not a 5xx or a timeout (here a
-// 401) is never sent again.
+// 401, and a rate limit answered as a 200) is never sent again.
 func TestScannedRepo_RetriesAreBounded(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
+		body   string
 		status int
 		want   int
 	}{
-		{"server error", 500, 1 + len(unfinishedRetryDelays)},
-		{"unauthorized", 401, 1},
+		{"server error", `{"message":"no"}`, 500, 1 + len(unfinishedRetryDelays)},
+		{"timeout answered 200", timeoutBody, 200, 1 + len(unfinishedRetryDelays)},
+		{"unauthorized", `{"message":"no"}`, 401, 1},
+		{"rate limited", rateLimited, 200, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			gql, queries := stubbedGraphQL(t, func(graphQLRequest) (string, int) { return `{"message":"no"}`, tc.status })
+			gql, queries := stubbedGraphQL(t, func(graphQLRequest) (string, int) { return tc.body, tc.status })
 			swapScannedRepoGraphQL(t, gql, nil)
 			restRecorder(t, nil)
 			_, _ = FetchGitHubDefaultBranch("", "acme", "widget")
@@ -384,4 +401,75 @@ func TestScannedRepo_RetriesAreBounded(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestScannedRepo_FieldErrorIsNotAnAnswer: an error GitHub ties to one of
+// the repository's own fields must not read as that field's empty value.
+// An unread default branch is not "no default branch" (which would turn
+// defaultMustBeProtected into a silent no-op), unread releases are not "no
+// bot release", and a repository nulled by a field's error is not "not
+// found". REST failed the matching request in each case.
+func TestScannedRepo_FieldErrorIsNotAnAnswer(t *testing.T) {
+	t.Run("default branch", func(t *testing.T) {
+		gql, _ := stubbedGraphQL(t, func(graphQLRequest) (string, int) {
+			return `{"data":{"repository":{"nameWithOwner":"acme/widget","visibility":"PUBLIC","isPrivate":false,"defaultBranchRef":null,"releases":{"nodes":[{"author":{"login":"github-actions[bot]"}}]}}},"errors":[{"path":["repository","defaultBranchRef","rules"],"message":"timeout"}]}`, 200
+		})
+		swapScannedRepoGraphQL(t, gql, nil)
+		restRecorder(t, nil)
+		if def, err := FetchGitHubDefaultBranch("", "acme", "widget"); def != "" || err == nil || !strings.Contains(err.Error(), "timeout") {
+			t.Errorf("default branch = %q, %v; want GitHub's error", def, err)
+		}
+		// The fields GitHub did answer are still read.
+		if vis, name := FetchGitHubRepoIdentity("", "acme", "widget"); vis != ir.VisibilityPublic || name != "acme/widget" {
+			t.Errorf("identity = %q, %q; want public, acme/widget", vis, name)
+		}
+		if visible, err := GitHubRepoVisible("", "acme", "widget"); !visible || err != nil {
+			t.Errorf("visible = %v, %v; want true", visible, err)
+		}
+		if !defaultTokenFromEffect("", "acme", "widget") {
+			t.Error("the releases were answered: the bot release must be read")
+		}
+	})
+	t.Run("releases", func(t *testing.T) {
+		gql, _ := stubbedGraphQL(t, func(graphQLRequest) (string, int) {
+			return `{"data":{"repository":{"nameWithOwner":"acme/widget","visibility":"PUBLIC","isPrivate":false,"defaultBranchRef":{"name":"main","refUpdateRule":null,"rules":{"totalCount":0}},"releases":null}},"errors":[{"path":["repository","releases"],"message":"releases timed out"}]}`, 200
+		})
+		swapScannedRepoGraphQL(t, gql, nil)
+		restRecorder(t, nil)
+		hook := logtest.NewGlobal()
+		origLevel := logrus.GetLevel()
+		logrus.SetLevel(logrus.DebugLevel)
+		t.Cleanup(func() {
+			logrus.SetLevel(origLevel)
+			hook.Reset()
+		})
+		if defaultTokenFromEffect("", "acme", "widget") {
+			t.Error("unread releases must not prove the effect route")
+		}
+		logged := false
+		for _, e := range hook.AllEntries() {
+			if strings.Contains(e.Message, "releases timed out") {
+				logged = true
+			}
+		}
+		if !logged {
+			t.Error("the releases GitHub could not answer must be logged, not read as no bot release")
+		}
+		if def, err := FetchGitHubDefaultBranch("", "acme", "widget"); def != "main" || err != nil {
+			t.Errorf("default branch = %q, %v; want main", def, err)
+		}
+	})
+	t.Run("field error nulls the repository", func(t *testing.T) {
+		gql, _ := stubbedGraphQL(t, func(graphQLRequest) (string, int) {
+			return `{"data":{"repository":null},"errors":[{"path":["repository","releases"],"message":"releases timed out"}]}`, 200
+		})
+		swapScannedRepoGraphQL(t, gql, nil)
+		restRecorder(t, nil)
+		if visible, err := GitHubRepoVisible("", "acme", "widget"); visible || err == nil {
+			t.Errorf("visible = %v, %v; want an error, not a repository that does not exist", visible, err)
+		}
+		if _, err := FetchGitHubDefaultBranch("", "acme", "widget"); err == nil {
+			t.Error("default branch: want an error, not the quiet degrade of a missing repository")
+		}
+	})
 }

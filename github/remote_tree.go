@@ -111,7 +111,7 @@ type treeQueryItem struct{ alias, expr, fields string }
 // queryObjects sends one query reading each item's object, with every
 // expression as a variable, and returns the repository's fields and the
 // aliases GitHub could not answer. A repository GitHub answers null for is
-// errRepoNotFound.
+// errRepoNotFound, unless an alias's error nulled it (nullRepositoryError).
 func queryObjects(gql *api.GraphQLClient, label, owner, repo string, items []treeQueryItem) (map[string]json.RawMessage, map[string]error, error) {
 	params := []string{"$owner: String!", "$name: String!"}
 	vars := map[string]any{"owner": owner, "name": repo}
@@ -139,7 +139,7 @@ func queryObjects(gql *api.GraphQLClient, label, owner, repo string, items []tre
 	}
 	var fields map[string]json.RawMessage
 	if json.Unmarshal(data["repository"], &fields) != nil || fields == nil {
-		return nil, nil, errRepoNotFound
+		return nil, nil, nullRepositoryError(failed)
 	}
 	return fields, failed, nil
 }
@@ -262,22 +262,40 @@ func localCompositeDirs(p []string) []string {
 	return out
 }
 
+// dirModeFields list a directory's entries with their git mode, without
+// their text.
+const dirModeFields = "... on Tree { entries { name mode } }"
+
 // prefetchLocalComposites reads action.yml and action.yaml of each
 // directory at rev in one query, keyed by the path the nested walk reads
 // (path.Join(dir, "action.yml")). A failed query or alias leaves the
 // path out, so it reads over REST.
+//
+// A Blob carries no git mode, and the blob of a symlink holds the path it
+// points at: on git/git, HEAD:RelNotes answered the text
+// "Documentation/RelNotes/2.98.0.adoc" where the contents API answered the
+// release notes, and the root tree (HEAD:) listed RelNotes with mode 40960
+// (checked 2026-11-26). So the query also lists each directory, and a
+// definition is kept only when its entry is a regular file. Any other
+// (a symlink, a submodule, a directory GitHub could not list) is left out
+// and reads over REST, which follows a link inside the repository.
 func prefetchLocalComposites(gql *api.GraphQLClient, owner, repo, rev string, dirs []string) map[string]prefetchedFile {
 	out := map[string]prefetchedFile{}
 	if len(dirs) == 0 {
 		return out
 	}
+	type definition struct {
+		path, name, dirAlias string
+	}
 	var items []treeQueryItem
-	paths := map[string]string{}
+	defs := map[string]definition{}
 	for i, d := range dirs {
+		dirAlias := "d" + strconv.Itoa(i)
+		items = append(items, treeQueryItem{dirAlias, rev + ":" + d, dirModeFields})
 		for j, name := range []string{"action.yml", "action.yaml"} {
 			alias := "f" + strconv.Itoa(i) + "_" + strconv.Itoa(j)
 			p := path.Join(d, name)
-			paths[alias] = p
+			defs[alias] = definition{p, name, dirAlias}
 			items = append(items, treeQueryItem{alias, rev + ":" + p, blobFields})
 		}
 	}
@@ -285,20 +303,41 @@ func prefetchLocalComposites(gql *api.GraphQLClient, owner, repo, rev string, di
 	if err != nil {
 		return out
 	}
-	for alias, p := range paths {
+	for alias, def := range defs {
 		if failed[alias] != nil {
 			continue
 		}
 		if isNull(fields[alias]) {
-			out[p] = prefetchedFile{missing: true}
+			out[def.path] = prefetchedFile{missing: true}
+			continue
+		}
+		if failed[def.dirAlias] != nil || !regularFile(fields[def.dirAlias], def.name) {
 			continue
 		}
 		var b blobAnswer
 		if json.Unmarshal(fields[alias], &b) == nil {
-			out[p] = prefetchedFile{blob: &b}
+			out[def.path] = prefetchedFile{blob: &b}
 		}
 	}
 	return out
+}
+
+// regularFile reports whether the directory listing raw holds name as a
+// regular or executable file. A listing that is missing or unreadable
+// answers false: the mode is then unknown.
+func regularFile(raw json.RawMessage, name string) bool {
+	var dir struct {
+		Entries []treeEntry `json:"entries"`
+	}
+	if isNull(raw) || json.Unmarshal(raw, &dir) != nil {
+		return false
+	}
+	for _, e := range dir.Entries {
+		if e.Name == name {
+			return e.Mode == modeFile || e.Mode == modeExecutable
+		}
+	}
+	return false
 }
 
 // prefetchedReader reads a prefetched composite definition, and anything

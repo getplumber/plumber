@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -208,15 +209,52 @@ func (c *GitHubMetadataClient) queryReposChunk(reqs []repoRequest) []releasesPag
 }
 
 // unfinished reports whether err is GitHub giving up on a query rather than
-// refusing it: a 5xx (a query past GitHub's time limit answers 502) or our
-// own timeout. A smaller query may then succeed; an auth or rate-limit
-// error would fail the same way.
+// refusing it: a 5xx (a query past GitHub's time limit answers 502), our
+// own timeout, or a timeout GitHub answers as a 200 (answeredTimeout). A
+// smaller query may then succeed; an auth or rate-limit error would fail
+// the same way.
 func unfinished(err error) bool {
 	var httpErr *api.HTTPError
 	if errors.As(err, &httpErr) {
 		return httpErr.StatusCode >= 500
 	}
+	var gqlErr *api.GraphQLError
+	if errors.As(err, &gqlErr) {
+		return answeredTimeout(gqlErr)
+	}
 	return errors.Is(err, context.DeadlineExceeded)
+}
+
+// timeoutMessages start the message of a query GitHub gave up on. The
+// second is the one GitHub's documentation gives ("Rate limits and query
+// limits for the GraphQL API", Timeouts).
+var timeoutMessages = []string{
+	"Something went wrong while executing your query",
+	"We couldn't respond to your request in time",
+}
+
+// answeredTimeout reports whether e is GitHub giving up on a query with a
+// 200: every error has one of timeoutMessages, no path and no type. The
+// match is narrow on purpose. A rate limit also answers 200 with an error
+// that has no path (type RATE_LIMITED), and must not be sent again or
+// split; an error this misses only keeps the query unretried.
+//
+// This shape was not reproduced: a query too heavy for GitHub answered a
+// 502 with an HTML body on both tries (torvalds/linux, 100 tags with the
+// history of each, 2026-11-26). It is here for the 200 the documentation
+// allows and reports describe.
+func answeredTimeout(e *api.GraphQLError) bool {
+	if len(e.Errors) == 0 {
+		return false
+	}
+	for _, item := range e.Errors {
+		if len(item.Path) != 0 || item.Type != "" || !slices.ContainsFunc(timeoutMessages, func(m string) bool {
+			return strings.HasPrefix(item.Message, m)
+		}) {
+			return false
+		}
+	}
+	return true
 }
 
 // unfinishedRetryDelays is how long doRetrying waits before each new try of
@@ -225,7 +263,8 @@ func unfinished(err error) bool {
 var unfinishedRetryDelays = []time.Duration{time.Second, 3 * time.Second}
 
 // doRetrying sends a query that cannot be made smaller, and sends it again
-// when GitHub could not finish it (unfinished: a 5xx or our own timeout).
+// when GitHub could not finish it (unfinished: a 5xx, our own timeout, or a
+// timeout answered as a 200).
 // queryReposChunk splits such a query instead; one about a single
 // repository has nothing to split, and without a retry one 502 costs the
 // run every read that query answers. Any other error (auth, a rate limit,

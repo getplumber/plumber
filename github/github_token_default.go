@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sirupsen/logrus"
+
 	"github.com/getplumber/plumber/internal/httpcount"
 )
 
@@ -489,6 +491,14 @@ func defaultTokenFromEffect(host, owner, repo string) bool {
 		}
 		if err != nil {
 			logRefusedLane("default token releases", err)
+			return false
+		}
+		if r.releasesErr != nil {
+			// GitHub answered the repository but not its releases: the
+			// effect route proves nothing, and the run says why.
+			logrus.WithField("context", "collector").
+				WithField("lane", "default token releases").
+				Debugf("releases could not be read, the default token's effect stays unknown: %v", r.releasesErr)
 			return false
 		}
 		return r.botRelease

@@ -1,6 +1,7 @@
 package github
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -213,6 +214,100 @@ func TestQueryRepos_SplitsAQueryGitHubCouldNotFinish(t *testing.T) {
 	}
 	if e := c.repoCache["o/slow"]; e.err == nil {
 		t.Errorf("slow = %+v, want could-not-verify", e)
+	}
+}
+
+// timeoutBody is GitHub answering 200 for a query it gave up on: no
+// data, and one error with neither a path nor a type.
+const timeoutBody = `{"data":null,"errors":[{"message":"Something went wrong while executing your query. This may be the result of a timeout, or it could be a GitHub bug. Please include ` + "`ABCD:1234`" + ` when reporting this issue."}]}`
+
+// rateLimited is GitHub refusing a query over the rate limit: also a 200
+// with an error that has no path, but one a smaller or later query would
+// hit the same way.
+const rateLimited = `{"errors":[{"type":"RATE_LIMITED","message":"API rate limit exceeded for user ID 1."}]}`
+
+// TestUnfinished: only GitHub giving up on a query counts (a 5xx, our own
+// timeout, a timeout answered as a 200). A refusal never does, since
+// sending the query again or smaller would fail the same way.
+func TestUnfinished(t *testing.T) {
+	gqlErr := func(items ...api.GraphQLErrorItem) error { return &api.GraphQLError{Errors: items} }
+	for _, tc := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"502", &api.HTTPError{StatusCode: 502}, true},
+		{"504", &api.HTTPError{StatusCode: 504}, true},
+		{"401", &api.HTTPError{StatusCode: 401}, false},
+		{"403", &api.HTTPError{StatusCode: 403}, false},
+		{"our timeout", fmt.Errorf("post: %w", context.DeadlineExceeded), true},
+		{"timeout answered 200", gqlErr(api.GraphQLErrorItem{Message: "Something went wrong while executing your query. This may be the result of a timeout, or it could be a GitHub bug."}), true},
+		{"timeout answered 200, docs message", gqlErr(api.GraphQLErrorItem{Message: "We couldn't respond to your request in time. Sorry about that."}), true},
+		{"wrapped", fmt.Errorf("query: %w", gqlErr(api.GraphQLErrorItem{Message: "Something went wrong while executing your query."})), true},
+		{"rate limited", gqlErr(api.GraphQLErrorItem{Type: "RATE_LIMITED", Message: "API rate limit exceeded for user ID 1."}), false},
+		{"typed, same message", gqlErr(api.GraphQLErrorItem{Type: "FORBIDDEN", Message: "Something went wrong while executing your query."}), false},
+		{"tied to an alias", gqlErr(api.GraphQLErrorItem{Path: []any{"r0"}, Message: "Something went wrong while executing your query."}), false},
+		{"another message", gqlErr(api.GraphQLErrorItem{Message: "Parse error on \"}\""}), false},
+		{"timeout beside a refusal", gqlErr(
+			api.GraphQLErrorItem{Message: "Something went wrong while executing your query."},
+			api.GraphQLErrorItem{Type: "RATE_LIMITED", Message: "API rate limit exceeded"}), false},
+		{"no items", gqlErr(), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := unfinished(tc.err); got != tc.want {
+				t.Errorf("unfinished(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestQueryRepos_SplitsAQueryGitHubAnsweredATimeout: a timeout GitHub
+// answers as a 200 with an error is split like a 502, so one slow
+// repository spoils only its own answer instead of the whole batch.
+func TestQueryRepos_SplitsAQueryGitHubAnsweredATimeout(t *testing.T) {
+	c, got := graphQLMetadataClient(t, func(q graphQLRequest) (string, int) {
+		if q.Variables["n1"] != nil || q.Variables["n0"] == "slow" {
+			return timeoutBody, 200
+		}
+		return `{"data":{"r0":{"nameWithOwner":"o/` + q.Variables["n0"].(string) + `","isArchived":false,"stargazerCount":1}}}`, 200
+	})
+	c.queryRepos([]repoRequest{
+		{owner: "o", repo: "fast", info: true},
+		{owner: "o", repo: "slow", info: true},
+		{owner: "o", repo: "quick", info: true},
+	})
+	// 3 repositories, then 1 + 2, then the 2 as 1 + 1.
+	if len(*got) != 5 {
+		t.Fatalf("queries = %d, want 5", len(*got))
+	}
+	for _, name := range []string{"fast", "quick"} {
+		if e := c.repoCache["o/"+name]; e.err != nil || e.fullName != "o/"+name {
+			t.Errorf("%s = %+v, want read", name, e)
+		}
+	}
+	if e := c.repoCache["o/slow"]; e.err == nil {
+		t.Errorf("slow = %+v, want could-not-verify", e)
+	}
+}
+
+// TestQueryRepos_RateLimitIsNotSplit: a rate limit also answers 200 with an
+// error that has no path, but halves would be refused the same way: the
+// batch is sent once and every repository is could-not-verify.
+func TestQueryRepos_RateLimitIsNotSplit(t *testing.T) {
+	c, got := graphQLMetadataClient(t, func(graphQLRequest) (string, int) { return rateLimited, 200 })
+	c.queryRepos([]repoRequest{
+		{owner: "o", repo: "a", info: true},
+		{owner: "o", repo: "b", info: true},
+		{owner: "o", repo: "c", info: true},
+	})
+	if len(*got) != 1 {
+		t.Fatalf("queries = %d, want 1", len(*got))
+	}
+	for _, name := range []string{"a", "b", "c"} {
+		if e := c.repoCache["o/"+name]; e.err == nil {
+			t.Errorf("%s = %+v, want could-not-verify", name, e)
+		}
 	}
 }
 

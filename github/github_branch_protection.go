@@ -387,6 +387,10 @@ func FetchGitHubDefaultBranch(host, owner, repo string) (string, error) {
 			return "", nil
 		case r.err != nil:
 			return "", r.err
+		case r.defaultBranchErr != nil:
+			// GitHub could not answer the default branch: an error, as a
+			// failed REST read was, never "no default branch".
+			return "", r.defaultBranchErr
 		}
 		return r.defaultBranch, nil
 	}

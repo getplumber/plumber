@@ -69,7 +69,11 @@ func (f gitRepo) answer(expr string) any {
 	var entries []map[string]any
 	seen := map[string]bool{}
 	for fp, file := range files {
-		rest, ok := strings.CutPrefix(fp, p+"/")
+		prefix := p + "/"
+		if p == "" {
+			prefix = "" // "<ref>:" is the root tree
+		}
+		rest, ok := strings.CutPrefix(fp, prefix)
 		if !ok {
 			continue
 		}
@@ -79,7 +83,7 @@ func (f gitRepo) answer(expr string) any {
 		}
 		seen[name] = true
 		if isDir {
-			entries = append(entries, map[string]any{"name": name, "path": p + "/" + name, "mode": 0o40000, "object": map[string]any{}})
+			entries = append(entries, map[string]any{"name": name, "path": prefix + name, "mode": 0o40000, "object": map[string]any{}})
 			continue
 		}
 		mode := file.mode
@@ -288,6 +292,21 @@ func TestWorkflowTree_FailedQuery(t *testing.T) {
 	}
 }
 
+// TestWorkflowTree_AliasErrorNullsTheRepository: an error on one alias can
+// null the repository. It is that error, not a repository that does not
+// exist.
+func TestWorkflowTree_AliasErrorNullsTheRepository(t *testing.T) {
+	gql, _ := stubbedGraphQL(t, func(graphQLRequest) (string, int) {
+		return `{"data":{"repository":null},"errors":[{"path":["repository","t0"],"message":"tree timed out"}]}`, 200
+	})
+	swapScannedRepoGraphQL(t, gql, nil)
+	restRecorder(t, nil)
+	_, _, err := ScanGitHubWorkflowsRemote("", "acme", "app", "main", false, false, nil)
+	if err == nil || !strings.Contains(err.Error(), "tree timed out") || strings.Contains(err.Error(), "not found") {
+		t.Errorf("err = %v, want GitHub's error, not a missing repository", err)
+	}
+}
+
 // TestLocalComposites_OneQuery: the local composites the workflows call
 // are read in one more query, action.yml or action.yaml. A composite only
 // another composite calls reads over REST.
@@ -320,8 +339,10 @@ func TestLocalComposites_OneQuery(t *testing.T) {
 	}
 	sort.Strings(exprs)
 	want := []string{
+		"refs/heads/main:.github/actions/x",
 		"refs/heads/main:.github/actions/x/action.yaml",
 		"refs/heads/main:.github/actions/x/action.yml",
+		"refs/heads/main:.github/actions/z",
 		"refs/heads/main:.github/actions/z/action.yaml",
 		"refs/heads/main:.github/actions/z/action.yml",
 	}
@@ -336,5 +357,88 @@ func TestLocalComposites_OneQuery(t *testing.T) {
 		if !strings.Contains(got, u) {
 			t.Errorf("job entries %q, missing %s", got, u)
 		}
+	}
+}
+
+// TestLocalComposites_SymlinkReadsOverREST: a Blob carries no git mode, and
+// the blob of a symlink holds the path it points at, not a definition. The
+// directory's listing gives the mode, and a definition that is not a
+// regular file reads over the contents API, which follows the link. Without
+// it the composite's own steps would never be resolved.
+func TestLocalComposites_SymlinkReadsOverREST(t *testing.T) {
+	const ci = "on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ./.github/actions/x\n      - uses: ./\n"
+	queries := swapGitRepo(t, gitRepo{
+		refs: []string{"refs/heads/main"},
+		files: map[string]fakeFile{
+			".github/workflows/ci.yml":     {text: ci},
+			".github/actions/x/action.yml": {text: "../shared/action.yml", mode: 0o120000},
+			// The root composite (uses: ./) is a regular file: its
+			// directory is the root tree, "<rev>:".
+			"action.yml": {text: composite("./.github/actions/root-step")},
+		},
+	})
+	paths := restRecorder(t, map[string]string{
+		"/repos/acme/app/contents/.github/actions/x/action.yml":         `{"encoding":"base64","content":"` + b64(composite("./.github/actions/y")) + `"}`,
+		"/repos/acme/app/contents/.github/actions/y/action.yml":         `{"encoding":"base64","content":"` + b64(composite()) + `"}`,
+		"/repos/acme/app/contents/.github/actions/root-step/action.yml": `{"encoding":"base64","content":"` + b64(composite()) + `"}`,
+	})
+
+	p, partial, err := ScanGitHubWorkflowsRemote("", "acme", "app", "main", false, false, nil)
+	if err != nil || len(partial) != 0 {
+		t.Fatalf("scan: %v %v", err, partial)
+	}
+	if len(*queries) != 2 {
+		t.Fatalf("sent %d queries, want 2", len(*queries))
+	}
+	asked := strings.Join(*paths, "\n")
+	if !strings.Contains(asked, "/repos/acme/app/contents/.github/actions/x/action.yml") {
+		t.Errorf("REST paths = %v, want the symlinked definition read over the contents API", *paths)
+	}
+	if strings.Contains(asked, "/repos/acme/app/contents/action.yml") {
+		t.Errorf("REST paths = %v, want the root definition (a regular file) read from the query", *paths)
+	}
+	got := strings.Join(entries(p.Jobs[0]), "\n")
+	for _, u := range []string{"./.github/actions/x |", "./.github/actions/y |", "./.github/actions/root-step |"} {
+		if !strings.Contains(got, u) {
+			t.Errorf("job entries %q, missing %s", got, u)
+		}
+	}
+}
+
+// TestLocalComposites_UnlistedDirectoryReadsOverREST: when GitHub could not
+// list a composite's directory, the mode of its definition is unknown, so
+// the definition reads over REST rather than being trusted as a blob.
+func TestLocalComposites_UnlistedDirectoryReadsOverREST(t *testing.T) {
+	repo := gitRepo{
+		refs: []string{"refs/heads/main"},
+		files: map[string]fakeFile{
+			".github/workflows/ci.yml":     {text: "on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ./.github/actions/x\n"},
+			".github/actions/x/action.yml": {text: composite()},
+		},
+	}
+	gql, _ := stubbedGraphQL(t, func(q graphQLRequest) (string, int) {
+		body, status := repo.respond(q)
+		for alias, v := range q.Variables {
+			if v == "refs/heads/main:.github/actions/x" {
+				var answer map[string]any
+				_ = json.Unmarshal([]byte(body), &answer)
+				answer["data"].(map[string]any)["repository"].(map[string]any)[alias] = nil
+				answer["errors"] = []map[string]any{{"path": []string{"repository", alias}, "message": "timeout"}}
+				out, _ := json.Marshal(answer)
+				return string(out), status
+			}
+		}
+		return body, status
+	})
+	swapScannedRepoGraphQL(t, gql, nil)
+	paths := restRecorder(t, map[string]string{
+		"/repos/acme/app/contents/.github/actions/x/action.yml": `{"encoding":"base64","content":"` + b64(composite()) + `"}`,
+	})
+
+	if _, partial, err := ScanGitHubWorkflowsRemote("", "acme", "app", "main", false, false, nil); err != nil || len(partial) != 0 {
+		t.Fatalf("scan: %v %v", err, partial)
+	}
+	if want := []string{"/repos/acme/app/contents/.github/actions/x/action.yml"}; !reflect.DeepEqual(*paths, want) {
+		t.Errorf("REST paths = %v, want %v", *paths, want)
 	}
 }

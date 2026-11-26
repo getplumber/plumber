@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -67,8 +68,14 @@ type scannedRepo struct {
 	fullName, visibility string
 	private              bool
 	defaultBranch        string
-	branches             map[string]branchFact
-	botRelease           bool
+	// defaultBranchErr is set when GitHub could not answer the default
+	// branch: defaultBranch is then unknown, not empty.
+	defaultBranchErr error
+	branches         map[string]branchFact
+	botRelease       bool
+	// releasesErr is set when GitHub could not answer the releases:
+	// botRelease is then unknown, not false.
+	releasesErr error
 }
 
 // scannedRepos keeps each repository's answer for the run.
@@ -175,11 +182,12 @@ func queryScannedRepo(gql *api.GraphQLClient, owner, repo string, branches []str
 	}
 	var fields map[string]json.RawMessage
 	if json.Unmarshal(data["repository"], &fields) != nil || fields == nil {
-		r.err = errRepoNotFound
+		r.err = nullRepositoryError(failed)
 		return r
 	}
 	if full {
 		decodeRepoFields(r, fields)
+		r.defaultBranchErr, r.releasesErr = failed["defaultBranchRef"], failed["releases"]
 	}
 	for alias, b := range aliases {
 		if ferr := failed[alias]; ferr != nil {
@@ -242,8 +250,10 @@ func decodeRepoFields(r *scannedRepo, fields map[string]json.RawMessage) {
 // scannedRepoErrors reads the query's error: the error of each branch alias
 // GitHub tied one to, and the error that spoils the whole repository. An
 // error on the repository itself maps to errRepoNotFound or
-// errRepoForbidden by its type. One on another of its fields (releases)
-// leaves that field empty. Any other error spoils the answer.
+// errRepoForbidden by its type. One on another of its fields
+// (defaultBranchRef, releases) is returned under that field's name, like a
+// branch alias: the caller must not read the field's empty value as an
+// answer. Any other error spoils the answer.
 func scannedRepoErrors(err error) (map[string]error, error) {
 	if err == nil {
 		return nil, nil
@@ -271,6 +281,22 @@ func scannedRepoErrors(err error) (map[string]error, error) {
 		}
 	}
 	return failed, nil
+}
+
+// nullRepositoryError is why GitHub answered null for the repository: the
+// error of one of its fields when there is one (an error on a field can
+// null its parent), errRepoNotFound otherwise. The field error wins: it
+// must not read as a repository that does not exist.
+func nullRepositoryError(failed map[string]error) error {
+	if len(failed) == 0 {
+		return errRepoNotFound
+	}
+	aliases := make([]string, 0, len(failed))
+	for alias := range failed {
+		aliases = append(aliases, alias)
+	}
+	sort.Strings(aliases)
+	return failed[aliases[0]]
 }
 
 // branch reads one branch the way fetchBranchByName does over REST: nil
