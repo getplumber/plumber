@@ -8,6 +8,7 @@ import (
 	"maps"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -432,6 +433,48 @@ func TestQueryTags_PeelsToTheCommitAndPages(t *testing.T) {
 	want := map[string]string{"c4": "v4.3.0", "c3": "v3.0.0"}
 	if tags := c.sha2tagCache["o/r"]; !maps.Equal(tags, want) {
 		t.Errorf("sha2tag = %v, want %v", tags, want)
+	}
+}
+
+// TestQueryTags_StopsAtMaxTagPages: a repository whose listing never ends
+// is read maxTagPages pages deep and no further, as the REST walk was.
+func TestQueryTags_StopsAtMaxTagPages(t *testing.T) {
+	page := 0
+	c, got := graphQLMetadataClient(t, func(graphQLRequest) (string, int) {
+		page++
+		n := strconv.Itoa(page)
+		return `{"data":{"r0":{"refs":{"nodes":[{"name":"v` + n + `.0.0","target":{"__typename":"Commit","oid":"c` + n + `"}}],"pageInfo":{"hasNextPage":true,"endCursor":"p` + n + `"}}}}}`, 200
+	})
+	c.queryTags([]repoKey{{"o", "r"}})
+	if len(*got) != maxTagPages {
+		t.Fatalf("queries = %d, want %d", len(*got), maxTagPages)
+	}
+	tags := c.sha2tagCache["o/r"]
+	if len(tags) != maxTagPages || tags["c1"] != "v1.0.0" || tags["c"+strconv.Itoa(maxTagPages)] != "v"+strconv.Itoa(maxTagPages)+".0.0" {
+		t.Errorf("sha2tag = %v, want the tag of each of the %d pages", tags, maxTagPages)
+	}
+}
+
+// TestQueryRepos_UnpatchedAdvisory: an advisory of the package that has no
+// patched version (firstPatchedVersion null) is kept with an empty patched
+// version, and its severity is read lower-cased, as the policies match it.
+func TestQueryRepos_UnpatchedAdvisory(t *testing.T) {
+	c, _ := graphQLMetadataClient(t, func(graphQLRequest) (string, int) {
+		return `{"data":{"a0":{"nodes":[
+			{"advisory":{"ghsaId":"GHSA-9","severity":"CRITICAL"},"package":{"name":"O/R"},"vulnerableVersionRange":"<= 3.1.0","firstPatchedVersion":null},
+			{"advisory":{"ghsaId":"GHSA-8","severity":"HIGH"},"package":{"name":"o/r"},"vulnerableVersionRange":"< 2.0.0","firstPatchedVersion":{"identifier":"2.0.0"}}
+		]}}}`, 200
+	})
+	c.queryRepos([]repoRequest{{owner: "o", repo: "r", advisories: true}})
+	want := []advisoryInfo{
+		{GhsaID: "GHSA-9", VulnerableRange: "<= 3.1.0", Severity: "critical"},
+		{GhsaID: "GHSA-8", VulnerableRange: "< 2.0.0", PatchedVersions: "2.0.0", Severity: "high"},
+	}
+	if adv := c.advisoryCache["o/r"]; !slices.Equal(adv, want) {
+		t.Errorf("advisories = %+v\nwant %+v", adv, want)
+	}
+	if len(c.DegradedChecks()) != 0 {
+		t.Errorf("degraded = %v, want none", c.DegradedChecks())
 	}
 }
 

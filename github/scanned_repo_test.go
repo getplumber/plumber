@@ -204,6 +204,57 @@ func TestScannedRepo_ReadsLoadOnFirstUse(t *testing.T) {
 	}
 }
 
+// TestScannedRepo_LaterBranchQueryFails: a branch a later read asks costs
+// one more query, and that query can fail as a whole. The branch is then
+// unverified, never absent: a 500 is an error, as REST's was, and a 401
+// the quiet degrade. What the first query answered stays.
+func TestScannedRepo_LaterBranchQueryFails(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		status  int
+		wantErr bool
+	}{
+		{"server error", 500, true},
+		{"unauthorized", 401, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gql, queries := stubbedGraphQL(t, func(q graphQLRequest) (string, int) {
+				if _, later := q.Variables["releases"]; !later {
+					return `{"message":"no"}`, tc.status
+				}
+				return acmeWidget, 200
+			})
+			swapScannedRepoGraphQL(t, gql, nil)
+			restRecorder(t, nil)
+
+			if def, _ := FetchGitHubDefaultBranch("", "acme", "widget"); def != "main" {
+				t.Fatalf("default branch = %q, want main", def)
+			}
+			sent := len(*queries)
+			branches, err := FetchGitHubBranchProtection("", "acme", "widget", BranchFetchOptions{ExactNames: []string{"dev"}})
+			if len(*queries) == sent {
+				t.Fatal("the branch read sent no query")
+			}
+			if len(branches) != 0 {
+				t.Errorf("branches = %+v, want none", branches)
+			}
+			if (err != nil) != tc.wantErr {
+				t.Errorf("err = %v, want an error: %v", err, tc.wantErr)
+			}
+			scannedRepos.Lock()
+			fact := scannedRepos.m["|acme/widget"].branches["dev"]
+			scannedRepos.Unlock()
+			if fact.err == nil {
+				t.Errorf("dev = %+v, want the query's error kept: an unread branch is not an absent one", fact)
+			}
+			// The first answer is still read.
+			if vis, _ := FetchGitHubRepoIdentity("", "acme", "widget"); vis != ir.VisibilityPrivate {
+				t.Errorf("visibility = %q, want private", vis)
+			}
+		})
+	}
+}
+
 // TestScannedRepo_NotFound: a repository GitHub answers null for reads as
 // REST's 404 did: no default branch and no error, unknown visibility, not
 // visible, and no branches.

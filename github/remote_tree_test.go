@@ -292,6 +292,57 @@ func TestWorkflowTree_FailedQuery(t *testing.T) {
 	}
 }
 
+// TestWorkflowTree_EmptyRepository: a repository with no commit has no
+// HEAD. Scanned at its default branch it has no workflows, which is not
+// the missing ref of ISSUE #222: a named ref that does not exist is still
+// an error.
+func TestWorkflowTree_EmptyRepository(t *testing.T) {
+	queries := swapGitRepo(t, gitRepo{refs: nil})
+	restRecorder(t, nil)
+	p, partial, err := ScanGitHubWorkflowsRemote("", "acme", "app", "", false, false, nil)
+	if err != nil || len(partial) != 0 {
+		t.Fatalf("scan: %v %v; want no error", err, partial)
+	}
+	if len(p.Jobs) != 0 || p.WorkflowFileCount != 0 {
+		t.Errorf("jobs = %v, files = %d; want none", jobNames(p.Jobs), p.WorkflowFileCount)
+	}
+	if len(*queries) != 1 {
+		t.Errorf("sent %d queries, want 1", len(*queries))
+	}
+	if _, _, err := ScanGitHubWorkflowsRemote("", "acme", "app", "main", false, false, nil); err == nil || !strings.Contains(err.Error(), `"main" not found`) {
+		t.Errorf("named ref: err = %v, want the missing ref error", err)
+	}
+}
+
+// TestWorkflowTree_CommitAliasFailed: an error GitHub ties to a
+// candidate's commit is that error. The candidate must not read as a ref
+// that does not exist, which would move on to the next candidate (a tag
+// of the same name) or report the ref missing.
+func TestWorkflowTree_CommitAliasFailed(t *testing.T) {
+	repo := gitRepo{
+		refs: []string{"refs/heads/main", "refs/tags/main"},
+		files: map[string]fakeFile{
+			".github/workflows/ci.yml": {text: probeWorkflow},
+		},
+	}
+	gql, _ := stubbedGraphQL(t, func(q graphQLRequest) (string, int) {
+		body, status := repo.respond(q)
+		var answer map[string]any
+		_ = json.Unmarshal([]byte(body), &answer)
+		// c0 is the branch's commit.
+		answer["data"].(map[string]any)["repository"].(map[string]any)["c0"] = nil
+		answer["errors"] = []map[string]any{{"path": []string{"repository", "c0"}, "message": "commit timed out"}}
+		out, _ := json.Marshal(answer)
+		return string(out), status
+	})
+	swapScannedRepoGraphQL(t, gql, nil)
+	restRecorder(t, nil)
+	p, _, err := ScanGitHubWorkflowsRemote("", "acme", "app", "main", false, false, nil)
+	if err == nil || !strings.Contains(err.Error(), "commit timed out") {
+		t.Errorf("err = %v (pipeline %v), want GitHub's error", err, p)
+	}
+}
+
 // TestWorkflowTree_AliasErrorNullsTheRepository: an error on one alias can
 // null the repository. It is that error, not a repository that does not
 // exist.

@@ -787,6 +787,39 @@ func TestReadWith_AuthenticatedRawMissIsFinal(t *testing.T) {
 
 const testSHA = "0123456789abcdef0123456789abcdef01234567"
 
+// TestReadWith_ServedFileProvesTheRepository: the contents API serving a
+// file accepts the token as much as its 404 does. In a repository it only
+// ever served files for, a later raw 404 at a commit SHA is final and the
+// API is not asked again (plumber#618).
+func TestReadWith_ServedFileProvesTheRepository(t *testing.T) {
+	t.Setenv(EnvDisableGitHubAPI, "0")
+	stub := newStub(map[string]string{})
+	// The raw host fails on action.yml, so the contents API is asked and
+	// serves it; every other path is a plain raw 404.
+	stub.errs["acme/b@"+testSHA+":action.yml"] = true
+	var apiPaths []string
+	client := stubbedMetadataClient(t, func(r *http.Request) (string, int) {
+		apiPaths = append(apiPaths, r.URL.Path)
+		if strings.HasSuffix(r.URL.Path, "/contents/action.yml") {
+			return `{"encoding":"base64","content":"` + b64(composite()) + `"}`, http.StatusOK
+		}
+		return `{"message":"Not Found"}`, http.StatusNotFound
+	})
+	defs := newDefinitionFetcher(stub.fetch, client)
+	defs.rawToken = "test-token"
+	if text, st := defs.read("acme", "b", testSHA, "action.yml"); st != fetchOK || text != composite() {
+		t.Fatalf("action.yml: %q, %v; want the contents API's file", text, st)
+	}
+	for _, p := range []string{"action.yaml", "dist/index.js"} {
+		if _, st := defs.read("acme", "b", testSHA, p); st != fetchMissing {
+			t.Fatalf("%s: status = %v, want fetchMissing", p, st)
+		}
+	}
+	if len(apiPaths) != 1 || !strings.HasSuffix(apiPaths[0], "/contents/action.yml") {
+		t.Fatalf("the served file proves the repository: no raw 404 after it may ask the contents API, got %q", apiPaths)
+	}
+}
+
 // TestReadWith_RawMissOnAMovableRefAsksTheAPI: the raw host's CDN keeps a
 // 404 for about a minute, so a file pushed to a branch (or under a moved
 // tag) right after a miss is still a 404 there. Only a full commit SHA,
