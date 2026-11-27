@@ -157,17 +157,27 @@ type outsiderFacts struct {
 	// comparison stays unresolved rather than settled either way.
 	repositoryKnown bool
 	byName          map[string]Job
+	// namespace is the workflow of the job being classified, the prefix
+	// of its name (jobNamespace): where a condition's needs.<job> is
+	// looked up (neededJob).
+	namespace string
 	// hide forces the named references unknown regardless of what the
 	// model would otherwise answer, used to find which fact family a
 	// False result depends on (see causalReason in gates.go).
 	hide []string
-	// resolving is the chain of job names whose needs.*.outputs.*
-	// resolution is in progress, so a step condition that reads back
-	// into a job already being resolved (two jobs whose output-gating
+	// resolving is the chain of job names whose needs.*.result or
+	// needs.*.outputs.* resolution is in progress, so a condition that
+	// reads back into a job already being resolved (two jobs whose
 	// conditions reference each other) stops instead of recursing
 	// forever: untrusted workflows get to define this chain, so it must
 	// never crash the process.
 	resolving []string
+	// needed remembers, per needed job and set of hidden references,
+	// what neededJobCondition answered, so a job many conditions read is
+	// evaluated once. Every copy of the facts shares it. An answer found
+	// while a cycle was being cut is the real one or Unknown, never the
+	// opposite value, so reusing it only ever leaves a gate less settled.
+	needed map[string]expr.Value
 }
 
 // newOutsiderFacts is the model for job on trigger with event action
@@ -192,6 +202,8 @@ func newOutsiderFacts(trigger, eventType string, job Job, byName map[string]Job,
 		repository:      repository,
 		repositoryKnown: repositoryKnown,
 		byName:          byName,
+		namespace:       jobNamespace(job.Name),
+		needed:          map[string]expr.Value{},
 	}
 }
 
@@ -317,7 +329,10 @@ func (f outsiderFacts) Resolve(ref string) (string, bool) {
 		return "", false
 	}
 	if strings.HasPrefix(ref, "needs.") {
-		return f.resolveNeedsOutput(ref)
+		if _, _, isOutput := parseNeedsOutputRef(ref); isOutput {
+			return f.resolveNeedsOutput(ref)
+		}
+		return f.resolveNeedsResult(ref)
 	}
 	switch ref {
 	case "github.event_name":
@@ -410,34 +425,115 @@ func defaultPushRef(job Job) string {
 	return "refs/heads/main"
 }
 
-// resolveNeedsOutput resolves a "needs.<job>.outputs.<output>" reference
-// by finding, in the named predecessor job, the run step that writes
-// <output>= to $GITHUB_OUTPUT and evaluating that step's own `if:`
-// against f: True yields the literal value written, False yields the
-// empty string (the step never ran, so the output was never set, which
-// is a known fact, not an unresolved one), and Unknown stays unresolved.
+// skippedResult is what needs.<job>.result reads for a job GitHub never
+// ran.
+const skippedResult = "skipped"
+
+// jobNamespace is the workflow prefix of a provider's job name
+// ("ci/lint" is job lint of workflow ci), "" for a bare name.
+func jobNamespace(name string) string {
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		return name[:i]
+	}
+	return ""
+}
+
+// neededJob finds the job a condition names in needs.<job>.*. A
+// condition names the bare job id while the provider qualifies job names
+// with their workflow ("ci/lint"), so the id is read inside the workflow
+// of the job being classified first, as GitHub reads it, and as a full
+// name otherwise.
+func (f outsiderFacts) neededJob(id string) (Job, bool) {
+	if f.namespace != "" {
+		if job, ok := f.byName[f.namespace+"/"+id]; ok {
+			return job, true
+		}
+	}
+	job, ok := f.byName[id]
+	return job, ok
+}
+
+// neededJobCondition evaluates job, a job a condition reads through
+// needs.<job>.*, for the outsider: its own `if:` and its `needs` chain
+// (evalJobCondition). False means the outsider's run skips the job.
+// Unknown when its resolution is already in progress up the call chain
+// (a cycle).
+func (f outsiderFacts) neededJobCondition(job Job) expr.Value {
+	if f.resolvingJob(job.Name) {
+		return expr.Unknown
+	}
+	key := job.Name + "\x00" + strings.Join(f.hide, "\x00")
+	if val, done := f.needed[key]; done {
+		return val
+	}
+	val, _ := evalJobCondition(job, f.byName, f.withResolving(job.Name), map[string]bool{})
+	if f.needed != nil {
+		f.needed[key] = val
+	}
+	return val
+}
+
+// resolveNeedsResult resolves a "needs.<job>.result" reference: a job
+// closed for the outsider (neededJobCondition) reads "skipped", a known
+// fact. A job that runs, or may run, stays unresolved: whether it then
+// succeeds or fails is nothing the model knows.
+func (f outsiderFacts) resolveNeedsResult(ref string) (string, bool) {
+	id, ok := parseNeedsResultRef(ref)
+	if !ok {
+		return "", false
+	}
+	job, ok := f.neededJob(id)
+	if !ok {
+		return "", false
+	}
+	if f.neededJobCondition(job) == expr.False {
+		return skippedResult, true
+	}
+	return "", false
+}
+
+// parseNeedsResultRef reads the job out of "needs.<job>.result". Job
+// names may contain dots (parseNeedsOutputRef), so it anchors on the
+// ".result" suffix.
+func parseNeedsResultRef(ref string) (job string, ok bool) {
+	rest, ok := strings.CutPrefix(ref, "needs.")
+	if !ok {
+		return "", false
+	}
+	job, ok = strings.CutSuffix(rest, ".result")
+	return job, ok && job != ""
+}
+
+// resolveNeedsOutput resolves a "needs.<job>.outputs.<output>" reference.
+// A predecessor closed for the outsider (neededJobCondition) never ran,
+// so every output of it reads empty, a known fact. Otherwise it finds, in
+// the predecessor, the run step that writes <output>= to $GITHUB_OUTPUT
+// and evaluates that step's own `if:` against f: True yields the literal
+// value written, False yields the empty string (the step never ran, so
+// the output was never set, which is a known fact, not an unresolved
+// one), and Unknown stays unresolved.
 //
 // That step's `if:` can itself read another job's output, so this
-// recurses; jobName joins f.resolving before the recursive Eval so a
+// recurses; the job joins f.resolving before the recursive Eval so a
 // cycle (two jobs whose output-gating conditions read each other's
 // output) is caught as unknown instead of recursing without end.
 func (f outsiderFacts) resolveNeedsOutput(ref string) (string, bool) {
-	jobName, output, ok := parseNeedsOutputRef(ref)
+	id, output, ok := parseNeedsOutputRef(ref)
 	if !ok {
 		return "", false
 	}
-	if f.resolvingJob(jobName) {
+	job, ok := f.neededJob(id)
+	if !ok || f.resolvingJob(job.Name) {
 		return "", false
 	}
-	job, ok := f.byName[jobName]
-	if !ok {
-		return "", false
+	if f.neededJobCondition(job) == expr.False {
+		return "", true
 	}
 	value, cond, found := findOutputStep(job, output)
 	if !found {
 		return "", false
 	}
-	switch expr.Eval(cond, f.withResolving(jobName)) {
+	switch expr.Eval(cond, f.withResolving(job.Name)) {
 	case expr.True:
 		return value, true
 	case expr.False:

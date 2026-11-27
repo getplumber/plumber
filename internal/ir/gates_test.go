@@ -191,14 +191,18 @@ func TestScriptOutputValueReadsTheLiteral(t *testing.T) {
 // dependent whose `if:` calls a status function (always(), failure(),
 // cancelled(), a negated success()) runs even when its predecessor was
 // skipped, so a predecessor's same-repository gate never closes it: its
-// own condition decides, the predecessor adding nothing but unknown.
+// own condition decides. always() is true, so alone it lets the outsider
+// in (job `always` of test/2026-11-27-always-after-skipped-gate,
+// getplumber-examples/github-actions-miscellaneous-knowledge, run
+// 45994252328: it ran on the fork pull request that skipped `gate`); the
+// other status functions say nothing the model knows and stay unknown.
 func TestClassifyGateStatusFunctionOutlivesTheNeedsChain(t *testing.T) {
 	check := Job{Name: "check", If: "github.event.pull_request.head.repo.full_name == github.repository"}
 	cases := []struct {
 		name, cond string
 		want       GateClass
 	}{
-		{"always() alone is unknown", "always()", GateUnknown},
+		{"always() alone is outsider", "always()", GateOutsider},
 		{"always() or an event the outsider produces is outsider", "always() || github.event_name == 'pull_request_target'", GateOutsider},
 		{"not failure and not cancelled is unknown", "!failure() && !cancelled()", GateUnknown},
 		{"a negated success() is unknown", "!success()", GateUnknown},
@@ -213,6 +217,122 @@ func TestClassifyGateStatusFunctionOutlivesTheNeedsChain(t *testing.T) {
 				t.Fatalf("gate = %+v, want %s", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestClassifyGateReadsASkippedPredecessorBack pins what a condition that
+// outlives the `needs` chain (always()) reads from a predecessor closed
+// to forks: needs.<job>.result is "skipped" and its outputs are empty, so
+// "run only if the gate job succeeded" keeps the gate, for the job and
+// for the job behind it. A condition the skip does not close lets the
+// outsider in, and a predecessor the outsider's run does not skip gives
+// no result: the guard is never invented.
+//
+// The first three rows are jobs always-result-success, always-output and
+// always-result-skipped of test/2026-11-27-always-after-skipped-gate
+// (getplumber-examples/github-actions-miscellaneous-knowledge, run
+// 45994252328, a fork pull request): the first two were skipped with the
+// job behind them (behind-closed), the third ran.
+func TestClassifyGateReadsASkippedPredecessorBack(t *testing.T) {
+	const sameRepo = "github.event.workflow_run.head_repository.full_name == github.repository"
+	writesGo := []string{`echo "go=true" >> "$GITHUB_OUTPUT"`}
+	cases := []struct {
+		name string
+		gate Job
+		cond string
+		want GateClass
+	}{
+		{"the result of a skipped gate is not success", Job{If: sameRepo},
+			"always() && needs.gate.result == 'success'", GateSameRepo},
+		{"an output of a skipped gate is empty", Job{If: sameRepo, Scripts: writesGo},
+			"always() && needs.gate.outputs.go == 'true'", GateSameRepo},
+		{"a job that asks for the skip runs", Job{If: sameRepo},
+			"always() && needs.gate.result == 'skipped'", GateOutsider},
+		{"always() or the result runs", Job{If: sameRepo},
+			"always() || needs.gate.result == 'success'", GateOutsider},
+		{"an open gate gives no result", Job{},
+			"always() && needs.gate.result == 'success'", GateUnknown},
+		{"an open gate keeps the output it writes", Job{Scripts: writesGo},
+			"always() && needs.gate.outputs.go == 'true'", GateOutsider},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gate := tc.gate
+			gate.Name = "gate"
+			ready := Job{Name: "ready", If: tc.cond, Needs: []string{"gate"}}
+			build := Job{Name: "build", Needs: []string{"ready"}}
+			byName := map[string]Job{"gate": gate, "ready": ready, "build": build}
+			// `build` has no condition of its own: closed with `ready`,
+			// open otherwise.
+			wantReady, wantBuild := Gate{Class: tc.want}, Gate{Class: GateOutsider}
+			if tc.want == GateSameRepo {
+				wantReady.Reason = "same repository"
+				wantBuild = wantReady
+			}
+			for job, want := range map[string]Gate{"ready": wantReady, "build": wantBuild} {
+				got := ClassifyGate(byName[job], byName, "workflow_run", []string{"completed"}, Environment{}, false, "", "")
+				if got.Class != want.Class || got.Reason != want.Reason {
+					t.Errorf("%s: gate = %+v, want %s %q", job, got, want.Class, want.Reason)
+				}
+			}
+		})
+	}
+}
+
+// TestClassifyGateAlwaysNextToTheOwnName pins the checkout job that
+// carries `always() && github.repository == '<own name>'` behind a job
+// closed to forks: both halves are true for the outsider, so it is
+// theirs (job always-own-name of
+// test/2026-11-27-always-after-skipped-gate, run 45994252328: it ran on
+// the fork pull request). With no project path the own name cannot be
+// told from another repository's and the gate stays unknown.
+func TestClassifyGateAlwaysNextToTheOwnName(t *testing.T) {
+	gate := Job{Name: "gate", If: "github.event.pull_request.head.repo.full_name == github.repository"}
+	build := Job{Name: "build", If: "always() && github.repository == '" + ownNameRepository + "'", Needs: []string{"gate"}}
+	byName := map[string]Job{"gate": gate, "build": build}
+	for repository, want := range map[string]GateClass{ownNameRepository: GateOutsider, "": GateUnknown} {
+		got := ClassifyGate(build, byName, "pull_request_target", nil, Environment{}, false, "", repository)
+		if got.Class != want {
+			t.Errorf("repository %q: gate = %+v, want %s", repository, got, want)
+		}
+	}
+}
+
+// TestClassifyGateFindsTheNeededJobInItsWorkflow pins that a condition's
+// needs.<job> is read inside the workflow of the job being classified:
+// the provider names jobs "<workflow>/<job>" while a condition names the
+// bare job id, and another workflow's job of the same id has no say.
+func TestClassifyGateFindsTheNeededJobInItsWorkflow(t *testing.T) {
+	const sameRepo = "github.event.workflow_run.head_repository.full_name == github.repository"
+	byName := map[string]Job{
+		"publish/gate":  {Name: "publish/gate", If: sameRepo},
+		"publish/ready": {Name: "publish/ready", If: "always() && needs.gate.result == 'success'", Needs: []string{"publish/gate"}},
+		"publish/build": {Name: "publish/build", Needs: []string{"publish/ready"}},
+		"other/gate":    {Name: "other/gate"},
+		"other/ready":   {Name: "other/ready", If: "always() && needs.gate.result == 'success'", Needs: []string{"other/gate"}},
+	}
+	for name, want := range map[string]GateClass{
+		"publish/ready": GateSameRepo,
+		"publish/build": GateSameRepo,
+		"other/ready":   GateUnknown,
+	} {
+		got := ClassifyGate(byName[name], byName, "workflow_run", []string{"completed"}, Environment{}, false, "", "")
+		if got.Class != want {
+			t.Errorf("%s: gate = %+v, want %s", name, got, want)
+		}
+	}
+}
+
+// TestClassifyGateResultCycleStops pins that two jobs whose conditions
+// read each other's result resolve to unknown instead of recursing
+// without end: an untrusted workflow writes these conditions.
+func TestClassifyGateResultCycleStops(t *testing.T) {
+	a := Job{Name: "a", If: "always() && needs.b.result == 'success'", Needs: []string{"b"}}
+	b := Job{Name: "b", If: "always() && needs.a.result == 'success'", Needs: []string{"a"}}
+	byName := map[string]Job{"a": a, "b": b}
+	got := ClassifyGate(a, byName, "workflow_run", []string{"completed"}, Environment{}, false, "", "")
+	if got.Class != GateUnknown {
+		t.Fatalf("gate = %+v, want unknown", got)
 	}
 }
 

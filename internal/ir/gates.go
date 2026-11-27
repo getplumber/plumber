@@ -237,8 +237,12 @@ func closedGate(job Job, byName map[string]Job, closed []string, facts outsiderF
 //
 // A job whose own `If` calls a status function (always(), failure(),
 // cancelled(), a negated success(): expr.HasStatusCall) runs even when a
-// predecessor was skipped, so no predecessor's False reaches it: its own
-// condition decides, and what a predecessor would add stays unknown.
+// predecessor was skipped, so no predecessor's False reaches it through
+// `needs`: its own condition decides. A condition that reads the
+// predecessor back (needs.<job>.result, needs.<job>.outputs.*) gets what
+// a skipped job leaves there (outsiderFacts.resolveNeedsResult,
+// resolveNeedsOutput); anything else a predecessor would add stays
+// unknown.
 func evalJobCondition(job Job, byName map[string]Job, facts outsiderFacts, visited map[string]bool) (expr.Value, []string) {
 	if visited[job.Name] {
 		return expr.Unknown, nil
