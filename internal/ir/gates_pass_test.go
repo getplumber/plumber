@@ -269,3 +269,19 @@ func TestClassifyGatesReadsTheProjectPath(t *testing.T) {
 		t.Errorf("gate = %+v, want outsider, pinned", g)
 	}
 }
+
+// TestBotAuthorGateRanksWithTheStrongClasses: the bot-author gate lets
+// no outsider in, so it is never the weaker of two maintainer's gates
+// and is the stronger of them, on either side of the comparison.
+func TestBotAuthorGateRanksWithTheStrongClasses(t *testing.T) {
+	bot := Gate{Class: GateMaintainerApproved, Reason: "author dependabot[bot]"}
+	label := Gate{Class: GateMaintainerApproved, Reason: "label safe to test"}
+	for _, pair := range [][2]Gate{{bot, label}, {label, bot}} {
+		if got := weakerGate(pair[0], pair[1]); got.Reason != label.Reason {
+			t.Errorf("weakerGate(%q, %q) = %q, want the label gate", pair[0].Reason, pair[1].Reason, got.Reason)
+		}
+		if got := strongerGate(pair[0], pair[1]); got.Reason != bot.Reason {
+			t.Errorf("strongerGate(%q, %q) = %q, want the bot-author gate", pair[0].Reason, pair[1].Reason, got.Reason)
+		}
+	}
+}

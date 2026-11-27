@@ -58,13 +58,25 @@ var classifiedTriggers = func() []string {
 // gateStrength orders the gate classes from the outsider's side: the
 // lower, the easier for an outsider to get in.
 // The two strong classes (same_repo, no_outsider) share one rank: either
-// admits no path.
+// admits no path. Gates are compared through Gate.strength, which also
+// ranks the bot-author gate.
 var gateStrength = map[GateClass]int{
 	GateOutsider:           0,
 	GateUnknown:            1,
 	GateMaintainerApproved: 2,
 	GateSameRepo:           3,
 	GateNoOutsider:         3,
+}
+
+// strength is g's rank from the outsider's side (gateStrength). A gate on
+// a bot as the pull request's author (BotAuthor) ranks with the strong
+// classes: its class is a maintainer's, but no outsider gets through it,
+// so it must not lose a tie to a label or an actor gate.
+func (g Gate) strength() int {
+	if g.BotAuthor() {
+		return gateStrength[GateSameRepo]
+	}
+	return gateStrength[g.Class]
 }
 
 // ClassifyGates fills Job.Gate on every GitHub job carrying a privileged
@@ -161,19 +173,19 @@ func callGate(p *NormalizedPipeline, byName map[string]Job, job Job, c ReusableC
 }
 
 // weakerGate is the gate of a and b an outsider gets through more easily
-// (gateStrength), a on a tie.
+// (Gate.strength), a on a tie.
 func weakerGate(a, b Gate) Gate {
-	if gateStrength[b.Class] < gateStrength[a.Class] {
+	if b.strength() < a.strength() {
 		return b
 	}
 	return a
 }
 
 // strongerGate is the gate of a and b an outsider gets through less
-// easily (gateStrength), a on a tie: what holds when a run has to pass
+// easily (Gate.strength), a on a tie: what holds when a run has to pass
 // both.
 func strongerGate(a, b Gate) Gate {
-	if gateStrength[b.Class] > gateStrength[a.Class] {
+	if b.strength() > a.strength() {
 		return b
 	}
 	return a

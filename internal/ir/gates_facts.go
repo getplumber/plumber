@@ -150,11 +150,12 @@ type outsiderFacts struct {
 	// the base repository's). Its path when the scan knows it,
 	// unknownRepository otherwise.
 	repository string
-	// repositoryKnown is whether `github.repository` resolves at all: its
-	// path is known, or no condition the evaluation reads compares it to
-	// a literal. With no path the model cannot tell the repository's own
-	// name, true for everyone, from another repository's, so that
-	// comparison stays unresolved rather than settled either way.
+	// repositoryKnown is whether `github.repository` and
+	// `github.repository_owner` resolve at all: the path is known, or no
+	// condition the evaluation reads compares either to a literal. With
+	// no path the model cannot tell the repository's own name or owner,
+	// true for everyone, from another one's, so that comparison stays
+	// unresolved rather than settled either way.
 	repositoryKnown bool
 	byName          map[string]Job
 	// namespace is the workflow of the job being classified, the prefix
@@ -233,11 +234,17 @@ func readConditions(job Job, byName map[string]Job) []string {
 	return conds
 }
 
+// repositoryIdentityRefs are the references naming the repository the
+// workflow runs in: its full name and its owner. Both are the scanned
+// repository's on every trigger, and both need its path to be told from
+// a literal.
+var repositoryIdentityRefs = []string{"github.repository", "github.repository_owner"}
+
 // comparesRepositoryToLiteral reports whether one of conds compares
-// github.repository to a literal.
+// github.repository or github.repository_owner to a literal.
 func comparesRepositoryToLiteral(conds []string) bool {
 	for _, c := range conds {
-		if len(expr.Comparisons(c, githubRepositoryRef)) > 0 {
+		if len(expr.Comparisons(c, repositoryIdentityRefs)) > 0 {
 			return true
 		}
 	}
@@ -369,6 +376,14 @@ func (f outsiderFacts) Resolve(ref string) (string, bool) {
 			return "", false
 		}
 		return f.repository, true
+	case "github.repository_owner":
+		// The owner of the repository the workflow runs in: the scanned
+		// one's on every trigger, like its name.
+		if !f.repositoryKnown {
+			return "", false
+		}
+		owner, _, _ := strings.Cut(f.repository, "/")
+		return owner, true
 	case "github.ref":
 		return f.ref()
 	case "github.ref_name":

@@ -51,6 +51,19 @@ type Gate struct {
 	Unknown []string `json:"unknown,omitempty"`
 }
 
+// BotAuthor reports whether g is a gate on the pull request's author
+// naming a "[bot]" login (reason "author <login>[bot]"): a login nobody
+// can take, whose pull requests come from the repository's own branches
+// (the Dependabot shape), so no outsider gets through it. A bot as the
+// actor ("actor <login>[bot]") is no such gate.
+func (g Gate) BotAuthor() bool {
+	if g.Class != GateMaintainerApproved {
+		return false
+	}
+	login, ok := strings.CutPrefix(g.Reason, "author ")
+	return ok && strings.HasSuffix(login, "[bot]")
+}
+
 // labelRefs, authorRefs, actorRefs, mergedRefs and sameRepoRefs are the
 // fact families causalReason hides one at a time to find which one a
 // False result depends on. authorRefs is the pull request's author alone,
@@ -207,11 +220,12 @@ func evaluateTypes(job Job, byName map[string]Job, trigger, base, repository str
 // closedGate is the gate of job given closed, the jobs whose own `If` is
 // False for the outsider (evalJobCondition): job runs only when every one
 // of them ran, so the strongest of their causes (causalReason,
-// gateStrength) is its gate, whatever the order of `needs`. The first in
-// that order names the reason among causes of equal strength.
+// Gate.strength) is its gate, whatever the order of `needs`. A bot-author
+// cause ranks with the strong classes, so it holds over a label or an
+// actor cause in any order. The first in that order names the class and
+// the reason among causes of equal strength.
 func closedGate(job Job, byName map[string]Job, closed []string, facts outsiderFacts) (GateClass, string) {
-	var class GateClass
-	var reason string
+	var gate Gate
 	for i, name := range closed {
 		target := job
 		if name != job.Name {
@@ -220,11 +234,12 @@ func closedGate(job Job, byName map[string]Job, closed []string, facts outsiderF
 			}
 		}
 		c, r := causalReason(target.If, facts)
-		if i == 0 || gateStrength[c] > gateStrength[class] {
-			class, reason = c, r
+		cause := Gate{Class: c, Reason: r}
+		if i == 0 || cause.strength() > gate.strength() {
+			gate = cause
 		}
 	}
-	return class, reason
+	return gate.Class, gate.Reason
 }
 
 // evalJobCondition evaluates job's own `If` against facts, first
