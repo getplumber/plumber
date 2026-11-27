@@ -35,6 +35,39 @@ func TestEvalThreeValued(t *testing.T) {
 	}
 }
 
+// TestEvalStatusFunctions pins that always() is True, in any letter case
+// and with the rest of the condition still deciding, while the status
+// functions that depend on the jobs before stay Unknown. Run 45994252328
+// of test/2026-11-27-always-after-skipped-gate
+// (getplumber-examples/github-actions-miscellaneous-knowledge): on a
+// fork pull request, `always()` and `always() && <true>` ran,
+// `always() && <false>` was skipped.
+func TestEvalStatusFunctions(t *testing.T) {
+	f := facts{"github.event_name": "pull_request_target"}
+	cases := []struct {
+		expr string
+		want Value
+	}{
+		{"always()", True},
+		{"${{ Always() }}", True},
+		{"!always()", False},
+		{"always() && github.event_name == 'pull_request_target'", True},
+		{"always() && github.event_name == 'push'", False},
+		{"always() && inputs.run == 'yes'", Unknown},
+		{"always() || inputs.run == 'yes'", True},
+		{"success()", Unknown},
+		{"failure()", Unknown},
+		{"cancelled()", Unknown},
+		{"!cancelled()", Unknown},
+		{"!failure() && !cancelled()", Unknown},
+	}
+	for _, c := range cases {
+		if got := Eval(c.expr, f); got != c.want {
+			t.Errorf("Eval(%q) = %v, want %v", c.expr, got, c.want)
+		}
+	}
+}
+
 // TestEvalAffixDecidesAResolvedReference pins startsWith and endsWith
 // on a reference the facts resolve: True on a match, False on none,
 // both compared case-insensitively as GitHub does. A job gated on one

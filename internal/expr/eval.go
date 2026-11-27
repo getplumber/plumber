@@ -127,11 +127,21 @@ func resolveOperand(n node, f Facts) (val string, known bool) {
 // (one per matching element) rather than a single scalar.
 const collectionSuffix = ".*.name"
 
-// evalCall evaluates contains/startsWith/endsWith. An unrecognized
-// function name is an unknown leaf, same as anything else outside the
-// grammar.
+// evalCall evaluates contains/startsWith/endsWith and always(). An
+// unrecognized function name is an unknown leaf, same as anything else
+// outside the grammar.
+//
+// always() is True whatever the facts: GitHub documents it as returning
+// true even when canceled, and a job carrying `if: always()` ran on a
+// fork pull request after the job it needs was skipped
+// (getplumber-examples/github-actions-miscellaneous-knowledge, branch
+// test/2026-11-27-always-after-skipped-gate, run 45994252328). The other
+// status functions (success(), failure(), cancelled()) depend on what the
+// jobs before did, which no facts tell: they stay Unknown.
 func evalCall(n nodeCall, f Facts) Value {
 	switch {
+	case strings.EqualFold(n.name, "always") && len(n.args) == 0:
+		return True
 	case strings.EqualFold(n.name, "contains"):
 		return evalContains(n, f)
 	case strings.EqualFold(n.name, "startsWith"):
