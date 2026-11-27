@@ -34,7 +34,7 @@ func TestClassifyGateEventExcludesThePrivilegedEvent(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := ClassifyGate(Job{Name: "j", If: tc.cond}, nil, "pull_request_target", nil, Environment{}, false, "")
+			got := ClassifyGate(Job{Name: "j", If: tc.cond}, nil, "pull_request_target", nil, Environment{}, false, "", "")
 			if got.Class != tc.class || got.Reason != tc.reason {
 				t.Fatalf("gate = %+v, want %s %q", got, tc.class, tc.reason)
 			}
@@ -168,14 +168,14 @@ func TestEveryOutsiderTypeIsADeliveredType(t *testing.T) {
 // carry github.base_ref, the base branch.
 func TestPullRequestTargetRunsOnTheBaseRef(t *testing.T) {
 	job := Job{Name: "j", If: "github.ref == 'refs/heads/main'"}
-	if g := ClassifyGate(job, nil, "pull_request_target", nil, Environment{}, false, ""); g.Class != GateOutsider {
+	if g := ClassifyGate(job, nil, "pull_request_target", nil, Environment{}, false, "", ""); g.Class != GateOutsider {
 		t.Errorf("pull_request_target, ref main: gate = %+v, want outsider", g)
 	}
-	if g := ClassifyGate(job, nil, "pull_request", nil, Environment{}, false, ""); g.Class != GateMaintainerApproved || g.Reason != "condition" {
+	if g := ClassifyGate(job, nil, "pull_request", nil, Environment{}, false, "", ""); g.Class != GateMaintainerApproved || g.Reason != "condition" {
 		t.Errorf("pull_request, ref main: gate = %+v, want maintainer_approved condition", g)
 	}
 	develop := Job{Name: "j", If: "github.ref_name == 'develop' && github.base_ref == 'develop'"}
-	if g := ClassifyGate(develop, nil, "pull_request_target", nil, Environment{}, false, "develop"); g.Class != GateOutsider {
+	if g := ClassifyGate(develop, nil, "pull_request_target", nil, Environment{}, false, "develop", ""); g.Class != GateOutsider {
 		t.Errorf("pull_request_target, default branch develop: gate = %+v, want outsider", g)
 	}
 
@@ -195,7 +195,7 @@ func TestPullRequestTargetRunsOnTheBaseRef(t *testing.T) {
 		// for the whole condition: unknown, the safe side of outsider.
 		{"github.ref == 'refs/heads/main' || github.base_ref == 'release'", GateUnknown},
 	} {
-		if g := ClassifyGate(Job{Name: "j", If: tc.cond}, nil, "pull_request_target", nil, Environment{}, false, ""); g.Class != tc.class {
+		if g := ClassifyGate(Job{Name: "j", If: tc.cond}, nil, "pull_request_target", nil, Environment{}, false, "", ""); g.Class != tc.class {
 			t.Errorf("pull_request_target, %s: gate = %+v, want %s", tc.cond, g, tc.class)
 		}
 	}
@@ -204,7 +204,7 @@ func TestPullRequestTargetRunsOnTheBaseRef(t *testing.T) {
 	// reads False on main (a maintainer's cap) for the job after it.
 	pred := Job{Name: "a", If: "github.base_ref == 'release'"}
 	after := Job{Name: "b", If: "github.base_ref == 'main'", Needs: []string{"a"}}
-	if g := ClassifyGate(after, map[string]Job{"a": pred, "b": after}, "pull_request_target", nil, Environment{}, false, ""); g.Class != GateUnknown {
+	if g := ClassifyGate(after, map[string]Job{"a": pred, "b": after}, "pull_request_target", nil, Environment{}, false, "", ""); g.Class != GateUnknown {
 		t.Errorf("predecessor on release: gate = %+v, want unknown", g)
 	}
 	// A predecessor's step condition counts the same way: the step
@@ -214,7 +214,7 @@ func TestPullRequestTargetRunsOnTheBaseRef(t *testing.T) {
 		Scripts:   []string{`echo "go=1" >> $GITHUB_OUTPUT`},
 		ScriptIfs: []string{"github.base_ref == 'release'"},
 	}
-	if g := ClassifyGate(after, map[string]Job{"a": predStep, "b": after}, "pull_request_target", nil, Environment{}, false, ""); g.Class != GateUnknown {
+	if g := ClassifyGate(after, map[string]Job{"a": predStep, "b": after}, "pull_request_target", nil, Environment{}, false, "", ""); g.Class != GateUnknown {
 		t.Errorf("predecessor step on release: gate = %+v, want unknown", g)
 	}
 
@@ -230,17 +230,17 @@ func TestPullRequestTargetRunsOnTheBaseRef(t *testing.T) {
 		{"pull_request", "develop", "github.base_ref", "develop"},
 	}
 	for _, c := range cases {
-		got, ok := newOutsiderFacts(c.trigger, "opened", Job{}, nil, c.base).Resolve(c.ref)
+		got, ok := newOutsiderFacts(c.trigger, "opened", Job{}, nil, c.base, "").Resolve(c.ref)
 		if !ok || got != c.want {
 			t.Errorf("%s %s (base %q) = %q %v, want %q", c.trigger, c.ref, c.base, got, ok, c.want)
 		}
 	}
 	// The outsider names their own branch, any value they like: no literal
 	// comparison of it is settled either way.
-	if _, ok := newOutsiderFacts("pull_request_target", "opened", Job{}, nil, "").Resolve("github.head_ref"); ok {
+	if _, ok := newOutsiderFacts("pull_request_target", "opened", Job{}, nil, "", "").Resolve("github.head_ref"); ok {
 		t.Error("github.head_ref resolved")
 	}
-	if _, ok := newOutsiderFacts("issue_comment", "created", Job{}, nil, "").Resolve("github.base_ref"); ok {
+	if _, ok := newOutsiderFacts("issue_comment", "created", Job{}, nil, "", "").Resolve("github.base_ref"); ok {
 		t.Error("github.base_ref resolved on issue_comment, which carries none")
 	}
 }

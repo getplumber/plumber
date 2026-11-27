@@ -18,7 +18,7 @@ func TestClassifyGateLabelGate(t *testing.T) {
 			{Uses: "actions/checkout@v4", With: map[string]any{"ref": "${{ github.event.pull_request.head.sha }}"}},
 		},
 	}
-	got := ClassifyGate(job, nil, "pull_request", []string{"labeled"}, Environment{}, false, "")
+	got := ClassifyGate(job, nil, "pull_request", []string{"labeled"}, Environment{}, false, "", "")
 	if got.Class != GateMaintainerApproved {
 		t.Fatalf("Class = %q, want %q", got.Class, GateMaintainerApproved)
 	}
@@ -37,7 +37,7 @@ func TestClassifyGateAuthorGate(t *testing.T) {
 		Name: "automerge",
 		If:   "github.actor == 'dependabot[bot]'",
 	}
-	got := ClassifyGate(job, nil, "pull_request_target", nil, Environment{}, false, "")
+	got := ClassifyGate(job, nil, "pull_request_target", nil, Environment{}, false, "", "")
 	if got.Class != GateMaintainerApproved {
 		t.Fatalf("Class = %q, want %q", got.Class, GateMaintainerApproved)
 	}
@@ -52,7 +52,7 @@ func TestClassifyGateAuthorGate(t *testing.T) {
 // own pull request, never its author.
 func TestClassifyGatePullRequestAuthorGate(t *testing.T) {
 	job := Job{Name: "automerge", If: "github.event.pull_request.user.login == 'dependabot[bot]'"}
-	got := ClassifyGate(job, nil, "pull_request_target", nil, Environment{}, false, "")
+	got := ClassifyGate(job, nil, "pull_request_target", nil, Environment{}, false, "", "")
 	if got.Class != GateMaintainerApproved || got.Reason != "author dependabot[bot]" {
 		t.Fatalf("gate = %+v", got)
 	}
@@ -66,7 +66,7 @@ func TestClassifyGateSameRepo(t *testing.T) {
 		Name: "publish",
 		If:   "github.event.workflow_run.head_repository.full_name == github.repository",
 	}
-	got := ClassifyGate(job, nil, "workflow_run", nil, Environment{}, false, "")
+	got := ClassifyGate(job, nil, "workflow_run", nil, Environment{}, false, "", "")
 	if got.Class != GateSameRepo {
 		t.Fatalf("Class = %q, want %q", got.Class, GateSameRepo)
 	}
@@ -82,7 +82,7 @@ func TestClassifyGateUngatedOutsider(t *testing.T) {
 	job := Job{
 		Name: "build",
 	}
-	got := ClassifyGate(job, nil, "pull_request_target", []string{"opened", "synchronize"}, Environment{}, false, "")
+	got := ClassifyGate(job, nil, "pull_request_target", []string{"opened", "synchronize"}, Environment{}, false, "", "")
 	if got.Class != GateOutsider {
 		t.Fatalf("Class = %q, want %q", got.Class, GateOutsider)
 	}
@@ -105,7 +105,7 @@ func TestClassifyGateNeedsChainOutput(t *testing.T) {
 		Needs: []string{"policy"},
 	}
 	byName := map[string]Job{"policy": policy, "deploy": deploy}
-	got := ClassifyGate(deploy, byName, "pull_request_target", nil, Environment{}, false, "")
+	got := ClassifyGate(deploy, byName, "pull_request_target", nil, Environment{}, false, "", "")
 	if got.Class != GateMaintainerApproved {
 		t.Fatalf("Class = %q, want %q (reason %q)", got.Class, GateMaintainerApproved, got.Reason)
 	}
@@ -137,7 +137,7 @@ func TestClassifyGateNeedsOutputTheOutsiderSets(t *testing.T) {
 				ScriptIfs: []string{stepIf},
 			}
 			byName := map[string]Job{"policy": policy, "deploy": deploy}
-			got := ClassifyGate(deploy, byName, "pull_request_target", nil, Environment{}, false, "")
+			got := ClassifyGate(deploy, byName, "pull_request_target", nil, Environment{}, false, "", "")
 			if got.Class != GateOutsider {
 				t.Errorf("script %q, step if %q: Class = %q, want %q (reason %q)", script, stepIf, got.Class, GateOutsider, got.Reason)
 			}
@@ -208,7 +208,7 @@ func TestClassifyGateStatusFunctionOutlivesTheNeedsChain(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			deploy := Job{Name: "deploy", If: tc.cond, Needs: []string{"check"}}
 			byName := map[string]Job{"check": check, "deploy": deploy}
-			got := ClassifyGate(deploy, byName, "pull_request_target", nil, Environment{}, false, "")
+			got := ClassifyGate(deploy, byName, "pull_request_target", nil, Environment{}, false, "", "")
 			if got.Class != tc.want {
 				t.Fatalf("gate = %+v, want %s", got, tc.want)
 			}
@@ -243,14 +243,14 @@ func TestClassifyGateEventTypes(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.trigger+" "+tc.typ, func(t *testing.T) {
-			got := ClassifyGate(Job{Name: "j"}, nil, tc.trigger, []string{tc.typ}, Environment{}, false, "")
+			got := ClassifyGate(Job{Name: "j"}, nil, tc.trigger, []string{tc.typ}, Environment{}, false, "", "")
 			if got.Class != tc.want {
 				t.Fatalf("gate = %+v, want %s", got, tc.want)
 			}
 		})
 	}
 	// A maintainer type next to an unknown one is unknown, never a gate.
-	got := ClassifyGate(Job{Name: "j"}, nil, "pull_request_target", []string{"labeled", "some_future_type"}, Environment{}, false, "")
+	got := ClassifyGate(Job{Name: "j"}, nil, "pull_request_target", []string{"labeled", "some_future_type"}, Environment{}, false, "", "")
 	if got.Class != GateUnknown {
 		t.Fatalf("labeled + some_future_type: gate = %+v, want unknown", got)
 	}
@@ -264,7 +264,7 @@ func TestClassifyGateUnknownInput(t *testing.T) {
 		Name: "release",
 		If:   "inputs.mode == 'full'",
 	}
-	got := ClassifyGate(job, nil, "pull_request", nil, Environment{}, false, "")
+	got := ClassifyGate(job, nil, "pull_request", nil, Environment{}, false, "", "")
 	if got.Class != GateUnknown {
 		t.Fatalf("Class = %q, want %q", got.Class, GateUnknown)
 	}
@@ -279,7 +279,7 @@ func TestClassifyGateUnknownInput(t *testing.T) {
 func TestClassifyGateEnvironmentRequiredReviewers(t *testing.T) {
 	job := Job{Name: "deploy-prod"}
 	env := Environment{Name: "production", RequiredReviewers: true}
-	got := ClassifyGate(job, nil, "pull_request_target", nil, env, true, "")
+	got := ClassifyGate(job, nil, "pull_request_target", nil, env, true, "", "")
 	if got.Class != GateMaintainerApproved {
 		t.Fatalf("Class = %q, want %q", got.Class, GateMaintainerApproved)
 	}
@@ -295,7 +295,7 @@ func TestClassifyGateEnvironmentRequiredReviewers(t *testing.T) {
 func TestClassifyGateEnvironmentUnknownIgnored(t *testing.T) {
 	job := Job{Name: "deploy-prod"}
 	env := Environment{Name: "production", RequiredReviewers: true, Known: false}
-	got := ClassifyGate(job, nil, "pull_request_target", []string{"opened"}, env, false, "")
+	got := ClassifyGate(job, nil, "pull_request_target", []string{"opened"}, env, false, "", "")
 	if got.Class != GateOutsider {
 		t.Fatalf("Class = %q, want %q", got.Class, GateOutsider)
 	}
@@ -311,7 +311,7 @@ func TestClassifyGateReadyForReviewOutsider(t *testing.T) {
 		Name: "build",
 		If:   "github.event.action == 'ready_for_review'",
 	}
-	got := ClassifyGate(job, nil, "pull_request", nil, Environment{}, false, "")
+	got := ClassifyGate(job, nil, "pull_request", nil, Environment{}, false, "", "")
 	if got.Class != GateOutsider {
 		t.Fatalf("Class = %q, want %q (reason %q)", got.Class, GateOutsider, got.Reason)
 	}
@@ -340,7 +340,7 @@ func TestClassifyGateNeedsOutputCycleIsUnknownNotCrash(t *testing.T) {
 	}
 	byName := map[string]Job{"a": a, "b": b, "deploy": deploy}
 
-	got := ClassifyGate(deploy, byName, "pull_request_target", nil, Environment{}, false, "")
+	got := ClassifyGate(deploy, byName, "pull_request_target", nil, Environment{}, false, "", "")
 	if got.Class != GateUnknown {
 		t.Fatalf("Class = %q, want %q (reason %q, unknown %v)", got.Class, GateUnknown, got.Reason, got.Unknown)
 	}
@@ -367,7 +367,7 @@ func TestClassifyGateStrongClassesHoldAlone(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := ClassifyGate(Job{Name: "j", If: tc.cond}, nil, "pull_request_target", nil, Environment{}, false, "")
+			got := ClassifyGate(Job{Name: "j", If: tc.cond}, nil, "pull_request_target", nil, Environment{}, false, "", "")
 			if got.Class != tc.class || got.Reason != tc.reason {
 				t.Fatalf("gate = %+v, want %s %q", got, tc.class, tc.reason)
 			}
@@ -385,7 +385,7 @@ func TestClassifyGateBareForkGuardIsSameRepo(t *testing.T) {
 		"!github.event.pull_request.head.repo.fork",
 	} {
 		job := Job{Name: "build", If: cond}
-		got := ClassifyGate(job, nil, "pull_request_target", nil, Environment{}, false, "")
+		got := ClassifyGate(job, nil, "pull_request_target", nil, Environment{}, false, "", "")
 		if got.Class != GateSameRepo {
 			t.Errorf("%s: Class = %q, want %q (reason %q, unknown %v)", cond, got.Class, GateSameRepo, got.Reason, got.Unknown)
 		}
@@ -407,8 +407,136 @@ func TestClassifyGateNeedsOutputComputedFromTheEventIsUnknown(t *testing.T) {
 		Needs: []string{"check"},
 	}
 	byName := map[string]Job{"check": check, "deploy": deploy}
-	got := ClassifyGate(deploy, byName, "pull_request_target", nil, Environment{}, false, "")
+	got := ClassifyGate(deploy, byName, "pull_request_target", nil, Environment{}, false, "", "")
 	if got.Class != GateUnknown {
 		t.Fatalf("Class = %q, want %q (reason %q)", got.Class, GateUnknown, got.Reason)
+	}
+}
+
+// ownNameRepository is the scanned repository of the #640 cases.
+const ownNameRepository = "my-org/my-repo"
+
+// TestClassifyGateOwnRepositoryNameGatesNothing pins getplumber/plumber#640:
+// `github.repository` is the repository the workflow runs in, the base
+// repository on pull_request_target and on workflow_run, so a comparison
+// with the scanned repository's own name is true for a fork's pull
+// request too. Proven on GitHub by the branch
+// test/2026-11-27-repository-name-condition of
+// getplumber-examples/github-actions-miscellaneous-knowledge: the
+// own-name job ran for the fork pull request, checked out its commit and
+// read the secret (runs 45973998287 on pull_request_target, 45974025370
+// on workflow_run).
+func TestClassifyGateOwnRepositoryNameGatesNothing(t *testing.T) {
+	cases := []struct {
+		name    string
+		trigger string
+		cond    string
+	}{
+		{"pull_request_target", "pull_request_target", "github.repository == 'my-org/my-repo'"},
+		{"workflow_run", "workflow_run", "github.repository == 'my-org/my-repo'"},
+		{"another case of the name", "pull_request_target", "github.repository == 'My-Org/My-Repo'"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ClassifyGate(Job{Name: "build", If: tc.cond}, nil, tc.trigger, nil, Environment{}, false, "", ownNameRepository)
+			if got.Class != GateOutsider {
+				t.Errorf("gate = %+v, want %q", got, GateOutsider)
+			}
+		})
+	}
+}
+
+// TestClassifyGateSameRepoWithTheScannedRepository pins the other side of
+// the same test branch: comparing the head repository with
+// github.repository did skip the fork's job (the head-repo job), whatever
+// the scanned repository is called, the model's own fork name included.
+func TestClassifyGateSameRepoWithTheScannedRepository(t *testing.T) {
+	conds := map[string]string{
+		"pull_request_target": "github.event.pull_request.head.repo.full_name == github.repository",
+		"workflow_run":        "github.event.workflow_run.head_repository.full_name == github.repository",
+	}
+	for _, repository := range []string{ownNameRepository, headRepoFullName, "Fork/Repo"} {
+		for trigger, cond := range conds {
+			got := ClassifyGate(Job{Name: "build", If: cond}, nil, trigger, nil, Environment{}, false, "", repository)
+			if got.Class != GateSameRepo || got.Reason != "same repository" {
+				t.Errorf("repository %q on %s: gate = %+v, want same_repo", repository, trigger, got)
+			}
+		}
+	}
+}
+
+// TestClassifyGateAnotherRepositoryNameStaysClosed: a literal naming
+// another repository is false in the scanned one, for everyone. The job
+// stays closed here (MarkInert is what reports it as never running).
+func TestClassifyGateAnotherRepositoryNameStaysClosed(t *testing.T) {
+	got := ClassifyGate(Job{Name: "build", If: "github.repository == 'upstream/project'"}, nil, "pull_request_target", nil, Environment{}, false, "", ownNameRepository)
+	if got.Class != GateMaintainerApproved || got.Reason != "condition" {
+		t.Errorf("gate = %+v, want maintainer_approved, condition", got)
+	}
+}
+
+// TestClassifyGateRepositoryLiteralWithoutThePath: with no project path
+// the model cannot tell the repository's own name from another one, so a
+// comparison with a literal stays unresolved: unknown on the job that
+// carries it, and never a closed job for the one that needs it. Without a
+// literal the stand-in still answers the same-repository check.
+func TestClassifyGateRepositoryLiteralWithoutThePath(t *testing.T) {
+	own := Job{Name: "build", If: "github.repository == 'my-org/my-repo'"}
+	got := ClassifyGate(own, nil, "pull_request_target", nil, Environment{}, false, "", "")
+	if got.Class != GateUnknown || !reflect.DeepEqual(got.Unknown, []string{"github.repository"}) {
+		t.Errorf("own if: gate = %+v, want unknown on github.repository", got)
+	}
+
+	after := Job{Name: "after", Needs: []string{"build"}}
+	got = ClassifyGate(after, map[string]Job{"build": own, "after": after}, "pull_request_target", nil, Environment{}, false, "", "")
+	if got.Class != GateOutsider {
+		t.Errorf("needed job: gate = %+v, want outsider", got)
+	}
+
+	same := Job{Name: "build", If: "github.event.pull_request.head.repo.full_name == github.repository"}
+	got = ClassifyGate(same, nil, "pull_request_target", nil, Environment{}, false, "", "")
+	if got.Class != GateSameRepo {
+		t.Errorf("same repository: gate = %+v, want same_repo", got)
+	}
+}
+
+// TestClassifyGateStrongestNeededJobWins pins the second effect of #640:
+// a job that needs several jobs closed to the outsider runs only when all
+// of them ran, so the strongest of their gates is its own, whatever the
+// order of `needs`.
+func TestClassifyGateStrongestNeededJobWins(t *testing.T) {
+	label := Job{Name: "label", If: "contains(github.event.pull_request.labels.*.name, 'safe to test')"}
+	gate := Job{Name: "gate", If: "github.event.pull_request.head.repo.full_name == github.repository"}
+	for _, needs := range [][]string{{"label", "gate"}, {"gate", "label"}} {
+		build := Job{Name: "build", Needs: needs}
+		byName := map[string]Job{"label": label, "gate": gate, "build": build}
+		got := ClassifyGate(build, byName, "pull_request_target", nil, Environment{}, false, "", ownNameRepository)
+		if got.Class != GateSameRepo || got.Reason != "same repository" {
+			t.Errorf("needs %v: gate = %+v, want same_repo", needs, got)
+		}
+	}
+
+	// The job's own condition counts with the jobs it needs.
+	build := Job{Name: "build", Needs: []string{"label"}, If: gate.If}
+	got := ClassifyGate(build, map[string]Job{"label": label, "build": build}, "pull_request_target", nil, Environment{}, false, "", ownNameRepository)
+	if got.Class != GateSameRepo {
+		t.Errorf("own condition: gate = %+v, want same_repo", got)
+	}
+}
+
+// TestClassifyGateIssue640NeedsOrder is the workflow of #640: `ready`
+// carries the repository's own name behind always(), `gate` the
+// same-repository check. `ready` closes nothing, so `gate` decides in
+// both orders.
+func TestClassifyGateIssue640NeedsOrder(t *testing.T) {
+	ready := Job{Name: "ready", If: "always() && github.repository == 'my-org/my-repo'"}
+	gate := Job{Name: "gate", If: "github.event.workflow_run.head_repository.full_name == github.repository"}
+	for _, needs := range [][]string{{"ready", "gate"}, {"gate", "ready"}} {
+		build := Job{Name: "build", Needs: needs}
+		byName := map[string]Job{"ready": ready, "gate": gate, "build": build}
+		got := ClassifyGate(build, byName, "workflow_run", nil, Environment{}, false, "", ownNameRepository)
+		if got.Class != GateSameRepo || got.Reason != "same repository" {
+			t.Errorf("needs %v: gate = %+v, want same_repo", needs, got)
+		}
 	}
 }

@@ -97,8 +97,10 @@ var (
 // neither evidence of a gate nor of its absence. base is the branch a
 // pull request targets in the model, the repository's default branch
 // ("" reads main): what github.ref, github.ref_name and github.base_ref
-// name on a pull_request_target run.
-func ClassifyGate(job Job, byName map[string]Job, trigger string, types []string, env Environment, known bool, base string) Gate {
+// name on a pull_request_target run. repository is the scanned
+// repository's path, what github.repository names on every run ("" when
+// the scan does not know it).
+func ClassifyGate(job Job, byName map[string]Job, trigger string, types []string, env Environment, known bool, base, repository string) Gate {
 	pinned := checkoutPinnedSha(job)
 
 	if known && env.RequiredReviewers {
@@ -112,7 +114,7 @@ func ClassifyGate(job Job, byName map[string]Job, trigger string, types []string
 	producible, unknownTypes := splitTypes(trigger, types)
 
 	if len(unknownTypes) > 0 {
-		return classifyUnknownTypes(job, byName, trigger, base, producible, unknownTypes, pinned)
+		return classifyUnknownTypes(job, byName, trigger, base, repository, producible, unknownTypes, pinned)
 	}
 
 	if len(types) > 0 && len(producible) == 0 {
@@ -122,7 +124,7 @@ func ClassifyGate(job Job, byName map[string]Job, trigger string, types []string
 		// (it often checks the very label that gates the type filter),
 		// so it is still worth evaluating; only fall back to the bare
 		// type gate when the condition would otherwise read as reachable.
-		class, reason, unknown := evaluateTypes(job, byName, trigger, base, types)
+		class, reason, unknown := evaluateTypes(job, byName, trigger, base, repository, types)
 		if class == GateOutsider || class == GateUnknown {
 			return Gate{
 				Class:     GateMaintainerApproved,
@@ -133,7 +135,7 @@ func ClassifyGate(job Job, byName map[string]Job, trigger string, types []string
 		return Gate{Class: class, Reason: reason, PinnedSha: pinned, Unknown: unknown}
 	}
 
-	class, reason, unknown := evaluateTypes(job, byName, trigger, base, producible)
+	class, reason, unknown := evaluateTypes(job, byName, trigger, base, repository, producible)
 	return Gate{Class: class, Reason: reason, PinnedSha: pinned, Unknown: unknown}
 }
 
@@ -144,16 +146,16 @@ func ClassifyGate(job Job, byName map[string]Job, trigger string, types []string
 // (github.event.action unresolved), never a maintainer's gate. The
 // outsider-producible types of the filter are evaluated as usual, and
 // the weaker of the two results is the gate.
-func classifyUnknownTypes(job Job, byName map[string]Job, trigger, base string, producible, unknownTypes []string, pinned bool) Gate {
+func classifyUnknownTypes(job Job, byName map[string]Job, trigger, base, repository string, producible, unknownTypes []string, pinned bool) Gate {
 	var known *Gate
 	if len(producible) > 0 {
-		class, reason, unknown := evaluateTypes(job, byName, trigger, base, producible)
+		class, reason, unknown := evaluateTypes(job, byName, trigger, base, repository, producible)
 		if class == GateOutsider {
 			return Gate{Class: class, PinnedSha: pinned}
 		}
 		known = &Gate{Class: class, Reason: reason, PinnedSha: pinned, Unknown: unknown}
 	}
-	class, reason, unknown := evaluateTypes(job, byName, trigger, base, unknownTypes)
+	class, reason, unknown := evaluateTypes(job, byName, trigger, base, repository, unknownTypes)
 	if class == GateOutsider || class == GateUnknown {
 		if known != nil {
 			unknown = appendUnique(append([]string(nil), known.Unknown...), unknown)
@@ -169,23 +171,24 @@ func classifyUnknownTypes(job Job, byName map[string]Job, trigger, base string, 
 
 // evaluateTypes classifies job against each of testTypes in turn: True
 // for at least one makes it GateOutsider; False for every one classifies
-// the cause of the first False; anything else is GateUnknown with the
+// the first False (closedGate); anything else is GateUnknown with the
 // union of unresolved references.
-func evaluateTypes(job Job, byName map[string]Job, trigger, base string, testTypes []string) (GateClass, string, []string) {
+func evaluateTypes(job Job, byName map[string]Job, trigger, base, repository string, testTypes []string) (GateClass, string, []string) {
 	allFalse := true
-	var falseType, falseJobName string
+	var falseType string
+	var closed []string
 	var unknown []string
 
 	for _, t := range testTypes {
-		facts := newOutsiderFacts(trigger, t, job, byName, base)
-		val, jobName := evalJobCondition(job, byName, facts, map[string]bool{})
+		facts := newOutsiderFacts(trigger, t, job, byName, base, repository)
+		val, closedJobs := evalJobCondition(job, byName, facts, map[string]bool{})
 		switch val {
 		case expr.True:
 			return GateOutsider, "", nil
 		case expr.False:
 			if falseType == "" {
 				falseType = t
-				falseJobName = jobName
+				closed = closedJobs
 			}
 		default:
 			allFalse = false
@@ -194,17 +197,34 @@ func evaluateTypes(job Job, byName map[string]Job, trigger, base string, testTyp
 	}
 
 	if allFalse && falseType != "" {
-		target := job
-		if falseJobName != "" && falseJobName != job.Name {
-			if j, ok := byName[falseJobName]; ok {
-				target = j
-			}
-		}
-		facts := newOutsiderFacts(trigger, falseType, job, byName, base)
-		class, reason := causalReason(target.If, facts)
+		facts := newOutsiderFacts(trigger, falseType, job, byName, base, repository)
+		class, reason := closedGate(job, byName, closed, facts)
 		return class, reason, nil
 	}
 	return GateUnknown, "", unknown
+}
+
+// closedGate is the gate of job given closed, the jobs whose own `If` is
+// False for the outsider (evalJobCondition): job runs only when every one
+// of them ran, so the strongest of their causes (causalReason,
+// gateStrength) is its gate, whatever the order of `needs`. The first in
+// that order names the reason among causes of equal strength.
+func closedGate(job Job, byName map[string]Job, closed []string, facts outsiderFacts) (GateClass, string) {
+	var class GateClass
+	var reason string
+	for i, name := range closed {
+		target := job
+		if name != job.Name {
+			if j, ok := byName[name]; ok {
+				target = j
+			}
+		}
+		c, r := causalReason(target.If, facts)
+		if i == 0 || gateStrength[c] > gateStrength[class] {
+			class, reason = c, r
+		}
+	}
+	return class, reason
 }
 
 // evalJobCondition evaluates job's own `If` against facts, first
@@ -212,16 +232,16 @@ func evaluateTypes(job Job, byName map[string]Job, trigger, base string, testTyp
 // for the outsider makes job False too, since job can never run without
 // it. visited guards against a cyclic Needs graph; it is shared across
 // the whole walk so no job is evaluated twice. It returns the value and,
-// when the value is False, which job's own `If` decided it (job itself
-// or a predecessor).
+// when the value is False, every job whose own `If` is False: the
+// predecessors in `needs` order, then job itself.
 //
 // A job whose own `If` calls a status function (always(), failure(),
 // cancelled(), a negated success(): expr.HasStatusCall) runs even when a
 // predecessor was skipped, so no predecessor's False reaches it: its own
 // condition decides, and what a predecessor would add stays unknown.
-func evalJobCondition(job Job, byName map[string]Job, facts outsiderFacts, visited map[string]bool) (expr.Value, string) {
+func evalJobCondition(job Job, byName map[string]Job, facts outsiderFacts, visited map[string]bool) (expr.Value, []string) {
 	if visited[job.Name] {
-		return expr.Unknown, ""
+		return expr.Unknown, nil
 	}
 	visited[job.Name] = true
 
@@ -229,22 +249,25 @@ func evalJobCondition(job Job, byName map[string]Job, facts outsiderFacts, visit
 	if expr.HasStatusCall(job.If) {
 		needs = nil
 	}
+	var closed []string
 	for _, dep := range needs {
 		pred, ok := byName[dep]
 		if !ok {
 			continue
 		}
-		val, falseJob := evalJobCondition(pred, byName, facts, visited)
-		if val == expr.False {
-			return expr.False, falseJob
+		if val, predClosed := evalJobCondition(pred, byName, facts, visited); val == expr.False {
+			closed = append(closed, predClosed...)
 		}
 	}
 
 	val := expr.Eval(job.If, facts)
 	if val == expr.False {
-		return expr.False, job.Name
+		closed = append(closed, job.Name)
 	}
-	return val, ""
+	if len(closed) > 0 {
+		return expr.False, closed
+	}
+	return val, nil
 }
 
 // gateFamily is one family of facts causalReason hides to find what a

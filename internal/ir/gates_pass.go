@@ -126,7 +126,7 @@ func triggerGate(p *NormalizedPipeline, byName map[string]Job, job Job, trigger 
 	if _, modeled := canonicalOutsiderTypes[trigger]; !modeled {
 		return Gate{Class: GateOutsider}
 	}
-	return ClassifyGate(job, byName, trigger, types, jobEnvironment(p, job.Environment), p.EnvironmentsKnown, p.DefaultBranch)
+	return ClassifyGate(job, byName, trigger, types, jobEnvironment(p, job.Environment), p.EnvironmentsKnown, p.DefaultBranch, p.ProjectPath)
 }
 
 // callGate is who can make job, a job of a reusable workflow, run through

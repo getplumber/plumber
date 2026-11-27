@@ -45,8 +45,7 @@
         "entryKind": "pr_target",
         "subjectContains": "github.event.pull_request.head.sha",
         "tier": "none",
-        "job": "dependabot-auto-merge/dependabot",
-        "pending": "the gate facts resolve `github.repository` to a stand-in instead of the scanned repository, so a condition comparing it with the repository's own name reads false and the gate is credited to \"condition\" instead of the fact that really decides it (the bot author, the same repository). Here `user.login == 'dependabot[bot]' && github.repository == 'jfrog/<repo>'` keeps the bot-only job on a maintainer-approved Medium path."
+        "job": "dependabot-auto-merge/dependabot"
       }
     ]
   }

@@ -6,17 +6,21 @@ import (
 	"github.com/getplumber/plumber/internal/expr"
 )
 
-// scannedRepository is the facts model's stand-in for `github.repository`:
-// the repository being analyzed. It only has to differ from the fork
-// facts below (headRepoFullName), never match a real repository.
-const scannedRepository = "acme/repo"
+// unknownRepository is the facts model's stand-in for `github.repository`
+// when the scan does not know the repository's path: it only has to
+// differ from the fork facts below (headRepoFullName), so it answers a
+// comparison with the head repository and never one with a literal
+// (repositoryKnown).
+const unknownRepository = "acme/repo"
 
 // headRepoFullName and headRepoFork are what an outsider's own pull
 // request or workflow_run head repository looks like: a fork, never the
-// scanned repository.
+// scanned repository. otherHeadRepoFullName takes over when the scanned
+// repository is itself called headRepoFullName.
 const (
-	headRepoFullName = "fork/repo"
-	headRepoFork     = "true"
+	headRepoFullName      = "fork/repo"
+	otherHeadRepoFullName = "fork/repo-fork"
+	headRepoFork          = "true"
 )
 
 // outsiderIdentity is the login the model gives every actor/author
@@ -140,7 +144,19 @@ type outsiderFacts struct {
 	// against any existing branch, so a condition naming another branch
 	// leaves the base unresolved rather than settling it either way.
 	baseKnown bool
-	byName    map[string]Job
+	// repository is what `github.repository` names: the repository the
+	// workflow runs in, the scanned one on every trigger, an outsider's
+	// pull request included (a pull_request_target or workflow_run run is
+	// the base repository's). Its path when the scan knows it,
+	// unknownRepository otherwise.
+	repository string
+	// repositoryKnown is whether `github.repository` resolves at all: its
+	// path is known, or no condition the evaluation reads compares it to
+	// a literal. With no path the model cannot tell the repository's own
+	// name, true for everyone, from another repository's, so that
+	// comparison stays unresolved rather than settled either way.
+	repositoryKnown bool
+	byName          map[string]Job
 	// hide forces the named references unknown regardless of what the
 	// model would otherwise answer, used to find which fact family a
 	// False result depends on (see causalReason in gates.go).
@@ -155,39 +171,35 @@ type outsiderFacts struct {
 }
 
 // newOutsiderFacts is the model for job on trigger with event action
-// eventType; base is the branch a pull request targets ("" reads main).
-func newOutsiderFacts(trigger, eventType string, job Job, byName map[string]Job, base string) outsiderFacts {
+// eventType; base is the branch a pull request targets ("" reads main)
+// and repository the scanned repository's path ("" when unknown).
+func newOutsiderFacts(trigger, eventType string, job Job, byName map[string]Job, base, repository string) outsiderFacts {
 	if base == "" {
 		base = "main"
 	}
+	conds := readConditions(job, byName)
+	repositoryKnown := repository != ""
+	if !repositoryKnown {
+		repository = unknownRepository
+		repositoryKnown = !comparesRepositoryToLiteral(conds)
+	}
 	return outsiderFacts{
-		trigger:   trigger,
-		eventType: eventType,
-		pushRef:   defaultPushRef(job),
-		base:      base,
-		baseKnown: baseLiteralsAreDefault(job, byName, base),
-		byName:    byName,
+		trigger:         trigger,
+		eventType:       eventType,
+		pushRef:         defaultPushRef(job),
+		base:            base,
+		baseKnown:       baseLiteralsAreDefault(conds, base),
+		repository:      repository,
+		repositoryKnown: repositoryKnown,
+		byName:          byName,
 	}
 }
 
-// baseRefs are the references that name the branch a pull request
-// targets on pull_request_target (github.ref, github.ref_name,
-// github.base_ref; on pull_request only github.base_ref does).
-var baseRefs = []string{"github.ref", "github.ref_name", "github.base_ref"}
-
-// baseLiteralsAreDefault reports whether every literal the conditions
-// the evaluation can read (job's own if:, and the if: and step
-// conditions of every job it needs, transitively: the predecessors and
-// outputs evalJobCondition and resolveNeedsOutput walk) compare a base
-// reference to is the default branch (refs/heads/<base> for github.ref,
-// <base> for the two names), each wanting them equal (expr.Comparisons:
-// no `!=`, no negation). The outsider picks the base, so a condition
-// that only ever asks for the default branch is the one their best
-// choice settles; `!= 'main'` or another branch they could satisfy by
-// targeting another branch, which the model cannot name, so it stays
-// unresolved. A step condition the walk never reads only ever leaves the
-// base unresolved more often, the safe side.
-func baseLiteralsAreDefault(job Job, byName map[string]Job, base string) bool {
+// readConditions lists the conditions the evaluation can read for job:
+// its own if:, and the if: and step conditions of every job it needs,
+// transitively (the predecessors and outputs evalJobCondition and
+// resolveNeedsOutput walk).
+func readConditions(job Job, byName map[string]Job) []string {
 	conds := []string{job.If}
 	seen := map[string]bool{job.Name: true}
 	queue := append([]string(nil), job.Needs...)
@@ -206,6 +218,36 @@ func baseLiteralsAreDefault(job Job, byName map[string]Job, base string) bool {
 		conds = append(conds, pred.ScriptIfs...)
 		queue = append(queue, pred.Needs...)
 	}
+	return conds
+}
+
+// comparesRepositoryToLiteral reports whether one of conds compares
+// github.repository to a literal.
+func comparesRepositoryToLiteral(conds []string) bool {
+	for _, c := range conds {
+		if len(expr.Comparisons(c, githubRepositoryRef)) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// baseRefs are the references that name the branch a pull request
+// targets on pull_request_target (github.ref, github.ref_name,
+// github.base_ref; on pull_request only github.base_ref does).
+var baseRefs = []string{"github.ref", "github.ref_name", "github.base_ref"}
+
+// baseLiteralsAreDefault reports whether every literal the conditions
+// the evaluation can read (conds, readConditions) compare a base
+// reference to is the default branch (refs/heads/<base> for github.ref,
+// <base> for the two names), each wanting them equal (expr.Comparisons:
+// no `!=`, no negation). The outsider picks the base, so a condition
+// that only ever asks for the default branch is the one their best
+// choice settles; `!= 'main'` or another branch they could satisfy by
+// targeting another branch, which the model cannot name, so it stays
+// unresolved. A step condition the walk never reads only ever leaves the
+// base unresolved more often, the safe side.
+func baseLiteralsAreDefault(conds []string, base string) bool {
 	for _, c := range conds {
 		for _, cmp := range expr.Comparisons(c, baseRefs[:1]) {
 			if cmp.Negated || !strings.EqualFold(cmp.Literal, "refs/heads/"+base) {
@@ -260,6 +302,15 @@ func (f outsiderFacts) withResolving(jobName string) outsiderFacts {
 	return g
 }
 
+// headRepository is the outsider's head repository: a fork whose name is
+// never the scanned repository's.
+func (f outsiderFacts) headRepository() string {
+	if strings.EqualFold(f.repository, headRepoFullName) {
+		return otherHeadRepoFullName
+	}
+	return headRepoFullName
+}
+
 // Resolve implements expr.Facts.
 func (f outsiderFacts) Resolve(ref string) (string, bool) {
 	if f.hidden(ref) {
@@ -292,14 +343,17 @@ func (f outsiderFacts) Resolve(ref string) (string, bool) {
 		return outsiderIdentity, true
 	case "github.event.pull_request.head.repo.full_name",
 		"github.event.workflow_run.head_repository.full_name":
-		return headRepoFullName, true
+		return f.headRepository(), true
 	case "github.event.pull_request.head.repo.fork",
 		"github.event.workflow_run.head_repository.fork":
 		return headRepoFork, true
 	case "github.event.pull_request.merged":
 		return "false", true
 	case "github.repository":
-		return scannedRepository, true
+		if !f.repositoryKnown {
+			return "", false
+		}
+		return f.repository, true
 	case "github.ref":
 		return f.ref()
 	case "github.ref_name":

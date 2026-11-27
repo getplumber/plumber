@@ -242,8 +242,7 @@
       {
         "entryKind": "pr_target",
         "subjectContains": "github.event.workflow_run.head_sha",
-        "tier": "none",
-        "pending": "the gate facts resolve `github.repository` to a stand-in instead of the scanned repository, so a condition comparing it with the repository's own name reads false and the gate is credited to \"condition\" instead of the fact that really decides it (the bot author, the same repository). Here `check-changes` and `test-cloud` both test `github.repository == 'mastra-ai/mastra'`, so the same-repository job keeps a maintainer-approved Medium path."
+        "tier": "none"
       },
       {
         "entryKind": "poisoned_cache",
