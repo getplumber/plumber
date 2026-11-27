@@ -51,12 +51,6 @@ deny contains finding if {
 		"job":      job.name,
 		"uses":     action.uses,
 		"line":     object.get(action, "line", 0),
-		# occurrenceSeverity: what this reference deserves, the registered
-		# severity above staying the code's own: medium when pinned by a
-		# full commit SHA (the owner can no longer change what runs), high
-		# on a ref the owner can move.
-		"pinnedBySha":        _pinned_by_sha(action.uses),
-		"occurrenceSeverity": _occurrence_severity(action.uses),
 	}, provenance.fields(action))
 }
 
@@ -77,21 +71,9 @@ deny contains finding if {
 		"message":  provenance.message(sprintf("job %q calls reusable workflow %q from an unauthorized source \u2014 restrict to authorized owners (actions/*, github/*) or an explicit allowlist", [job.name, use]), job),
 		"job":      job.name,
 		"uses":     use,
-		"pinnedBySha":        _pinned_by_sha(use),
-		"occurrenceSeverity": _occurrence_severity(use),
-		"line":               location.key_line(job, ["uses"]),
+		"line":     location.key_line(job, ["uses"]),
 	}, provenance.fields(job))
 }
-
-# _pinned_by_sha: the reference's ref (after the last "@") is a full
-# 40-hex commit SHA. A short SHA, a tag or a branch can be moved.
-_pinned_by_sha(uses) if {
-	parts := split(uses, "@")
-	count(parts) > 1
-	regex.match(`^[0-9a-fA-F]{40}$`, parts[count(parts) - 1])
-} else := false
-
-_occurrence_severity(uses) := "medium" if _pinned_by_sha(uses) else := "high"
 
 # An action is authorized when ANY trust condition holds.
 _authorized(action) if _is_official(action.uses)

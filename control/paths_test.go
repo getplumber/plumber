@@ -1592,8 +1592,8 @@ func TestTwoFindingsOnOneImageMakeOnePath(t *testing.T) {
 // An owner or a registry outside the authorized list is a trust policy
 // finding, not a way in: on a reference pinned by a full commit SHA nothing
 // can change without a commit in the repository, so the finding starts no
-// path and is priced as an individual finding: Medium for an action pinned
-// by a full commit SHA, the registry's High for the image.
+// path and is priced as an individual finding at its registered High, the
+// action pinned by a full commit SHA and the image by a digest alike.
 func TestAnUnauthorizedSourceAloneStartsNoPath(t *testing.T) {
 	const pinned = "some/action@0123456789abcdef0123456789abcdef01234567"
 	findings := []opaengine.Finding{
@@ -1605,8 +1605,8 @@ func TestAnUnauthorizedSourceAloneStartsNoPath(t *testing.T) {
 		t.Fatalf("an unauthorized source alone is no entry, got %+v", paths)
 	}
 	s := ComputePlumberScoreV4(ScoreInputV4{Findings: findings, Paths: paths})
-	if s.OtherFindings == nil || s.OtherFindings.Counts.High != 1 || s.OtherFindings.Counts.Medium != 1 || s.FinalPoints != 85 {
-		t.Errorf("want the action at Medium and the image at High: %+v %v", s.OtherFindings, s.FinalPoints)
+	if s.OtherFindings == nil || s.OtherFindings.Counts.High != 2 || s.OtherFindings.Counts.Medium != 0 || s.FinalPoints != 80 {
+		t.Errorf("want the action and the image at High: %+v %v", s.OtherFindings, s.FinalPoints)
 	}
 }
 

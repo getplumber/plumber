@@ -74,20 +74,12 @@ func TestIndividualSeverityReadsTheOccurrenceSeverity(t *testing.T) {
 	if got := IndividualSeverity(branch, "main"); got != SeverityHigh {
 		t.Errorf("branch: %s, want the occurrence's high", got)
 	}
-	action := opaengine.Finding{Code: string(CodeActionUnauthorizedSource), Data: map[string]any{"uses": "o/a@v1", "occurrenceSeverity": "medium"}}
-	if got := IndividualSeverity(action, "main"); got != SeverityMedium {
-		t.Errorf("action: %s, want the occurrence's medium", got)
+	gated := opaengine.Finding{Code: string(CodeActionUnauthorizedSource), Data: map[string]any{"uses": "o/a@v1", "occurrenceSeverity": "low"}}
+	if got := IndividualSeverity(gated, "main"); got != SeverityLow {
+		t.Errorf("gated action: %s, want the occurrence's low", got)
 	}
 	odd := opaengine.Finding{Code: string(CodeActionUnauthorizedSource), Data: map[string]any{"uses": "o/a@v1", "occurrenceSeverity": "severe"}}
 	if got := IndividualSeverity(odd, "main"); got != SeverityHigh {
-		t.Errorf("unknown occurrence severity: %s, want the computed high", got)
-	}
-	component := opaengine.Finding{Code: string(CodeComponentUnauthorizedSource), Data: map[string]any{"componentPath": "gitlab.example.com/g/c/x", "occurrenceSeverity": "medium"}}
-	if got := IndividualSeverity(component, "main"); got != SeverityMedium {
-		t.Errorf("component: %s, want the occurrence's medium", got)
-	}
-	function := opaengine.Finding{Code: string(CodeFunctionUnauthorizedSource), Job: "build", Data: map[string]any{"link": "registry.example.com/g/fn:1.0", "occurrenceSeverity": "medium"}}
-	if got := IndividualSeverity(function, "main"); got != SeverityMedium {
-		t.Errorf("function: %s, want the occurrence's medium", got)
+		t.Errorf("unknown occurrence severity: %s, want the registered high", got)
 	}
 }

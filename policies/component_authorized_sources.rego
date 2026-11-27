@@ -59,12 +59,6 @@ deny contains finding if {
 		# finding anchors on the same include; the engine keeps it out of
 		# the outputs.
 		"subject":               _subject(inc),
-		# occurrenceSeverity: what this reference deserves, the registered
-		# severity above staying the code's own: medium when pinned by a
-		# full commit SHA (the source can no longer change what runs), high
-		# on a ref the source can move.
-		"pinnedBySha":           _pinned_by_sha(_subject(inc)),
-		"occurrenceSeverity":    _occurrence_severity(_subject(inc)),
 	}
 }
 
@@ -72,16 +66,6 @@ deny contains finding if {
 # alone when the include carries no ref (include_subject in the situation
 # facts builds the include fact's subject the same way).
 _subject(inc) := sprintf("%s@%s", [inc.source, inc.ref]) if object.get(inc, "ref", "") != "" else := inc.source
-
-# _pinned_by_sha: the reference's ref (after the last "@") is a full
-# 40-hex commit SHA. A short SHA, a tag or a branch can be moved.
-_pinned_by_sha(ref) if {
-	parts := split(ref, "@")
-	count(parts) > 1
-	regex.match(`^[0-9a-fA-F]{40}$`, parts[count(parts) - 1])
-} else := false
-
-_occurrence_severity(ref) := "medium" if _pinned_by_sha(ref) else := "high"
 
 _is_trusted(source) if {
 	not _has_dot_segment(source)
