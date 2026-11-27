@@ -83,11 +83,8 @@ func noOutsiderGate(g ir.Gate) bool {
 	switch g.Class {
 	case ir.GateSameRepo, ir.GateNoOutsider:
 		return true
-	case ir.GateMaintainerApproved:
-		login, ok := strings.CutPrefix(g.Reason, "author ")
-		return ok && strings.HasSuffix(login, "[bot]")
 	}
-	return false
+	return g.BotAuthor()
 }
 
 // gateEntry reads the entry job's gate onto an entry an outsider would

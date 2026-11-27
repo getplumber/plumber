@@ -225,12 +225,12 @@ func TestClassifiedTriggersAreTheUnion(t *testing.T) {
 // the literal its own comparison reads, never one of another clause:
 // 'issues' belongs to the event-name test.
 func TestLabelReasonIsTheLabelsOwnLiteral(t *testing.T) {
-	g := ClassifyGate(issuesOrLabel(), nil, "pull_request_target", []string{"labeled"}, Environment{}, false, "")
+	g := ClassifyGate(issuesOrLabel(), nil, "pull_request_target", []string{"labeled"}, Environment{}, false, "", "")
 	if g.Class != GateMaintainerApproved || g.Reason != "label ok" {
 		t.Errorf("gate = %+v", g)
 	}
 	other := Job{Name: "x", If: "github.event.label.name == github.event.inputs.wanted"}
-	if g := ClassifyGate(other, nil, "pull_request_target", []string{"labeled"}, Environment{}, false, ""); g.Reason != "label" && g.Reason != "types labeled" {
+	if g := ClassifyGate(other, nil, "pull_request_target", []string{"labeled"}, Environment{}, false, "", ""); g.Reason != "label" && g.Reason != "types labeled" {
 		t.Errorf("label compared to a reference: %+v", g)
 	}
 }
@@ -247,6 +247,41 @@ func TestPRHeadRefs(t *testing.T) {
 	} {
 		if got := [2]bool{IsPRHeadRef(ref), IsPRHeadShaRef(ref)}; got != want {
 			t.Errorf("%s: %v, want %v", ref, got, want)
+		}
+	}
+}
+
+// TestClassifyGatesReadsTheProjectPath pins getplumber/plumber#640 at the
+// pass: the pipeline's ProjectPath is what github.repository resolves to,
+// so the pull_request_target job that compares it with the repository's
+// own name and checks out the head commit is an outsider's.
+func TestClassifyGatesReadsTheProjectPath(t *testing.T) {
+	p := githubPipeline(Job{
+		Name:     "build",
+		Triggers: []string{"pull_request_target"},
+		If:       "github.repository == 'my-org/my-repo'",
+		Uses:     []Action{checkoutHeadSha},
+	})
+	p.ProjectPath = "my-org/my-repo"
+	ClassifyGates(p)
+	g := p.Jobs[0].Gate
+	if g == nil || g.Class != GateOutsider || !g.PinnedSha {
+		t.Errorf("gate = %+v, want outsider, pinned", g)
+	}
+}
+
+// TestBotAuthorGateRanksWithTheStrongClasses: the bot-author gate lets
+// no outsider in, so it is never the weaker of two maintainer's gates
+// and is the stronger of them, on either side of the comparison.
+func TestBotAuthorGateRanksWithTheStrongClasses(t *testing.T) {
+	bot := Gate{Class: GateMaintainerApproved, Reason: "author dependabot[bot]"}
+	label := Gate{Class: GateMaintainerApproved, Reason: "label safe to test"}
+	for _, pair := range [][2]Gate{{bot, label}, {label, bot}} {
+		if got := weakerGate(pair[0], pair[1]); got.Reason != label.Reason {
+			t.Errorf("weakerGate(%q, %q) = %q, want the label gate", pair[0].Reason, pair[1].Reason, got.Reason)
+		}
+		if got := strongerGate(pair[0], pair[1]); got.Reason != bot.Reason {
+			t.Errorf("strongerGate(%q, %q) = %q, want the bot-author gate", pair[0].Reason, pair[1].Reason, got.Reason)
 		}
 	}
 }
