@@ -31,16 +31,19 @@ import data.lib.location
 # cannot carry an injection payload, and flagging them drowns the
 # real signal in false positives.
 #
-# `[^}]*` keeps every match inside a single `${{ … }}` expression so
-# an unrelated safe expression on the same line cannot trigger one.
+# Between `${{` and the field, `(?:'(?:''|[^'])*'|[^'}])*` skips
+# single-quoted strings whole and stops at the first `}` outside one, so
+# a match stays inside one `${{ … }}` expression (an unrelated safe
+# expression on the same line cannot trigger one) while a `}` in a
+# literal such as format('{0}', …) does not end it (#631).
 unsafe_patterns := [
 	# Titles and bodies — issue, pull_request, comment, review,
 	# discussion.
-	`\${{[^}]*github\.event\.[^}]*\.(title|body)\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*\.(title|body)\b`,
 	# Branch / ref names controlled on the attacker's fork.
-	`\${{[^}]*github\.head_ref\b`,
-	`\${{[^}]*github\.event\.[^}]*\.head\.(ref|label)\b`,
-	`\${{[^}]*github\.event\.[^}]*head_branch\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.head_ref\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*\.head\.(ref|label)\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*head_branch\b`,
 	# default_branch is attacker-controlled ONLY on the fork ("head")
 	# repository: pull_request.head.repo.default_branch (an attacker can
 	# rename their fork's default branch) and the workflow_run
@@ -48,16 +51,16 @@ unsafe_patterns := [
 	# default_branch is admin metadata and must NOT be flagged (#230).
 	# RE2 has no negative lookahead, so we require the fork qualifier
 	# instead of excluding the base path.
-	`\${{[^}]*github\.event\.[^}]*head\.repo\.default_branch\b`,
-	`\${{[^}]*github\.event\.[^}]*head_repository\.default_branch\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*head\.repo\.default_branch\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*head_repository\.default_branch\b`,
 	# Commit messages.
-	`\${{[^}]*github\.event\.[^}]*\.message\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*\.message\b`,
 	# Repository metadata an attacker sets on their fork.
-	`\${{[^}]*github\.event\.[^}]*\.(description|homepage)\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*\.(description|homepage)\b`,
 	# Author / committer identity free text.
-	`\${{[^}]*github\.event\.[^}]*(author|committer)\.(name|email)\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*(author|committer)\.(name|email)\b`,
 	# GitHub Pages page name.
-	`\${{[^}]*github\.event\.[^}]*page_name\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*page_name\b`,
 ]
 
 deny contains finding if {
@@ -66,9 +69,8 @@ deny contains finding if {
 	script := job.scripts[j]
 	lines := split(script, "\n")
 	some li
-	line := lines[li]
-	_line_controlled(job, line)
-	not _safe_sink(lines, li, line)
+	some e in regex.find_n(`\$\{\{(?:'(?:''|[^'])*'|[^'}])*`, lines[li], -1)
+	_injected(job, lines, li, e)
 	finding := {
 		"code":     "ISSUE-207",
 		"severity": "critical",
@@ -85,8 +87,8 @@ _job_line(job) := location.first({location.script_line(job, j, li) |
 	some j, script in job.scripts
 	lines := split(script, "\n")
 	some li, line in lines
-	_line_controlled(job, line)
-	not _safe_sink(lines, li, line)
+	some e in regex.find_n(`\$\{\{(?:'(?:''|[^'])*'|[^'}])*`, line, -1)
+	_injected(job, lines, li, e)
 })
 
 # _job_subject: the untrusted expression this job's finding names, "${{"
@@ -97,17 +99,17 @@ _job_subject(job) := s if {
 		some script in job.scripts
 		lines := split(script, "\n")
 		some li, line in lines
-		not _safe_sink(lines, li, line)
-		some e in regex.find_n(`\$\{\{[^}]*`, line, -1)
-		_expression_controlled(job, e)
+		some e in regex.find_n(`\$\{\{(?:'(?:''|[^'])*'|[^'}])*`, line, -1)
+		_injected(job, lines, li, e)
 	})
 } else := ""
 
-# _line_controlled: the line holds an expression whose value someone
-# controls when the job runs (_expression_controlled).
-_line_controlled(job, line) if {
-	some e in regex.find_n(`\$\{\{[^}]*`, line, -1)
+# _injected: expression e on line li of a script reaches the shell with a
+# value someone controls when the job runs (_expression_controlled), and
+# is not a safe sink.
+_injected(job, lines, li, e) if {
 	_expression_controlled(job, e)
+	not _safe_sink(lines, li, e)
 }
 
 # _expression_controlled: the expression reads a free-text field, and not
@@ -142,9 +144,9 @@ _matches_unsafe(line) if {
 	regex.match(unsafe_patterns[k], line)
 }
 
-# A matched expression is a safe sink (#229) only when it is BOTH wrapped
-# in toJSON(...) AND sits inside a quoted heredoc body. Neither condition
-# alone is sufficient:
+# A matched expression is a safe sink (#229) only when BOTH every untrusted
+# field in it sits inside a toJSON(...) call AND the line is inside a
+# quoted heredoc body. Neither condition alone is sufficient:
 #   - toJSON inside `echo "..."` still runs $()/backticks: the shell
 #     evaluates them inside double quotes and toJSON does not escape `$`.
 #   - a raw expression inside a quoted heredoc is substituted by GitHub
@@ -154,14 +156,20 @@ _matches_unsafe(line) if {
 # (<<"EOF" / <<'EOF') disables all expansion, so together they are safe.
 # Reading the value as data (jq, json.load) is a separate safe sink not
 # special-cased here; bind through env: and dereference "$VAR" instead.
-_safe_sink(lines, li, line) if {
-	_tojson_wrapped(line)
+#
+# The check is per expression and on the field itself: a toJSON elsewhere
+# on the line (`${{ toJSON(github.sha) }} ${{ github.event.issue.title }}`)
+# or elsewhere in the expression (`format('{0} {1}', github.event.comment.body,
+# toJSON(github.sha))`) leaves the field raw.
+_safe_sink(lines, li, e) if {
 	_inside_quoted_heredoc(lines, li)
+	not _matches_unsafe(_without_tojson(e))
 }
 
-_tojson_wrapped(line) if {
-	regex.match(`(?i)\$\{\{[^}]*\btojson\s*\(`, line)
-}
+# _without_tojson: the expression with each toJSON(...) call removed, so
+# what is left is what reaches the shell raw. A call with nested
+# parentheses (toJSON(format(...))) is left in place and still flagged.
+_without_tojson(e) := regex.replace(e, `(?i)\btojson\s*\((?:'(?:''|[^'])*'|[^'()}])*\)`, "")
 
 # Line li is inside a quoted heredoc when an earlier line opens one
 # (<<"WORD" / <<'WORD', optionally <<-) and a later line closes it with

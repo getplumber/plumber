@@ -40,16 +40,16 @@ import data.lib.location
 # KEEP IN SYNC with policies/template_injection.rego::unsafe_patterns
 # (byte-for-byte; enforced by TestIssue209UnsafePatternsMatchTemplateInjection).
 unsafe_patterns := [
-	`\${{[^}]*github\.event\.[^}]*\.(title|body)\b`,
-	`\${{[^}]*github\.head_ref\b`,
-	`\${{[^}]*github\.event\.[^}]*\.head\.(ref|label)\b`,
-	`\${{[^}]*github\.event\.[^}]*head_branch\b`,
-	`\${{[^}]*github\.event\.[^}]*head\.repo\.default_branch\b`,
-	`\${{[^}]*github\.event\.[^}]*head_repository\.default_branch\b`,
-	`\${{[^}]*github\.event\.[^}]*\.message\b`,
-	`\${{[^}]*github\.event\.[^}]*\.(description|homepage)\b`,
-	`\${{[^}]*github\.event\.[^}]*(author|committer)\.(name|email)\b`,
-	`\${{[^}]*github\.event\.[^}]*page_name\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*\.(title|body)\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.head_ref\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*\.head\.(ref|label)\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*head_branch\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*head\.repo\.default_branch\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*head_repository\.default_branch\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*\.message\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*\.(description|homepage)\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*(author|committer)\.(name|email)\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*page_name\b`,
 ]
 
 # NEWLINE-capable subset: fields that can contain a literal newline and thus
@@ -58,8 +58,8 @@ unsafe_patterns := [
 # cannot poison $GITHUB_ENV through an env-bound write. Used only by the
 # env-bound $GITHUB_ENV rule. (A subset of unsafe_patterns by construction.)
 newline_unsafe_patterns := [
-	`\${{[^}]*github\.event\.[^}]*\.body\b`,
-	`\${{[^}]*github\.event\.[^}]*\.message\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*\.body\b`,
+	`\${{(?:'(?:''|[^'])*'|[^'}])*github\.event\.(?:'(?:''|[^'])*'|[^'}])*\.message\b`,
 ]
 
 # A redirect (`>>` / `>`) or `tee` writing into the named file, in `$VAR` or
@@ -83,8 +83,7 @@ deny contains finding if {
 	job := input.pipeline.jobs[i]
 	line := split(job.scripts[j], "\n")[_]
 	_matches(line, sink_patterns)
-	_matches(line, unsafe_patterns)
-	not _tojson_wrapped(line)
+	_untrusted(line, unsafe_patterns)
 	finding := _finding(job.name, "", _direct_subject(job), _direct_line(job), "writes a user-controlled template expression into $GITHUB_ENV or $GITHUB_PATH; an attacker can hijack later steps")
 }
 
@@ -95,8 +94,7 @@ deny contains finding if {
 	some i
 	job := input.pipeline.jobs[i]
 	some varname
-	_matches(job.variables[varname], newline_unsafe_patterns)
-	not _tojson_wrapped(job.variables[varname])
+	_untrusted(job.variables[varname], newline_unsafe_patterns)
 	some j
 	line := split(job.scripts[j], "\n")[_]
 	_matches(line, env_sink_patterns)
@@ -111,8 +109,7 @@ deny contains finding if {
 	some i
 	job := input.pipeline.jobs[i]
 	some varname
-	_matches(job.variables[varname], unsafe_patterns)
-	not _tojson_wrapped(job.variables[varname])
+	_untrusted(job.variables[varname], unsafe_patterns)
 	some j
 	line := split(job.scripts[j], "\n")[_]
 	_matches(line, path_sink_patterns)
@@ -130,8 +127,7 @@ deny contains finding if {
 	some i
 	job := input.pipeline.jobs[i]
 	some varname
-	_matches(job.variables[varname], newline_unsafe_patterns)
-	not _tojson_wrapped(job.variables[varname])
+	_untrusted(job.variables[varname], newline_unsafe_patterns)
 	some j
 	_heredoc_to_sink(job.scripts[j], varname, env_sink_patterns)
 	finding := _finding(job.name, varname, _value_subject(job.variables[varname]), _var_line(job, varname), sprintf("writes $%s into $GITHUB_ENV through a heredoc/redirect; the multiline value still opens a second variable (base64-encode or use a randomised heredoc delimiter)", [varname]))
@@ -143,8 +139,7 @@ deny contains finding if {
 	some i
 	job := input.pipeline.jobs[i]
 	some varname
-	_matches(job.variables[varname], unsafe_patterns)
-	not _tojson_wrapped(job.variables[varname])
+	_untrusted(job.variables[varname], unsafe_patterns)
 	some j
 	_heredoc_to_sink(job.scripts[j], varname, path_sink_patterns)
 	finding := _finding(job.name, varname, _value_subject(job.variables[varname]), _var_line(job, varname), sprintf("writes $%s into $GITHUB_PATH through a heredoc/redirect; an attacker controls a directory placed on PATH", [varname]))
@@ -180,7 +175,21 @@ _heredoc_to_sink(script, varname, sinkpatterns) if {
 	regex.match(sprintf(`(?s)<<-?\s*["']?\w+["']?[^\n]*(%s).*\$\{?%s\b`, [sinkpat, varname]), script)
 }
 
-_tojson_wrapped(s) if regex.match(`(?i)\$\{\{[^}]*\btojson\s*\(`, s)
+# _untrusted: s holds an expression whose untrusted field reaches the
+# output raw, that is outside every toJSON(...) call. toJSON escapes the
+# newline, but only for the value it wraps: a toJSON elsewhere on the line
+# (`A=${{ toJSON(github.sha) }} B=${{ github.event.issue.title }}`) or
+# elsewhere in the expression (`format('{0} {1}', github.event.comment.body,
+# toJSON(github.sha))`) leaves the field raw.
+_untrusted(s, patterns) if {
+	some e in regex.find_n(`\$\{\{(?:'(?:''|[^'])*'|[^'}])*`, s, -1)
+	_matches(_without_tojson(e), patterns)
+}
+
+# _without_tojson: the expression with each toJSON(...) call removed, so
+# what is left is what reaches the output raw. A call with nested
+# parentheses (toJSON(format(...))) is left in place and still flagged.
+_without_tojson(e) := regex.replace(e, `(?i)\btojson\s*\((?:'(?:''|[^'])*'|[^'()}])*\)`, "")
 
 _finding(jobname, varname, subject, line, msg) := {
 	"code":         "ISSUE-209",
@@ -198,8 +207,7 @@ _direct_line(job) := location.first({location.script_line(job, j, li) |
 	some j, script in job.scripts
 	some li, line in split(script, "\n")
 	_matches(line, sink_patterns)
-	_matches(line, unsafe_patterns)
-	not _tojson_wrapped(line)
+	_untrusted(line, unsafe_patterns)
 })
 
 # _var_line: the line of an env-bound finding (#572), the first write of
@@ -209,11 +217,11 @@ _direct_line(job) := location.first({location.script_line(job, j, li) |
 _var_line(job, varname) := location.first(env | path) if {
 	value := job.variables[varname]
 	env := {n |
-		_matches(value, newline_unsafe_patterns)
+		_untrusted(value, newline_unsafe_patterns)
 		some n in {_sink_line(job, varname, env_sink_patterns), _heredoc_line(job, varname, env_sink_patterns)}
 	}
 	path := {n |
-		_matches(value, unsafe_patterns)
+		_untrusted(value, unsafe_patterns)
 		some n in {_sink_line(job, varname, path_sink_patterns), _heredoc_line(job, varname, path_sink_patterns)}
 	}
 } else := 0
@@ -244,16 +252,15 @@ _direct_subject(job) := s if {
 		some script in job.scripts
 		some line in split(script, "\n")
 		_matches(line, sink_patterns)
-		not _tojson_wrapped(line)
-		some e in regex.find_n(`\$\{\{[^}]*`, line, -1)
-		_matches(e, unsafe_patterns)
+		some e in regex.find_n(`\$\{\{(?:'(?:''|[^'])*'|[^'}])*`, line, -1)
+		_matches(_without_tojson(e), unsafe_patterns)
 	})
 } else := ""
 
 # _value_subject: the untrusted expression an env: binding holds.
 _value_subject(value) := s if {
 	s := min({trim_space(trim_prefix(e, "${{")) |
-		some e in regex.find_n(`\$\{\{[^}]*`, value, -1)
-		_matches(e, unsafe_patterns)
+		some e in regex.find_n(`\$\{\{(?:'(?:''|[^'])*'|[^'}])*`, value, -1)
+		_matches(_without_tojson(e), unsafe_patterns)
 	})
 } else := ""
