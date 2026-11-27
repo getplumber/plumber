@@ -14,6 +14,7 @@
 package github_app_skip_revoke
 
 import rego.v1
+import data.lib.actions
 import data.lib.provenance
 
 token_actions := {
@@ -40,12 +41,7 @@ deny contains finding if {
 
 _is_app_token_action(uses) if {
 	some prefix in token_actions
-	startswith(uses, sprintf("%s@", [prefix]))
-}
-
-_is_app_token_action(uses) if {
-	some prefix in token_actions
-	uses == prefix
+	actions.matches_any_ref(uses, prefix)
 }
 
 _revocation_disabled(action) if {

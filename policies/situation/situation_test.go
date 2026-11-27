@@ -1549,6 +1549,11 @@ func TestYAMLStringBooleansAndExpressions(t *testing.T) {
 	if got := evaluate(t, checkout(true), nil).Jobs["build"].Privilege.PersistedCredentials; got != "proven" {
 		t.Errorf("persist-credentials: true: got %q, want proven", got)
 	}
+	upper := checkout(true)
+	upper.Jobs[0].Uses[0].Uses = "Actions/Checkout@v4"
+	if got := evaluate(t, upper, nil).Jobs["build"].Privilege.PersistedCredentials; got != "proven" {
+		t.Errorf("Actions/Checkout@v4: got %q, want proven", got)
+	}
 
 	cases := []struct {
 		name      string

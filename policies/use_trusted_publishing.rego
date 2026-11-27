@@ -11,6 +11,7 @@
 package use_trusted_publishing
 
 import rego.v1
+import data.lib.actions
 import data.lib.provenance
 
 # Publish actions we know about. The policy does not cover every
@@ -42,13 +43,7 @@ deny contains finding if {
 
 _publish_action_ecosystem(uses) := eco if {
 	some prefix, ecosystem in publish_actions
-	startswith(uses, sprintf("%s@", [prefix]))
-	eco := ecosystem
-}
-
-_publish_action_ecosystem(uses) := eco if {
-	some prefix, ecosystem in publish_actions
-	uses == prefix
+	actions.matches_any_ref(uses, prefix)
 	eco := ecosystem
 }
 

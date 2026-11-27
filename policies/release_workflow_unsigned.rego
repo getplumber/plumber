@@ -15,6 +15,7 @@
 package release_workflow_unsigned
 
 import rego.v1
+import data.lib.actions
 
 publish_actions := {
 	"pypa/gh-action-pypi-publish",
@@ -75,26 +76,14 @@ _is_release_context(job) if {
 
 _is_publish_action(uses) if {
 	some prefix in publish_actions
-	startswith(uses, sprintf("%s@", [prefix]))
-}
-
-_is_publish_action(uses) if {
-	some prefix in publish_actions
-	uses == prefix
+	actions.matches_any_ref(uses, prefix)
 }
 
 _job_runs_signing_step(job) if {
 	some k
 	action := job.uses[k]
 	some prefix in signing_actions
-	startswith(action.uses, sprintf("%s@", [prefix]))
-}
-
-_job_runs_signing_step(job) if {
-	some k
-	action := job.uses[k]
-	some prefix in signing_actions
-	action.uses == prefix
+	actions.matches_any_ref(action.uses, prefix)
 }
 
 # npm --provenance on a run: script counts as self-signing.
@@ -118,5 +107,5 @@ _job_self_signs(job) if {
 	some k
 	action := job.uses[k]
 	some prefix in self_signing_publish_actions
-	startswith(action.uses, sprintf("%s@", [prefix]))
+	actions.matches(action.uses, prefix)
 }

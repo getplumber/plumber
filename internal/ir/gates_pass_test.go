@@ -148,6 +148,10 @@ func TestCheckoutPinnedShaNeedsEveryHeadCheckoutPinned(t *testing.T) {
 	if checkoutPinnedSha(Job{Uses: []Action{base}}) {
 		t.Error("a base checkout alone read as pinned")
 	}
+	upper := Action{Uses: "Actions/Checkout@v5", With: checkoutHeadSha.With}
+	if !checkoutPinnedSha(Job{Uses: []Action{upper}}) {
+		t.Error("an Actions/Checkout head.sha checkout read as not pinned")
+	}
 }
 
 // issuesOrLabel is a job on issues and on a labeled pull_request_target,

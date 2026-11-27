@@ -50,6 +50,7 @@ func TestImpactCodeSigning(t *testing.T) {
 		{Name: "c", Permissions: perms, Scripts: []string{"codesign --force --sign \"$IDENTITY\" build/App.app"}},
 		{Name: "d", Uses: []ir.Action{{Uses: "apple-actions/import-codesign-certs@v3"}}},
 		{Name: "e", Scripts: []string{"codesign -s \"$IDENTITY\" build/App.app"}},
+		{Name: "f", Permissions: perms, Uses: []ir.Action{{Uses: "Apple-Actions/Import-Codesign-Certs@v3"}}},
 	}
 	for _, job := range cases {
 		if i, ok := impactOn(t, job)["signs_or_releases"]; !ok || i.State != "proven" {

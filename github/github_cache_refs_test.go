@@ -294,3 +294,33 @@ func TestArchOnlyForPlainHostedLabels(t *testing.T) {
 		})
 	}
 }
+
+// TestCacheAndArtifactRefsIgnoreOwnerCase pins that the official cache and
+// artifact actions are recognized whatever the case of their owner and
+// repository: GitHub runs Actions/Cache@v4 as actions/cache, so the step
+// must give the same cache and artifact edges.
+func TestCacheAndArtifactRefsIgnoreOwnerCase(t *testing.T) {
+	with := map[string]any{"key": "k", "path": "dist", "name": "bin"}
+	refs := func(uses ...string) ([]ir.CacheRef, []ir.ArtifactRef) {
+		var steps []ir.Action
+		for _, u := range uses {
+			steps = append(steps, ir.Action{Uses: u, With: with})
+		}
+		caches, artifacts := cacheAndArtifactRefs(steps, "build", nil, false)
+		for i := range caches {
+			caches[i].Uses = ""
+		}
+		return caches, artifacts
+	}
+	lowerCaches, lowerArtifacts := refs("actions/cache@v4", "actions/upload-artifact@v4", "actions/download-artifact@v4")
+	upperCaches, upperArtifacts := refs("Actions/Cache@v4", "Actions/Upload-Artifact@v4", "Actions/Download-Artifact@v4")
+	if len(lowerCaches) == 0 || len(lowerArtifacts) != 2 {
+		t.Fatalf("lower-case steps: caches %+v, artifacts %+v", lowerCaches, lowerArtifacts)
+	}
+	if !reflect.DeepEqual(upperCaches, lowerCaches) {
+		t.Errorf("Actions/Cache: caches %+v, want %+v", upperCaches, lowerCaches)
+	}
+	if !reflect.DeepEqual(upperArtifacts, lowerArtifacts) {
+		t.Errorf("Actions/*-Artifact: artifacts %+v, want %+v", upperArtifacts, lowerArtifacts)
+	}
+}
